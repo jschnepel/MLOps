@@ -73,7 +73,7 @@
 
 ## Exact next step
 
-Write the implementation plan for M00–M01 (T01–T04), then run T01:
+Write the implementation plan for M00–M01 (T01–T08), then run T01:
 
 ```powershell
 uv venv .venv-ref --python 3.13
