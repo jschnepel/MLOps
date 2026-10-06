@@ -1,6 +1,6 @@
 # Agent instructions — Operations Copilot
 
-Read `BUILD_SPEC.md` in full before building. It is the sole authoritative project specification. Then read `STATUS.md`, `handoff/tasks.json`, `handoff/acceptance-matrix.json`, and `SESSION_STATE.md`. Start with `START_HERE.md` for commands.
+Read `BUILD_SPEC.md` and `SPEC_AMENDMENTS.md` in full before building. Together they are the authoritative project specification, and the amendments take precedence. Then read `STATUS.md`, `handoff/tasks.json`, `handoff/acceptance-matrix.json`, and `SESSION_STATE.md`. Start with `START_HERE.md` for commands.
 
 ## Execution rules
 
@@ -18,7 +18,7 @@ Read `BUILD_SPEC.md` in full before building. It is the sole authoritative proje
 
 ## Instruction precedence
 
-`BUILD_SPEC.md` controls the build. Schemas and the acceptance matrix are companions; report/reconcile contradictions. Historical docs and generated diagrams do not override the specification. `provenance/original-implementation-kit.zip` is a reference snapshot, not a second active repository. The model’s text is never a source of authorization.
+`BUILD_SPEC.md` as amended by `SPEC_AMENDMENTS.md` controls the build; the amendments win wherever they conflict. ADRs live in `docs/adr/`. Schemas and the acceptance matrix are companions; report/reconcile contradictions. Historical docs and generated diagrams do not override the specification. `provenance/original-implementation-kit.zip` is a reference snapshot, not a second active repository. The model’s text is never a source of authorization.
 
 ## First task
 

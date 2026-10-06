@@ -24,3 +24,16 @@ Authority: `BUILD_SPEC.md`. Detailed observed checks: `reports/handoff/VERIFICAT
 The original optional dependency bounds and example APIs must be resolved/locked and tested, not treated as a complete compatible environment. `tests/integration` is excluded by the historical default pytest configuration. `integrations/mcp_tools.py` contains a historical comment pointing to an absent `database/target_schema.sql`; use BUILD_SPEC section 6 and implement the target migrations rather than assuming that file exists. Historical README/docs paths have been archived; active instructions start at the root specification.
 
 The inherited source/test/integration bytes are retained unchanged in this handoff and can be checked against `provenance/reference-code-hashes.json`. New documents and schema examples do not silently upgrade their implementation status. The target requires actual acceptance evidence before any feature is promoted to complete.
+
+## Update — 2026-10-06 planning session (OPS-BUILD-1.1)
+
+- The handoff was imported unmodified (git commit 1) and amended by `SPEC_AMENDMENTS.md`, ADR-0001 (per-service directories) and ADR-0002 (v1 scope cut).
+- The adversarial review is at `docs/reviews/handoff-review-2026-10-06.md`.
+- **No target capability is implemented yet.** Every acceptance requirement (R001–R100) remains `NOT_RUN`.
+- **Reference baseline on the owner's Windows machine:**
+  - recovery CLI reproduced;
+  - 58-test suite **not yet reproduced** (FastAPI missing; T01).
+- **Known v1 limitations, by design (ADR-0002):**
+  - single-writer checkpoint profile (R021 open);
+  - no Kubernetes deployment claim;
+  - owner-authored rather than third-party holdout.

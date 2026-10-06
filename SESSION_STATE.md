@@ -1,28 +1,64 @@
-# Session state — initial build handoff
+# Session state
 
-**Specification:** OPS-BUILD-1.0  
-**Current milestone:** M00 — reproduce in the builder's environment  
-**Next task:** T01, then T02  
-**Repository remote/commit:** Not created or assumed by handoff assembly.
+**Specification:** OPS-BUILD-1.1 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
+**Current milestone:** M00 (baseline, environment and model probe)
+**Next task:** T01, then T02
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `main`. Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
 
-## Completed by handoff author
+## Done in the planning session (2026-10-06)
 
-Consolidated the build specification, original local reference, corrected stage charts, typed target schema examples, task DAG, acceptance requirements, synthetic source fixtures and development scenario cards. Reran the reference tests and recovery CLI; see the current handoff verification report for the exact evidence. No target cloud, model, MCP, browser, Docker or Kubernetes success is implied.
+- **Imported the handoff unmodified** (commit "Import Operations Copilot build handoff…"). In place, `scripts/verify_handoff.py --manifest --reference-code` passed with 161 checksums and 19 reference files.
+- **Ran the reference recovery CLI** locally: OUTCOME_UNKNOWN → reconcile → one incident.
+- **Could not run the 58-test reference suite here.** Collection failed with `ModuleNotFoundError: fastapi`. An isolated `uv run --with …` attempt was blocked by tool permission. This is the first thing T01 must do.
+- **Ran an adversarial review** with six independent reviewers plus a lead spot-check: `docs/reviews/handoff-review-2026-10-06.md`.
+- **The owner approved "amend + cut".** Wrote:
+  - `SPEC_AMENDMENTS.md`;
+  - `docs/adr/ADR-0001-*` (top-level directory per service);
+  - `docs/adr/ADR-0002-*` (v1 scope cut; single-writer checkpoint profile);
+  - the regenerated `handoff/tasks.json` (35 tasks as a graph);
+  - `handoff/acceptance-matrix.json` (100 requirements, re-homed, R081–R100 added);
+  - `handoff/BUILD_BACKLOG.md`;
+  - an MIT `LICENSE`.
+- After those edits, `scripts/verify_handoff.py` (structure checks) passes: 35 acyclic tasks, 100 covered requirements. **`--manifest` no longer passes**, because the edited files intentionally differ from the delivered snapshot (BUILD_SPEC §0 anticipates this). The original snapshot is preserved in git commit 1.
+- Added `.gitattributes` (LF) so fixture and manifest hashes survive Windows checkouts.
 
-## First builder commands
+## Environment (observed)
 
-```bash
-python scripts/verify_handoff.py --manifest --reference-code
-PYTHONPATH=src python -m operations_copilot.cli
-python -m pytest -q
+| Item | Observed |
+|---|---|
+| OS | Windows 11 Home 10.0.26200 |
+| CPU / RAM | Ryzen 9 5900X / 31.9 GB |
+| GPU | RTX 3080 (10 GB) |
+| Python | 3.13.7 (`python`), 3.14.6 (`py`) |
+| uv | 0.11.8 |
+| Docker | Docker Desktop 29.6.2 |
+| Ollama | 0.33.3, with `qwen3:8b` and `nomic-embed-text` installed |
+| Node | 24.15.0 |
+| git | 2.54 |
+| Not installed | psql, helm (kubectl present) |
+
+## Owner decisions recorded
+
+- Portfolio/learning purpose; synthetic data only.
+- Keycloak for identity.
+- Local `qwen3:8b`.
+- Every failure category proven by tests.
+- Separate-services architecture.
+- MIT license; publish publicly to `jschnepel/MLOps` once logged in.
+
+## Open owner inputs
+
+- `gh auth login`, then approval to push.
+- Approval of the written amendments before the implementation plan is written (in progress).
+
+## Exact next step
+
+Write the implementation plan for M00–M01 (T01–T04), then run T01:
+
+```powershell
+uv venv .venv-ref --python 3.13
+uv pip install --python .venv-ref -e ".[web,test]"
+.venv-ref\Scripts\python -m pytest -q
 ```
 
-If required test dependencies are missing, record that fact and perform isolated dependency resolution in M01; do not turn the missing suite into a pass. After baseline capture, inspect schemas/tasks and implement the first tested contract/toolchain slice.
-
-## External inputs not yet authorized or known
-
-Actual target machine/GPU and chosen installed model; large model download consent; nonlocal identity/cloud/notification credentials; public domain; spending; public license; repository publication; final holdout reviewer custody. Defaults stay local, synthetic, fake-control mode while independent work proceeds.
-
-## Update this record after each slice
-
-Record current commit/dirty files, task IDs, changed files, actual commands and results including skips/failures, review findings, blockers, approved deviations, next task and exact next command. Do not store secrets or a private reasoning transcript.
+Do not store secrets or private reasoning in this file.

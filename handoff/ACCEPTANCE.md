@@ -1,5 +1,7 @@
 # Requirements-to-evidence checklist
 
+> **Superseded for milestones and new requirements (OPS-BUILD-1.1):** `handoff/acceptance-matrix.json` is authoritative. It re-homes requirements to the milestone where each becomes testable and adds R081–R100 from `SPEC_AMENDMENTS.md`. This table is the original 1.0 snapshot.
+
 All entries are target requirements; suggested tests must be implemented. The delivered reference baseline is separately reported.
 
 - [ ] **R001 / M00** — Reference baseline remains reproducible. Evidence: Run the original suite and CLI from a clean extraction; retain the test/model-mode distinction.

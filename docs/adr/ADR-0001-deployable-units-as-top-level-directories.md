@@ -1,0 +1,40 @@
+# ADR-0001: Deployable units as top-level directories
+
+- **Status:** Accepted, 2026-10-06
+- **Amends:** BUILD_SPEC.md §5 (repository layout only)
+- **Deciders:** repository owner
+
+## Context
+
+BUILD_SPEC §5 puts all code in one package, `src/operations_copilot/`, with services as sub-packages.
+
+This is a portfolio project. Its main readers are interviewers, who should be able to open one directory and understand one running process: what it owns, what it trusts, and how it is tested.
+
+BUILD_SPEC §3 also says that application-domain functions are not separate microservices. The deliberate network boundaries are MCP and the synthetic destination. The API and worker may share an image.
+
+## Decision
+
+Each independently deployed process gets its own top-level directory. Each has its own `pyproject.toml`, `Dockerfile`, entrypoint, `tests/` and a `README.md` stating ownership and trust:
+
+```text
+core/          shared library (uv workspace member): domain, application, adapters, contracts
+api/           FastAPI: sessions, admission, decisions, SSE, health
+worker/        run-lease worker: LangGraph graph, LangChain draft node, MCP client
+mcp-server/    authenticated MCP server: read tools, guarded write, receipt lookup
+asset-sim/     synthetic asset/alert API
+incident-sim/  synthetic incident destination with its own database
+web/           React + TypeScript + Vite
+```
+
+- **`core/` is a library, not a service.** Every service imports domain rules from it. No domain logic is duplicated, and none is exposed over the network.
+- **Network boundaries stay where §3 puts them:** browser → api, worker → mcp-server, mcp-server → asset-sim / incident-sim, worker → Ollama.
+- **Images:** the API and worker may share a base image.
+- **Python packaging:** one `uv` workspace and one `uv.lock` at the repository root.
+- **Cross-service tests:** end-to-end tests that span services live in `tests/e2e/` at the root.
+- **The reference implementation** (`src/operations_copilot/`) stays as a reference until its behaviours are re-expressed as `core/` tests (task T04). After that it moves to `reference/`, unchanged.
+
+## Consequences
+
+- Interviewers can read one service at a time, and each Dockerfile builds only its member plus `core/`.
+- There is a risk of `core/` turning into a dumping ground. To mitigate it, `core/` keeps the sub-packages `domain/`, `application/`, `adapters/` and `contracts/`, and services contain only wiring, transport and process lifecycle.
+- The two synthetic services (`asset-sim/`, `incident-sim/`) are separate on purpose. The destination needs an independent database and credentials (§14). The read API does not.
