@@ -1,0 +1,5 @@
+Fresh ZIP extraction test:
+..........................................................               [100%]
+58 passed in 0.62s
+
+CLI: passed; destination incident count: 1.

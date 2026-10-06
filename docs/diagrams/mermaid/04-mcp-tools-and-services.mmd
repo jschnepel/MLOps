@@ -1,0 +1,11 @@
+%% TARGET DESIGN — Stage 4: Tools & Services via MCP
+%% Component-stage labels are not a strict runtime call order.
+flowchart LR
+    S1["01 • Receive a tool request<br/>LangGraph selects an allowlisted tool operation.<br/>Use typed arguments with bounded size and scope.<br/>Read calls and approved writes follow distinct rules."]
+    S2["02 • Call the MCP server<br/>Use a real MCP client over authenticated transport.<br/>Optional LangChain adapter exposes compatible tools.<br/>Send scoped service credentials and trusted run context."]
+    S3["03 • Enforce server policy<br/>Validate credential audience, expiry, and scopes.<br/>Resolve current access from trusted identity.<br/>Reject unexpected tools and invalid arguments."]
+    S4["04 • Route the allowed call<br/>Read: asset status, recent alerts, procedure search.<br/>Write: create_incident with an approved proposal ID.<br/>Recheck write authority at the execution boundary."]
+    S5["05 • Validate the result<br/>Read results carry evidence IDs and timestamps.<br/>Writes return a verified receipt or uncertain status.<br/>Bound and redact results before persisting events."]
+    S1 --> S2 --> S3 --> S4 --> S5
+    classDef step fill:#FFF8E8,stroke:#B77904,color:#12253F,stroke-width:1.5px;
+    class S1,S2,S3,S4,S5 step;

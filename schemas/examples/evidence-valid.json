@@ -1,0 +1,10 @@
+{
+  "evidence_id": "ALPHA-INCIDENT:v2:review",
+  "document_id": "ALPHA-INCIDENT",
+  "version": "2",
+  "section": "review",
+  "content_sha256": "8bc7631462663afea7fb457da5159c99f9ef3d3cffe21056d487c45c55931c4a",
+  "excerpt": "Repeated simulated warnings may be summarized in a reviewable incident draft. A different authorized reviewer must inspect the exact content before submission. The warning count alone does not establish root cause.",
+  "effective_from": "2026-10-01T00:00:00Z",
+  "retrieved_at": "2026-10-06T12:00:00Z"
+}

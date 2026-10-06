@@ -1,0 +1,8 @@
+{
+  "kind": "investigate",
+  "text": "Check A17.",
+  "context": {
+    "asset_id": "A17",
+    "hours": true
+  }
+}

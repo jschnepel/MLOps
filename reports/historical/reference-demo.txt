@@ -1,0 +1,73 @@
+1. AWAITING_INPUT — time range needed
+2. AWAITING_APPROVAL — nothing submitted
+3. OUTCOME_UNKNOWN — response lost after destination commit
+4. SUCCEEDED — INC-66ea189a63e5
+5. Destination incident count: 1
+{
+  "mode": "deterministic test double",
+  "events": [
+    {
+      "id": 1,
+      "kind": "run.created",
+      "created_at": 1790782556.8337154,
+      "payload": {
+        "actor": "alex",
+        "status": "AWAITING_INPUT"
+      }
+    },
+    {
+      "id": 2,
+      "kind": "clarification.accepted",
+      "created_at": 1790782556.8342547,
+      "payload": {
+        "asset_id": "A17",
+        "hours": 24
+      }
+    },
+    {
+      "id": 3,
+      "kind": "proposal.created",
+      "created_at": 1790782556.8359587,
+      "payload": {
+        "action_executed": false,
+        "proposal_hash": "867c095a605e8acc37014712109de48e3d8fcb096a98da51969ab68c4e0f7be5"
+      }
+    },
+    {
+      "id": 4,
+      "kind": "approval.recorded",
+      "created_at": 1790782556.8368194,
+      "payload": {
+        "actor": "sam",
+        "decision": "approve",
+        "proposal_hash": "867c095a605e8acc37014712109de48e3d8fcb096a98da51969ab68c4e0f7be5"
+      }
+    },
+    {
+      "id": 5,
+      "kind": "action.started",
+      "created_at": 1790782556.8380527,
+      "payload": {
+        "action_key": "incident:1c3956fe-5b56-4a32-87b7-f84dc6e900ac:867c095a605e8acc37014712109de48e3d8fcb096a98da51969ab68c4e0f7be5"
+      }
+    },
+    {
+      "id": 6,
+      "kind": "action.outcome_unknown",
+      "created_at": 1790782556.8386977,
+      "payload": {
+        "message": "Reconcile before retrying."
+      }
+    },
+    {
+      "id": 7,
+      "kind": "action.committed",
+      "created_at": 1790782556.8412628,
+      "payload": {
+        "action_key": "incident:1c3956fe-5b56-4a32-87b7-f84dc6e900ac:867c095a605e8acc37014712109de48e3d8fcb096a98da51969ab68c4e0f7be5",
+        "incident_id": "INC-66ea189a63e5",
+        "payload_hash": "867c095a605e8acc37014712109de48e3d8fcb096a98da51969ab68c4e0f7be5"
+      }
+    }
+  ]
+}

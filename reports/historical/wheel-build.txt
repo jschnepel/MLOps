@@ -1,0 +1,10 @@
+WARNING: The directory '/home/oai/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Processing /mnt/data/operations-copilot
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: operations-copilot
+  Building wheel for operations-copilot (pyproject.toml): started
+  Building wheel for operations-copilot (pyproject.toml): finished with status 'done'
+  Created wheel for operations-copilot: filename=operations_copilot-0.1.0-py3-none-any.whl size=21758 sha256=545fbf1a83aae2652c6964022e511f7a49fd6da64132f613832df20016262226
+  Stored in directory: /tmp/pip-ephem-wheel-cache-uyzmodmf/wheels/71/f1/0d/66ae5c3ecf23fafb2c6bc367c80331a997bcb150877900e965
+Successfully built operations-copilot

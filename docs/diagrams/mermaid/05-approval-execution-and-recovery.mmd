@@ -1,0 +1,11 @@
+%% TARGET DESIGN — Stage 5: Approval, Execution & Recovery
+%% Component-stage labels are not a strict runtime call order.
+flowchart LR
+    S1["01 • Review the exact proposal<br/>A different authorized person reviews the draft.<br/>Show asset, destination, content, and evidence.<br/>Keep the proposal immutable during review."]
+    S2["02 • Record the decision<br/>Persist approve or reject with reviewer identity.<br/>Bind approval to hash, revision, and expiry.<br/>Rejecting or revising does not execute a write."]
+    S3["03 • Recheck & grant execution<br/>Verify current requester and reviewer permissions.<br/>Check hash, expiry, freshness, and cancellation.<br/>Commit a versioned execution grant."]
+    S4["04 • Dispatch idempotently<br/>Stage 4 submits the stable action ID and payload hash.<br/>Destination commits incident plus receipt atomically.<br/>Same key returns its result; changed payload conflicts."]
+    S5["05 • Confirm or reconcile<br/>Verified receipt means confirmed success.<br/>A definitive no-commit response means failure.<br/>Ambiguity stays unknown; reconcile by action ID."]
+    S1 --> S2 --> S3 --> S4 --> S5
+    classDef step fill:#FFF0F3,stroke:#CE354E,color:#12253F,stroke-width:1.5px;
+    class S1,S2,S3,S4,S5 step;

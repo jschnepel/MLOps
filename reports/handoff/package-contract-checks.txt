@@ -1,0 +1,9 @@
+$ /opt/pyvenv/bin/python scripts/verify_handoff.py --contracts --reference-code
+EXIT_CODE=0
+
+PASS: package structure; 49 JSON files; 32 acyclic tasks; 80 covered requirements
+PASS: 8 source hashes; 32 development scenario cards; 18 Python syntax checks; 6 SVG XML files
+PASS: synthetic proposal/decision/outcome example hashes agree
+PASS: 11 JSON Schema documents; 20 accepted examples; 9 rejected negative examples
+PASS: 19 inherited source/test/integration files match original snapshot
+LIMIT: These are handoff/contract checks, not real model, authorization, MCP network, browser, Docker, Kubernetes or production acceptance tests.

@@ -1,0 +1,95 @@
+$ /opt/pyvenv/bin/python scripts/verify_handoff.py --contracts --reference-code --manifest
+EXIT_CODE=0
+
+PASS: package structure; 49 JSON files; 32 acyclic tasks; 80 covered requirements
+PASS: 8 source hashes; 32 development scenario cards; 18 Python syntax checks; 6 SVG XML files
+PASS: synthetic proposal/decision/outcome example hashes agree
+PASS: 11 JSON Schema documents; 20 accepted examples; 9 rejected negative examples
+PASS: 19 inherited source/test/integration files match original snapshot
+PASS: 160 delivered snapshot file checksums
+LIMIT: These are handoff/contract checks, not real model, authorization, MCP network, browser, Docker, Kubernetes or production acceptance tests.
+
+
+$ /opt/pyvenv/bin/python -m pytest -q -p no:cacheprovider
+EXIT_CODE=0
+
+..........................................................               [100%]
+58 passed in 0.96s
+
+
+$ /opt/pyvenv/bin/python -m operations_copilot.cli
+EXIT_CODE=0
+
+1. AWAITING_INPUT — time range needed
+2. AWAITING_APPROVAL — nothing submitted
+3. OUTCOME_UNKNOWN — response lost after destination commit
+4. SUCCEEDED — INC-8a1886de210f
+5. Destination incident count: 1
+{
+  "mode": "deterministic test double",
+  "events": [
+    {
+      "id": 1,
+      "kind": "run.created",
+      "created_at": 1791297311.5573916,
+      "payload": {
+        "actor": "alex",
+        "status": "AWAITING_INPUT"
+      }
+    },
+    {
+      "id": 2,
+      "kind": "clarification.accepted",
+      "created_at": 1791297311.5581203,
+      "payload": {
+        "asset_id": "A17",
+        "hours": 24
+      }
+    },
+    {
+      "id": 3,
+      "kind": "proposal.created",
+      "created_at": 1791297311.5599787,
+      "payload": {
+        "action_executed": false,
+        "proposal_hash": "add2ddcc28fdd19b6094cc0727ec5254bb30911abc1755cbc4571d02b4e35864"
+      }
+    },
+    {
+      "id": 4,
+      "kind": "approval.recorded",
+      "created_at": 1791297311.560529,
+      "payload": {
+        "actor": "sam",
+        "decision": "approve",
+        "proposal_hash": "add2ddcc28fdd19b6094cc0727ec5254bb30911abc1755cbc4571d02b4e35864"
+      }
+    },
+    {
+      "id": 5,
+      "kind": "action.started",
+      "created_at": 1791297311.5621524,
+      "payload": {
+        "action_key": "incident:0f2357f1-1ddc-4624-a24c-5b885762813c:add2ddcc28fdd19b6094cc0727ec5254bb30911abc1755cbc4571d02b4e35864"
+      }
+    },
+    {
+      "id": 6,
+      "kind": "action.outcome_unknown",
+      "created_at": 1791297311.5632794,
+      "payload": {
+        "message": "Reconcile before retrying."
+      }
+    },
+    {
+      "id": 7,
+      "kind": "action.committed",
+      "created_at": 1791297311.5656118,
+      "payload": {
+        "action_key": "incident:0f2357f1-1ddc-4624-a24c-5b885762813c:add2ddcc28fdd19b6094cc0727ec5254bb30911abc1755cbc4571d02b4e35864",
+        "incident_id": "INC-8a1886de210f",
+        "payload_hash": "add2ddcc28fdd19b6094cc0727ec5254bb30911abc1755cbc4571d02b4e35864"
+      }
+    }
+  ]
+}

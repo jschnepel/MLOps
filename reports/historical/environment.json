@@ -1,0 +1,22 @@
+{
+  "date": "2026-09-30",
+  "python": "3.13.5",
+  "packages": {
+    "fastapi": "0.128.2",
+    "uvicorn": "0.48.0",
+    "pydantic": "2.13.4",
+    "httpx": "0.28.1",
+    "pytest": "9.0.2"
+  },
+  "deterministic_tests": {
+    "passed": 58,
+    "failed": 0,
+    "skipped": 0,
+    "external_sdk_tests_excluded": true
+  },
+  "wheel_sha256": "545fbf1a83aae2652c6964022e511f7a49fd6da64132f613832df20016262226",
+  "browser_verified": false,
+  "model_inference_verified": false,
+  "docker_verified": false,
+  "kubernetes_verified": false
+}

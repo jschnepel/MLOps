@@ -1,0 +1,81 @@
+{
+  "description": "Hashes of original source, tests and integration examples. Handoff assembly must not silently alter functional reference code. Future implementation is expected to change these paths deliberately.",
+  "files": [
+    {
+      "path": "integrations/README.md",
+      "sha256": "ce807b1fb98e16ce6527bcc25d313f9399875fb20b14158e1221eb023ea88721"
+    },
+    {
+      "path": "integrations/__init__.py",
+      "sha256": "0a0f09a43082bfc524c82a9c080a076a441341e6e0040b1aae181d4414ca9e00"
+    },
+    {
+      "path": "integrations/langgraph_workflow.py",
+      "sha256": "e6d3e3b8f6f80ab36ea02d467a6e0e9971d1fb9e3acf5d2f36a354ac9262c7d1"
+    },
+    {
+      "path": "integrations/mcp_tools.py",
+      "sha256": "feb781acc47272405a3898e8163cdf1359b4de65227be7ea95a96b478999d066"
+    },
+    {
+      "path": "src/operations_copilot/__init__.py",
+      "sha256": "f0bf0b50d21942d5f9bf50cd613deb8d9b75d62b9ccb318485428e140b5aa3af"
+    },
+    {
+      "path": "src/operations_copilot/api.py",
+      "sha256": "bdb1cefb369d85fd6914591252324668b1908c194d1332925bdd3cb3392bc328"
+    },
+    {
+      "path": "src/operations_copilot/cli.py",
+      "sha256": "fe35d4582e39399c05be6781b68519a457e14d76d6497f9c1ca2a9bdac25d382"
+    },
+    {
+      "path": "src/operations_copilot/domain.py",
+      "sha256": "313efab5b7a352e434ba1e38a39f7adb33fcc46c47309aec960c9f1b63cec8a0"
+    },
+    {
+      "path": "src/operations_copilot/models.py",
+      "sha256": "a3f30f724f4caa3a22f0f02694d7cf8c6c24f40357fc3a3bd5a25f4227ddbc35"
+    },
+    {
+      "path": "src/operations_copilot/service.py",
+      "sha256": "0b337372ad68cc032d43324e3ca7a51072dd419839888a970bb6522ea20f4d9b"
+    },
+    {
+      "path": "src/operations_copilot/store.py",
+      "sha256": "85cbc5a24896909e23289a5dd262e5fdf18a2ae9244909fea4f5d56f2e9aa575"
+    },
+    {
+      "path": "src/operations_copilot/synthetic.py",
+      "sha256": "ab5e4288707d1b3073e629100f8ba62f46db132477de7ccd360b405730260bbe"
+    },
+    {
+      "path": "src/operations_copilot/web/app.js",
+      "sha256": "4384ccf17464b2f94ccd68193da3f3ede875b4b43eb60ca15b33323d326cdc5e"
+    },
+    {
+      "path": "src/operations_copilot/web/index.html",
+      "sha256": "1e2d96f50c3f4bc7e39b8d30c6472f0b78426add394c0c6eeb7c3595a99a99b4"
+    },
+    {
+      "path": "src/operations_copilot/web/style.css",
+      "sha256": "21f41ef81896e3a8fb845f2dc4afe5a08b07be2df9d72ed2354eda99cae01f46"
+    },
+    {
+      "path": "tests/conftest.py",
+      "sha256": "2cace95fff523ebeca87af6ebfd82808bd80db36fedd7efa9892cd5f5c08a9a8"
+    },
+    {
+      "path": "tests/integration/test_sdk_contracts.py",
+      "sha256": "f33c9fec3271367c077d399889bd9d40f9a06835aab53a4bf0174c304f19526a"
+    },
+    {
+      "path": "tests/test_api.py",
+      "sha256": "5e309dd90d6a807249972e473a53e5d3d6e031d679c8f647c652371b56e8d1ab"
+    },
+    {
+      "path": "tests/test_control.py",
+      "sha256": "395f49803d3137435b5dfa1d5b9f76a242f1e09738c1695ef680826895380aa7"
+    }
+  ]
+}

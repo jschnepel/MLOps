@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operations-copilot:schema:action-outcome:1",
+  "title": "Operations Copilot target action-outcome v1",
+  "$comment": "Target contract. Declarative validation does not implement authentication, authorization, semantic support, atomicity, or runtime integrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "enum": [
+        "SUCCEEDED",
+        "FAILED_NO_COMMIT",
+        "UNKNOWN",
+        "CONFLICT"
+      ]
+    },
+    "action_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "payload_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "receipt": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "receipt_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "incident_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "committed_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "incident_id",
+            "committed_at"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "status",
+    "action_id",
+    "payload_sha256",
+    "receipt",
+    "reason"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "SUCCEEDED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "receipt": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "receipt_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "incident_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "committed_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "receipt_id",
+              "incident_id",
+              "committed_at"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "receipt": {
+            "type": "null"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+%% TARGET DESIGN — Stage 1: User Interaction
+%% Component-stage labels are not a strict runtime call order.
+flowchart LR
+    S1["01 • Compose the request<br/>Identify the asset and investigation period.<br/>Ask a question or request an incident draft.<br/>Use synthetic operational data only."]
+    S2["02 • Use the web workspace<br/>React + TypeScript: chat, evidence, activity, approvals.<br/>Sign in through the configured identity provider.<br/>The interface does not grant permissions."]
+    S3["03 • Submit an HTTP command<br/>Send the request to FastAPI over HTTPS.<br/>Include the session and a request deduplication key.<br/>Show the accepted run ID after durable admission."]
+    S4["04 • Clarify or review<br/>Reply to a stored clarification request.<br/>Inspect the exact proposal and its sources.<br/>Only an independent authorized reviewer approves."]
+    S5["05 • Receive live updates<br/>Read authorized, persisted events over SSE.<br/>Replay missed events after reconnecting.<br/>Display confirmed or explicitly unknown outcomes."]
+    S1 --> S2 --> S3 --> S4 --> S5
+    classDef step fill:#EDF5FF,stroke:#1468CC,color:#12253F,stroke-width:1.5px;
+    class S1,S2,S3,S4,S5 step;

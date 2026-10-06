@@ -1,0 +1,428 @@
+[
+  {
+    "num": 1,
+    "slug": "user-interaction",
+    "title": "User Interaction",
+    "subtitle": "A two-way conversation: submit a request, answer questions, review evidence, and see recorded progress.",
+    "accent": "#1468CC",
+    "tint": "#EDF5FF",
+    "steps": [
+      [
+        "Compose the request",
+        [
+          "Identify the asset and investigation period.",
+          "Ask a question or request an incident draft.",
+          "Use synthetic operational data only."
+        ],
+        "INPUT: message + context"
+      ],
+      [
+        "Use the web workspace",
+        [
+          "React + TypeScript: chat, evidence, activity, approvals.",
+          "Sign in through the configured identity provider.",
+          "The interface does not grant permissions."
+        ],
+        "CLIENT: web first"
+      ],
+      [
+        "Submit an HTTP command",
+        [
+          "Send the request to FastAPI over HTTPS.",
+          "Include the session and a request deduplication key.",
+          "Show the accepted run ID after durable admission."
+        ],
+        "HANDOFF: Stage 2"
+      ],
+      [
+        "Clarify or review",
+        [
+          "Reply to a stored clarification request.",
+          "Inspect the exact proposal and its sources.",
+          "Only an independent authorized reviewer approves."
+        ],
+        "REVIEW: Stage 5"
+      ],
+      [
+        "Receive live updates",
+        [
+          "Read authorized, persisted events over SSE.",
+          "Replay missed events after reconnecting.",
+          "Display confirmed or explicitly unknown outcomes."
+        ],
+        "FEEDBACK: Stage 6"
+      ]
+    ],
+    "support": [
+      [
+        "INPUT CONNECTION",
+        "The operator provides a request. An independent reviewer can later inspect and decide on the proposal."
+      ],
+      [
+        "SHARED COMPONENTS",
+        "FastAPI owns access checks. PostgreSQL stores conversations and events. Slack is optional; voice is deferred."
+      ],
+      [
+        "OUTPUT CONNECTION",
+        "Stage 2 receives durable commands. Stage 6 supplies progress and results. Status questions do not create duplicate jobs."
+      ]
+    ],
+    "rule": "Clarification is not approval. A chat message saying “yes” is not an execution grant.",
+    "why": "HTTP carries user commands; SSE carries authorized progress. Reconnection restores the view without restarting the work."
+  },
+  {
+    "num": 2,
+    "slug": "api-and-orchestration",
+    "title": "API & Workflow Orchestration",
+    "subtitle": "FastAPI admits durable work. LangGraph coordinates the workflow. Application code owns authority.",
+    "accent": "#098461",
+    "tint": "#ECF9F4",
+    "steps": [
+      [
+        "Authenticate & validate",
+        [
+          "Verify the session and current team membership.",
+          "Check permissions, input schema, and limits.",
+          "Derive user and team identity on the server."
+        ],
+        "COMPONENT: FastAPI"
+      ],
+      [
+        "Admit work durably",
+        [
+          "Commit message, run, and job in one transaction.",
+          "Deduplicate repeated request submissions.",
+          "Return HTTP 202 and the run ID after commit."
+        ],
+        "STORE: PostgreSQL"
+      ],
+      [
+        "Lease a queued job",
+        [
+          "A worker claims a short, renewable job lease.",
+          "Use a fencing token to reject stale workers.",
+          "Do not hold a transaction during model calls."
+        ],
+        "RUNTIME: worker"
+      ],
+      [
+        "Coordinate the graph",
+        [
+          "Load checkpoint plus authoritative application state.",
+          "Retrieve through Stage 4, then draft in Stage 3.",
+          "Route the immutable proposal to Stage 5."
+        ],
+        "ORCHESTRATOR: LangGraph"
+      ],
+      [
+        "Pause, resume, or finish",
+        [
+          "Persist clarification or approval waits; release the lease.",
+          "Resume from a validated, committed user event.",
+          "Store status and events for Stage 6."
+        ],
+        "PERSISTENCE: checkpoints"
+      ]
+    ],
+    "support": [
+      [
+        "INPUT CONNECTION",
+        "Stage 1 sends commands. A job is acknowledged only after its durable admission transaction commits."
+      ],
+      [
+        "SHARED COMPONENTS",
+        "PostgreSQL: jobs, runs, checkpoints, proposals, approvals, events, outbox. OpenTelemetry: diagnostics."
+      ],
+      [
+        "OUTPUT CONNECTION",
+        "Read tools: Stage 4. Model generation: Stage 3. Approval/write: Stage 5. User projections: Stage 6."
+      ]
+    ],
+    "rule": "LangGraph coordinates execution; neither generated text nor a checkpoint grants permission to write.",
+    "why": "API and worker can share a Python image with different commands. PostgreSQL replaces SQLite before distributed deployment."
+  },
+  {
+    "num": 3,
+    "slug": "langchain-model-and-draft",
+    "title": "LangChain Model & Draft Generation",
+    "subtitle": "Generate only after authorized evidence is available. The output is a proposal, never permission or proof of execution.",
+    "accent": "#7543C4",
+    "tint": "#F4EFFF",
+    "steps": [
+      [
+        "Receive permitted evidence",
+        [
+          "Accept the validated request from the worker.",
+          "Use timestamped tool results from Stage 4.",
+          "Missing evidence triggers clarification or abstention."
+        ],
+        "INPUT: authorized context"
+      ],
+      [
+        "Build the model input",
+        [
+          "LangChain prepares prompt templates and model messages.",
+          "Keep retrieved documents separate from instructions.",
+          "Bound context size and include evidence IDs."
+        ],
+        "COMPONENT: LangChain"
+      ],
+      [
+        "Invoke the chosen model",
+        [
+          "ChatOllama connects the worker to local Ollama.",
+          "Request a structured draft under a fixed schema.",
+          "Apply time, output, and attempt limits."
+        ],
+        "RUNTIME: Ollama"
+      ],
+      [
+        "Validate the draft",
+        [
+          "Pydantic validates fields and rejects forbidden authority fields.",
+          "Check citation IDs against retrieved evidence.",
+          "Semantic support requires evaluation and review."
+        ],
+        "CONTROL: application code"
+      ],
+      [
+        "Freeze the proposal",
+        [
+          "Store exact content, destination, and evidence versions.",
+          "Assign a revision, payload hash, and expiry.",
+          "Return the proposal for independent review."
+        ],
+        "HANDOFF: Stage 5"
+      ]
+    ],
+    "support": [
+      [
+        "INPUT CONNECTION",
+        "LangGraph calls Stage 4 read tools before final drafting. Stage numbers are component labels, not a rigid call order."
+      ],
+      [
+        "SHARED COMPONENTS",
+        "LangChain runs inside the workflow worker. It is not an extra service or a second workflow orchestrator."
+      ],
+      [
+        "OUTPUT CONNECTION",
+        "Stage 5 receives an immutable proposal. Stage 6 can show the evidence, assumptions, and concise explanation."
+      ]
+    ],
+    "rule": "Show evidence and explanation—not a fabricated internal thought process. Model reasoning is never an audit record.",
+    "why": "A deterministic model substitute tests control logic. Real-model trials separately measure answer quality and resource use."
+  },
+  {
+    "num": 4,
+    "slug": "mcp-tools-and-services",
+    "title": "Tools & Services via MCP",
+    "subtitle": "One controlled tool boundary: read evidence before drafting; execute a write only after Stage 5 authorizes it.",
+    "accent": "#B77904",
+    "tint": "#FFF8E8",
+    "steps": [
+      [
+        "Receive a tool request",
+        [
+          "LangGraph selects an allowlisted tool operation.",
+          "Use typed arguments with bounded size and scope.",
+          "Read calls and approved writes follow distinct rules."
+        ],
+        "CALLER: workflow worker"
+      ],
+      [
+        "Call the MCP server",
+        [
+          "Use a real MCP client over authenticated transport.",
+          "Optional LangChain adapter exposes compatible tools.",
+          "Send scoped service credentials and trusted run context."
+        ],
+        "INTERFACE: MCP"
+      ],
+      [
+        "Enforce server policy",
+        [
+          "Validate credential audience, expiry, and scopes.",
+          "Resolve current access from trusted identity.",
+          "Reject unexpected tools and invalid arguments."
+        ],
+        "BOUNDARY: MCP server"
+      ],
+      [
+        "Route the allowed call",
+        [
+          "Read: asset status, recent alerts, procedure search.",
+          "Write: create_incident with an approved proposal ID.",
+          "Recheck write authority at the execution boundary."
+        ],
+        "SERVICES: synthetic only"
+      ],
+      [
+        "Validate the result",
+        [
+          "Read results carry evidence IDs and timestamps.",
+          "Writes return a verified receipt or uncertain status.",
+          "Bound and redact results before persisting events."
+        ],
+        "RETURN: worker + events"
+      ]
+    ],
+    "support": [
+      [
+        "READ CONNECTION",
+        "Asset/alert service + approved procedures. Apply source access before results reach the Stage 3 model."
+      ],
+      [
+        "WRITE CONNECTION",
+        "Stage 5 → guarded MCP write → incident service. The destination atomically stores the incident and deduplication receipt."
+      ],
+      [
+        "SHARED COMPONENTS",
+        "PostgreSQL/pgvector can hold governed evidence. The incident destination has a logically independent receipt store."
+      ]
+    ],
+    "rule": "MCP is a tool protocol—not the scheduler or permission policy. Model-supplied roles and “approved=true” are not authority.",
+    "why": "A separate MCP service makes contracts and access failures testable with an independent client. No generic shell, SQL, or URL-fetch tool."
+  },
+  {
+    "num": 5,
+    "slug": "approval-execution-and-recovery",
+    "title": "Approval, Execution & Recovery",
+    "subtitle": "The reviewer authorizes an exact proposal. The destination—not the model—establishes whether the incident exists.",
+    "accent": "#CE354E",
+    "tint": "#FFF0F3",
+    "steps": [
+      [
+        "Review the exact proposal",
+        [
+          "A different authorized person reviews the draft.",
+          "Show asset, destination, content, and evidence.",
+          "Keep the proposal immutable during review."
+        ],
+        "INPUT: Stage 3 proposal"
+      ],
+      [
+        "Record the decision",
+        [
+          "Persist approve or reject with reviewer identity.",
+          "Bind approval to hash, revision, and expiry.",
+          "Rejecting or revising does not execute a write."
+        ],
+        "STORE: approval record"
+      ],
+      [
+        "Recheck & grant execution",
+        [
+          "Verify current requester and reviewer permissions.",
+          "Check hash, expiry, freshness, and cancellation.",
+          "Commit a versioned execution grant."
+        ],
+        "AUTHORITY: application"
+      ],
+      [
+        "Dispatch idempotently",
+        [
+          "Stage 4 submits the stable action ID and payload hash.",
+          "Destination commits incident plus receipt atomically.",
+          "Same key returns its result; changed payload conflicts."
+        ],
+        "BOUNDARY: destination"
+      ],
+      [
+        "Confirm or reconcile",
+        [
+          "Verified receipt means confirmed success.",
+          "A definitive no-commit response means failure.",
+          "Ambiguity stays unknown; reconcile by action ID."
+        ],
+        "HANDOFF: Stage 6"
+      ]
+    ],
+    "support": [
+      [
+        "REPLAY & DUPLICATES",
+        "Repeated approvals, worker retries, and lost responses must retain the same action identity for the same approved payload."
+      ],
+      [
+        "UNKNOWN OUTCOMES",
+        "Look up the original destination receipt with bounded backoff. Missing receipts do not alone prove that nothing committed."
+      ],
+      [
+        "CANCELLATION LIMIT",
+        "Cancellation before grant may stop dispatch. After dispatch, report confirmed or uncertain effects; do not claim an automatic undo."
+      ]
+    ],
+    "rule": "Never retry an uncertain write with a new action ID. There is no universal exactly-once guarantee across arbitrary services.",
+    "why": "Separate approval, execution, and receipt records let you demonstrate stale-approval denial and response-loss recovery."
+  },
+  {
+    "num": 6,
+    "slug": "results-feedback-and-observability",
+    "title": "Results, Feedback & Observability",
+    "subtitle": "Keep users informed throughout the run. Final claims come from recorded evidence and confirmed destination outcomes.",
+    "accent": "#176DB8",
+    "tint": "#ECF6FF",
+    "steps": [
+      [
+        "Persist the actual state",
+        [
+          "Record confirmed success, failure, or unknown status.",
+          "Save ordered events with run and action IDs.",
+          "Commit notification intent in the outbox."
+        ],
+        "SOURCE: application records"
+      ],
+      [
+        "Stream permitted events",
+        [
+          "Authorize the SSE stream and event-history requests.",
+          "Replay from the last cursor after reconnecting.",
+          "Recheck session and access during long streams."
+        ],
+        "TRANSPORT: SSE + HTTP"
+      ],
+      [
+        "Explain with evidence",
+        [
+          "Show the recommendation and permitted sources.",
+          "Separate assumptions from confirmed actions.",
+          "Present tool outcomes in an inspectable timeline."
+        ],
+        "DISPLAY: web workspace"
+      ],
+      [
+        "Deliver optional alerts",
+        [
+          "An outbox worker delivers opted-in Slack notifications.",
+          "Resolve recipients from approved identity mappings.",
+          "Track delivery failures separately from run success."
+        ],
+        "EXTENSION: Slack"
+      ],
+      [
+        "Evaluate improvements",
+        [
+          "Capture user corrections and reviewed failure cases.",
+          "Compare changes against baselines and held-out tests.",
+          "Promote versioned changes only after release gates."
+        ],
+        "GOVERNANCE: human review"
+      ]
+    ],
+    "support": [
+      [
+        "USER CONNECTION",
+        "Stage 1 receives progress, evidence, clarification, and final status. A correction or follow-up becomes a new validated command."
+      ],
+      [
+        "OPERATIONAL VISIBILITY",
+        "OpenTelemetry correlates API, worker, model, and MCP diagnostics. Dashboards cover errors, latency, budgets, and unknown outcomes."
+      ],
+      [
+        "RELEASE CONNECTION",
+        "GitHub Actions tests changes; Docker packages them; Helm/Kubernetes deploy approved versions. Feedback is not automatic retraining."
+      ]
+    ],
+    "rule": "A model saying “done” is not evidence. Recorded outcomes override generated narratives; telemetry is not the approval database.",
+    "why": "Progress and delivery remain available without a model-generated status message. Optional reasoning output is separate and non-authoritative."
+  }
+]

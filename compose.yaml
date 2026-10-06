@@ -1,0 +1,32 @@
+# LOCAL REFERENCE ONLY: one SQLite-backed instance. No MCP/PG/K8s claims from this mode.
+services:
+  api:
+    build: .
+    image: operations-copilot:reference
+    init: true
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      APP_MODE: reference
+      OPS_DATA_DIR: /app/runtime
+      MODEL_MODE: deterministic
+    command: ["sh", "-c", "python scripts/init_demo.py --data-dir /app/runtime && exec python -m uvicorn operations_copilot.api:create_app --factory --host 0.0.0.0 --port 8000"]
+    volumes:
+      - reference-data:/app/runtime
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [reference]
+networks:
+  reference:
+    internal: true
+volumes:
+  reference-data:

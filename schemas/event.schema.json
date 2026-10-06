@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operations-copilot:schema:event:1",
+  "title": "Operations Copilot target event v1",
+  "$comment": "Target contract. Declarative validation does not implement authentication, authorization, semantic support, atomicity, or runtime integrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "tenant_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "conversation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "type": {
+      "enum": [
+        "run.accepted",
+        "clarification.requested",
+        "tool.started",
+        "tool.completed",
+        "proposal.ready",
+        "approval.recorded",
+        "action.dispatched",
+        "action.uncertain",
+        "action.confirmed",
+        "run.failed",
+        "run.cancelled",
+        "notification.failed",
+        "feedback.recorded",
+        "explanation.ready"
+      ]
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "enum": [
+        "application",
+        "destination",
+        "model_summary"
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 2500
+        },
+        "status": {
+          "enum": [
+            "QUEUED",
+            "AWAITING_INPUT",
+            "RETRIEVING",
+            "DRAFTING",
+            "AWAITING_APPROVAL",
+            "APPROVED",
+            "EXECUTING",
+            "OUTCOME_UNKNOWN",
+            "SUCCEEDED",
+            "ANSWERED",
+            "REJECTED",
+            "CANCELLED",
+            "INSUFFICIENT_EVIDENCE",
+            "FAILED",
+            "BLOCKED_REVIEW"
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "minItems": 0,
+          "maxItems": 8,
+          "uniqueItems": true
+        },
+        "proposal_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "action_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "incident_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "receipt_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": []
+    }
+  },
+  "required": [
+    "event_id",
+    "tenant_id",
+    "conversation_id",
+    "run_id",
+    "sequence",
+    "type",
+    "occurred_at",
+    "source",
+    "payload"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "model_summary"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "const": "explanation.ready"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2500
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "minItems": 0,
+                "maxItems": 8,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "message"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

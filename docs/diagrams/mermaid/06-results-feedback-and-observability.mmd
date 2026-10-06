@@ -1,0 +1,11 @@
+%% TARGET DESIGN — Stage 6: Results, Feedback & Observability
+%% Component-stage labels are not a strict runtime call order.
+flowchart LR
+    S1["01 • Persist the actual state<br/>Record confirmed success, failure, or unknown status.<br/>Save ordered events with run and action IDs.<br/>Commit notification intent in the outbox."]
+    S2["02 • Stream permitted events<br/>Authorize the SSE stream and event-history requests.<br/>Replay from the last cursor after reconnecting.<br/>Recheck session and access during long streams."]
+    S3["03 • Explain with evidence<br/>Show the recommendation and permitted sources.<br/>Separate assumptions from confirmed actions.<br/>Present tool outcomes in an inspectable timeline."]
+    S4["04 • Deliver optional alerts<br/>An outbox worker delivers opted-in Slack notifications.<br/>Resolve recipients from approved identity mappings.<br/>Track delivery failures separately from run success."]
+    S5["05 • Evaluate improvements<br/>Capture user corrections and reviewed failure cases.<br/>Compare changes against baselines and held-out tests.<br/>Promote versioned changes only after release gates."]
+    S1 --> S2 --> S3 --> S4 --> S5
+    classDef step fill:#ECF6FF,stroke:#176DB8,color:#12253F,stroke-width:1.5px;
+    class S1,S2,S3,S4,S5 step;

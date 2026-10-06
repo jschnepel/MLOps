@@ -1,0 +1,84 @@
+# Requirements-to-evidence checklist
+
+All entries are target requirements; suggested tests must be implemented. The delivered reference baseline is separately reported.
+
+- [ ] **R001 / M00** — Reference baseline remains reproducible. Evidence: Run the original suite and CLI from a clean extraction; retain the test/model-mode distinction.
+- [ ] **R002 / M00** — Feature claims distinguish implemented, planned and unverified. Evidence: Audit README/status/demo labels against observed test evidence; fake and real modes are visible.
+- [ ] **R003 / M01** — Dependencies and images are genuinely locked. Evidence: Install in an empty environment from reviewed locks; record actual hashes and compatible imports.
+- [ ] **R004 / M01** — Model or client authority fields are rejected. Evidence: Inject role/tenant/approved/actor fields in model and browser payloads; validation fails.
+- [ ] **R005 / M01** — Canonical payload and action identity stay stable. Evidence: Property-test NFC/ordering/duplicate keys/nonfinite rejection; store exact bytes; changed payload changes hash.
+- [ ] **R006 / M02** — Migrations run on real PostgreSQL. Evidence: Create empty DB, migrate, rerun safely and test supported old-schema compatibility.
+- [ ] **R007 / M02** — Runtime-role row security isolates tenants. Evidence: Run as non-owner/non-BYPASSRLS; exact beta IDs cannot expose data to alpha.
+- [ ] **R008 / M02** — Connection pooling does not leak tenant context. Evidence: Reuse the same pooled connection for different tenants and assert no residual access.
+- [ ] **R009 / M02** — Tenant-scoped child references cannot cross tenants. Evidence: Try attaching alpha proposal/message/approval records to beta parents; DB refuses.
+- [ ] **R010 / M02** — Destination records have an independent data boundary. Evidence: Restore or reset only the application store; retained destination receipt still proves its existing incident.
+- [ ] **R011 / M03** — OIDC validation rejects invalid token/callback context. Evidence: Wrong issuer/audience/nonce/state/expiry/signature/algorithm and redirect targets fail.
+- [ ] **R012 / M03** — Sessions and CSRF protect browser mutations. Evidence: Cross-origin or missing CSRF mutation fails; logout/expiry/rotation invalidate old session.
+- [ ] **R013 / M03** — Current membership overrides old roles. Evidence: Revoke membership while session/token remains otherwise valid; new protected operations fail.
+- [ ] **R014 / M03** — Secrets never enter URLs or browser storage. Evidence: Inspect browser requests/storage; no access tokens in URLs/localStorage or persisted debug data.
+- [ ] **R015 / M03** — Accepted work is committed before acknowledgement. Evidence: Kill around admission commit; every acknowledged run has message/run/job; no volatile acceptance.
+- [ ] **R016 / M03** — HTTP replay resolves once and conflicting body fails. Evidence: Repeat same scoped key/body then changed body; one logical run then 409.
+- [ ] **R017 / M03** — Only one active mutating run per conversation. Evidence: Concurrent requests cannot start two mutating investigations; status question makes no incident job.
+- [ ] **R018 / M03** — Relative intervals resolve once and ambiguity clarifies. Evidence: Retry after clock advance and conflict text/form asset; interval remains fixed and ambiguity pauses.
+- [ ] **R019 / M04** — Leases can expire and be recovered safely. Evidence: Kill lease owner; another owner acquires after expiry with incremented fence.
+- [ ] **R020 / M04** — Stale worker cannot mutate application state. Evidence: Old worker attempts commit after fence changes; transaction rejects it.
+- [ ] **R021 / M04** — Stale worker cannot mutate authoritative checkpoints. Evidence: Lose lease during graph work; old saver write is rejected inside checkpoint transaction.
+- [ ] **R022 / M04** — Human waits release workers and transactions. Evidence: Pause for review; no active worker lease/long DB transaction/model budget consumed.
+- [ ] **R023 / M04** — Reply/approval wakeups cannot be lost. Evidence: Inject crash between decision/event/checkpoint/job acknowledgement; sweeper resumes exactly the accepted event.
+- [ ] **R024 / M04** — Notification intent is transactional and deduplicated. Evidence: Fail delivery after state commit; result remains recorded and dedup key preserves intent.
+- [ ] **R025 / M05** — A real independent MCP client crosses the network. Evidence: Run client/server in separate processes; discover and call actual protocol tools.
+- [ ] **R026 / M05** — MCP rejects wrong audience or browser token passthrough. Evidence: Use valid token for another service; resource server rejects it without downstream forwarding.
+- [ ] **R027 / M05** — Invocation handle binds workload run lease and tools. Evidence: Replay with other workload/run/expired fence/tool; server rejects; handle absent from model/logs.
+- [ ] **R028 / M05** — Read tools enforce current source and asset access. Evidence: Alpha requests B22 or revoked procedure; no forbidden data reaches the model.
+- [ ] **R029 / M05** — Unexpected tools and invalid results fail closed. Evidence: Alter discovered tool/schema; return error-flagged/malformed/oversized payload; no success assumption.
+- [ ] **R030 / M05** — Receipt lookup is restricted and cannot create actions. Evidence: Normal/model tools cannot call lookup; reconciliation workload sees minimal existing-action outcome only.
+- [ ] **R031 / M05** — Selected SDK versions pass actual imports and contracts. Evidence: Install locked SDKs and run network tests; examples are not accepted based on syntax alone.
+- [ ] **R032 / M06** — Source ingestion is versioned effective and idempotent. Evidence: Repeat same document; change hash under same version; supersede/unapprove; only permitted effective version retrieves.
+- [ ] **R033 / M06** — Lexical baseline has labeled evidence measurements. Evidence: Known questions return labeled permitted sections; missing source remains missing, not guessed.
+- [ ] **R034 / M06** — Exact vector retrieval is measured against the baseline. Evidence: Record model/dimension/corpus and matched question retrieval results, including regressions.
+- [ ] **R035 / M06** — Revoked evidence does not leak from derived state. Evidence: Revoke source after draft; caches/checkpoints/summary/events/citation viewer do not re-expose it.
+- [ ] **R036 / M06** — Retrieved instructions cannot grant tool authority. Evidence: Inject administrator-style text into SOP fixture; no permission/action boundary changes.
+- [ ] **R037 / M07** — Actual LangChain and Ollama inference occurs. Evidence: Trace ChatOllama request using named installed model; record real output, versions and hardware.
+- [ ] **R038 / M07** — Evidence retrieval precedes final drafting. Evidence: Trace order and input bundle show MCP read results before final model proposal.
+- [ ] **R039 / M07** — Reasoning text is not authority or an audit record. Evidence: Model claims success without receipt; UI/actions remain authoritative and raw reasoning stays off.
+- [ ] **R040 / M07** — Invalid model schema has a bounded repair policy. Evidence: Repeated malformed JSON exhausts one repair within remaining budget; no incident.
+- [ ] **R041 / M07** — No fake or hosted fallback masquerades as real output. Evidence: Remove real model or block endpoint; clear failure/manual path, no silent substitute.
+- [ ] **R042 / M07** — Actual checkpoint pause/resume survives restart. Evidence: Restart graph process during clarification/review and resume from committed event under same run.
+- [ ] **R043 / M08** — Requester cannot approve their own proposal. Evidence: Same identity with both scopes submits approval; rejected; another permitted reviewer succeeds.
+- [ ] **R044 / M08** — Approval binds exact immutable revision and expiry. Evidence: Edit content, change revision/hash or advance time; old decision cannot authorize changed action.
+- [ ] **R045 / M08** — Final grant checks current authority and evidence. Evidence: Revoke requester/reviewer or source before grant transaction; zero destination writes.
+- [ ] **R046 / M08** — Cancellation race is ordered at execution grant. Evidence: Race cancel and grant; before grant no dispatch, after grant report actual/unknown outcome without undo claim.
+- [ ] **R047 / M08** — Concurrent same-key writes commit one incident. Evidence: Send concurrent duplicates; atomic destination record and one returned receipt identity.
+- [ ] **R048 / M08** — Lost acknowledgement resolves the original incident. Evidence: Commit destination, lose response, restart, reconcile; one corresponding incident.
+- [ ] **R049 / M08** — Mismatching key/hash never becomes success. Evidence: Return different hash for same action or resubmit changed bytes; conflict and escalation, no new key.
+- [ ] **R050 / M08** — Missing receipt is not definitive failure. Evidence: Delay receipt visibility while commit may be in flight; remain unknown, no blind new write.
+- [ ] **R051 / M08** — Receipt retention outlives all possible replays. Evidence: Old accepted action after app restore/retry cannot be accepted as new because dedup state expired.
+- [ ] **R052 / M09** — Complete user and independent-reviewer flow works. Evidence: Operate actual browser request/clarify/evidence/review/submit/result path; screenshots and no console error.
+- [ ] **R053 / M09** — SSE reconnect replays safely without duplicate work. Evidence: Disconnect, receive events, reconnect after cursor, dedup rendering; expired cursor yields explicit reset.
+- [ ] **R054 / M09** — Streaming access follows session and source revocation. Evidence: Revoke user/source during stream; stop or redact before protected data is emitted again.
+- [ ] **R055 / M09** — Untrusted content cannot execute browser script. Evidence: Inject HTML/script/javascript URL into tool/model/source; displayed safely or rejected.
+- [ ] **R056 / M09** — Keyboard and accessible state controls work. Evidence: Keyboard-only request/review/reject navigation, visible focus, readable state labels and errors.
+- [ ] **R057 / M09** — Manual baseline uses the same approval controls. Evidence: With model unavailable, search and manual draft work under identical independent review/write policy.
+- [ ] **R058 / M10** — One run is correlated across all real boundaries. Evidence: Trace API/job/graph/LangChain/MCP/destination/reconcile; show failures and version identifiers.
+- [ ] **R059 / M10** — Telemetry excludes credentials and sensitive reasoning. Evidence: Seed canary secret in relevant error/input; collector/log export does not reveal it.
+- [ ] **R060 / M10** — Metrics have bounded cardinality and honest timing. Evidence: No run IDs as metric labels; active compute and human waits measured separately.
+- [ ] **R061 / M10** — Dependency failures preserve truth and degrade clearly. Evidence: Model/MCP/DB/outbox fail independently; controlled states, no invented success or offline-to-cloud jump.
+- [ ] **R062 / M10** — Resource budgets and overload are enforced. Evidence: Oversize input/results, exhausted repair/time/tool cap and full queue stop predictably without retry storm.
+- [ ] **R063 / M11** — Target Docker images are built from locks and run non-root. Evidence: Clean actual build, locked artifacts, non-root/read-only checks and recorded image digest.
+- [ ] **R064 / M11** — Containers and repository do not carry secrets. Evidence: Scan image layers/config/repo; no runtime credentials, service secrets or model weights embedded.
+- [ ] **R065 / M11** — Probes and drain distinguish model outages from dead API. Evidence: Stop model; API does not restart endlessly. Terminate worker; no new leases and safe recovery.
+- [ ] **R066 / M11** — Network restrictions are actually enforced. Evidence: Run positive and negative pod connections including model-to-destination denial using compatible CNI.
+- [ ] **R067 / M11** — A real worker or pod kill does not duplicate actions. Evidence: Kill process/pod at designated write windows; one incident and accurate recovered state.
+- [ ] **R068 / M12** — Older app backup reconciles independently retained receipt. Evidence: Restore app snapshot predating commit while retaining destination; dispatch disabled until reconciliation.
+- [ ] **R069 / M12** — Paused v1 workflow is compatible with v2 and rollback. Evidence: Upgrade/rollback with pending v1 approval; preserve content/hash/action identity and version routing.
+- [ ] **R070 / M13** — Manual RAG and orchestration baselines use comparable tasks. Evidence: Same permitted evidence/final approval rule; report measured effort and real outcomes, no fabricated timing.
+- [ ] **R071 / M13** — Final holdout is kept out of the tuning context. Evidence: Record split grouping/reviewer custody/used status; leaked cases replaced before new holdout claim.
+- [ ] **R072 / M13** — Model trials are repeated and isolated. Evidence: Reset app/destination namespaces per trial and publish every trial/config/denominator.
+- [ ] **R073 / M13** — Semantic grading is calibrated and separate from receipts. Evidence: Compare grader with reviewed labels; deterministic destination state decides action outcome.
+- [ ] **R074 / M13** — Safety failures and unset quality gates block release. Evidence: Inject unauthorized/duplicate/fabricated-success failure or missing threshold; promotion fails.
+- [ ] **R075 / M13** — Untrusted PR code cannot access privileged release context. Evidence: Audit fork workflow/runner/permissions; immutable action pins and isolated credentialed steps.
+- [ ] **R076 / M13** — Released artifacts link to tested inputs and evidence. Evidence: Verify manifest includes actual image/lock/model/prompt/corpus/report hashes and approved commit.
+- [ ] **R077 / M14** — Independent user can reproduce real workflow and recovery. Evidence: Follow README on clean setup and record successful/denied/recovery demos with actual mode visible.
+- [ ] **R078 / M14** — Publication claims and license choices are explicit. Evidence: Owner approves license/publish; each completed feature/metric points to real evidence.
+- [ ] **R079 / M15** — Slack reuses authority and handles replay safely. Evidence: Verify signature/time/membership and repeated web/Slack decisions; one logical action, delivery separate.
+- [ ] **R080 / M15** — Cloud deployment is authorized budgeted and reversible. Evidence: Only approved environment/resources; cost review, rollback and destroy evidence; no assumed credential access.

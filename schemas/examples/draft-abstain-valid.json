@@ -1,0 +1,10 @@
+{
+  "kind": "abstain",
+  "title": "No suitable approved evidence",
+  "summary": "No permitted approved procedure was returned for this investigation.",
+  "evidence_refs": [],
+  "assumptions": [],
+  "limitations": [
+    "Cannot prepare an evidence-backed incident."
+  ]
+}

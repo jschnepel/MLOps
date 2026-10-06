@@ -1,0 +1,46 @@
+{
+  "fixture_version": "handoff-1",
+  "clock": "2026-10-06T12:00:00Z",
+  "assets": [
+    {
+      "asset_id": "A17",
+      "tenant": "alpha",
+      "state": "warning",
+      "revision": 3,
+      "observed_at": "2026-10-06T11:59:30Z"
+    },
+    {
+      "asset_id": "B22",
+      "tenant": "beta",
+      "state": "normal",
+      "revision": 1,
+      "observed_at": "2026-10-06T11:59:30Z"
+    }
+  ],
+  "alerts": [
+    {
+      "id": "A17-alert-001",
+      "asset_id": "A17",
+      "tenant": "alpha",
+      "occurred_at": "2026-10-06T08:00:00Z",
+      "code": "SIM-WARN",
+      "message": "Synthetic warning sample 1."
+    },
+    {
+      "id": "A17-alert-002",
+      "asset_id": "A17",
+      "tenant": "alpha",
+      "occurred_at": "2026-10-06T10:00:00Z",
+      "code": "SIM-WARN",
+      "message": "Synthetic warning sample 2."
+    },
+    {
+      "id": "A17-old-001",
+      "asset_id": "A17",
+      "tenant": "alpha",
+      "occurred_at": "2026-10-04T10:00:00Z",
+      "code": "SIM-WARN",
+      "message": "Outside the example 24-hour interval."
+    }
+  ]
+}

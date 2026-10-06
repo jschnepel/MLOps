@@ -1,0 +1,16 @@
+image:
+  repository: operations-copilot
+  tag: reference
+  pullPolicy: IfNotPresent
+storage:
+  size: 1Gi
+  className: ""
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+networkPolicy:
+  enabled: true

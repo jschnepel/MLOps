@@ -1,0 +1,13 @@
+{
+  "kind": "proposal",
+  "title": "Review repeated synthetic warnings on A17",
+  "summary": "The supplied synthetic records contain two warnings within the requested interval. An independent reviewer should inspect the incident draft. Root cause is not established.",
+  "evidence_refs": [
+    "ALPHA-INCIDENT:v2:review"
+  ],
+  "assumptions": [],
+  "limitations": [
+    "Synthetic data only.",
+    "Root cause is not established."
+  ]
+}

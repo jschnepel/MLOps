@@ -1,0 +1,11 @@
+%% TARGET DESIGN — Stage 3: LangChain Model & Draft Generation
+%% Component-stage labels are not a strict runtime call order.
+flowchart LR
+    S1["01 • Receive permitted evidence<br/>Accept the validated request from the worker.<br/>Use timestamped tool results from Stage 4.<br/>Missing evidence triggers clarification or abstention."]
+    S2["02 • Build the model input<br/>LangChain prepares prompt templates and model messages.<br/>Keep retrieved documents separate from instructions.<br/>Bound context size and include evidence IDs."]
+    S3["03 • Invoke the chosen model<br/>ChatOllama connects the worker to local Ollama.<br/>Request a structured draft under a fixed schema.<br/>Apply time, output, and attempt limits."]
+    S4["04 • Validate the draft<br/>Pydantic validates fields and rejects forbidden authority fields.<br/>Check citation IDs against retrieved evidence.<br/>Semantic support requires evaluation and review."]
+    S5["05 • Freeze the proposal<br/>Store exact content, destination, and evidence versions.<br/>Assign a revision, payload hash, and expiry.<br/>Return the proposal for independent review."]
+    S1 --> S2 --> S3 --> S4 --> S5
+    classDef step fill:#F4EFFF,stroke:#7543C4,color:#12253F,stroke-width:1.5px;
+    class S1,S2,S3,S4,S5 step;

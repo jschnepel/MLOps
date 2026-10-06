@@ -1,0 +1,6 @@
+apiVersion: v2
+name: operations-copilot-reference
+description: Single-replica local reference. Not the target distributed deployment.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

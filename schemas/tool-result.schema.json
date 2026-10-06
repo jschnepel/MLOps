@@ -1,0 +1,669 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operations-copilot:schema:tool-result:1",
+  "title": "Operations Copilot target tool-result v1",
+  "$comment": "Target contract. Declarative validation does not implement authentication, authorization, semantic support, atomicity, or runtime integrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "tool_name": {
+      "enum": [
+        "get_asset_status",
+        "get_recent_alerts",
+        "search_procedures",
+        "create_incident",
+        "get_incident_receipt"
+      ]
+    },
+    "request_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "error",
+        "unknown"
+      ]
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "data": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "message",
+            "retryable"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "tool_name",
+    "request_id",
+    "status",
+    "observed_at",
+    "truncated",
+    "data",
+    "error"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "null"
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "retryable"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "error": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "get_asset_status"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "asset_id": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_-]{0,31}$"
+              },
+              "state": {
+                "enum": [
+                  "normal",
+                  "warning",
+                  "unavailable"
+                ]
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "observed_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "data_source": {
+                "const": "synthetic"
+              }
+            },
+            "required": [
+              "asset_id",
+              "state",
+              "revision",
+              "observed_at",
+              "data_source"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "get_recent_alerts"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "asset_id": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_-]{0,31}$"
+              },
+              "start_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "end_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "alerts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "alert_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "asset_id": {
+                      "type": "string",
+                      "pattern": "^[A-Z][A-Z0-9_-]{0,31}$"
+                    },
+                    "occurred_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "alert_id",
+                    "asset_id",
+                    "occurred_at",
+                    "code",
+                    "message",
+                    "revision"
+                  ]
+                },
+                "minItems": 0,
+                "maxItems": 100
+              }
+            },
+            "required": [
+              "asset_id",
+              "start_at",
+              "end_at",
+              "alerts"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "search_procedures"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "evidence_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "document_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "version": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 40
+                    },
+                    "section": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    },
+                    "content_sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "excerpt": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8000
+                    },
+                    "effective_from": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "retrieved_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "evidence_id",
+                    "document_id",
+                    "version",
+                    "section",
+                    "content_sha256",
+                    "excerpt",
+                    "effective_from",
+                    "retrieved_at"
+                  ]
+                },
+                "minItems": 0,
+                "maxItems": 8
+              },
+              "retrieval_mode": {
+                "enum": [
+                  "lexical",
+                  "vector_exact"
+                ]
+              },
+              "corpus_version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              }
+            },
+            "required": [
+              "results",
+              "retrieval_mode",
+              "corpus_version"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "create_incident"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "enum": [
+                  "SUCCEEDED",
+                  "FAILED_NO_COMMIT",
+                  "UNKNOWN",
+                  "CONFLICT"
+                ]
+              },
+              "action_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "payload_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "receipt": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "receipt_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "incident_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "committed_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "required": [
+                      "receipt_id",
+                      "incident_id",
+                      "committed_at"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 500
+              }
+            },
+            "required": [
+              "status",
+              "action_id",
+              "payload_sha256",
+              "receipt",
+              "reason"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "SUCCEEDED"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "receipt": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "receipt_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "incident_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        "committed_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "receipt_id",
+                        "incident_id",
+                        "committed_at"
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "receipt": {
+                      "type": "null"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "const": "get_incident_receipt"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "enum": [
+                  "SUCCEEDED",
+                  "FAILED_NO_COMMIT",
+                  "UNKNOWN",
+                  "CONFLICT"
+                ]
+              },
+              "action_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "payload_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "receipt": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "receipt_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "incident_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "committed_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "required": [
+                      "receipt_id",
+                      "incident_id",
+                      "committed_at"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 500
+              }
+            },
+            "required": [
+              "status",
+              "action_id",
+              "payload_sha256",
+              "receipt",
+              "reason"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "SUCCEEDED"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "receipt": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "receipt_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "incident_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        "committed_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "receipt_id",
+                        "incident_id",
+                        "committed_at"
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "receipt": {
+                      "type": "null"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "unknown"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "tool_name": {
+            "enum": [
+              "create_incident",
+              "get_incident_receipt"
+            ]
+          },
+          "data": {
+            "properties": {
+              "status": {
+                "const": "UNKNOWN"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

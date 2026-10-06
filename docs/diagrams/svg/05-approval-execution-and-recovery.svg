@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1240" viewBox="0 0 1920 1240" role="img" aria-labelledby="title desc">
+<title id="title">Stage 5: Approval, Execution &amp; Recovery</title>
+<desc id="desc">A standalone left-to-right target-design diagram. Five numbered steps connect with right-facing arrows. Supporting notes explain system connections and control boundaries.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 Z" fill="#63748A"/></marker></defs>
+<g font-family="DejaVu Sans, Arial, sans-serif">
+<rect x="0" y="0" width="1920" height="1240" rx="0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.5"/>
+<text x="48" y="43.0" font-size="18" font-weight="700" fill="#465971">OPERATIONS COPILOT  /  STAGE DETAIL</text>
+<rect x="1600" y="19" width="272" height="41" rx="20" fill="#FFF0F3" stroke="#CE354E" stroke-width="1.5"/>
+<text x="1622" y="47.0" font-size="15" font-weight="700" fill="#CE354E">TARGET DESIGN • NOT LIVE</text>
+<circle cx="82" cy="112" r="34" fill="#CE354E"/>
+<text x="69" y="124.0" font-size="34" font-weight="700" fill="#FFFFFF">5</text>
+<text x="135" y="127.0" font-size="46" font-weight="700" fill="#12253F">Approval, Execution &amp; Recovery</text>
+<text x="48" y="179.0" font-size="23" font-weight="400" fill="#465971">The reviewer authorizes an exact proposal. The destination—not the model—establishes whether the incident exists.</text>
+<text x="48" y="217.0" font-size="16" font-weight="700" fill="#CE354E">READ LEFT → RIGHT WITHIN THIS STAGE</text>
+<rect x="48" y="239" width="340" height="475" rx="17" fill="#FFFFFF" stroke="#D9E1EB" stroke-width="1.5"/>
+<rect x="48" y="239" width="340" height="122" rx="17" fill="#FFF0F3" stroke="#FFF0F3" stroke-width="1.5"/>
+<rect x="49" y="341" width="338" height="20" fill="#FFF0F3"/>
+<text x="70" y="272.0" font-size="18" font-weight="700" fill="#CE354E">01</text>
+<text x="70" y="309.0" font-size="24" font-weight="700" fill="#12253F">Review the exact</text>
+<text x="70" y="338.0" font-size="24" font-weight="700" fill="#12253F">proposal</text>
+<circle cx="72" cy="391" r="3" fill="#CE354E"/>
+<text x="86" y="398.0" font-size="20" font-weight="400" fill="#12253F">A different authorized</text>
+<text x="86" y="424.0" font-size="20" font-weight="400" fill="#12253F">person reviews the draft.</text>
+<circle cx="72" cy="455" r="3" fill="#CE354E"/>
+<text x="86" y="462.0" font-size="20" font-weight="400" fill="#12253F">Show asset, destination,</text>
+<text x="86" y="488.0" font-size="20" font-weight="400" fill="#12253F">content, and evidence.</text>
+<circle cx="72" cy="519" r="3" fill="#CE354E"/>
+<text x="86" y="526.0" font-size="20" font-weight="400" fill="#12253F">Keep the proposal</text>
+<text x="86" y="552.0" font-size="20" font-weight="400" fill="#12253F">immutable during review.</text>
+<line x1="69" y1="667" x2="367" y2="667" stroke="#D9E1EB"/>
+<text x="69" y="692.0" font-size="14" font-weight="700" fill="#CE354E">INPUT: Stage 3 proposal</text>
+<path d="M392,441 H413" stroke="#63748A" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect x="419" y="239" width="340" height="475" rx="17" fill="#FFFFFF" stroke="#D9E1EB" stroke-width="1.5"/>
+<rect x="419" y="239" width="340" height="122" rx="17" fill="#FFF0F3" stroke="#FFF0F3" stroke-width="1.5"/>
+<rect x="420" y="341" width="338" height="20" fill="#FFF0F3"/>
+<text x="441" y="272.0" font-size="18" font-weight="700" fill="#CE354E">02</text>
+<text x="441" y="309.0" font-size="24" font-weight="700" fill="#12253F">Record the decision</text>
+<circle cx="443" cy="391" r="3" fill="#CE354E"/>
+<text x="457" y="398.0" font-size="20" font-weight="400" fill="#12253F">Persist approve or reject</text>
+<text x="457" y="424.0" font-size="20" font-weight="400" fill="#12253F">with reviewer identity.</text>
+<circle cx="443" cy="455" r="3" fill="#CE354E"/>
+<text x="457" y="462.0" font-size="20" font-weight="400" fill="#12253F">Bind approval to hash,</text>
+<text x="457" y="488.0" font-size="20" font-weight="400" fill="#12253F">revision, and expiry.</text>
+<circle cx="443" cy="519" r="3" fill="#CE354E"/>
+<text x="457" y="526.0" font-size="20" font-weight="400" fill="#12253F">Rejecting or revising does</text>
+<text x="457" y="552.0" font-size="20" font-weight="400" fill="#12253F">not execute a write.</text>
+<line x1="440" y1="667" x2="738" y2="667" stroke="#D9E1EB"/>
+<text x="440" y="692.0" font-size="14" font-weight="700" fill="#CE354E">STORE: approval record</text>
+<path d="M763,441 H784" stroke="#63748A" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect x="790" y="239" width="340" height="475" rx="17" fill="#FFFFFF" stroke="#D9E1EB" stroke-width="1.5"/>
+<rect x="790" y="239" width="340" height="122" rx="17" fill="#FFF0F3" stroke="#FFF0F3" stroke-width="1.5"/>
+<rect x="791" y="341" width="338" height="20" fill="#FFF0F3"/>
+<text x="812" y="272.0" font-size="18" font-weight="700" fill="#CE354E">03</text>
+<text x="812" y="309.0" font-size="24" font-weight="700" fill="#12253F">Recheck &amp; grant</text>
+<text x="812" y="338.0" font-size="24" font-weight="700" fill="#12253F">execution</text>
+<circle cx="814" cy="391" r="3" fill="#CE354E"/>
+<text x="828" y="398.0" font-size="20" font-weight="400" fill="#12253F">Verify current requester</text>
+<text x="828" y="424.0" font-size="20" font-weight="400" fill="#12253F">and reviewer permissions.</text>
+<circle cx="814" cy="455" r="3" fill="#CE354E"/>
+<text x="828" y="462.0" font-size="20" font-weight="400" fill="#12253F">Check hash, expiry,</text>
+<text x="828" y="488.0" font-size="20" font-weight="400" fill="#12253F">freshness, and cancellation.</text>
+<circle cx="814" cy="519" r="3" fill="#CE354E"/>
+<text x="828" y="526.0" font-size="20" font-weight="400" fill="#12253F">Commit a versioned</text>
+<text x="828" y="552.0" font-size="20" font-weight="400" fill="#12253F">execution grant.</text>
+<line x1="811" y1="667" x2="1109" y2="667" stroke="#D9E1EB"/>
+<text x="811" y="692.0" font-size="14" font-weight="700" fill="#CE354E">AUTHORITY: application</text>
+<path d="M1134,441 H1155" stroke="#63748A" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect x="1161" y="239" width="340" height="475" rx="17" fill="#FFFFFF" stroke="#D9E1EB" stroke-width="1.5"/>
+<rect x="1161" y="239" width="340" height="122" rx="17" fill="#FFF0F3" stroke="#FFF0F3" stroke-width="1.5"/>
+<rect x="1162" y="341" width="338" height="20" fill="#FFF0F3"/>
+<text x="1183" y="272.0" font-size="18" font-weight="700" fill="#CE354E">04</text>
+<text x="1183" y="309.0" font-size="24" font-weight="700" fill="#12253F">Dispatch</text>
+<text x="1183" y="338.0" font-size="24" font-weight="700" fill="#12253F">idempotently</text>
+<circle cx="1185" cy="391" r="3" fill="#CE354E"/>
+<text x="1199" y="398.0" font-size="20" font-weight="400" fill="#12253F">Stage 4 submits the stable</text>
+<text x="1199" y="424.0" font-size="20" font-weight="400" fill="#12253F">action ID and payload hash.</text>
+<circle cx="1185" cy="455" r="3" fill="#CE354E"/>
+<text x="1199" y="462.0" font-size="20" font-weight="400" fill="#12253F">Destination commits</text>
+<text x="1199" y="488.0" font-size="20" font-weight="400" fill="#12253F">incident plus receipt</text>
+<text x="1199" y="514.0" font-size="20" font-weight="400" fill="#12253F">atomically.</text>
+<circle cx="1185" cy="545" r="3" fill="#CE354E"/>
+<text x="1199" y="552.0" font-size="20" font-weight="400" fill="#12253F">Same key returns its result;</text>
+<text x="1199" y="578.0" font-size="20" font-weight="400" fill="#12253F">changed payload conflicts.</text>
+<line x1="1182" y1="667" x2="1480" y2="667" stroke="#D9E1EB"/>
+<text x="1182" y="692.0" font-size="14" font-weight="700" fill="#CE354E">BOUNDARY: destination</text>
+<path d="M1505,441 H1526" stroke="#63748A" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+<rect x="1532" y="239" width="340" height="475" rx="17" fill="#FFFFFF" stroke="#D9E1EB" stroke-width="1.5"/>
+<rect x="1532" y="239" width="340" height="122" rx="17" fill="#FFF0F3" stroke="#FFF0F3" stroke-width="1.5"/>
+<rect x="1533" y="341" width="338" height="20" fill="#FFF0F3"/>
+<text x="1554" y="272.0" font-size="18" font-weight="700" fill="#CE354E">05</text>
+<text x="1554" y="309.0" font-size="24" font-weight="700" fill="#12253F">Confirm or reconcile</text>
+<circle cx="1556" cy="391" r="3" fill="#CE354E"/>
+<text x="1570" y="398.0" font-size="20" font-weight="400" fill="#12253F">Verified receipt means</text>
+<text x="1570" y="424.0" font-size="20" font-weight="400" fill="#12253F">confirmed success.</text>
+<circle cx="1556" cy="455" r="3" fill="#CE354E"/>
+<text x="1570" y="462.0" font-size="20" font-weight="400" fill="#12253F">A definitive no-commit</text>
+<text x="1570" y="488.0" font-size="20" font-weight="400" fill="#12253F">response means failure.</text>
+<circle cx="1556" cy="519" r="3" fill="#CE354E"/>
+<text x="1570" y="526.0" font-size="20" font-weight="400" fill="#12253F">Ambiguity stays unknown;</text>
+<text x="1570" y="552.0" font-size="20" font-weight="400" fill="#12253F">reconcile by action ID.</text>
+<line x1="1553" y1="667" x2="1851" y2="667" stroke="#D9E1EB"/>
+<text x="1553" y="692.0" font-size="14" font-weight="700" fill="#CE354E">HANDOFF: Stage 6</text>
+<rect x="48" y="742" width="586" height="176" rx="14" fill="#F8FAFD" stroke="#D9E1EB" stroke-width="1.5"/>
+<text x="70" y="775.0" font-size="16" font-weight="700" fill="#CE354E">REPLAY &amp; DUPLICATES</text>
+<text x="70" y="808.0" font-size="21" font-weight="400" fill="#12253F">Repeated approvals, worker retries, and lost</text>
+<text x="70" y="836.0" font-size="21" font-weight="400" fill="#12253F">responses must retain the same action identity for</text>
+<text x="70" y="864.0" font-size="21" font-weight="400" fill="#12253F">the same approved payload.</text>
+<rect x="667" y="742" width="586" height="176" rx="14" fill="#F8FAFD" stroke="#D9E1EB" stroke-width="1.5"/>
+<text x="689" y="775.0" font-size="16" font-weight="700" fill="#CE354E">UNKNOWN OUTCOMES</text>
+<text x="689" y="808.0" font-size="21" font-weight="400" fill="#12253F">Look up the original destination receipt with</text>
+<text x="689" y="836.0" font-size="21" font-weight="400" fill="#12253F">bounded backoff. Missing receipts do not alone</text>
+<text x="689" y="864.0" font-size="21" font-weight="400" fill="#12253F">prove that nothing committed.</text>
+<rect x="1286" y="742" width="586" height="176" rx="14" fill="#F8FAFD" stroke="#D9E1EB" stroke-width="1.5"/>
+<text x="1308" y="775.0" font-size="16" font-weight="700" fill="#CE354E">CANCELLATION LIMIT</text>
+<text x="1308" y="808.0" font-size="21" font-weight="400" fill="#12253F">Cancellation before grant may stop dispatch. After</text>
+<text x="1308" y="836.0" font-size="21" font-weight="400" fill="#12253F">dispatch, report confirmed or uncertain effects; do</text>
+<text x="1308" y="864.0" font-size="21" font-weight="400" fill="#12253F">not claim an automatic undo.</text>
+<rect x="48" y="944" width="1824" height="112" rx="14" fill="#FFF0F3" stroke="#CE354E" stroke-width="1.5"/>
+<text x="71" y="977.0" font-size="16" font-weight="700" fill="#CE354E">CONTROL BOUNDARY</text>
+<text x="71" y="1014.0" font-size="23" font-weight="700" fill="#12253F">Never retry an uncertain write with a new action ID. There is no universal exactly-once guarantee across arbitrary services.</text>
+<text x="48" y="1095.0" font-size="15" font-weight="700" fill="#CE354E">WHY THIS CONNECTION</text>
+<text x="48" y="1128.0" font-size="21" font-weight="400" fill="#465971">Separate approval, execution, and receipt records let you demonstrate stale-approval denial and response-loss recovery.</text>
+<text x="48" y="1209.0" font-size="14" font-weight="400" fill="#465971">Stage labels identify responsibilities. LangGraph calls read tools before drafting; approved writes reuse the MCP boundary.</text>
+<text x="1705" y="1209.0" font-size="15" font-weight="700" fill="#CE354E">STAGE 5 / 6</text>
+</g></svg>

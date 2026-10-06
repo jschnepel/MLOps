@@ -1,0 +1,11 @@
+%% TARGET DESIGN — Stage 2: API & Workflow Orchestration
+%% Component-stage labels are not a strict runtime call order.
+flowchart LR
+    S1["01 • Authenticate & validate<br/>Verify the session and current team membership.<br/>Check permissions, input schema, and limits.<br/>Derive user and team identity on the server."]
+    S2["02 • Admit work durably<br/>Commit message, run, and job in one transaction.<br/>Deduplicate repeated request submissions.<br/>Return HTTP 202 and the run ID after commit."]
+    S3["03 • Lease a queued job<br/>A worker claims a short, renewable job lease.<br/>Use a fencing token to reject stale workers.<br/>Do not hold a transaction during model calls."]
+    S4["04 • Coordinate the graph<br/>Load checkpoint plus authoritative application state.<br/>Retrieve through Stage 4, then draft in Stage 3.<br/>Route the immutable proposal to Stage 5."]
+    S5["05 • Pause, resume, or finish<br/>Persist clarification or approval waits; release the lease.<br/>Resume from a validated, committed user event.<br/>Store status and events for Stage 6."]
+    S1 --> S2 --> S3 --> S4 --> S5
+    classDef step fill:#ECF9F4,stroke:#098461,color:#12253F,stroke-width:1.5px;
+    class S1,S2,S3,S4,S5 step;

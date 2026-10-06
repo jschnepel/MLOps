@@ -1,0 +1,76 @@
+$ /opt/pyvenv/bin/python -m operations_copilot.cli
+EXIT_CODE=0
+
+1. AWAITING_INPUT — time range needed
+2. AWAITING_APPROVAL — nothing submitted
+3. OUTCOME_UNKNOWN — response lost after destination commit
+4. SUCCEEDED — INC-8e934bdf31fe
+5. Destination incident count: 1
+{
+  "mode": "deterministic test double",
+  "events": [
+    {
+      "id": 1,
+      "kind": "run.created",
+      "created_at": 1791297135.8453743,
+      "payload": {
+        "actor": "alex",
+        "status": "AWAITING_INPUT"
+      }
+    },
+    {
+      "id": 2,
+      "kind": "clarification.accepted",
+      "created_at": 1791297135.8462358,
+      "payload": {
+        "asset_id": "A17",
+        "hours": 24
+      }
+    },
+    {
+      "id": 3,
+      "kind": "proposal.created",
+      "created_at": 1791297135.847806,
+      "payload": {
+        "action_executed": false,
+        "proposal_hash": "2749f1804d9960642d105c63f761186a61fbbf6bed4941af91f2c8fbd6dfad4b"
+      }
+    },
+    {
+      "id": 4,
+      "kind": "approval.recorded",
+      "created_at": 1791297135.8482745,
+      "payload": {
+        "actor": "sam",
+        "decision": "approve",
+        "proposal_hash": "2749f1804d9960642d105c63f761186a61fbbf6bed4941af91f2c8fbd6dfad4b"
+      }
+    },
+    {
+      "id": 5,
+      "kind": "action.started",
+      "created_at": 1791297135.8495018,
+      "payload": {
+        "action_key": "incident:ecd7e85a-05dd-49f7-9535-dd5aea70dbbf:2749f1804d9960642d105c63f761186a61fbbf6bed4941af91f2c8fbd6dfad4b"
+      }
+    },
+    {
+      "id": 6,
+      "kind": "action.outcome_unknown",
+      "created_at": 1791297135.8507407,
+      "payload": {
+        "message": "Reconcile before retrying."
+      }
+    },
+    {
+      "id": 7,
+      "kind": "action.committed",
+      "created_at": 1791297135.8528798,
+      "payload": {
+        "action_key": "incident:ecd7e85a-05dd-49f7-9535-dd5aea70dbbf:2749f1804d9960642d105c63f761186a61fbbf6bed4941af91f2c8fbd6dfad4b",
+        "incident_id": "INC-8e934bdf31fe",
+        "payload_hash": "2749f1804d9960642d105c63f761186a61fbbf6bed4941af91f2c8fbd6dfad4b"
+      }
+    }
+  ]
+}

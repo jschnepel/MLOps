@@ -1,0 +1,1 @@
+These ten definitions are development seeds, not a completed evaluation dataset, a test runner, or measured results. See ../docs/EVALUATION.md. Expand them into independent fixtures and label source evidence before any model comparison. No holdout examples are supplied.

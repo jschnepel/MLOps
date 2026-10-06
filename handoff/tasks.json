@@ -1,0 +1,950 @@
+{
+  "specification": "OPS-BUILD-1.0",
+  "current_milestone": "M00",
+  "note": "Sequential dependency-safe slices. Author handoff checks do not establish the builder environment. Optional M15 must not block core v1.",
+  "milestones": [
+    {
+      "id": "M00",
+      "title": "Baseline and environment",
+      "required_for_v1": true,
+      "task_ids": [
+        "T01",
+        "T02"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M01",
+      "title": "Contracts and toolchain",
+      "required_for_v1": true,
+      "task_ids": [
+        "T03",
+        "T04"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M02",
+      "title": "PostgreSQL foundations",
+      "required_for_v1": true,
+      "task_ids": [
+        "T05",
+        "T06"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M03",
+      "title": "Identity and API",
+      "required_for_v1": true,
+      "task_ids": [
+        "T07",
+        "T08"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M04",
+      "title": "Jobs and persistence",
+      "required_for_v1": true,
+      "task_ids": [
+        "T09",
+        "T10"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M05",
+      "title": "Remote MCP",
+      "required_for_v1": true,
+      "task_ids": [
+        "T11",
+        "T12"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M06",
+      "title": "Evidence pipeline",
+      "required_for_v1": true,
+      "task_ids": [
+        "T13",
+        "T14"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M07",
+      "title": "LangChain and LangGraph",
+      "required_for_v1": true,
+      "task_ids": [
+        "T15",
+        "T16"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M08",
+      "title": "Review and outcomes",
+      "required_for_v1": true,
+      "task_ids": [
+        "T17",
+        "T18"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M09",
+      "title": "Web experience",
+      "required_for_v1": true,
+      "task_ids": [
+        "T19",
+        "T20"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M10",
+      "title": "Observability and budgets",
+      "required_for_v1": true,
+      "task_ids": [
+        "T21",
+        "T22"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M11",
+      "title": "Containers and cluster",
+      "required_for_v1": true,
+      "task_ids": [
+        "T23",
+        "T24"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M12",
+      "title": "Restore and upgrade",
+      "required_for_v1": true,
+      "task_ids": [
+        "T25",
+        "T26"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M13",
+      "title": "Evaluations and secure CI",
+      "required_for_v1": true,
+      "task_ids": [
+        "T27",
+        "T28"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M14",
+      "title": "Portfolio release",
+      "required_for_v1": true,
+      "task_ids": [
+        "T29",
+        "T30"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M15",
+      "title": "Optional extensions",
+      "required_for_v1": false,
+      "task_ids": [
+        "T31",
+        "T32"
+      ],
+      "status": "PLANNED"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T01",
+      "milestone": "M00",
+      "title": "Reproduce reference and inspect source",
+      "instructions": "Run the existing 58-test baseline and dependency-free recovery CLI. Record actual mode and capabilities.",
+      "depends_on": [],
+      "requirement_ids": [
+        "R001",
+        "R002"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T02",
+      "milestone": "M00",
+      "title": "Inventory environment and preserve work",
+      "instructions": "Inspect git state, tool versions, installed model/hardware, filesystem and local-only boundaries. Record unresolved owner inputs.",
+      "depends_on": [
+        "T01"
+      ],
+      "requirement_ids": [
+        "R001",
+        "R002"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T03",
+      "milestone": "M01",
+      "title": "Resolve and lock compatible toolchains",
+      "instructions": "Create real locks and import/SDK compatibility report; add Ruff/mypy checks without deleting baseline tests.",
+      "depends_on": [
+        "T01",
+        "T02"
+      ],
+      "requirement_ids": [
+        "R003",
+        "R004",
+        "R005"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T04",
+      "milestone": "M01",
+      "title": "Implement reviewed contracts and canonical action representation",
+      "instructions": "Turn schemas into tested Pydantic contracts, enum transitions, canonicalization and application API/version rules.",
+      "depends_on": [
+        "T03"
+      ],
+      "requirement_ids": [
+        "R003",
+        "R004",
+        "R005"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T05",
+      "milestone": "M02",
+      "title": "Build real PostgreSQL migrations and restricted repositories",
+      "instructions": "Define application schema/constraints and runtime roles/RLS; test pooling and cross-tenant child references.",
+      "depends_on": [
+        "T03",
+        "T04"
+      ],
+      "requirement_ids": [
+        "R006",
+        "R007",
+        "R008",
+        "R009",
+        "R010"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T06",
+      "milestone": "M02",
+      "title": "Create independent synthetic destination persistence",
+      "instructions": "Implement destination schema and interfaces while preserving independent receipts; no shared assistant transaction assumption.",
+      "depends_on": [
+        "T05"
+      ],
+      "requirement_ids": [
+        "R006",
+        "R007",
+        "R008",
+        "R009",
+        "R010"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T07",
+      "milestone": "M03",
+      "title": "Implement local Keycloak login and secure backend sessions",
+      "instructions": "OIDC/PKCE/session lifecycle/CSRF/current-membership checks and negative tests.",
+      "depends_on": [
+        "T05",
+        "T06"
+      ],
+      "requirement_ids": [
+        "R011",
+        "R012",
+        "R013",
+        "R014",
+        "R015",
+        "R016",
+        "R017",
+        "R018"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T08",
+      "milestone": "M03",
+      "title": "Implement versioned API with durable admission",
+      "instructions": "Messages/runs/jobs/events commit before 202; scoped request idempotency, fixed interval and stale-version conflicts.",
+      "depends_on": [
+        "T07"
+      ],
+      "requirement_ids": [
+        "R011",
+        "R012",
+        "R013",
+        "R014",
+        "R015",
+        "R016",
+        "R017",
+        "R018"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T09",
+      "milestone": "M04",
+      "title": "Implement durable leased workers and fencing",
+      "instructions": "Job claim/heartbeat/sweeper, application and checkpoint transactional fence checks.",
+      "depends_on": [
+        "T07",
+        "T08"
+      ],
+      "requirement_ids": [
+        "R019",
+        "R020",
+        "R021",
+        "R022",
+        "R023",
+        "R024"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T10",
+      "milestone": "M04",
+      "title": "Implement event journal, wake-up reconciliation and outbox",
+      "instructions": "Protect user-event to checkpoint handoff from lost wakeups; release leases on human waits.",
+      "depends_on": [
+        "T09"
+      ],
+      "requirement_ids": [
+        "R019",
+        "R020",
+        "R021",
+        "R022",
+        "R023",
+        "R024"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T11",
+      "milestone": "M05",
+      "title": "Deploy authenticated MCP transport and per-run invocation contexts",
+      "instructions": "Official SDK remote host/client, workload audience and expiring lease-bound invocation handles.",
+      "depends_on": [
+        "T09",
+        "T10"
+      ],
+      "requirement_ids": [
+        "R025",
+        "R026",
+        "R027",
+        "R028",
+        "R029",
+        "R030",
+        "R031"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T12",
+      "milestone": "M05",
+      "title": "Implement controlled tool registry and independent network tests",
+      "instructions": "Read tools plus disabled-until-approved write boundary; restricted receipt lookup for reconciliation. Full approved execution closes in M08.",
+      "depends_on": [
+        "T11"
+      ],
+      "requirement_ids": [
+        "R025",
+        "R026",
+        "R027",
+        "R028",
+        "R029",
+        "R030",
+        "R031"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T13",
+      "milestone": "M06",
+      "title": "Implement versioned source ingestion and lexical baseline",
+      "instructions": "Authored fixtures, approved/effective sections, source hashes, current access and source revocation tests.",
+      "depends_on": [
+        "T11",
+        "T12"
+      ],
+      "requirement_ids": [
+        "R032",
+        "R033",
+        "R034",
+        "R035",
+        "R036"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T14",
+      "milestone": "M06",
+      "title": "Add exact vector retrieval and comparison report",
+      "instructions": "Select installed/approved embedding model, record dimensions/index version, compare same development queries.",
+      "depends_on": [
+        "T13"
+      ],
+      "requirement_ids": [
+        "R032",
+        "R033",
+        "R034",
+        "R035",
+        "R036"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T15",
+      "milestone": "M07",
+      "title": "Implement real LangChain ChatOllama draft adapter",
+      "instructions": "Versioned prompts, explicit mode, supported structured output, bounded validation/repair, real inference evidence.",
+      "depends_on": [
+        "T13",
+        "T14"
+      ],
+      "requirement_ids": [
+        "R037",
+        "R038",
+        "R039",
+        "R040",
+        "R041",
+        "R042"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T16",
+      "milestone": "M07",
+      "title": "Wire explicit persistent LangGraph workflow",
+      "instructions": "Run retrieval before final generation; typed clarification, persisted interrupt/resume, deterministic policy branching.",
+      "depends_on": [
+        "T15"
+      ],
+      "requirement_ids": [
+        "R037",
+        "R038",
+        "R039",
+        "R040",
+        "R041",
+        "R042"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T17",
+      "milestone": "M08",
+      "title": "Implement immutable independent-review lifecycle and final grant",
+      "instructions": "Lock/version authority, exact approval hash/revision, freshness and cancellation race ordering.",
+      "depends_on": [
+        "T15",
+        "T16"
+      ],
+      "requirement_ids": [
+        "R043",
+        "R044",
+        "R045",
+        "R046",
+        "R047",
+        "R048",
+        "R049",
+        "R050",
+        "R051"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T18",
+      "milestone": "M08",
+      "title": "Implement stable-key destination execution and reconciliation",
+      "instructions": "Use actual MCP path; same-key atomic commit, response-loss/hash-conflict/delayed-receipt/retention tests.",
+      "depends_on": [
+        "T17"
+      ],
+      "requirement_ids": [
+        "R043",
+        "R044",
+        "R045",
+        "R046",
+        "R047",
+        "R048",
+        "R049",
+        "R050",
+        "R051"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T19",
+      "milestone": "M09",
+      "title": "Build React conversation evidence activity and approval views",
+      "instructions": "Accessible UI with all states, safe rendering, independent identities, manual baseline and backend capabilities.",
+      "depends_on": [
+        "T17",
+        "T18"
+      ],
+      "requirement_ids": [
+        "R052",
+        "R053",
+        "R054",
+        "R055",
+        "R056",
+        "R057"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T20",
+      "milestone": "M09",
+      "title": "Implement authenticated SSE replay and actual browser tests",
+      "instructions": "Cursor reset/dedup, stream revocation, multi-tab decisions, identity changes and keyboard interaction.",
+      "depends_on": [
+        "T19"
+      ],
+      "requirement_ids": [
+        "R052",
+        "R053",
+        "R054",
+        "R055",
+        "R056",
+        "R057"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T21",
+      "milestone": "M10",
+      "title": "Instrument real runtime and create diagnostics",
+      "instructions": "OTel traces, metrics, dashboards, redaction and bounded labels; audit records separate.",
+      "depends_on": [
+        "T19",
+        "T20"
+      ],
+      "requirement_ids": [
+        "R058",
+        "R059",
+        "R060",
+        "R061",
+        "R062"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T22",
+      "milestone": "M10",
+      "title": "Enforce budgets and degraded operating behavior",
+      "instructions": "Queue/model caps, time/retry limits, dependency outages, no hidden fallback; measure load on named hardware.",
+      "depends_on": [
+        "T21"
+      ],
+      "requirement_ids": [
+        "R058",
+        "R059",
+        "R060",
+        "R061",
+        "R062"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T23",
+      "milestone": "M11",
+      "title": "Build target Docker and Compose profiles",
+      "instructions": "Locked minimal images, target services, reference-vs-real modes, explicit model endpoint and secret handling.",
+      "depends_on": [
+        "T21",
+        "T22"
+      ],
+      "requirement_ids": [
+        "R063",
+        "R064",
+        "R065",
+        "R066",
+        "R067"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T24",
+      "milestone": "M11",
+      "title": "Deploy target Helm/kind topology and test it",
+      "instructions": "Compatible CNI, network allows/denials, probes/drain, actual worker/pod failure and persistent state.",
+      "depends_on": [
+        "T23"
+      ],
+      "requirement_ids": [
+        "R063",
+        "R064",
+        "R065",
+        "R066",
+        "R067"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T25",
+      "milestone": "M12",
+      "title": "Rehearse retained-receipt restore and paused-run upgrade",
+      "instructions": "Restore isolated old app state against retained destination, route/migrate old workflows and verify rollback compatibility.",
+      "depends_on": [
+        "T23",
+        "T24"
+      ],
+      "requirement_ids": [
+        "R068",
+        "R069"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T26",
+      "milestone": "M12",
+      "title": "Complete operational runbooks and measured recovery evidence",
+      "instructions": "Write exact commands and observations for outages, stale approvals, lease recovery, uncertain outcomes, overload and restore.",
+      "depends_on": [
+        "T25"
+      ],
+      "requirement_ids": [
+        "R068",
+        "R069"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T27",
+      "milestone": "M13",
+      "title": "Build evaluation harness baseline reports and holdout governance",
+      "instructions": "80 development/40 independently controlled release cases target, repeated trials, grader calibration and frozen thresholds.",
+      "depends_on": [
+        "T25",
+        "T26"
+      ],
+      "requirement_ids": [
+        "R070",
+        "R071",
+        "R072",
+        "R073",
+        "R074",
+        "R075",
+        "R076"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T28",
+      "milestone": "M13",
+      "title": "Enable secure CI and protected release gates",
+      "instructions": "Test trust separation, locked builds, scans, actual evals, blockers, SBOM/provenance and release manifest.",
+      "depends_on": [
+        "T27"
+      ],
+      "requirement_ids": [
+        "R070",
+        "R071",
+        "R072",
+        "R073",
+        "R074",
+        "R075",
+        "R076"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T29",
+      "milestone": "M14",
+      "title": "Validate clean-machine setup and record three truthful demos",
+      "instructions": "Use actual LLM/MCP success, denied action, and real interruption/reconciliation; keep deterministic demo separate.",
+      "depends_on": [
+        "T27",
+        "T28"
+      ],
+      "requirement_ids": [
+        "R077",
+        "R078"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T30",
+      "milestone": "M14",
+      "title": "Review license claims release evidence and owner publication approval",
+      "instructions": "Update README/ADRs/status/limits, tie every claim to evidence, no remote publication without explicit approval.",
+      "depends_on": [
+        "T29"
+      ],
+      "requirement_ids": [
+        "R077",
+        "R078"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T31",
+      "milestone": "M15",
+      "title": "Add opt-in Slack adapter after v1",
+      "instructions": "Verified callbacks, identity mapping, outbox notifications and same review/execute/reconcile policy.",
+      "depends_on": [
+        "T29",
+        "T30"
+      ],
+      "requirement_ids": [
+        "R079",
+        "R080"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": true
+    },
+    {
+      "id": "T32",
+      "milestone": "M15",
+      "title": "Add explicitly approved budgeted cloud deployment",
+      "instructions": "Terraform/EKS only after owner authorization, compatible identity/secrets, cost plan and teardown.",
+      "depends_on": [
+        "T31"
+      ],
+      "requirement_ids": [
+        "R079",
+        "R080"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Implement the required code and negative tests.",
+        "Run actual targeted tests; record failures/skips and exact environment.",
+        "Complete correctness and adversarial review for critical boundaries.",
+        "Update STATUS.md, SESSION_STATE.md, and evidence references."
+      ],
+      "external_approval_required": true
+    }
+  ]
+}

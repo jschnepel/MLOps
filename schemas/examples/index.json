@@ -1,0 +1,179 @@
+{
+  "specification": "OPS-BUILD-1.0",
+  "examples": [
+    {
+      "path": "schemas/examples/message-valid.json",
+      "schema": "schemas/message.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/message-clarification-needed.json",
+      "schema": "schemas/message.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/message-invalid-authority.json",
+      "schema": "schemas/message.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/message-invalid-bool-hours.json",
+      "schema": "schemas/message.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/clarification-valid.json",
+      "schema": "schemas/clarification.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/draft-valid.json",
+      "schema": "schemas/model-draft.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/draft-abstain-valid.json",
+      "schema": "schemas/model-draft.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/draft-invalid-approval.json",
+      "schema": "schemas/model-draft.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/draft-invalid-no-evidence.json",
+      "schema": "schemas/model-draft.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/draft-invalid-duplicate-evidence.json",
+      "schema": "schemas/model-draft.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/evidence-valid.json",
+      "schema": "schemas/evidence.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/proposal-valid.json",
+      "schema": "schemas/proposal.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/decision-valid.json",
+      "schema": "schemas/decision.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/decision-invalid-actor.json",
+      "schema": "schemas/decision.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/cancellation-valid.json",
+      "schema": "schemas/cancellation.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/outcome-success-valid.json",
+      "schema": "schemas/action-outcome.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/outcome-unknown-valid.json",
+      "schema": "schemas/action-outcome.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/outcome-invalid-fake-success.json",
+      "schema": "schemas/action-outcome.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/outcome-invalid-unknown-receipt.json",
+      "schema": "schemas/action-outcome.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/tool-get_asset_status-valid.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/tool-get_recent_alerts-valid.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/tool-search_procedures-valid.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/tool-create_incident-valid.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/tool-get_incident_receipt-valid.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/tool-error-valid.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/event-valid.json",
+      "schema": "schemas/event.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/event-invalid-model-success.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/error-valid.json",
+      "schema": "schemas/error.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/draft-answer-valid.json",
+      "schema": "schemas/model-draft.schema.json",
+      "valid": true,
+      "note": "Synthetic read-only answer shape, not a write or actual model result."
+    }
+  ]
+}

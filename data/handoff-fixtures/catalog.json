@@ -1,0 +1,120 @@
+{
+  "fixture_version": "handoff-1",
+  "as_of": "2026-10-06T12:00:00Z",
+  "documents": [
+    {
+      "document_id": "ALPHA-INCIDENT",
+      "tenant": "alpha",
+      "version": "1",
+      "approval_status": "superseded",
+      "effective_from": "2026-09-01T00:00:00Z",
+      "supersedes": null,
+      "path": "alpha-alpha-incident-v1.md",
+      "content_sha256": "3a10fa46b2dca2841b2833d0124933970fc202554e659205f6fb1c35343ce20e",
+      "sections": [
+        "review"
+      ],
+      "classification": "synthetic"
+    },
+    {
+      "document_id": "ALPHA-INCIDENT",
+      "tenant": "alpha",
+      "version": "2",
+      "approval_status": "approved",
+      "effective_from": "2026-10-01T00:00:00Z",
+      "supersedes": "1",
+      "path": "alpha-alpha-incident-v2.md",
+      "content_sha256": "8bc7631462663afea7fb457da5159c99f9ef3d3cffe21056d487c45c55931c4a",
+      "sections": [
+        "review",
+        "evidence"
+      ],
+      "classification": "synthetic"
+    },
+    {
+      "document_id": "ALPHA-TRIAGE",
+      "tenant": "alpha",
+      "version": "1",
+      "approval_status": "approved",
+      "effective_from": "2026-10-01T00:00:00Z",
+      "supersedes": null,
+      "path": "alpha-alpha-triage-v1.md",
+      "content_sha256": "fa5c02c0d29a543e42d325c615930fb2922240b65cf4441adff2125a98277610",
+      "sections": [
+        "scope",
+        "limits"
+      ],
+      "classification": "synthetic"
+    },
+    {
+      "document_id": "ALPHA-EVIDENCE",
+      "tenant": "alpha",
+      "version": "1",
+      "approval_status": "approved",
+      "effective_from": "2026-10-01T00:00:00Z",
+      "supersedes": null,
+      "path": "alpha-alpha-evidence-v1.md",
+      "content_sha256": "611e1bbf9133fc861b63d5e5d6326f8f7f763b27857cd93bc35c782334a15582",
+      "sections": [
+        "quality"
+      ],
+      "classification": "synthetic"
+    },
+    {
+      "document_id": "ALPHA-DRAFT",
+      "tenant": "alpha",
+      "version": "1",
+      "approval_status": "draft",
+      "effective_from": "2026-10-01T00:00:00Z",
+      "supersedes": null,
+      "path": "alpha-alpha-draft-v1.md",
+      "content_sha256": "57c5978af25e1b1b39e126ce1714249622e961621dfcf4fb913ad1bbfd23ce41",
+      "sections": [
+        "draft"
+      ],
+      "classification": "synthetic"
+    },
+    {
+      "document_id": "BETA-INCIDENT",
+      "tenant": "beta",
+      "version": "1",
+      "approval_status": "approved",
+      "effective_from": "2026-10-01T00:00:00Z",
+      "supersedes": null,
+      "path": "beta-beta-incident-v1.md",
+      "content_sha256": "2f8f159008ec0052b3237677f5428db511ad6ffd7dbbe4643497c0ac0249dbde",
+      "sections": [
+        "review"
+      ],
+      "classification": "synthetic"
+    },
+    {
+      "document_id": "BETA-TRIAGE",
+      "tenant": "beta",
+      "version": "1",
+      "approval_status": "approved",
+      "effective_from": "2026-10-01T00:00:00Z",
+      "supersedes": null,
+      "path": "beta-beta-triage-v1.md",
+      "content_sha256": "a8b6f78ddd9e0b1c17f240b834d8f6d6fa55eb093c522bd0f2c3a456df269766",
+      "sections": [
+        "scope"
+      ],
+      "classification": "synthetic"
+    },
+    {
+      "document_id": "BETA-EVIDENCE",
+      "tenant": "beta",
+      "version": "1",
+      "approval_status": "approved",
+      "effective_from": "2026-10-01T00:00:00Z",
+      "supersedes": null,
+      "path": "beta-beta-evidence-v1.md",
+      "content_sha256": "6c12fdf1eb044a9dc8d23480473efcbf1ccd5f23fc9dfaebed164dbec73a640f",
+      "sections": [
+        "quality"
+      ],
+      "classification": "synthetic"
+    }
+  ]
+}
