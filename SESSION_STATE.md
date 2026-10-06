@@ -1,8 +1,8 @@
 # Session state
 
-**Specification:** OPS-BUILD-1.1 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
+**Specification:** OPS-BUILD-1.2 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, environment and model probe)
-**Next task:** T01, then T02
+**Next task:** T01, then T02. T03 (owner holdout authoring) can start now, in parallel and off-machine.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `main`. Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
 
 ## Done in the planning session (2026-10-06)
@@ -21,6 +21,25 @@
   - an MIT `LICENSE`.
 - After those edits, `scripts/verify_handoff.py` (structure checks) passes: 35 acyclic tasks, 100 covered requirements. **`--manifest` no longer passes**, because the edited files intentionally differ from the delivered snapshot (BUILD_SPEC §0 anticipates this). The original snapshot is preserved in git commit 1.
 - Added `.gitattributes` (LF) so fixture and manifest hashes survive Windows checkouts.
+
+## Second review and 1.2 revision (2026-10-06)
+
+- Ran a second adversarial review with four fresh reviewers: `docs/reviews/plan-review-2026-10-06.md`.
+- The owner approved the 1.2 update. Rewrote `SPEC_AMENDMENTS.md` (1.2). The main changes:
+  - the MCP server records the attempt protocol through hardened definer functions;
+  - fenced writes lock the lease row and use `clock_timestamp()`;
+  - `durability="sync"` plus a stored checkpoint ID;
+  - one destination `action_key` table;
+  - one grant per run, ever;
+  - a revocation mechanism;
+  - a custom MCP `TokenVerifier`;
+  - one worker replica in v1;
+  - evaluation statistics;
+  - schema alignment assigned to T07.
+- Revised ADR-0002 (effort is now 54–108 days, unmeasured).
+- Regenerated `handoff/tasks.json`: 40 tasks, renumbered, now including a walking skeleton, dev bootstrap and early CI. Regenerated the acceptance matrix: 117 requirements, all with a test path.
+- `scripts/verify_handoff.py` passes the structure checks. A cross-reference check found no unknown task or requirement IDs in the amendments or ADRs.
+- **Schemas, examples and fixtures are deliberately still at 1.0.** T07 updates them under contract tests (AM-80, R104).
 
 ## Environment (observed)
 
@@ -49,7 +68,8 @@
 ## Open owner inputs
 
 - `gh auth login`, then approval to push.
-- Approval of the written amendments before the implementation plan is written (in progress).
+- Review of OPS-BUILD-1.2, then the implementation plan for M00–M01.
+- T03: the owner writes and seals about 25 holdout cases off-machine before any prompt tuning.
 
 ## Exact next step
 

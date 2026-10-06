@@ -1,6 +1,6 @@
 {
-  "specification": "OPS-BUILD-1.1 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
-  "note": "These are target acceptance requirements, not passing tests. Suggested test paths must be implemented; no empty test files are supplied. Historical reference tests do not close distributed/model gates. Milestones re-homed and R081-R100 added by SPEC_AMENDMENTS.md (OPS-BUILD-1.1).",
+  "specification": "OPS-BUILD-1.2 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "note": "Target acceptance requirements, not passing tests. Milestones follow the first owning task in tasks.json; R081-R117 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement.",
   "requirements": [
     {
       "id": "R001",
@@ -9,10 +9,13 @@
       "requirement": "Reference baseline remains reproducible",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_reference_baseline.py",
+      "suggested_test": "tests/acceptance/test_r001_reference_baseline_remains_reproducible.py",
       "expected_evidence": "Run the original suite and CLI from a clean extraction; retain the test/model-mode distinction.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T01"
+      ]
     },
     {
       "id": "R002",
@@ -21,10 +24,13 @@
       "requirement": "Feature claims distinguish implemented, planned and unverified",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_honest_status.py",
+      "suggested_test": "tests/acceptance/test_r002_feature_claims_distinguish_implemented_planned_a.py",
       "expected_evidence": "Audit README/status/demo labels against observed test evidence; fake and real modes are visible.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T01"
+      ]
     },
     {
       "id": "R003",
@@ -33,10 +39,13 @@
       "requirement": "Dependencies and images are genuinely locked",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_clean_locked_install.py",
+      "suggested_test": "tests/acceptance/test_r003_dependencies_and_images_are_genuinely_locked.py",
       "expected_evidence": "Install in an empty environment from reviewed locks; record actual hashes and compatible imports.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T04"
+      ]
     },
     {
       "id": "R004",
@@ -45,10 +54,13 @@
       "requirement": "Model or client authority fields are rejected",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_forbidden_authority_fields.py",
+      "suggested_test": "tests/acceptance/test_r004_model_or_client_authority_fields_are_rejected.py",
       "expected_evidence": "Inject role/tenant/approved/actor fields in model and browser payloads; validation fails.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T07"
+      ]
     },
     {
       "id": "R005",
@@ -57,10 +69,13 @@
       "requirement": "Canonical payload and action identity stay stable",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_canonical_payload_stability.py",
+      "suggested_test": "tests/acceptance/test_r005_canonical_payload_and_action_identity_stay_stabl.py",
       "expected_evidence": "Property-test NFC/ordering/duplicate keys/nonfinite rejection; store exact bytes; changed payload changes hash.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T07"
+      ]
     },
     {
       "id": "R006",
@@ -69,10 +84,13 @@
       "requirement": "Migrations run on real PostgreSQL",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_postgres_migrations.py",
+      "suggested_test": "tests/acceptance/test_r006_migrations_run_on_real_postgresql.py",
       "expected_evidence": "Create empty DB, migrate, rerun safely and test supported old-schema compatibility.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T09"
+      ]
     },
     {
       "id": "R007",
@@ -81,10 +99,13 @@
       "requirement": "Runtime-role row security isolates tenants",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_runtime_role_rls.py",
+      "suggested_test": "tests/acceptance/test_r007_runtime_role_row_security_isolates_tenants.py",
       "expected_evidence": "Run as non-owner/non-BYPASSRLS; exact beta IDs cannot expose data to alpha.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T09"
+      ]
     },
     {
       "id": "R008",
@@ -93,10 +114,13 @@
       "requirement": "Connection pooling does not leak tenant context",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_pooled_tenant_context.py",
+      "suggested_test": "tests/acceptance/test_r008_connection_pooling_does_not_leak_tenant_context.py",
       "expected_evidence": "Reuse the same pooled connection for different tenants and assert no residual access.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T09"
+      ]
     },
     {
       "id": "R009",
@@ -105,10 +129,13 @@
       "requirement": "Tenant-scoped child references cannot cross tenants",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_composite_tenant_fk.py",
+      "suggested_test": "tests/acceptance/test_r009_tenant_scoped_child_references_cannot_cross_tena.py",
       "expected_evidence": "Try attaching alpha proposal/message/approval records to beta parents; DB refuses.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T09"
+      ]
     },
     {
       "id": "R010",
@@ -117,10 +144,13 @@
       "requirement": "Destination records have an independent data boundary",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_independent_destination_store.py",
+      "suggested_test": "tests/acceptance/test_r010_destination_records_have_an_independent_data_bou.py",
       "expected_evidence": "Restore or reset only the application store; retained destination receipt still proves its existing incident.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T10"
+      ]
     },
     {
       "id": "R011",
@@ -129,10 +159,13 @@
       "requirement": "OIDC validation rejects invalid token/callback context",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_oidc_negative_claims.py",
+      "suggested_test": "tests/acceptance/test_r011_oidc_validation_rejects_invalid_token_callback_c.py",
       "expected_evidence": "Wrong issuer/audience/nonce/state/expiry/signature/algorithm and redirect targets fail.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T11"
+      ]
     },
     {
       "id": "R012",
@@ -141,10 +174,13 @@
       "requirement": "Sessions and CSRF protect browser mutations",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_session_csrf_rotation.py",
+      "suggested_test": "tests/acceptance/test_r012_sessions_and_csrf_protect_browser_mutations.py",
       "expected_evidence": "Cross-origin or missing CSRF mutation fails; logout/expiry/rotation invalidate old session.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T11"
+      ]
     },
     {
       "id": "R013",
@@ -153,22 +189,28 @@
       "requirement": "Current membership overrides old roles",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_current_membership.py",
+      "suggested_test": "tests/acceptance/test_r013_current_membership_overrides_old_roles.py",
       "expected_evidence": "Revoke membership while session/token remains otherwise valid; new protected operations fail.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T11"
+      ]
     },
     {
       "id": "R014",
-      "milestone": "M03",
+      "milestone": "M10",
       "category": "security",
       "requirement": "Secrets never enter URLs or browser storage",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_browser_credential_handling.py",
+      "suggested_test": "tests/acceptance/test_r014_secrets_never_enter_urls_or_browser_storage.py",
       "expected_evidence": "Inspect browser requests/storage; no access tokens in URLs/localStorage or persisted debug data.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T26"
+      ]
     },
     {
       "id": "R015",
@@ -177,10 +219,13 @@
       "requirement": "Accepted work is committed before acknowledgement",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_atomic_admission.py",
+      "suggested_test": "tests/acceptance/test_r015_accepted_work_is_committed_before_acknowledgemen.py",
       "expected_evidence": "Kill around admission commit; every acknowledged run has message/run/job; no volatile acceptance.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T12"
+      ]
     },
     {
       "id": "R016",
@@ -189,10 +234,13 @@
       "requirement": "HTTP replay resolves once and conflicting body fails",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_request_idempotency.py",
+      "suggested_test": "tests/acceptance/test_r016_http_replay_resolves_once_and_conflicting_body_f.py",
       "expected_evidence": "Repeat same scoped key/body then changed body; one logical run then 409.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T12"
+      ]
     },
     {
       "id": "R017",
@@ -201,10 +249,13 @@
       "requirement": "Only one active mutating run per conversation",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_conversation_serialization.py",
+      "suggested_test": "tests/acceptance/test_r017_only_one_active_mutating_run_per_conversation.py",
       "expected_evidence": "Concurrent requests cannot start two mutating investigations; status question makes no incident job.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T12"
+      ]
     },
     {
       "id": "R018",
@@ -213,10 +264,13 @@
       "requirement": "Relative intervals resolve once and ambiguity clarifies",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_fixed_interval.py",
+      "suggested_test": "tests/acceptance/test_r018_relative_intervals_resolve_once_and_ambiguity_cl.py",
       "expected_evidence": "Retry after clock advance and conflict text/form asset; interval remains fixed and ambiguity pauses.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T12"
+      ]
     },
     {
       "id": "R019",
@@ -225,10 +279,13 @@
       "requirement": "Leases can expire and be recovered safely",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_job_lease_reclaim.py",
+      "suggested_test": "tests/acceptance/test_r019_leases_can_expire_and_be_recovered_safely.py",
       "expected_evidence": "Kill lease owner; another owner acquires after expiry with incremented fence.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T13"
+      ]
     },
     {
       "id": "R020",
@@ -237,10 +294,13 @@
       "requirement": "Stale worker cannot mutate application state",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_application_fencing.py",
+      "suggested_test": "tests/acceptance/test_r020_stale_worker_cannot_mutate_application_state.py",
       "expected_evidence": "Old worker attempts commit after fence changes; transaction rejects it.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T13"
+      ]
     },
     {
       "id": "R021",
@@ -249,34 +309,43 @@
       "requirement": "Stale worker cannot mutate authoritative checkpoints",
       "blocking_for_v1": false,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_checkpoint_fencing.py",
+      "suggested_test": "tests/acceptance/test_r021_stale_worker_cannot_mutate_authoritative_checkpo.py",
       "expected_evidence": "Lose lease during graph work; old saver write is rejected inside checkpoint transaction.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T38"
+      ]
     },
     {
       "id": "R022",
-      "milestone": "M04",
+      "milestone": "M07",
       "category": "workflow",
       "requirement": "Human waits release workers and transactions",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_pause_releases_resources.py",
+      "suggested_test": "tests/acceptance/test_r022_human_waits_release_workers_and_transactions.py",
       "expected_evidence": "Pause for review; no active worker lease/long DB transaction/model budget consumed.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T20"
+      ]
     },
     {
       "id": "R023",
-      "milestone": "M04",
+      "milestone": "M08",
       "category": "durability",
       "requirement": "Reply/approval wakeups cannot be lost",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_wake_up_races.py",
+      "suggested_test": "tests/acceptance/test_r023_reply_approval_wakeups_cannot_be_lost.py",
       "expected_evidence": "Inject crash between decision/event/checkpoint/job acknowledgement; sweeper resumes exactly the accepted event.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T21"
+      ]
     },
     {
       "id": "R024",
@@ -285,10 +354,13 @@
       "requirement": "Notification intent is transactional and deduplicated",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_outbox_commit_recovery.py",
+      "suggested_test": "tests/acceptance/test_r024_notification_intent_is_transactional_and_dedupli.py",
       "expected_evidence": "Fail delivery after state commit; result remains recorded and dedup key preserves intent.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T14"
+      ]
     },
     {
       "id": "R025",
@@ -297,10 +369,13 @@
       "requirement": "A real independent MCP client crosses the network",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_mcp_remote_contract.py",
+      "suggested_test": "tests/acceptance/test_r025_a_real_independent_mcp_client_crosses_the_networ.py",
       "expected_evidence": "Run client/server in separate processes; discover and call actual protocol tools.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T15"
+      ]
     },
     {
       "id": "R026",
@@ -309,10 +384,13 @@
       "requirement": "MCP rejects wrong audience or browser token passthrough",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_mcp_audience.py",
+      "suggested_test": "tests/acceptance/test_r026_mcp_rejects_wrong_audience_or_browser_token_pass.py",
       "expected_evidence": "Use valid token for another service; resource server rejects it without downstream forwarding.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T15"
+      ]
     },
     {
       "id": "R027",
@@ -321,10 +399,13 @@
       "requirement": "Invocation handle binds workload run lease and tools",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_invocation_context_scope.py",
+      "suggested_test": "tests/acceptance/test_r027_invocation_handle_binds_workload_run_lease_and_t.py",
       "expected_evidence": "Replay with other workload/run/expired fence/tool; server rejects; handle absent from model/logs.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T15"
+      ]
     },
     {
       "id": "R028",
@@ -333,10 +414,13 @@
       "requirement": "Read tools enforce current source and asset access",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_mcp_read_permissions.py",
+      "suggested_test": "tests/acceptance/test_r028_read_tools_enforce_current_source_and_asset_acce.py",
       "expected_evidence": "Alpha requests B22 or revoked procedure; no forbidden data reaches the model.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T16"
+      ]
     },
     {
       "id": "R029",
@@ -345,10 +429,13 @@
       "requirement": "Unexpected tools and invalid results fail closed",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_mcp_schema_allowlist.py",
+      "suggested_test": "tests/acceptance/test_r029_unexpected_tools_and_invalid_results_fail_closed.py",
       "expected_evidence": "Alter discovered tool/schema; return error-flagged/malformed/oversized payload; no success assumption.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T16"
+      ]
     },
     {
       "id": "R030",
@@ -357,10 +444,13 @@
       "requirement": "Receipt lookup is restricted and cannot create actions",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_reconciliation_tool_scope.py",
+      "suggested_test": "tests/acceptance/test_r030_receipt_lookup_is_restricted_and_cannot_create_a.py",
       "expected_evidence": "Normal/model tools cannot call lookup; reconciliation workload sees minimal existing-action outcome only.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T16"
+      ]
     },
     {
       "id": "R031",
@@ -369,10 +459,13 @@
       "requirement": "Selected SDK versions pass actual imports and contracts",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_sdk_compatibility.py",
+      "suggested_test": "tests/acceptance/test_r031_selected_sdk_versions_pass_actual_imports_and_co.py",
       "expected_evidence": "Install locked SDKs and run network tests; examples are not accepted based on syntax alone.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T15"
+      ]
     },
     {
       "id": "R032",
@@ -381,10 +474,13 @@
       "requirement": "Source ingestion is versioned effective and idempotent",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_source_ingestion_version.py",
+      "suggested_test": "tests/acceptance/test_r032_source_ingestion_is_versioned_effective_and_idem.py",
       "expected_evidence": "Repeat same document; change hash under same version; supersede/unapprove; only permitted effective version retrieves.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T17"
+      ]
     },
     {
       "id": "R033",
@@ -393,10 +489,13 @@
       "requirement": "Lexical baseline has labeled evidence measurements",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_lexical_baseline.py",
+      "suggested_test": "tests/acceptance/test_r033_lexical_baseline_has_labeled_evidence_measuremen.py",
       "expected_evidence": "Known questions return labeled permitted sections; missing source remains missing, not guessed.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T17"
+      ]
     },
     {
       "id": "R034",
@@ -405,22 +504,28 @@
       "requirement": "Exact vector retrieval is measured against the baseline",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_pgvector_comparison.py",
+      "suggested_test": "tests/acceptance/test_r034_exact_vector_retrieval_is_measured_against_the_b.py",
       "expected_evidence": "Record model/dimension/corpus and matched question retrieval results, including regressions.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T18"
+      ]
     },
     {
       "id": "R035",
-      "milestone": "M07",
+      "milestone": "M10",
       "category": "security",
       "requirement": "Revoked evidence does not leak from derived state",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_source_revocation_projection.py",
+      "suggested_test": "tests/acceptance/test_r035_revoked_evidence_does_not_leak_from_derived_stat.py",
       "expected_evidence": "Revoke source after draft; caches/checkpoints/summary/events/citation viewer do not re-expose it.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T26"
+      ]
     },
     {
       "id": "R036",
@@ -429,10 +534,13 @@
       "requirement": "Retrieved instructions cannot grant tool authority",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_document_prompt_injection.py",
+      "suggested_test": "tests/acceptance/test_r036_retrieved_instructions_cannot_grant_tool_authori.py",
       "expected_evidence": "Inject administrator-style text into SOP fixture; no permission/action boundary changes.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T19"
+      ]
     },
     {
       "id": "R037",
@@ -441,10 +549,13 @@
       "requirement": "Actual LangChain and Ollama inference occurs",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_langchain_real_model.py",
+      "suggested_test": "tests/acceptance/test_r037_actual_langchain_and_ollama_inference_occurs.py",
       "expected_evidence": "Trace ChatOllama request using named installed model; record real output, versions and hardware.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T19"
+      ]
     },
     {
       "id": "R038",
@@ -453,10 +564,13 @@
       "requirement": "Evidence retrieval precedes final drafting",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_retrieval_before_draft.py",
+      "suggested_test": "tests/acceptance/test_r038_evidence_retrieval_precedes_final_drafting.py",
       "expected_evidence": "Trace order and input bundle show MCP read results before final model proposal.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T20"
+      ]
     },
     {
       "id": "R039",
@@ -465,10 +579,13 @@
       "requirement": "Reasoning text is not authority or an audit record",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_explanation_boundary.py",
+      "suggested_test": "tests/acceptance/test_r039_reasoning_text_is_not_authority_or_an_audit_reco.py",
       "expected_evidence": "Model claims success without receipt; UI/actions remain authoritative and raw reasoning stays off.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T19"
+      ]
     },
     {
       "id": "R040",
@@ -477,10 +594,13 @@
       "requirement": "Invalid model schema has a bounded repair policy",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_bounded_model_repair.py",
+      "suggested_test": "tests/acceptance/test_r040_invalid_model_schema_has_a_bounded_repair_policy.py",
       "expected_evidence": "Repeated malformed JSON exhausts one repair within remaining budget; no incident.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T19"
+      ]
     },
     {
       "id": "R041",
@@ -489,10 +609,13 @@
       "requirement": "No fake or hosted fallback masquerades as real output",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_explicit_model_modes.py",
+      "suggested_test": "tests/acceptance/test_r041_no_fake_or_hosted_fallback_masquerades_as_real_o.py",
       "expected_evidence": "Remove real model or block endpoint; clear failure/manual path, no silent substitute.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T19"
+      ]
     },
     {
       "id": "R042",
@@ -501,10 +624,13 @@
       "requirement": "Actual checkpoint pause/resume survives restart",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_durable_langgraph_resume.py",
+      "suggested_test": "tests/acceptance/test_r042_actual_checkpoint_pause_resume_survives_restart.py",
       "expected_evidence": "Restart graph process during clarification/review and resume from committed event under same run.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T20"
+      ]
     },
     {
       "id": "R043",
@@ -513,10 +639,13 @@
       "requirement": "Requester cannot approve their own proposal",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_independent_approval.py",
+      "suggested_test": "tests/acceptance/test_r043_requester_cannot_approve_their_own_proposal.py",
       "expected_evidence": "Same identity with both scopes submits approval; rejected; another permitted reviewer succeeds.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T21"
+      ]
     },
     {
       "id": "R044",
@@ -525,10 +654,13 @@
       "requirement": "Approval binds exact immutable revision and expiry",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_proposal_revision_expiry.py",
+      "suggested_test": "tests/acceptance/test_r044_approval_binds_exact_immutable_revision_and_expi.py",
       "expected_evidence": "Edit content, change revision/hash or advance time; old decision cannot authorize changed action.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T21"
+      ]
     },
     {
       "id": "R045",
@@ -537,10 +669,13 @@
       "requirement": "Final grant checks current authority and evidence",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_final_authorization_gate.py",
+      "suggested_test": "tests/acceptance/test_r045_final_grant_checks_current_authority_and_evidenc.py",
       "expected_evidence": "Revoke requester/reviewer or source before grant transaction; zero destination writes.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T21"
+      ]
     },
     {
       "id": "R046",
@@ -549,10 +684,13 @@
       "requirement": "Cancellation race is ordered at execution grant",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_cancel_grant_race.py",
+      "suggested_test": "tests/acceptance/test_r046_cancellation_race_is_ordered_at_execution_grant.py",
       "expected_evidence": "Race cancel and grant; before grant no dispatch, after grant report actual/unknown outcome without undo claim.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T21"
+      ]
     },
     {
       "id": "R047",
@@ -561,10 +699,13 @@
       "requirement": "Concurrent same-key writes commit one incident",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_destination_unique_action.py",
+      "suggested_test": "tests/acceptance/test_r047_concurrent_same_key_writes_commit_one_incident.py",
       "expected_evidence": "Send concurrent duplicates; atomic destination record and one returned receipt identity.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T10"
+      ]
     },
     {
       "id": "R048",
@@ -573,22 +714,28 @@
       "requirement": "Lost acknowledgement resolves the original incident",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_post_commit_response_loss.py",
+      "suggested_test": "tests/acceptance/test_r048_lost_acknowledgement_resolves_the_original_incid.py",
       "expected_evidence": "Commit destination, lose response, restart, reconcile; one corresponding incident.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T22"
+      ]
     },
     {
       "id": "R049",
-      "milestone": "M02",
+      "milestone": "M08",
       "category": "recovery",
       "requirement": "Mismatching key/hash never becomes success",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_receipt_hash_conflict.py",
+      "suggested_test": "tests/acceptance/test_r049_mismatching_key_hash_never_becomes_success.py",
       "expected_evidence": "Return different hash for same action or resubmit changed bytes; conflict and escalation, no new key.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T22"
+      ]
     },
     {
       "id": "R050",
@@ -597,10 +744,13 @@
       "requirement": "Missing receipt is not definitive failure",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_delayed_receipt_unknown.py",
+      "suggested_test": "tests/acceptance/test_r050_missing_receipt_is_not_definitive_failure.py",
       "expected_evidence": "Delay receipt visibility while commit may be in flight; remain unknown, no blind new write.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T22"
+      ]
     },
     {
       "id": "R051",
@@ -609,10 +759,13 @@
       "requirement": "Receipt retention outlives all possible replays",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_receipt_retention_window.py",
+      "suggested_test": "tests/acceptance/test_r051_receipt_retention_outlives_all_possible_replays.py",
       "expected_evidence": "Old accepted action after app restore/retry cannot be accepted as new because dedup state expired.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T22"
+      ]
     },
     {
       "id": "R052",
@@ -621,10 +774,13 @@
       "requirement": "Complete user and independent-reviewer flow works",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_browser_flagship.py",
+      "suggested_test": "tests/acceptance/test_r052_complete_user_and_independent_reviewer_flow_work.py",
       "expected_evidence": "Operate actual browser request/clarify/evidence/review/submit/result path; screenshots and no console error.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T26"
+      ]
     },
     {
       "id": "R053",
@@ -633,10 +789,13 @@
       "requirement": "SSE reconnect replays safely without duplicate work",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_sse_replay_cursor.py",
+      "suggested_test": "tests/acceptance/test_r053_sse_reconnect_replays_safely_without_duplicate_w.py",
       "expected_evidence": "Disconnect, receive events, reconnect after cursor, dedup rendering; expired cursor yields explicit reset.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T27"
+      ]
     },
     {
       "id": "R054",
@@ -645,10 +804,13 @@
       "requirement": "Streaming access follows session and source revocation",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_stream_revocation.py",
+      "suggested_test": "tests/acceptance/test_r054_streaming_access_follows_session_and_source_revo.py",
       "expected_evidence": "Revoke user/source during stream; stop or redact before protected data is emitted again.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T27"
+      ]
     },
     {
       "id": "R055",
@@ -657,10 +819,13 @@
       "requirement": "Untrusted content cannot execute browser script",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_safe_text_rendering.py",
+      "suggested_test": "tests/acceptance/test_r055_untrusted_content_cannot_execute_browser_script.py",
       "expected_evidence": "Inject HTML/script/javascript URL into tool/model/source; displayed safely or rejected.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T26"
+      ]
     },
     {
       "id": "R056",
@@ -669,22 +834,28 @@
       "requirement": "Keyboard and accessible state controls work",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_keyboard_accessibility.py",
+      "suggested_test": "tests/acceptance/test_r056_keyboard_and_accessible_state_controls_work.py",
       "expected_evidence": "Keyboard-only request/review/reject navigation, visible focus, readable state labels and errors.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T26"
+      ]
     },
     {
       "id": "R057",
-      "milestone": "M10",
+      "milestone": "M08",
       "category": "product",
       "requirement": "Manual baseline uses the same approval controls",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_manual_proposal_path.py",
+      "suggested_test": "tests/acceptance/test_r057_manual_baseline_uses_the_same_approval_controls.py",
       "expected_evidence": "With model unavailable, search and manual draft work under identical independent review/write policy.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T21"
+      ]
     },
     {
       "id": "R058",
@@ -693,10 +864,13 @@
       "requirement": "One run is correlated across all real boundaries",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_end_to_end_trace.py",
+      "suggested_test": "tests/acceptance/test_r058_one_run_is_correlated_across_all_real_boundaries.py",
       "expected_evidence": "Trace API/job/graph/LangChain/MCP/destination/reconcile; show failures and version identifiers.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T28"
+      ]
     },
     {
       "id": "R059",
@@ -705,10 +879,13 @@
       "requirement": "Telemetry excludes credentials and sensitive reasoning",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_telemetry_redaction.py",
+      "suggested_test": "tests/acceptance/test_r059_telemetry_excludes_credentials_and_sensitive_rea.py",
       "expected_evidence": "Seed canary secret in relevant error/input; collector/log export does not reveal it.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T28"
+      ]
     },
     {
       "id": "R060",
@@ -717,10 +894,13 @@
       "requirement": "Metrics have bounded cardinality and honest timing",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_metrics_cardinality.py",
+      "suggested_test": "tests/acceptance/test_r060_metrics_have_bounded_cardinality_and_honest_timi.py",
       "expected_evidence": "No run IDs as metric labels; active compute and human waits measured separately.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T28"
+      ]
     },
     {
       "id": "R061",
@@ -729,10 +909,13 @@
       "requirement": "Dependency failures preserve truth and degrade clearly",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_dependency_outage.py",
+      "suggested_test": "tests/acceptance/test_r061_dependency_failures_preserve_truth_and_degrade_c.py",
       "expected_evidence": "Model/MCP/DB/outbox fail independently; controlled states, no invented success or offline-to-cloud jump.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T29"
+      ]
     },
     {
       "id": "R062",
@@ -741,10 +924,13 @@
       "requirement": "Resource budgets and overload are enforced",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_budget_backpressure.py",
+      "suggested_test": "tests/acceptance/test_r062_resource_budgets_and_overload_are_enforced.py",
       "expected_evidence": "Oversize input/results, exhausted repair/time/tool cap and full queue stop predictably without retry storm.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T29"
+      ]
     },
     {
       "id": "R063",
@@ -753,10 +939,13 @@
       "requirement": "Target Docker images are built from locks and run non-root",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_container_build.py",
+      "suggested_test": "tests/acceptance/test_r063_target_docker_images_are_built_from_locks_and_ru.py",
       "expected_evidence": "Clean actual build, locked artifacts, non-root/read-only checks and recorded image digest.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T30"
+      ]
     },
     {
       "id": "R064",
@@ -765,10 +954,13 @@
       "requirement": "Containers and repository do not carry secrets",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_secret_hygiene.py",
+      "suggested_test": "tests/acceptance/test_r064_containers_and_repository_do_not_carry_secrets.py",
       "expected_evidence": "Scan image layers/config/repo; no runtime credentials, service secrets or model weights embedded.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T30"
+      ]
     },
     {
       "id": "R065",
@@ -777,22 +969,28 @@
       "requirement": "Probes and drain distinguish model outages from dead API",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_probe_graceful_drain.py",
+      "suggested_test": "tests/acceptance/test_r065_probes_and_drain_distinguish_model_outages_from_.py",
       "expected_evidence": "Stop model; API does not restart endlessly. Terminate worker; no new leases and safe recovery.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T30"
+      ]
     },
     {
       "id": "R066",
       "milestone": "M12",
       "category": "security",
-      "requirement": "Network restrictions are actually enforced",
+      "requirement": "Docker network restrictions are actually enforced",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_network_policy_enforcement.py",
-      "expected_evidence": "Run positive and negative pod connections including model-to-destination denial using compatible CNI.",
+      "suggested_test": "tests/acceptance/test_r066_docker_network_restrictions_are_actually_enforce.py",
+      "expected_evidence": "From containers: model/worker cannot reach incident-sim; browser network cannot reach internal services; allowed paths work.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T30"
+      ]
     },
     {
       "id": "R067",
@@ -801,10 +999,13 @@
       "requirement": "A real worker or pod kill does not duplicate actions",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_pod_kill_recovery.py",
+      "suggested_test": "tests/acceptance/test_r067_a_real_worker_or_pod_kill_does_not_duplicate_act.py",
       "expected_evidence": "Kill process/pod at designated write windows; one incident and accurate recovered state.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T30"
+      ]
     },
     {
       "id": "R068",
@@ -813,10 +1014,13 @@
       "requirement": "Older app backup reconciles independently retained receipt",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_restore_after_commit.py",
+      "suggested_test": "tests/acceptance/test_r068_older_app_backup_reconciles_independently_retain.py",
       "expected_evidence": "Restore app snapshot predating commit while retaining destination; dispatch disabled until reconciliation.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T32"
+      ]
     },
     {
       "id": "R069",
@@ -825,10 +1029,13 @@
       "requirement": "Paused v1 workflow is compatible with v2 and rollback",
       "blocking_for_v1": false,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_paused_workflow_upgrade.py",
+      "suggested_test": "tests/acceptance/test_r069_paused_v1_workflow_is_compatible_with_v2_and_rol.py",
       "expected_evidence": "Upgrade/rollback with pending v1 approval; preserve content/hash/action identity and version routing.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T36"
+      ]
     },
     {
       "id": "R070",
@@ -837,22 +1044,28 @@
       "requirement": "Manual RAG and orchestration baselines use comparable tasks",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_baseline_comparison.py",
+      "suggested_test": "tests/acceptance/test_r070_manual_rag_and_orchestration_baselines_use_compa.py",
       "expected_evidence": "Same permitted evidence/final approval rule; report measured effort and real outcomes, no fabricated timing.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T25"
+      ]
     },
     {
       "id": "R071",
-      "milestone": "M09",
+      "milestone": "M00",
       "category": "evaluation",
       "requirement": "Final holdout is kept out of the tuning context",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_holdout_governance.py",
+      "suggested_test": "tests/acceptance/test_r071_final_holdout_is_kept_out_of_the_tuning_context.py",
       "expected_evidence": "Record split grouping/reviewer custody/used status; leaked cases replaced before new holdout claim.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T03"
+      ]
     },
     {
       "id": "R072",
@@ -861,10 +1074,13 @@
       "requirement": "Model trials are repeated and isolated",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_repeated_isolated_trials.py",
+      "suggested_test": "tests/acceptance/test_r072_model_trials_are_repeated_and_isolated.py",
       "expected_evidence": "Reset app/destination namespaces per trial and publish every trial/config/denominator.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T25"
+      ]
     },
     {
       "id": "R073",
@@ -873,10 +1089,13 @@
       "requirement": "Semantic grading is calibrated and separate from receipts",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_grader_calibration.py",
+      "suggested_test": "tests/acceptance/test_r073_semantic_grading_is_calibrated_and_separate_from.py",
       "expected_evidence": "Compare grader with reviewed labels; deterministic destination state decides action outcome.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T25"
+      ]
     },
     {
       "id": "R074",
@@ -885,10 +1104,13 @@
       "requirement": "Safety failures and unset quality gates block release",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_release_blockers.py",
+      "suggested_test": "tests/acceptance/test_r074_safety_failures_and_unset_quality_gates_block_re.py",
       "expected_evidence": "Inject unauthorized/duplicate/fabricated-success failure or missing threshold; promotion fails.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T25"
+      ]
     },
     {
       "id": "R075",
@@ -897,10 +1119,13 @@
       "requirement": "Untrusted PR code cannot access privileged release context",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_ci_trust_boundaries.py",
+      "suggested_test": "tests/acceptance/test_r075_untrusted_pr_code_cannot_access_privileged_relea.py",
       "expected_evidence": "Audit fork workflow/runner/permissions; immutable action pins and isolated credentialed steps.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T31"
+      ]
     },
     {
       "id": "R076",
@@ -909,10 +1134,13 @@
       "requirement": "Released artifacts link to tested inputs and evidence",
       "blocking_for_v1": false,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_release_provenance.py",
+      "suggested_test": "tests/acceptance/test_r076_released_artifacts_link_to_tested_inputs_and_evi.py",
       "expected_evidence": "Verify manifest includes actual image/lock/model/prompt/corpus/report hashes and approved commit.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T37"
+      ]
     },
     {
       "id": "R077",
@@ -921,10 +1149,13 @@
       "requirement": "Independent user can reproduce real workflow and recovery",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_clean_machine_walkthrough.py",
+      "suggested_test": "tests/acceptance/test_r077_independent_user_can_reproduce_real_workflow_and.py",
       "expected_evidence": "Follow README on clean setup and record successful/denied/recovery demos with actual mode visible.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T33"
+      ]
     },
     {
       "id": "R078",
@@ -933,10 +1164,13 @@
       "requirement": "Publication claims and license choices are explicit",
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_publication_review.py",
+      "suggested_test": "tests/acceptance/test_r078_publication_claims_and_license_choices_are_expli.py",
       "expected_evidence": "Owner approves license/publish; each completed feature/metric points to real evidence.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T34"
+      ]
     },
     {
       "id": "R079",
@@ -945,10 +1179,13 @@
       "requirement": "Slack reuses authority and handles replay safely",
       "blocking_for_v1": false,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_slack_callback_replay.py",
+      "suggested_test": "tests/acceptance/test_r079_slack_reuses_authority_and_handles_replay_safely.py",
       "expected_evidence": "Verify signature/time/membership and repeated web/Slack decisions; one logical action, delivery separate.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T39"
+      ]
     },
     {
       "id": "R080",
@@ -957,270 +1194,608 @@
       "requirement": "Cloud deployment is authorized budgeted and reversible",
       "blocking_for_v1": false,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": "tests/target/test_cloud_budget_teardown.py",
+      "suggested_test": "tests/acceptance/test_r080_cloud_deployment_is_authorized_budgeted_and_reve.py",
       "expected_evidence": "Only approved environment/resources; cost review, rollback and destroy evidence; no assumed credential access.",
       "evidence_status": "NOT_RUN",
-      "evidence_paths": []
+      "evidence_paths": [],
+      "owning_tasks": [
+        "T40"
+      ]
     },
     {
       "id": "R081",
-      "milestone": "M00",
       "category": "model",
       "requirement": "Local model runtime profile is measured before use",
-      "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "reports/model-probe-qwen3-8b.md: >=30 calls, thinking disabled, num_ctx set, JSON/schema-valid rates, latency, VRAM, digest.",
+      "expected_evidence": "Probe report: >=30 calls, thinking disabled, num_ctx set, first-pass and post-repair validity with Wilson CIs, latency, VRAM, cancellation behaviour, digest; owner decision recorded.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M00",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T02"
+      ],
+      "suggested_test": "tests/acceptance/test_r081_local_model_runtime_profile_is_measured_before_u.py"
     },
     {
       "id": "R082",
-      "milestone": "M01",
       "category": "domain",
       "requirement": "Run transitions are enforced from one table including ESCALATED",
-      "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
       "expected_evidence": "Exhaustive transition tests; disallowed transitions rejected and logged.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M01",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T07"
+      ],
+      "suggested_test": "tests/acceptance/test_r082_run_transitions_are_enforced_from_one_table_incl.py"
     },
     {
       "id": "R083",
-      "milestone": "M01",
       "category": "contracts",
       "requirement": "Schemas forbid model-asserted outcomes and envelope/data contradictions",
-      "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "Schema probes: model_summary status, action.confirmed without receipt, ok+UNKNOWN all rejected.",
+      "expected_evidence": "Probes: model_summary status, action.confirmed without receipt, ok+UNKNOWN, outcome without action_id all rejected.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M01",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T07"
+      ],
+      "suggested_test": "tests/acceptance/test_r083_schemas_forbid_model_asserted_outcomes_and_envel.py"
     },
     {
       "id": "R084",
-      "milestone": "M02",
       "category": "security",
       "requirement": "MCP executor role has no direct table privileges",
-      "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "As mcp_exec, SELECT on application tables is permission denied; only security-definer functions succeed.",
+      "expected_evidence": "As mcp_exec, SELECT on any application table is permission denied.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M02",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T09"
+      ],
+      "suggested_test": "tests/acceptance/test_r084_mcp_executor_role_has_no_direct_table_privileges.py"
     },
     {
       "id": "R085",
-      "milestone": "M05",
       "category": "security",
-      "requirement": "Tool allowlist is derived server-side from job type and run state",
-      "blocking_for_v1": true,
+      "requirement": "Tool allowlist is server-derived and bound to the workload client",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "Worker-written allowlist cannot enable create_incident for a non-execute job.",
+      "expected_evidence": "Worker-chosen tools ignored; handle used with a different azp rejected.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M05",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T15"
+      ],
+      "suggested_test": "tests/acceptance/test_r085_tool_allowlist_is_server_derived_and_bound_to_th.py"
     },
     {
       "id": "R086",
-      "milestone": "M03",
       "category": "security",
-      "requirement": "Disabling a user at the IdP ends application access",
-      "blocking_for_v1": true,
+      "requirement": "IdP disable and back-channel logout end application authority",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "Disable user in Keycloak; next mutation returns 401.",
+      "expected_evidence": "Disabled user: next decision-class mutation 401, grants blocked within 60 s; back-channel logout destroys sessions; replayed logout token rejected.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M03",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T11"
+      ],
+      "suggested_test": "tests/acceptance/test_r086_idp_disable_and_back_channel_logout_end_applicat.py"
     },
     {
       "id": "R087",
-      "milestone": "M04",
       "category": "concurrency",
       "requirement": "Lease and fence are per run across all job types",
-      "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
       "expected_evidence": "Resume-job vs original-job race: only the current run fence writes.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M04",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T13"
+      ],
+      "suggested_test": "tests/acceptance/test_r087_lease_and_fence_are_per_run_across_all_job_types.py"
     },
     {
       "id": "R088",
-      "milestone": "M04",
       "category": "concurrency",
-      "requirement": "Long model calls keep the lease; lease loss cancels inference",
-      "blocking_for_v1": true,
+      "requirement": "Heartbeat survives long or blocking work; lease loss cancels it",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "Slow fake drafter >30 s survives; forced heartbeat failure cancels the call and revokes handles.",
+      "expected_evidence": "Blocked loop and >30 s fake drafter keep the lease; forced renewal failure cancels the call and revokes handles.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M04",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T13"
+      ],
+      "suggested_test": "tests/acceptance/test_r088_heartbeat_survives_long_or_blocking_work_lease_l.py"
     },
     {
       "id": "R089",
-      "milestone": "M04",
       "category": "events",
       "requirement": "Per-run event sequences are gap-free and commit-ordered",
-      "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
       "expected_evidence": "Concurrent writers; SSE replay never skips.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M04",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T14"
+      ],
+      "suggested_test": "tests/acceptance/test_r089_per_run_event_sequences_are_gap_free_and_commit_.py"
     },
     {
       "id": "R090",
-      "milestone": "M08",
       "category": "approval",
-      "requirement": "At most one active execution grant exists per run",
-      "blocking_for_v1": true,
+      "requirement": "At most one execution grant exists per run",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "Revision after grant returns 409; second grant insert fails.",
+      "expected_evidence": "UNIQUE(run_id); revision after grant 409; second grant fails even after abort.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M08",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T21"
+      ],
+      "suggested_test": "tests/acceptance/test_r090_at_most_one_execution_grant_exists_per_run.py"
     },
     {
       "id": "R091",
-      "milestone": "M07",
       "category": "privacy",
       "requirement": "Checkpoints and interrupts carry identifiers only",
-      "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
       "expected_evidence": "Grep of checkpoint blobs after pause finds no evidence or proposal text.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M07",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T20"
+      ],
+      "suggested_test": "tests/acceptance/test_r091_checkpoints_and_interrupts_carry_identifiers_onl.py"
     },
     {
       "id": "R092",
-      "milestone": "M08",
       "category": "approval",
-      "requirement": "Expired proposals move to BLOCKED_REVIEW without a live worker",
-      "blocking_for_v1": true,
+      "requirement": "Expired proposals reach BLOCKED_REVIEW without a live worker",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "Lazy check in decision/grant plus scheduled expiry job, with injected DB time.",
+      "expected_evidence": "Lazy check in decision/grant plus scheduled expiry job with injected DB time.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M08",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T21"
+      ],
+      "suggested_test": "tests/acceptance/test_r092_expired_proposals_reach_blocked_review_without_a.py"
     },
     {
       "id": "R093",
-      "milestone": "M08",
       "category": "approval",
       "requirement": "No content author may approve the proposal",
-      "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
       "expected_evidence": "Reviewer-authored revision or manual proposal cannot be approved by that reviewer.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M08",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T21"
+      ],
+      "suggested_test": "tests/acceptance/test_r093_no_content_author_may_approve_the_proposal.py"
     },
     {
       "id": "R094",
-      "milestone": "M08",
       "category": "recovery",
-      "requirement": "Every grant-to-receipt crash window resolves to one outcome",
-      "blocking_for_v1": true,
+      "requirement": "Every attempt state resolves to one truthful outcome",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "Kill tests at windows a, b, c, d; abort tombstone blocks late commit.",
+      "expected_evidence": "Kill tests at INTENT, SENT, post-commit and pre-persist; abort yields receipt or tombstone; late POST after tombstone never commits.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M08",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T22"
+      ],
+      "suggested_test": "tests/acceptance/test_r094_every_attempt_state_resolves_to_one_truthful_out.py"
     },
     {
       "id": "R095",
-      "milestone": "M08",
       "category": "recovery",
-      "requirement": "Conflicts and expired unknown outcomes escalate truthfully",
-      "blocking_for_v1": true,
+      "requirement": "Conflicts and deadline expiry escalate truthfully",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "CONFLICT and escalation-deadline expiry reach ESCALATED; reconciliation continues.",
+      "expected_evidence": "CONFLICT and escalation deadline reach ESCALATED; reconciliation continues; late evidence moves to SUCCEEDED/FAILED.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M08",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T22"
+      ],
+      "suggested_test": "tests/acceptance/test_r095_conflicts_and_deadline_expiry_escalate_truthfull.py"
     },
     {
       "id": "R096",
-      "milestone": "M02",
       "category": "destination",
-      "requirement": "Destination recomputes payload hash and accepts only the executor identity",
-      "blocking_for_v1": true,
+      "requirement": "Destination key table is atomic, permanent and executor-only",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "Caller-supplied hash ignored; worker/API tokens get 403.",
+      "expected_evidence": "Concurrent POST/abort on one key yield one state; hash recomputed; keys never deleted; non-executor tokens 403.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M02",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T10"
+      ],
+      "suggested_test": "tests/acceptance/test_r096_destination_key_table_is_atomic_permanent_and_ex.py"
     },
     {
       "id": "R097",
-      "milestone": "M09",
       "category": "evaluation",
-      "requirement": "Development scenario cards run as executable state-asserting tests",
-      "blocking_for_v1": true,
+      "requirement": "30 development cards run as state-asserting tests",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "All 32 cards in pytest with oracles on application and destination state.",
+      "expected_evidence": "All cards except DEV-013 and DEV-032 executable; cards join as capabilities land (T24, T27, T29, T32).",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M09",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T24",
+        "T27",
+        "T29",
+        "T32"
+      ],
+      "suggested_test": "tests/acceptance/test_r097_30_development_cards_run_as_state_asserting_test.py"
     },
     {
       "id": "R098",
-      "milestone": "M12",
       "category": "security",
       "requirement": "Fault-injection hooks are unreachable outside the test profile",
-      "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "Default and demo profiles return 404 for hook routes; factory refuses to start without PROFILE=test.",
+      "expected_evidence": "Hook routes 404 in default and demo profiles; factories refuse to start without PROFILE=test.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M04",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T13"
+      ],
+      "suggested_test": "tests/acceptance/test_r098_fault_injection_hooks_are_unreachable_outside_th.py"
     },
     {
       "id": "R099",
-      "milestone": "M06",
       "category": "retrieval",
       "requirement": "Evidence corpus is large enough to measure retrieval",
-      "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": ">=12 documents of 300-900 words, >=6 assets, per-section hashes, superseded/conflicting/injected sources.",
+      "expected_evidence": ">=12 documents of 300-900 words, >=6 assets, per-section hashes, tenant/alert UUID fixtures, superseded/conflicting/injected sources.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M06",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T17"
+      ],
+      "suggested_test": "tests/acceptance/test_r099_evidence_corpus_is_large_enough_to_measure_retri.py"
     },
     {
       "id": "R100",
-      "milestone": "M08",
       "category": "security",
-      "requirement": "A write handle cannot execute another run's proposal",
-      "blocking_for_v1": true,
+      "requirement": "A write or recovery handle cannot act on another run's proposal",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "suggested_test": null,
-      "expected_evidence": "Valid handle for run X with proposal of run Y (same or other tenant) writes nothing.",
+      "expected_evidence": "Valid handle for run X with a proposal of run Y (any tenant) writes nothing.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
-      "source": "SPEC_AMENDMENTS.md"
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M08",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T21"
+      ],
+      "suggested_test": "tests/acceptance/test_r100_a_write_or_recovery_handle_cannot_act_on_another.py"
+    },
+    {
+      "id": "R101",
+      "category": "environment",
+      "requirement": "Development environment starts from a clean clone with one command",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Dev profile (PostgreSQL+pgvector, Keycloak, Ollama bridge) healthy on Windows; secrets generated outside git.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M01",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T05"
+      ],
+      "suggested_test": "tests/acceptance/test_r101_development_environment_starts_from_a_clean_clon.py"
+    },
+    {
+      "id": "R102",
+      "category": "security",
+      "requirement": "Workload clients receive correctly scoped tokens",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Each workload token carries the expected aud and azp; realm export contains no secrets.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M01",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T05"
+      ],
+      "suggested_test": "tests/acceptance/test_r102_workload_clients_receive_correctly_scoped_tokens.py"
+    },
+    {
+      "id": "R103",
+      "category": "ci",
+      "requirement": "Secret-free CI runs from the first code task",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Lint, type and unit jobs green on push/PR with pinned action SHAs and read-only token.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M01",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T06"
+      ],
+      "suggested_test": "tests/acceptance/test_r103_secret_free_ci_runs_from_the_first_code_task.py"
+    },
+    {
+      "id": "R104",
+      "category": "contracts",
+      "requirement": "Schemas, examples and fixtures match the 1.2 contract",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "verify_handoff.py --contracts passes including AM-80 negative probes.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M01",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T07"
+      ],
+      "suggested_test": "tests/acceptance/test_r104_schemas_examples_and_fixtures_match_the_1_2_cont.py"
+    },
+    {
+      "id": "R105",
+      "category": "architecture",
+      "requirement": "A walking skeleton crosses every service before hardening",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "One e2e test: run -> job -> worker -> mcp-server -> incident-sim -> receipt -> event.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M01",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T08"
+      ],
+      "suggested_test": "tests/acceptance/test_r105_a_walking_skeleton_crosses_every_service_before_.py"
+    },
+    {
+      "id": "R106",
+      "category": "security",
+      "requirement": "Definer functions are hardened and tenant-isolated",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "search_path fixed, PUBLIC execute revoked, owner is not a table owner, FORCE RLS; cross-tenant access through functions fails.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M02",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T09"
+      ],
+      "suggested_test": "tests/acceptance/test_r106_definer_functions_are_hardened_and_tenant_isolat.py"
+    },
+    {
+      "id": "R107",
+      "category": "concurrency",
+      "requirement": "Fenced writes lock the lease row and follow one lock order",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Two-connection interleaving and stress tests: stale writes abort, no deadlocks, clock_timestamp-based expiry.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M04",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T13"
+      ],
+      "suggested_test": "tests/acceptance/test_r107_fenced_writes_lock_the_lease_row_and_follow_one_.py"
+    },
+    {
+      "id": "R108",
+      "category": "workflow",
+      "requirement": "Graphs persist synchronously and resume from the stored checkpoint",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "durability=sync asserted; resume uses runs.checkpoint_id; a stray newer head is ignored.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M07",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T20"
+      ],
+      "suggested_test": "tests/acceptance/test_r108_graphs_persist_synchronously_and_resume_from_the.py"
+    },
+    {
+      "id": "R109",
+      "category": "recovery",
+      "requirement": "A transport timeout during create_incident cannot hide a grant",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Timeout path takes the lease lock, bumps the fence, reads the grant; late grant impossible afterwards.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M08",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T22"
+      ],
+      "suggested_test": "tests/acceptance/test_r109_a_transport_timeout_during_create_incident_canno.py"
+    },
+    {
+      "id": "R110",
+      "category": "safety",
+      "requirement": "Unresolved actions block duplicate incidents for the same asset and interval",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Second run for the same asset/overlapping interval cannot freeze or grant while one is unresolved.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M08",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T22"
+      ],
+      "suggested_test": "tests/acceptance/test_r110_unresolved_actions_block_duplicate_incidents_for.py"
+    },
+    {
+      "id": "R111",
+      "category": "evaluation",
+      "requirement": "Development evaluation set has gold labels and calibrated graders",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "~60 labelled dev cases; deterministic graders unit-tested; groundedness rubric documented.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M09",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T23"
+      ],
+      "suggested_test": "tests/acceptance/test_r111_development_evaluation_set_has_gold_labels_and_c.py"
+    },
+    {
+      "id": "R112",
+      "category": "deployment",
+      "requirement": "Cluster NetworkPolicy is actually enforced (optional)",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "kind default CNI; denied pod-to-pod paths observed.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M15",
+      "blocking_for_v1": false,
+      "owning_tasks": [
+        "T35"
+      ],
+      "suggested_test": "tests/acceptance/test_r112_cluster_networkpolicy_is_actually_enforced_optio.py"
+    },
+    {
+      "id": "R113",
+      "category": "feedback",
+      "requirement": "Feedback is recorded without changing runtime behaviour",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Feedback endpoint stores classified feedback, emits feedback.recorded, alters no prompt/policy/permission.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M08",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T21"
+      ],
+      "suggested_test": "tests/acceptance/test_r113_feedback_is_recorded_without_changing_runtime_be.py"
+    },
+    {
+      "id": "R114",
+      "category": "workflow",
+      "requirement": "Read-only answers complete as ANSWERED without proposals",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Answer path cites evidence, creates no proposal or grant, ends ANSWERED.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M07",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T20"
+      ],
+      "suggested_test": "tests/acceptance/test_r114_read_only_answers_complete_as_answered_without_p.py"
+    },
+    {
+      "id": "R115",
+      "category": "api",
+      "requirement": "Errors use the safe schema and documented status mapping",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Tests for 401/403/404/409/422/429/503 cases; no stack traces or unauthorized IDs.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M03",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T12"
+      ],
+      "suggested_test": "tests/acceptance/test_r115_errors_use_the_safe_schema_and_documented_status.py"
+    },
+    {
+      "id": "R116",
+      "category": "approval",
+      "requirement": "Stale asset observations block the grant",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Asset status older than 5 minutes at grant -> BLOCKED_REVIEW.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M08",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T21"
+      ],
+      "suggested_test": "tests/acceptance/test_r116_stale_asset_observations_block_the_grant.py"
+    },
+    {
+      "id": "R117",
+      "category": "ui",
+      "requirement": "The eight v1 UI states are rendered truthfully",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Playwright assertion per AM-40 state.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "milestone": "M10",
+      "blocking_for_v1": true,
+      "owning_tasks": [
+        "T26"
+      ],
+      "suggested_test": "tests/acceptance/test_r117_the_eight_v1_ui_states_are_rendered_truthfully.py"
     }
   ]
 }

@@ -37,3 +37,9 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   - single-writer checkpoint profile (R021 open);
   - no Kubernetes deployment claim;
   - owner-authored rather than third-party holdout.
+
+## Update — OPS-BUILD-1.2 (2026-10-06)
+
+- The plan was revised after a second adversarial review (`docs/reviews/plan-review-2026-10-06.md`).
+- Still **no target capability implemented**. All of R001–R117 are `NOT_RUN`.
+- Schemas, examples and fixtures still describe 1.0 until T07.

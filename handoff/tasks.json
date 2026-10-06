@@ -1,51 +1,35 @@
 {
-  "specification": "OPS-BUILD-1.1 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "specification": "OPS-BUILD-1.2 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
   "current_milestone": "M00",
-  "note": "Dependency graph (not a serial chain). Requirements sit in the milestone where they first become testable. M15 is optional and must not block v1. See SPEC_AMENDMENTS.md AM-60.",
+  "note": "Dependency graph (renumbered in 1.2). Requirements sit with the first task able to test them; R097 accrues across T24/T27/T29/T32. M15 is optional. See SPEC_AMENDMENTS.md AM-60.",
   "milestones": [
     {
       "id": "M00",
-      "title": "Baseline, environment and model probe",
+      "title": "Baseline, environment, model probe and sealed holdout",
       "required_for_v1": true,
       "task_ids": [
         "T01",
-        "T02"
+        "T02",
+        "T03"
       ],
       "status": "PLANNED"
     },
     {
       "id": "M01",
-      "title": "Workspace, contracts and toolchain",
+      "title": "Workspace, bootstrap, contracts and walking skeleton",
       "required_for_v1": true,
       "task_ids": [
-        "T03",
-        "T04"
-      ],
-      "status": "PLANNED"
-    },
-    {
-      "id": "M02",
-      "title": "PostgreSQL foundations and independent destination",
-      "required_for_v1": true,
-      "task_ids": [
+        "T04",
         "T05",
-        "T06"
-      ],
-      "status": "PLANNED"
-    },
-    {
-      "id": "M03",
-      "title": "Identity and durable admission API",
-      "required_for_v1": true,
-      "task_ids": [
+        "T06",
         "T07",
         "T08"
       ],
       "status": "PLANNED"
     },
     {
-      "id": "M04",
-      "title": "Run leases, event journal and outbox",
+      "id": "M02",
+      "title": "PostgreSQL authority model and independent destination",
       "required_for_v1": true,
       "task_ids": [
         "T09",
@@ -54,8 +38,8 @@
       "status": "PLANNED"
     },
     {
-      "id": "M05",
-      "title": "Authenticated MCP boundary",
+      "id": "M03",
+      "title": "Identity, sessions and durable admission",
       "required_for_v1": true,
       "task_ids": [
         "T11",
@@ -64,8 +48,8 @@
       "status": "PLANNED"
     },
     {
-      "id": "M06",
-      "title": "Evidence corpus and retrieval",
+      "id": "M04",
+      "title": "Run leases, fencing, event journal and outbox",
       "required_for_v1": true,
       "task_ids": [
         "T13",
@@ -74,8 +58,8 @@
       "status": "PLANNED"
     },
     {
-      "id": "M07",
-      "title": "LangChain draft node and LangGraph workflow",
+      "id": "M05",
+      "title": "Authenticated MCP boundary",
       "required_for_v1": true,
       "task_ids": [
         "T15",
@@ -84,8 +68,8 @@
       "status": "PLANNED"
     },
     {
-      "id": "M08",
-      "title": "Independent review, grant and outcome recovery",
+      "id": "M06",
+      "title": "Evidence corpus and retrieval",
       "required_for_v1": true,
       "task_ids": [
         "T17",
@@ -94,8 +78,8 @@
       "status": "PLANNED"
     },
     {
-      "id": "M09",
-      "title": "Scenario suite and model-quality evaluation",
+      "id": "M07",
+      "title": "LangChain draft node and LangGraph workflow",
       "required_for_v1": true,
       "task_ids": [
         "T19",
@@ -104,8 +88,8 @@
       "status": "PLANNED"
     },
     {
-      "id": "M10",
-      "title": "Web workspace",
+      "id": "M08",
+      "title": "Independent review, grant, execution and recovery",
       "required_for_v1": true,
       "task_ids": [
         "T21",
@@ -114,37 +98,29 @@
       "status": "PLANNED"
     },
     {
-      "id": "M11",
-      "title": "Observability and operating budgets",
+      "id": "M09",
+      "title": "Scenario suite and model-quality evaluation",
       "required_for_v1": true,
       "task_ids": [
         "T23",
-        "T24"
+        "T24",
+        "T25"
       ],
       "status": "PLANNED"
     },
     {
-      "id": "M12",
-      "title": "Containers, network isolation and CI",
+      "id": "M10",
+      "title": "Web workspace",
       "required_for_v1": true,
       "task_ids": [
-        "T25",
-        "T26"
-      ],
-      "status": "PLANNED"
-    },
-    {
-      "id": "M13",
-      "title": "Retained-receipt restore",
-      "required_for_v1": true,
-      "task_ids": [
+        "T26",
         "T27"
       ],
       "status": "PLANNED"
     },
     {
-      "id": "M14",
-      "title": "Portfolio release",
+      "id": "M11",
+      "title": "Observability and operating budgets",
       "required_for_v1": true,
       "task_ids": [
         "T28",
@@ -153,16 +129,45 @@
       "status": "PLANNED"
     },
     {
+      "id": "M12",
+      "title": "Containers, network isolation and full CI",
+      "required_for_v1": true,
+      "task_ids": [
+        "T30",
+        "T31"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M13",
+      "title": "Retained-receipt restore",
+      "required_for_v1": true,
+      "task_ids": [
+        "T32"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "M14",
+      "title": "Portfolio release",
+      "required_for_v1": true,
+      "task_ids": [
+        "T33",
+        "T34"
+      ],
+      "status": "PLANNED"
+    },
+    {
       "id": "M15",
       "title": "Optional v1.1+ extensions (non-blocking)",
       "required_for_v1": false,
       "task_ids": [
-        "T30",
-        "T31",
-        "T32",
-        "T33",
-        "T34",
-        "T35"
+        "T35",
+        "T36",
+        "T37",
+        "T38",
+        "T39",
+        "T40"
       ],
       "status": "PLANNED"
     }
@@ -172,7 +177,7 @@
       "id": "T01",
       "milestone": "M00",
       "title": "Reproduce reference baseline on this machine",
-      "instructions": "In an isolated uv environment with the reference's web+test extras, run the 58-test suite and the recovery CLI on Windows. Record versions, results and any failures in reports/baseline/. Do not modify reference code.",
+      "instructions": "Isolated uv venv with the reference web+test extras; run the 58 tests and the recovery CLI on Windows; save outputs under reports/baseline/. Do not modify reference code.",
       "depends_on": [],
       "requirement_ids": [
         "R001",
@@ -180,17 +185,16 @@
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "58-test result and CLI output saved under reports/baseline/ with exact command and environment.",
-        "Any failure recorded verbatim; no test skipped or edited to pass.",
-        "STATUS.md states reference vs target capability honestly."
+        "58-test result and CLI output saved with exact commands and environment.",
+        "Failures recorded verbatim; nothing skipped or edited to pass."
       ],
       "external_approval_required": false
     },
     {
       "id": "T02",
       "milestone": "M00",
-      "title": "Inventory environment and probe qwen3:8b",
-      "instructions": "Record hardware, Docker, Ollama and installed models. Run the AM-31 probe: >=30 schema-constrained calls with thinking disabled and explicit num_ctx; record JSON/schema validity, latency p50/p95, peak VRAM and model digest.",
+      "title": "Environment inventory and qwen3:8b probe",
+      "instructions": "Per AM-31: >=30 structured calls (reasoning=False, num_ctx=16384); first-pass and post-repair validity with Wilson CIs; latency; VRAM; thinking leakage; mid-generation cancellation behaviour via `ollama ps`/GPU.",
       "depends_on": [
         "T01"
       ],
@@ -199,17 +203,33 @@
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "reports/model-probe-qwen3-8b.md contains measured rates with denominators, parameters and digest.",
-        "Thinking-disabled behaviour verified, not assumed.",
-        "Owner decision raised if schema-valid rate < 90%."
+        "reports/model-probe-qwen3-8b.md with measured rates, denominators, CIs, digest and parameters.",
+        "Cancellation behaviour measured and the model_permit release rule chosen accordingly.",
+        "Owner decision on proceeding recorded."
       ],
       "external_approval_required": false
     },
     {
       "id": "T03",
+      "milestone": "M00",
+      "title": "Owner authors and seals the holdout set",
+      "instructions": "Owner writes ~25 holdout cases without AI assistance, stores them off-machine or encrypted, commits only sha256 and count, and drafts quality-gates.json structure (AM-50).",
+      "depends_on": [],
+      "requirement_ids": [
+        "R071"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "evals/holdout.sha256 and count committed before any prompt tuning (git history proves order).",
+        "No holdout content in the repo or agent-readable paths."
+      ],
+      "external_approval_required": true
+    },
+    {
+      "id": "T04",
       "milestone": "M01",
-      "title": "Create uv workspace with per-service directories and locks",
-      "instructions": "Implement ADR-0001 layout (core/, api/, worker/, mcp-server/, asset-sim/, incident-sim/). Resolve versions from official sources, commit uv.lock, add ruff, mypy and pytest wiring and a single `make check` / script entry point.",
+      "title": "uv workspace with per-service directories and locks",
+      "instructions": "ADR-0001 layout (core/, api/, worker/, mcp-server/, asset-sim/, incident-sim/); resolve versions per AM-30; commit uv.lock; ruff, mypy, pytest via one command.",
       "depends_on": [
         "T02"
       ],
@@ -218,177 +238,234 @@
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "`uv sync --locked` succeeds from a clean clone; lockfile committed.",
-        "ruff + mypy + pytest run green on the empty skeleton via one command.",
-        "Each service directory has README stating ownership and trust boundary."
-      ],
-      "external_approval_required": false
-    },
-    {
-      "id": "T04",
-      "milestone": "M01",
-      "title": "Implement contracts, canonical bytes and state machine in core",
-      "instructions": "Pydantic contracts from schemas with AM-14/AM-15 fixes and tool input schemas; canonical JSON v1; transition table incl. ESCALATED as data with one enforcing function; port the 58 reference behaviours as core tests.",
-      "depends_on": [
-        "T03"
-      ],
-      "requirement_ids": [
-        "R004",
-        "R005",
-        "R082",
-        "R083"
-      ],
-      "status": "PLANNED",
-      "definition_of_done": [
-        "Property tests (Hypothesis) show canonical bytes stable and authority fields rejected.",
-        "Every allowed transition tested; every disallowed transition rejected.",
-        "Schema if/then rules reject model-asserted outcomes and envelope/data contradictions.",
-        "Reference behaviours re-expressed as core tests and passing."
+        "`uv sync --locked` succeeds from a clean clone.",
+        "One command runs ruff + mypy + pytest green on the skeleton.",
+        "Each service README states ownership and trust boundary."
       ],
       "external_approval_required": false
     },
     {
       "id": "T05",
-      "milestone": "M02",
-      "title": "PostgreSQL migrations, roles, RLS and security-definer functions",
-      "instructions": "Alembic migrations for tenants, memberships, conversations, messages, runs (incl. next_event_seq), run_lease, jobs, events, outbox, proposals, decisions, execution_grant, action_attempt, idempotency. Roles migrator/api/worker/mcp_exec; RLS on api; checkpoints schema; resolve_invocation and grant_execution as SECURITY DEFINER.",
+      "milestone": "M01",
+      "title": "Dev bootstrap: Compose dev profile, Keycloak realm, secrets, seed IDs",
+      "instructions": "Compose dev profile with PostgreSQL+pgvector and Keycloak 26.8.x (pinned digest); realm export with 5 personas, workload clients and hardcoded-audience mappers (mcp-server resource URL, incident-sim); view-users service account; Windows-friendly secret generation outside git; seeded tenant/persona UUIDs; host Ollama bridge.",
       "depends_on": [
         "T04"
+      ],
+      "requirement_ids": [
+        "R101",
+        "R102"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "One command brings up the dev profile from a clean clone on Windows.",
+        "Tokens for each workload client carry the expected aud and azp (asserted).",
+        "No secret committed; generated secrets live in an ignored file."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T06",
+      "milestone": "M01",
+      "title": "Early secret-free CI",
+      "instructions": "GitHub Actions workflow for ruff, mypy and unit tests with pinned action SHAs and read-only token; requires the public repo to exist.",
+      "depends_on": [
+        "T04"
+      ],
+      "requirement_ids": [
+        "R103"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "CI runs on push and PR in jschnepel/MLOps and is green.",
+        "No secrets or privileged contexts used."
+      ],
+      "external_approval_required": true
+    },
+    {
+      "id": "T07",
+      "milestone": "M01",
+      "title": "Contracts, state machine, schema alignment and reference migration",
+      "instructions": "Pydantic contracts; canonical JSON v1; transition table incl. ESCALATED; apply every AM-80 schema/example/fixture change; port the 58 reference behaviours as core tests; move src/operations_copilot to reference/ unchanged.",
+      "depends_on": [
+        "T04"
+      ],
+      "requirement_ids": [
+        "R004",
+        "R005",
+        "R082",
+        "R083",
+        "R104"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "`verify_handoff.py --contracts` passes with the AM-80 negative probes.",
+        "Every allowed transition tested; disallowed ones rejected.",
+        "Reference behaviours pass as core tests; reference/ byte-identical to the original."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T08",
+      "milestone": "M01",
+      "title": "Walking skeleton across all services",
+      "instructions": "Fake model; real PostgreSQL and real HTTP: POST run -> job -> worker -> mcp-server (minimal auth) -> incident-sim -> receipt -> event. No hardening; proves wiring before depth.",
+      "depends_on": [
+        "T05",
+        "T07"
+      ],
+      "requirement_ids": [
+        "R105"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "One e2e test drives a run to SUCCEEDED across five processes.",
+        "Skeleton shortcuts are listed in SESSION_STATE.md as debt with owning tasks."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T09",
+      "milestone": "M02",
+      "title": "Migrations, roles, RLS and hardened definer functions",
+      "instructions": "Alembic schema (incl. run_lease, runs.next_event_seq, runs.checkpoint_id, execution_grant.run_id UNIQUE, action_attempt, sessions); roles per AM-02; FORCE RLS; app_definer-owned SECURITY DEFINER functions with fixed search_path and REVOKE FROM PUBLIC; app.current_time().",
+      "depends_on": [
+        "T08"
       ],
       "requirement_ids": [
         "R006",
         "R007",
         "R008",
         "R009",
-        "R084"
+        "R084",
+        "R106"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Migrations up/down on real PostgreSQL in tests.",
-        "Cross-tenant reads/child references fail as api role; pooled connections do not leak tenant.",
-        "mcp_exec SELECT on any table is permission denied; functions are its only access."
+        "Migrations up/down on real PostgreSQL.",
+        "mcp_exec cannot SELECT any table; definer path cannot cross tenants.",
+        "Pooled connections do not leak tenant context."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T06",
+      "id": "T10",
       "milestone": "M02",
-      "title": "Independent incident-sim destination with atomic receipts and abort",
-      "instructions": "Separate service + database: POST /internal/incidents (atomic incident+receipt, recomputed hash), GET /internal/actions/{id}, POST /internal/actions/{id}/abort tombstone; executor-audience auth; test-only fault hooks.",
+      "title": "incident-sim destination with action_key table",
+      "instructions": "Single action_key table; INSERT .. ON CONFLICT for incidents and abort; recomputed hash; never-expiring keys; incident-sim audience auth; test-only fault factory.",
       "depends_on": [
-        "T04"
+        "T08"
       ],
       "requirement_ids": [
         "R010",
         "R047",
-        "R049",
         "R096"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Concurrent same-key submissions commit exactly one incident.",
-        "Same key + different bytes returns CONFLICT; caller-supplied hash ignored.",
-        "Abort tombstone blocks a late commit; worker/API tokens get 403."
+        "Concurrent same-key POSTs and POST-vs-abort races yield exactly one terminal key state.",
+        "Different hash under an existing key returns CONFLICT; worker/API tokens get 403."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T07",
+      "id": "T11",
       "milestone": "M03",
-      "title": "Keycloak OIDC with backend sessions and current membership",
-      "instructions": "Local Keycloak realm (5 personas, workload clients with audience mappers); authlib code+PKCE flow; opaque HttpOnly session, CSRF, origin checks; back-channel logout and periodic IdP status check; membership read from app tables.",
+      "title": "Keycloak login, server-side sessions and revocation",
+      "instructions": "authlib code+PKCE with state in the server-side session store; opaque hashed session IDs; CSRF and origin checks; hand-written back-channel logout endpoint; admin-API enabled check on decision-class mutations; 60 s membership sync.",
       "depends_on": [
+        "T09",
         "T05"
       ],
       "requirement_ids": [
         "R011",
         "R012",
         "R013",
-        "R014",
         "R086"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Negative tests: bad state/nonce/aud/iss, missing CSRF, revoked membership, disabled IdP user -> 401/403.",
-        "No tokens in URLs, browser storage or logs (asserted).",
-        "Realm export committed without secrets; dev secrets generated locally."
+        "Negative tests for state/nonce/iss/aud, CSRF, revoked membership.",
+        "Disabled user: next decision-class mutation 401; grants blocked within 60 s.",
+        "Back-channel logout token validation incl. jti replay."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T08",
+      "id": "T12",
       "milestone": "M03",
-      "title": "Versioned durable admission API",
-      "instructions": "/api/v1 conversations, messages, runs; admission commits message+run+job+event in one transaction before 202; scoped Idempotency-Key (24 h window); one active run per conversation; relative interval resolved once with DB now().",
+      "title": "Durable admission API and error mapping",
+      "instructions": "/api/v1 conversations/messages/runs; message+run+job+event committed before 202; scoped Idempotency-Key (24 h); one active run per conversation; interval resolved once; safe error schema and 401/403/404/409/422/429/503 mapping.",
       "depends_on": [
-        "T07"
+        "T09"
       ],
       "requirement_ids": [
         "R015",
         "R016",
         "R017",
-        "R018"
+        "R018",
+        "R115"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Fault test: crash before commit leaves no ack; after commit job exists.",
-        "Same key/same body replays result; different body 409.",
-        "Second active run in a conversation is refused."
+        "Crash-before-commit leaves no ack; after commit the job exists.",
+        "Replay same body returns same result; different body 409.",
+        "Each status code has a test proving the mapping."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T09",
+      "id": "T13",
       "milestone": "M04",
-      "title": "Run-level lease, fence and independent heartbeat",
-      "instructions": "run_lease acquisition with fence increment; all run mutations fence-checked; heartbeat as independent task; on lease loss cancel model/tool calls and revoke handles; model_permit semaphore; sweeper reclaims expired leases.",
-      "depends_on": [
-        "T08"
-      ],
-      "requirement_ids": [
-        "R019",
-        "R020",
-        "R022",
-        "R087",
-        "R088"
-      ],
-      "status": "PLANNED",
-      "definition_of_done": [
-        "Two workers racing one run: only the current fence writes (resume job vs original job case included).",
-        "Slow fake drafter (>30 s) keeps lease via heartbeat; forced heartbeat failure cancels it.",
-        "Human waits hold no lease or transaction."
-      ],
-      "external_approval_required": false
-    },
-    {
-      "id": "T10",
-      "milestone": "M04",
-      "title": "Gap-free event journal, wake-ups and outbox",
-      "instructions": "Per-run sequence from runs.next_event_seq under row lock; decision/reply wake-up jobs committed atomically; sweeper re-enqueues lost wake-ups; transactional outbox with leased delivery loop (no external channel).",
+      "title": "Run lease, fence locking, heartbeat thread and fault factory",
+      "instructions": "Lease acquisition FOR UPDATE; fenced writes FOR SHARE; clock_timestamp via app.current_time(); published lock order; heartbeat on its own thread/connection; local monotonic deadline; model_permit with SKIP LOCKED; test-only fault factory for app services.",
       "depends_on": [
         "T09"
       ],
       "requirement_ids": [
-        "R023",
+        "R019",
+        "R020",
+        "R087",
+        "R088",
+        "R098",
+        "R107"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Two-connection interleaving test: stale fence write aborts.",
+        "Stress test shows no deadlock under the lock order.",
+        "Blocked event loop (25 s) does not lose the lease; forced renewal failure cancels work."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T14",
+      "milestone": "M04",
+      "title": "Gap-free event journal, wake-ups and outbox",
+      "instructions": "runs.next_event_seq under the runs lock; wake-up jobs committed with user events; sweeper; transactional outbox with leased delivery loop (no external channel).",
+      "depends_on": [
+        "T13",
+        "T12"
+      ],
+      "requirement_ids": [
         "R024",
         "R089"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Concurrent event writers produce gap-free, commit-ordered sequences.",
-        "Crash between decision commit and processing is recovered by the sweeper.",
+        "Concurrent writers yield gap-free commit-ordered sequences.",
         "Outbox rows deduplicated and leased; delivery result recorded separately."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T11",
+      "id": "T15",
       "milestone": "M05",
-      "title": "Authenticated MCP server/client and invocation handles",
-      "instructions": "mcp-server on official SDK 2.x over Streamable HTTP pinned to protocol 2026-07-28; workload token audience ops-mcp; X-Ops-Invocation handle bound to run fence; allowlist derived server-side via resolve_invocation; independent-process client tests.",
+      "title": "Authenticated MCP server, token verifier and invocation handles",
+      "instructions": "mcp 2.3.x over Streamable HTTP pinned to 2026-07-28; custom TokenVerifier (iss, aud resource URL, azp, exp); X-Ops-Invocation as lookup key only; resolve_invocation with azp binding and server-derived allowlist.",
       "depends_on": [
-        "T09",
-        "T07"
+        "T13",
+        "T05"
       ],
       "requirement_ids": [
         "R025",
@@ -399,20 +476,21 @@
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Real network client lists/calls tools from a separate process.",
-        "Wrong/missing aud, browser token, replayed/expired/other-run handle all rejected.",
-        "Worker-written allowlist cannot enable create_incident for a retrieval job."
+        "Independent-process client lists and calls tools.",
+        "Missing/wrong aud, browser token, replayed/expired/other-run/other-azp handle all rejected.",
+        "Protocol-version header/_meta mismatch rejected."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T12",
+      "id": "T16",
       "milestone": "M05",
-      "title": "Read tools, asset-sim and reconciliation-only receipt lookup",
-      "instructions": "asset-sim service; get_asset_status, get_recent_alerts (absolute interval, next_cursor), search_procedures stub over governed store; get_incident_receipt for reconciliation workload only; fail-closed result validation.",
+      "title": "Read tools, asset-sim and recovery tools",
+      "instructions": "asset-sim service; get_asset_status, get_recent_alerts (absolute interval, next_cursor), search_procedures over the governed store; get_incident_receipt and abort_incident for recover jobs only; fail-closed result validation.",
       "depends_on": [
-        "T11",
-        "T06"
+        "T15",
+        "T10",
+        "T17"
       ],
       "requirement_ids": [
         "R028",
@@ -421,18 +499,18 @@
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Cross-tenant asset reads denied; unexpected tools and malformed results fail closed.",
-        "Receipt lookup unavailable to normal/model workloads and cannot create actions."
+        "Cross-tenant reads denied; unexpected tools and malformed results fail closed.",
+        "Recovery tools unavailable to read/execute jobs and to any model-facing adapter."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T13",
+      "id": "T17",
       "milestone": "M06",
       "title": "Expanded corpus, governed ingestion and lexical baseline",
-      "instructions": "Author >=12 documents (300-900 words), >=6 assets, 2 tenants, incl. superseded, conflicting and injected-instruction sources; per-section IDs and hashes; idempotent ingestion; PostgreSQL full-text retrieval with access filtering.",
+      "instructions": "Author >=12 documents (300-900 words), >=6 assets, 2 tenants incl. superseded, conflicting and injected sources; per-section IDs/hashes; tenant UUID and alert UUID fixtures; idempotent ingestion; PostgreSQL full-text retrieval with access filtering.",
       "depends_on": [
-        "T12"
+        "T09"
       ],
       "requirement_ids": [
         "R032",
@@ -441,19 +519,19 @@
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Corpus and catalog committed with per-section sha256; ingestion idempotent.",
+        "Catalog with per-section sha256; ingestion idempotent.",
         "Superseded/expired/revoked sections never returned.",
-        "Lexical retrieval measured on labelled dev queries (with denominators)."
+        "Lexical retrieval measured on labelled dev queries with denominators."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T14",
+      "id": "T18",
       "milestone": "M06",
       "title": "Exact pgvector retrieval and comparison",
-      "instructions": "nomic-embed-text embeddings (record model, dimension, digest); exact search with the same access filters; comparison report against lexical on the same dev queries.",
+      "instructions": "nomic-embed-text with search_document:/search_query: prefixes (tested); record model, dimension, digest; exact search with the same filters; comparison report vs lexical.",
       "depends_on": [
-        "T13"
+        "T17"
       ],
       "requirement_ids": [
         "R034"
@@ -461,18 +539,19 @@
       "status": "PLANNED",
       "definition_of_done": [
         "reports/retrieval-comparison.md with recall@k for both methods, denominators and CIs.",
-        "Access filters applied before scores; no cross-tenant results."
+        "Prefix application asserted by a test."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T15",
+      "id": "T19",
       "milestone": "M07",
-      "title": "LangChain ChatOllama DraftGenerator",
-      "instructions": "Versioned prompts; ChatOllama with thinking disabled, num_ctx 16384, num_predict 1000, 60 s timeout; structural validation incl. citation membership; one bounded repair; explicit MODEL_MODE fake|ollama with no fallback.",
+      "title": "Async LangChain ChatOllama DraftGenerator",
+      "instructions": "Versioned prompts; ChatOllama.ainvoke with AM-31 settings; structural validation incl. citation membership; one bounded repair; explicit MODEL_MODE fake|ollama, no fallback.",
       "depends_on": [
-        "T02",
-        "T13"
+        "T07",
+        "T17",
+        "T02"
       ],
       "requirement_ids": [
         "R036",
@@ -483,178 +562,206 @@
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Recorded real-model run evidence (model digest, params, outputs).",
-        "Injected-instruction source cannot add tools/authority; invalid output -> bounded repair -> controlled failure.",
-        "Missing model fails clearly; fake mode labelled in every output."
+        "Recorded real-model run evidence (digest, params, outputs).",
+        "Injected source cannot add tools or authority; invalid output -> repair -> controlled failure."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T16",
+      "id": "T20",
       "milestone": "M07",
-      "title": "Explicit LangGraph workflow with durable pauses",
-      "instructions": "Nodes per BUILD_SPEC section 8 with retrieval before drafting; deterministic edges; clarification and approval interrupts carrying IDs/hashes only; nodes reread authoritative state; checkpoints in checkpoints schema.",
+      "title": "LangGraph workflow with sync durability and stored checkpoint IDs",
+      "instructions": "Nodes per BUILD_SPEC section 8; retrieval before drafting; durability=sync; runs.checkpoint_id stored under fence and used on resume; idempotent pre-interrupt logic; ID-only interrupts; human waits release the lease; ANSWERED path.",
       "depends_on": [
-        "T15",
-        "T10",
-        "T12"
-      ],
-      "requirement_ids": [
-        "R035",
-        "R038",
-        "R042",
-        "R091"
-      ],
-      "status": "PLANNED",
-      "definition_of_done": [
-        "Trace shows MCP reads complete before the draft node.",
-        "Pause/resume survives worker process restart.",
-        "Checkpoint blobs contain no evidence or proposal text (grep test)."
-      ],
-      "external_approval_required": false
-    },
-    {
-      "id": "T17",
-      "milestone": "M08",
-      "title": "Immutable proposals, independent decisions and final grant",
-      "instructions": "Per-revision proposal IDs; decision endpoint with expected hash; first decision wins; author-set independence; lazy+scheduled expiry to BLOCKED_REVIEW; grant_execution final gate with one active grant per run and proposal/run binding.",
-      "depends_on": [
+        "T19",
+        "T14",
         "T16"
       ],
       "requirement_ids": [
+        "R022",
+        "R038",
+        "R042",
+        "R091",
+        "R108",
+        "R114"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Trace shows MCP reads complete before drafting.",
+        "Pause/resume survives worker restart from the stored checkpoint_id; a newer stray head is ignored.",
+        "Checkpoint blobs contain no evidence or proposal text."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T21",
+      "milestone": "M08",
+      "title": "Proposals, decisions, manual proposals, feedback and final grant",
+      "instructions": "Per-revision proposal IDs; expected_payload_sha256; first decision wins; author-set independence; expiry to BLOCKED_REVIEW; manual-proposal API; feedback endpoint; grant_execution final gate with UNIQUE(run_id), proposal/run binding, asset freshness and asset guard.",
+      "depends_on": [
+        "T20",
+        "T11"
+      ],
+      "requirement_ids": [
+        "R023",
         "R043",
         "R044",
         "R045",
         "R046",
+        "R057",
         "R090",
         "R092",
         "R093",
-        "R100"
+        "R100",
+        "R113",
+        "R116"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Self-approval and reviewer-authored-revision approval denied.",
-        "Opposing/stale decisions 409; expired proposal blocked.",
-        "Revocation or cancellation before grant blocks dispatch; second grant for a run impossible.",
-        "Cross-run proposal_id with valid handle writes nothing."
+        "Self-approval and reviewer-authored-revision approval denied; opposing/stale decisions 409.",
+        "Revocation or cancellation before grant blocks dispatch; a second grant for a run is impossible.",
+        "Lost-wakeup crash between decision commit and processing recovered by the sweeper."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T18",
+      "id": "T22",
       "milestone": "M08",
-      "title": "Execution, crash-window recovery and escalation",
-      "instructions": "action_attempt INTENT/SENT/RESOLVED; recovery for windows a-d; same-key redispatch or abort per AM-13; bounded reconciliation backoff; CONFLICT and expired unknown -> ESCALATED; receipt retention.",
+      "title": "Attempt protocol, recovery, abort and escalation",
+      "instructions": "grant inserts INTENT; mark_sent before I/O; record_outcome; recover jobs with redispatch/abort rules; reconciliation backoff; transport-timeout rule; CONFLICT and deadlines to ESCALATED; asset guard; receipt retention.",
       "depends_on": [
-        "T17",
-        "T12",
-        "T06"
+        "T21"
       ],
       "requirement_ids": [
         "R048",
+        "R049",
         "R050",
         "R051",
         "R094",
-        "R095"
+        "R095",
+        "R109",
+        "R110"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Kill tests at each of windows a, b, c, d end with exactly one matching incident or an authoritative abort.",
-        "Missing receipt never becomes FAILED without tombstone/rejection.",
-        "Hash conflict escalates; never success."
+        "Kill tests at INTENT, SENT, post-commit and pre-persist each end with one matching incident or an authoritative abort.",
+        "Timeout during create_incident resolves via the lease-lock read.",
+        "Hash conflict escalates; never success; escalated action blocks a duplicate for the same asset/interval."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T19",
+      "id": "T23",
       "milestone": "M09",
-      "title": "Executable deterministic scenario suite",
-      "instructions": "Convert the 32 development scenario cards into pytest scenarios with oracles asserting final application and destination state; run on every PR.",
+      "title": "Development eval set, gold labels and rubric",
+      "instructions": "~60 dev cases over the expanded corpus with gold labels; deterministic graders for schema, citations and abstention; groundedness rubric for owner labelling.",
       "depends_on": [
-        "T18"
+        "T17"
+      ],
+      "requirement_ids": [
+        "R111"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "evals/dev/ cases and labels committed; graders unit-tested.",
+        "Rubric with worked examples and inter-trial labelling instructions."
+      ],
+      "external_approval_required": false
+    },
+    {
+      "id": "T24",
+      "milestone": "M09",
+      "title": "Executable scenario suite (core cards)",
+      "instructions": "Convert the development cards whose capabilities exist after T22 into pytest scenarios asserting application and destination state; run in CI.",
+      "depends_on": [
+        "T22"
       ],
       "requirement_ids": [
         "R097"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "All 32 cards executable; oracle failures point to state, not prose.",
-        "Suite runs in under 10 minutes in fake model mode."
+        "Core cards executable in fake mode in under 10 minutes.",
+        "Remaining cards listed with their owning tasks (T27, T29, T32)."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T20",
+      "id": "T25",
       "milestone": "M09",
-      "title": "Model-quality evaluation with owner-authored holdout",
-      "instructions": "~60 dev cases; ~25 owner-authored holdout cases kept outside the repo with committed sha256; quality-gates.json committed before first holdout run; 3 isolated trials; conditions manual/RAG/orchestrated; Wilson 95% CIs.",
+      "title": "Model-quality evaluation A/B/C",
+      "instructions": "Conditions per AM-50; 3 isolated trials; case-level Wilson CIs, cluster bootstrap, paired McNemar; quality-gates.json committed before the holdout run; holdout run once per release candidate.",
       "depends_on": [
+        "T22",
         "T18",
-        "T14"
+        "T23",
+        "T03"
       ],
       "requirement_ids": [
         "R070",
-        "R071",
         "R072",
         "R073",
         "R074"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "reports/eval/ contains per-condition rates with denominators and CIs.",
-        "Holdout hash and gates commit predate the holdout run (git history).",
-        "Unset gates or any unauthorized write blocks release."
+        "reports/eval/ with per-condition rates, denominators, CIs and test statistics.",
+        "Gates commit predates the holdout run; any unauthorized write blocks release."
       ],
-      "external_approval_required": true
+      "external_approval_required": false
     },
     {
-      "id": "T21",
+      "id": "T26",
       "milestone": "M10",
       "title": "React workspace: conversation, evidence and approvals",
-      "instructions": "Vite + React + TS; three panels; the eight AM-40 states; escaped/approved markdown; authorized evidence viewer; approval card bound to revision/hash; manual proposal path.",
+      "instructions": "Vite + React + TS; three panels; the eight AM-40 states; safe rendering; authorized evidence viewer; approval card bound to revision/hash; manual proposal UI.",
       "depends_on": [
-        "T18"
+        "T22",
+        "T11"
       ],
       "requirement_ids": [
+        "R014",
+        "R035",
         "R052",
         "R055",
         "R056",
-        "R057"
+        "R117"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Playwright: requester flow, independent reviewer approval, stale card disabled.",
-        "Malicious content does not execute; keyboard-only approval works."
+        "Playwright covers requester flow, independent approval, stale card and each of the eight states.",
+        "No credentials in browser storage or URLs; malicious content inert; keyboard-only approval works."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T22",
+      "id": "T27",
       "milestone": "M10",
-      "title": "Authenticated SSE replay and revocation",
-      "instructions": "Last-Event-ID replay from gap-free sequences; heartbeat; cursor reset snapshot; access recheck on every frame; identity change closes stream.",
+      "title": "Authenticated SSE replay and revocation (+ SSE cards)",
+      "instructions": "Last-Event-ID replay; heartbeats; cursor-reset snapshot; access recheck per frame; identity change closes stream; ESCALATED runs stay live; add SSE scenario cards.",
       "depends_on": [
-        "T21",
-        "T10"
+        "T26",
+        "T14"
       ],
       "requirement_ids": [
         "R053",
-        "R054"
+        "R054",
+        "R097"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Reconnect replays without duplicates or gaps.",
-        "Revoked membership/source stops the stream and redacts evidence."
+        "Reconnect replays without gaps or duplicates.",
+        "Revocation stops the stream and redacts evidence; SSE cards pass."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T23",
+      "id": "T28",
       "milestone": "M11",
       "title": "OpenTelemetry tracing with redaction",
-      "instructions": "OTel SDK in api/worker/mcp-server; collector + one trace backend; bounded metric labels; redaction tests for tokens, handles and evidence text.",
+      "instructions": "OTel in api, worker, mcp-server, incident-sim; collector + one trace backend; bounded labels; redaction of tokens, handles and evidence.",
       "depends_on": [
-        "T18"
+        "T22"
       ],
       "requirement_ids": [
         "R058",
@@ -663,120 +770,122 @@
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "One run correlated across api, worker, mcp-server and incident-sim in a saved trace.",
+        "Saved trace correlates one run across all services.",
         "Secret-bearing fields absent from exported telemetry (asserted)."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T24",
+      "id": "T29",
       "milestone": "M11",
-      "title": "Budgets and degraded operation",
-      "instructions": "Queue/model/time/retry caps from BUILD_SPEC section 17; dependency outage behaviour with templated messages; capacity measurement on the owner's hardware.",
+      "title": "Budgets and degraded operation (+ budget cards)",
+      "instructions": "Queue/model/time/retry caps; dependency outages produce templated truthful states; capacity measured on the owner's hardware; add budget scenario cards.",
       "depends_on": [
-        "T23"
+        "T28"
       ],
       "requirement_ids": [
         "R061",
-        "R062"
+        "R062",
+        "R097"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Ollama/MCP/destination outages produce truthful states.",
+        "Outage tests for Ollama, MCP and destination.",
         "reports/capacity.md with measured limits on named hardware."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T25",
+      "id": "T30",
       "milestone": "M12",
-      "title": "Hardened images, Compose profiles and network isolation",
-      "instructions": "Multi-stage non-root images from uv.lock; compose profiles (test, demo); docker networks enforce model-to-destination and browser-to-internal denial; test-only fault factory; docker-kill worker recovery demo.",
+      "title": "Hardened images, demo profile and Docker network isolation",
+      "instructions": "Multi-stage non-root images from uv.lock; Compose test/demo profiles (one worker replica); Docker networks deny model->destination and browser->internal; docker-kill recovery demo.",
       "depends_on": [
-        "T18"
+        "T22"
       ],
       "requirement_ids": [
         "R063",
         "R064",
         "R065",
         "R066",
-        "R067",
-        "R098"
+        "R067"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "`docker compose --profile demo up` reaches healthy; images scanned with results saved.",
-        "Denied network paths tested from containers.",
-        "Killing a worker around destination commit yields one incident (recorded)."
+        "`docker compose --profile demo up` reaches healthy and the published port is reachable.",
+        "Denied paths tested from containers; images scanned with results saved.",
+        "Worker kill around destination commit yields one incident (recorded)."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T26",
+      "id": "T31",
       "milestone": "M12",
-      "title": "GitHub Actions CI with trust separation",
-      "instructions": "PR workflow: ruff, mypy, unit, PostgreSQL integration, scenario suite, image build+scan; pinned action SHAs; least-privilege tokens; no secrets on PRs.",
+      "title": "Full CI with trust separation",
+      "instructions": "Extend T06: PostgreSQL integration, scenario suite, image build and scan; separate trusted workflow for real-model checks run manually; pinned SHAs; least privilege.",
       "depends_on": [
-        "T25"
+        "T30",
+        "T06"
       ],
       "requirement_ids": [
         "R075"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "CI green on the public repo for a real PR.",
-        "Workflow review shows pinned SHAs and no privileged PR context."
+        "CI green on a real PR including integration and scenario jobs.",
+        "No privileged context reachable from PR code."
       ],
       "external_approval_required": true
     },
     {
-      "id": "T27",
+      "id": "T32",
       "milestone": "M13",
-      "title": "Retained-receipt restore demonstration",
-      "instructions": "Restore an older app backup against the retained destination; reconcile by original action IDs; runbook with exact commands and observations.",
+      "title": "Retained-receipt restore (+ restore card)",
+      "instructions": "Restore an older app backup against the retained destination; reconcile by original action IDs; runbook with real observations; add restore scenario card.",
       "depends_on": [
-        "T25"
+        "T30"
       ],
       "requirement_ids": [
-        "R068"
+        "R068",
+        "R097"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Recorded restore run ending with matching incident and no duplicate.",
-        "docs/runbooks/restore.md with real observations."
+        "Recorded restore ends with the matching incident and no duplicate.",
+        "docs/runbooks/restore.md with exact commands and outputs."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T28",
+      "id": "T33",
       "milestone": "M14",
       "title": "Clean-machine reproduction and three recorded demos",
-      "instructions": "From a clean clone: setup, success demo, denial demo, recovery demo; deterministic mode shown separately.",
+      "instructions": "From a clean clone: setup, success, denial and recovery demos; deterministic mode shown separately.",
       "depends_on": [
-        "T19",
-        "T20",
-        "T22",
         "T24",
-        "T26",
-        "T27"
+        "T25",
+        "T27",
+        "T29",
+        "T31",
+        "T32"
       ],
       "requirement_ids": [
         "R077"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Recorded demos and setup transcript saved under reports/demos/.",
+        "Demos and setup transcript saved under reports/demos/.",
         "Every README claim links to evidence."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T29",
+      "id": "T34",
       "milestone": "M14",
-      "title": "Release notes, MIT license and publication",
-      "instructions": "README rewrite for interviewers, ADR index, limitations (single-writer checkpoints, solo holdout), MIT LICENSE, push to github.com/jschnepel/MLOps.",
+      "title": "Interviewer README, limitations and publication",
+      "instructions": "README for interviewers, ADR index, limitations (one worker replica, owner-authored holdout, effort ranges), MIT license, push to github.com/jschnepel/MLOps.",
       "depends_on": [
-        "T28"
+        "T33"
       ],
       "requirement_ids": [
         "R078"
@@ -784,20 +893,20 @@
       "status": "PLANNED",
       "definition_of_done": [
         "Claim-to-evidence map complete; limitations stated.",
-        "Owner approves the push."
+        "Owner approves publication."
       ],
       "external_approval_required": true
     },
     {
-      "id": "T30",
+      "id": "T35",
       "milestone": "M15",
-      "title": "kind/Helm deployment with default CNI policy tests",
-      "instructions": "Helm chart and kind cluster using kind's default CNI with kube-network-policies; pod-level allow/deny and pod-kill tests.",
+      "title": "kind/Helm with default-CNI NetworkPolicy tests",
+      "instructions": "Helm chart; kind default CNI (kube-network-policies); pod-level allow/deny and pod-kill tests.",
       "depends_on": [
-        "T25"
+        "T30"
       ],
       "requirement_ids": [
-        "R066"
+        "R112"
       ],
       "status": "PLANNED",
       "definition_of_done": [
@@ -806,12 +915,12 @@
       "external_approval_required": false
     },
     {
-      "id": "T31",
+      "id": "T36",
       "milestone": "M15",
       "title": "Paused-version upgrade and rollback rehearsal",
-      "instructions": "Route paused v1 runs to compatible code across a workflow_version bump; rollback test.",
+      "instructions": "Route paused runs across a workflow_version bump; rollback test.",
       "depends_on": [
-        "T27"
+        "T32"
       ],
       "requirement_ids": [
         "R069"
@@ -823,12 +932,12 @@
       "external_approval_required": false
     },
     {
-      "id": "T32",
+      "id": "T37",
       "milestone": "M15",
       "title": "SBOM and release provenance",
-      "instructions": "Generate SBOM and provenance attestations for released images; link to tested inputs.",
+      "instructions": "SBOM and provenance attestations for released images linked to tested inputs.",
       "depends_on": [
-        "T26"
+        "T31"
       ],
       "requirement_ids": [
         "R076"
@@ -840,29 +949,29 @@
       "external_approval_required": false
     },
     {
-      "id": "T33",
+      "id": "T38",
       "milestone": "M15",
-      "title": "Fenced distributed checkpoint writes",
-      "instructions": "BaseCheckpointSaver subclass that checks run fence inside each put/put_writes transaction; stale-worker head-hijack test.",
+      "title": "Fenced checkpoint writes and multi-replica workers",
+      "instructions": "BaseCheckpointSaver subclass checking the run fence inside put/put_writes; enable multiple worker replicas; DEV-013 card.",
       "depends_on": [
-        "T16"
+        "T20"
       ],
       "requirement_ids": [
         "R021"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Paused old worker resumed after lease loss cannot append a checkpoint."
+        "Stale worker cannot append a checkpoint or pending write after lease loss."
       ],
       "external_approval_required": false
     },
     {
-      "id": "T34",
+      "id": "T39",
       "milestone": "M15",
       "title": "Opt-in Slack adapter",
       "instructions": "Verified callbacks, identity mapping, outbox delivery, same review/execute policy.",
       "depends_on": [
-        "T29"
+        "T34"
       ],
       "requirement_ids": [
         "R079"
@@ -874,12 +983,12 @@
       "external_approval_required": true
     },
     {
-      "id": "T35",
+      "id": "T40",
       "milestone": "M15",
       "title": "Approved budgeted cloud deployment",
       "instructions": "Terraform/EKS only after owner cost and teardown approval.",
       "depends_on": [
-        "T34"
+        "T39"
       ],
       "requirement_ids": [
         "R080"
