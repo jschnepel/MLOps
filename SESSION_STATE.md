@@ -159,7 +159,6 @@ Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss 
 ## Open owner inputs
 
 - `gh auth login`, then approval to push.
-- Review of OPS-BUILD-1.2, then the implementation plan for M00–M01.
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
 - T06: decide whether to publish early (public repo at M01) or start private and make it public at T34.
 
