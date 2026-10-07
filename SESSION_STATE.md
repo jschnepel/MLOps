@@ -104,7 +104,6 @@ Write the implementation plan for M00–M01 (T01–T08), then run T01:
 uv venv "$env:LOCALAPPDATA\ops-ref-venv" --python 3.13
 uv pip install --python "$env:LOCALAPPDATA\ops-ref-venv" -e ".[web,test]"
 & "$env:LOCALAPPDATA\ops-ref-venv\Scripts\python" -m pytest -q
-.venv-ref\Scripts\python -m pytest -q
 ```
 
 Do not store secrets or private reasoning in this file.
