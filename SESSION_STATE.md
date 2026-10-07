@@ -1,8 +1,8 @@
 # Session state
 
-**Specification:** OPS-BUILD-1.3.5 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
+**Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** T01 (agent) and T03 (owner, off-machine) in parallel. Then T04, and T02 once T03's seal is recorded externally.
+**Next task:** execute Plan A (`docs/superpowers/plans/2026-10-07-first-slice-a-baseline-workspace.md`): T01 (agent) and T03 (owner, off-machine) in parallel, then T02 (after the seal), T42, T04, T06.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `main`. Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
 
 ## Done in the planning session (2026-10-06)
@@ -96,6 +96,12 @@
 - Task splits: T04 → T04 + T42; T05 → T05 + T43 + T44; T07 → T07 + T45 + T46. 46 tasks, 128 requirements, critical path 15.
 - `docs/PROJECT_HISTORY.md` added: the problems found across all rounds and what changed, for portfolio readers.
 
+## Round 8, 1.3.6 and Plan A (2026-10-07)
+
+- Round 8 (`docs/reviews/plan-review-r8-2026-10-07.md`): 8 of 10 round-7 items closed; 1.3.5 had 2 high regressions (`create_run` had no tenant source; `freeze_proposal` had no payload) and 4 medium; **Plan A was not executable** (nine blocking defects, all reproduced by a builder dry-run on scratch copies: the hashes file is a dict, the reference conftest above the new tests, `--all-packages`, ruff on pinned files, a backslash-n in a test, PowerShell BOM+CRLF, in-tree `build/`, a thinning rule that dropped three scenarios).
+- **1.3.6:** `create_run(tenant_id, …)`; `freeze_proposal(run_id, draft_id, payload)` verified against `drafts.draft_sha256`; status answers and conversation clarifications are messages, not events; the sweeper iterates tenants; `clarify` after the active-run check; `ABORT_REQUESTED` in the attempt-state enum; T42 now precedes T04.
+- **Plan A rewritten** in the order T01, T03, T02, T42, T04, T06, with every "Expected" line stating only what the step's command prints, generators writing their own LF files, a model unload before the cold call, an AST cross-import test, a clean-clone sync step, and the full checker tail shown. Plans B and C are written after Plan A executes and are dry-run before execution.
+
 ## 1.3.5 (2026-10-07): round-7 fixes
 
 - `docs/reviews/plan-review-r7-2026-10-07.md`: 10 of 13 round-6 items closed; 5 high, all in 1.3.3/1.3.4 text; the `session_user` mechanism verified sound.
@@ -158,7 +164,7 @@ Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss 
 
 ## Exact next step
 
-Write the implementation plan for M00–M01 (T01, T03, T02, T04, T42, T05, T43, T44, T06, T07, T45, T46, T08), then run T01:
+Execute Plan A, starting with T01:
 
 ```powershell
 uv venv "$env:LOCALAPPDATA\ops-ref-venv" --python 3.13

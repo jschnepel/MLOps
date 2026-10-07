@@ -69,3 +69,8 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 - Round-7 high and blocking items fixed; showcase and history corrected for truthfulness.
 - Still **no target capability implemented**. All of R001–R131 are `NOT_RUN`.
+
+## Update — OPS-BUILD-1.3.6 and Plan A (2026-10-07)
+
+- Round-8 regressions fixed; Plan A (T01, T03, T02, T42, T04, T06) rewritten after a builder dry-run found it unexecutable.
+- Still **no target capability implemented**. All of R001–R131 are `NOT_RUN`.

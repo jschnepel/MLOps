@@ -1,5 +1,5 @@
 {
-  "specification": "OPS-BUILD-1.3.5 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "specification": "OPS-BUILD-1.3.6 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
   "current_milestone": "M00",
   "note": "Dependency graph. IDs stable since 1.2; T41 (1.3) and T42-T46 (1.3.3 splits) and T47 (1.3.4 mcp-write) appended. Requirements sit with the first task able to test them. review_notes carry later-round items for the owning task. M15 is optional. See SPEC_AMENDMENTS.md AM-60.",
   "milestones": [
@@ -19,8 +19,8 @@
       "title": "Workspace, bootstrap, contracts, schemas and walking skeleton",
       "required_for_v1": true,
       "task_ids": [
-        "T04",
         "T42",
+        "T04",
         "T05",
         "T43",
         "T44",
@@ -238,33 +238,12 @@
       "external_approval_required": false
     },
     {
-      "id": "T04",
-      "milestone": "M01",
-      "title": "uv workspace, locks, check entry point and seed IDs",
-      "instructions": "ADR-0001 layout (core/, api/, worker/, mcp-read/, mcp-write/, asset-sim/, incident-sim/ with trust-boundary READMEs); root pyproject becomes the uv workspace root with `[tool.uv.workspace] exclude=[\"reference\"]`; resolve versions per AM-30 and commit uv.lock; add jsonschema to the dev group; `scripts/check.py` runs ruff + mypy + pytest (no make on Windows); create data/seed-ids.json (tenant/persona UUIDs). Hyphenated service dirs get explicit import names; none is named `mcp`.",
-      "depends_on": [
-        "T01"
-      ],
-      "requirement_ids": [
-        "R003",
-        "R031"
-      ],
-      "status": "PLANNED",
-      "definition_of_done": [
-        "`uv sync --locked` succeeds from a clean clone.",
-        "`uv run python scripts/check.py` is green on the skeleton.",
-        "data/seed-ids.json committed; each service README states ownership and trust boundary."
-      ],
-      "external_approval_required": false,
-      "review_notes": []
-    },
-    {
       "id": "T42",
       "milestone": "M01",
       "title": "Reference move, hash remap and zip-based manifest",
-      "instructions": "Move the whole reference unit unchanged into reference/ (src, tests, pyproject, Makefile, Dockerfile, compose, integrations, scripts/init_demo.py, scripts/check_reference.sh); add provenance/reference-code-hashes.remap.json and checker support; move MANIFEST.sha256 to provenance/MANIFEST-1.0.sha256 and make `verify_handoff.py --manifest` verify it against provenance/handoff-1.0.zip entries with zipfile (AM-00); checker skips .venv*/node_modules/reference build outputs; re-create the external reference venv from reference/ and re-run its suite.",
+      "instructions": "Move the whole reference unit unchanged into reference/ (src, tests, pyproject, Makefile, Dockerfile, compose, integrations, scripts/init_demo.py, scripts/check_reference.sh); move the root pyproject.toml to reference/ as well (the workspace root is created afterwards in T04); add provenance/reference-code-hashes.remap.json and checker support; move MANIFEST.sha256 to provenance/MANIFEST-1.0.sha256 and make `verify_handoff.py --manifest` verify it against provenance/handoff-1.0.zip entries with zipfile (AM-00); checker skips .venv*/node_modules/reference build outputs; re-create the external reference venv from reference/ and re-run its suite.",
       "depends_on": [
-        "T04"
+        "T01"
       ],
       "requirement_ids": [
         "R121"
@@ -276,7 +255,31 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Both T42 and T45 edit verify_handoff.py: T45 runs after T42."
+        "Both T42 and T45 edit verify_handoff.py: T45 runs after T42.",
+        "Runs BEFORE T04 (1.3.6): a root pytest cannot load while reference tests/conftest.py is above tests/plan_a, and ruff cannot be green with hash-pinned files under the root."
+      ]
+    },
+    {
+      "id": "T04",
+      "milestone": "M01",
+      "title": "uv workspace, locks, check entry point and seed IDs",
+      "instructions": "ADR-0001 layout (core/, api/, worker/, mcp-read/, mcp-write/, asset-sim/, incident-sim/ with trust-boundary READMEs); create the uv workspace root pyproject (the reference's moved in T42) with `[tool.uv.workspace] exclude=[\"reference\"]`; resolve versions per AM-30 and commit uv.lock; add jsonschema to the dev group; `scripts/check.py` runs ruff + mypy + pytest (no make on Windows); create data/seed-ids.json (tenant/persona UUIDs). Hyphenated service dirs get explicit import names; none is named `mcp`.",
+      "depends_on": [
+        "T42"
+      ],
+      "requirement_ids": [
+        "R003",
+        "R031"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "`uv sync --locked --all-packages` succeeds from a clean clone (verified by cloning locally); `.python-version` pins 3.13.",
+        "`uv run python scripts/check.py` is green on the skeleton.",
+        "data/seed-ids.json committed; each service README states ownership and trust boundary."
+      ],
+      "external_approval_required": false,
+      "review_notes": [
+        "Non-editable in-tree installs write build/ and egg-info: build/ is git-ignored and both are deleted after every install. Never create files with PowerShell `>`/Tee-Object (BOM + CRLF); scripts write their own output."
       ]
     },
     {
@@ -307,7 +310,7 @@
       "id": "T43",
       "milestone": "M01",
       "title": "Dev bootstrap: remaining personas, service account, admin cleanup",
-      "instructions": "Add the remaining three personas (lee, riley, jordan) and tenant beta; the view-users service account for the AM-20 admin-API check; delete the temporary Keycloak bootstrap admin after realm import (self-delete via admin REST with the bootstrap token; verify on the cached 26.8.0 image first); finish the topology document.",
+      "instructions": "Add the remaining three personas (lee, riley, jordan) and tenant beta; the view-users service account for the AM-20 admin-API check; delete the temporary Keycloak bootstrap admin after realm import (self-delete via admin REST with the bootstrap token; verify on the cached 26.8.0 image first); finish the topology document. Persona memberships and tenants are seeded by a migrator data migration under BYPASSRLS (AM-20.1), not by runtime roles.",
       "depends_on": [
         "T05"
       ],
@@ -382,7 +385,9 @@
         "A draft containing supersedes_run_id fails validation; the creation row and the answer_only refusal are in the table (R125, R114)."
       ],
       "external_approval_required": false,
-      "review_notes": []
+      "review_notes": [
+        "freeze_proposal takes the validated payload; drafts holds its hash only (AM-20.4, 1.3.6)."
+      ]
     },
     {
       "id": "T45",
@@ -446,7 +451,7 @@
       "id": "T09",
       "milestone": "M02",
       "title": "Migrations, roles, RLS and hardened definer functions",
-      "instructions": "Implement AM-20 in code: Alembic schema (incl. run_state_history, action_attempt_state, drafts, run_directory, run_lease, jobs with dedup keys, execution_grant UNIQUE(run_id), sessions); roles per AM-20.1 incl. test_harness via the `testclock` Alembic branch; exact grants per AM-20.2; every AM-20.3 definer function (incl. create_run, revoke_handles, record_status_answer) with search_path/REVOKE/GRANT-to-named-callers, session_user checks and transaction-local set_config; transition_run restricted to worker and pre-grant targets; seed data migrations under migrator BYPASSRLS; sweeper_all policies on memberships and jobs; action_attempt_state seq ordering; clock_offset column; RLS policies per AM-20.5 incl. FORCE; app.current_time() per AM-20.6.",
+      "instructions": "Implement AM-20 in code: Alembic schema (incl. run_state_history, action_attempt_state, drafts, run_directory, run_lease, jobs with dedup keys, execution_grant UNIQUE(run_id), sessions); roles per AM-20.1 incl. test_harness via the `testclock` Alembic branch; exact grants per AM-20.2; every AM-20.3 definer function (incl. create_run with its tenant argument, revoke_handles) with search_path/REVOKE/GRANT-to-named-callers, session_user checks and transaction-local set_config; transition_run restricted to worker and pre-grant targets; seed data migrations under migrator BYPASSRLS; sweeper_all policies on memberships and jobs; action_attempt_state seq ordering; clock_offset column; RLS policies per AM-20.5 incl. FORCE; app.current_time() per AM-20.6.",
       "depends_on": [
         "T08",
         "T45"
@@ -540,7 +545,7 @@
       "id": "T12",
       "milestone": "M03",
       "title": "Durable admission API and error mapping",
-      "instructions": "/api/v1 conversations/messages/runs; message+run+job+event committed before 202; scoped Idempotency-Key (24 h); one active run per conversation; interval resolved once; safe error schema and 401/403/404/409/422/429/503 mapping; the AM-16 admission router with its six routes (investigate, clarification_reply, status_question, readonly_answer, clarify, reject) as a table in core/routing.py, deterministic-first; a model hint can only produce clarify; investigate/readonly_answer go through create_run with intent; status questions are stored via record_status_answer.",
+      "instructions": "/api/v1 conversations/messages/runs; message+run+job+event committed before 202; scoped Idempotency-Key (24 h); one active run per conversation; interval resolved once; safe error schema and 401/403/404/409/422/429/503 mapping; the AM-16 admission router with its six routes (investigate, clarification_reply, status_question, readonly_answer, clarify, reject) as a table in core/routing.py, deterministic-first; a model hint can only produce clarify; investigate/readonly_answer go through create_run with intent; status questions and conversation-level clarifications are stored by the API as messages (kind=status_question/status_answer/clarification_question).",
       "depends_on": [
         "T09"
       ],
@@ -562,7 +567,7 @@
       "external_approval_required": false,
       "review_notes": [
         "Slot rule: partial unique index on runs(conversation_id) over AM-10 active states, plus a concurrent admission test.",
-        "status_question stores question and answer as messages and emits a conversation-scoped status.answered event, so it is audited."
+        "Status answers and conversation-level clarifications are messages (kind=status_question/status_answer/clarification_question), not events; the clarify route is evaluated after the active-run check (1.3.6)."
       ]
     },
     {
@@ -619,7 +624,8 @@
       "external_approval_required": false,
       "review_notes": [
         "Jobs carry dedup_key UNIQUE per AM-20.4; recover jobs never created by either MCP server.",
-        "append_event enforces payload rules inside the function (no status field from api/worker on tool.completed); action.granted emitted by grant_execution; action.redispatched by mark_sent when attempt_no > 1; deliver_outbox is a job type."
+        "append_event enforces payload rules inside the function (no status field from api/worker on tool.completed); action.granted emitted by grant_execution; action.redispatched by mark_sent when attempt_no > 1; deliver_outbox is a job type.",
+        "The sweeper iterates tenants and sets app.tenant_id per tenant for expiry, outbox delivery and deadline escalation; sweeper_all covers memberships and jobs only (AM-20.5, 1.3.6)."
       ]
     },
     {
@@ -898,7 +904,8 @@
         "Cancellation after SENT aborts immediately; otherwise abort at dispatch deadline (<=5 min FAILED latency stated).",
         "Operator CLI `ops resolve-escalation` -> ABANDONED_UNVERIFIED with operator_resolutions audit row.",
         "Late destination evidence on ABANDONED_UNVERIFIED emits action.late_evidence; record_outcome never transitions terminal runs; recover jobs stay allowed.",
-        "request_abort is invoked inside create_incident after mark_sent returns cancelled/expired; allow abort after ABANDONED_UNVERIFIED (tombstone recorded as late evidence) with a bounded reconciliation job budget."
+        "request_abort is invoked inside create_incident after mark_sent returns cancelled/expired; allow abort after ABANDONED_UNVERIFIED (tombstone recorded as late evidence) with a bounded reconciliation job budget.",
+        "Attempt states are INTENT, SENT, ABORT_REQUESTED, RESOLVED (append-only rows ordered by seq); create_incident is refused once ABORT_REQUESTED exists (1.3.6)."
       ]
     },
     {

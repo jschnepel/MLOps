@@ -1,5 +1,5 @@
 {
-  "specification": "OPS-BUILD-1.3.5 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "specification": "OPS-BUILD-1.3.6 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
   "note": "Target acceptance requirements, not passing tests. Milestone = earliest owning task; R097 accrues across T24/T27/T29/T32. R081-R131 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement.",
   "requirements": [
     {
@@ -220,7 +220,7 @@
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
       "suggested_test": "tests/acceptance/test_r015_accepted_work_is_committed_before_acknowledgemen.py",
-      "expected_evidence": "create_run commits message, run, directory, history, job and run.accepted in one transaction before the 202; a crash before commit leaves nothing; no other path creates a run.",
+      "expected_evidence": "In one transaction the API inserts the message and calls create_run(tenant_id, ...) which inserts run, directory, history, job and run.accepted; the 202 follows the commit; a crash before commit leaves nothing; no other path creates a run.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "owning_tasks": [
@@ -1584,7 +1584,7 @@
     {
       "id": "R104",
       "category": "contracts",
-      "requirement": "Schemas, examples and fixtures match the 1.3.5 contract",
+      "requirement": "Schemas, examples and fixtures match the 1.3.6 contract",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
       "expected_evidence": "verify_handoff.py --contracts passes including AM-80 negative probes.",
       "evidence_status": "NOT_RUN",

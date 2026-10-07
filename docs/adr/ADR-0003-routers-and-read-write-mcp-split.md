@@ -11,7 +11,7 @@ The project's purpose is to demonstrate four things to a technical reader: least
 ## Decision
 
 1. **Routers become named components with enumerable route tables** (AM-16):
-   - an **admission router** in the API with routes `investigate`, `clarification_reply`, `status_question`, `readonly_answer`, `reject`;
+   - an **admission router** in the API with routes `investigate`, `clarification_reply`, `status_question`, `readonly_answer`, `clarify`, `reject`;
    - a **graph router** node (`route_request`) in the orchestrator whose conditional edges come only from a route table in `core/`;
    - a **model router** (the `DraftGenerator` factory) that selects `fake`, `qwen3:8b` or a future model by configuration, records the choice in the run manifest, and never falls back silently.
    - Rule for all three: deterministic rules decide; model classification is at most a hint; unroutable input becomes a clarification or a 422 and never creates work (R129, R130).
