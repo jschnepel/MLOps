@@ -19,6 +19,15 @@ def test_token_is_read_only_and_no_secrets_are_referenced():
     doc = yaml.safe_load(text)
     assert doc["permissions"] == {"contents": "read"}
     assert "secrets." not in text
+    checkouts = [
+        step
+        for job in doc["jobs"].values()
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
+    assert checkouts
+    for step in checkouts:
+        assert step.get("with", {}).get("persist-credentials") is False, step
 
 
 def test_workflow_runs_the_one_command_with_all_packages():
