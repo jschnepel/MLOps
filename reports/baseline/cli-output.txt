@@ -1,7 +1,7 @@
-1. AWAITING_INPUT — time range needed
-2. AWAITING_APPROVAL — nothing submitted
-3. OUTCOME_UNKNOWN — response lost after destination commit
-4. SUCCEEDED — INC-43ff1f125931
+1. AWAITING_INPUT â€” time range needed
+2. AWAITING_APPROVAL â€” nothing submitted
+3. OUTCOME_UNKNOWN â€” response lost after destination commit
+4. SUCCEEDED â€” INC-722e85249a1f
 5. Destination incident count: 1
 {
   "mode": "deterministic test double",
@@ -9,7 +9,7 @@
     {
       "id": 1,
       "kind": "run.created",
-      "created_at": 1791413321.830554,
+      "created_at": 1791413385.8185337,
       "payload": {
         "actor": "alex",
         "status": "AWAITING_INPUT"
@@ -18,7 +18,7 @@
     {
       "id": 2,
       "kind": "clarification.accepted",
-      "created_at": 1791413321.8392603,
+      "created_at": 1791413385.8269591,
       "payload": {
         "asset_id": "A17",
         "hours": 24
@@ -27,34 +27,34 @@
     {
       "id": 3,
       "kind": "proposal.created",
-      "created_at": 1791413321.8513231,
+      "created_at": 1791413385.8401887,
       "payload": {
         "action_executed": false,
-        "proposal_hash": "4999411cd83e84ab3a094c28c4914fe42396e3dc6ece146511532baa8b7d1716"
+        "proposal_hash": "4d047abbe486731741fb38aefda374606deffbe92f0ec09ee27d1ce564c18846"
       }
     },
     {
       "id": 4,
       "kind": "approval.recorded",
-      "created_at": 1791413321.8582397,
+      "created_at": 1791413385.8477373,
       "payload": {
         "actor": "sam",
         "decision": "approve",
-        "proposal_hash": "4999411cd83e84ab3a094c28c4914fe42396e3dc6ece146511532baa8b7d1716"
+        "proposal_hash": "4d047abbe486731741fb38aefda374606deffbe92f0ec09ee27d1ce564c18846"
       }
     },
     {
       "id": 5,
       "kind": "action.started",
-      "created_at": 1791413321.8695278,
+      "created_at": 1791413385.8588016,
       "payload": {
-        "action_key": "incident:6d9f7613-86c7-4c58-98e8-cafc6430a2a8:4999411cd83e84ab3a094c28c4914fe42396e3dc6ece146511532baa8b7d1716"
+        "action_key": "incident:2cfd7288-129d-49f7-8a6e-a84c005f0894:4d047abbe486731741fb38aefda374606deffbe92f0ec09ee27d1ce564c18846"
       }
     },
     {
       "id": 6,
       "kind": "action.outcome_unknown",
-      "created_at": 1791413321.882247,
+      "created_at": 1791413385.8816059,
       "payload": {
         "message": "Reconcile before retrying."
       }
@@ -62,11 +62,11 @@
     {
       "id": 7,
       "kind": "action.committed",
-      "created_at": 1791413321.8963034,
+      "created_at": 1791413385.8998473,
       "payload": {
-        "action_key": "incident:6d9f7613-86c7-4c58-98e8-cafc6430a2a8:4999411cd83e84ab3a094c28c4914fe42396e3dc6ece146511532baa8b7d1716",
-        "incident_id": "INC-43ff1f125931",
-        "payload_hash": "4999411cd83e84ab3a094c28c4914fe42396e3dc6ece146511532baa8b7d1716"
+        "action_key": "incident:2cfd7288-129d-49f7-8a6e-a84c005f0894:4d047abbe486731741fb38aefda374606deffbe92f0ec09ee27d1ce564c18846",
+        "incident_id": "INC-722e85249a1f",
+        "payload_hash": "4d047abbe486731741fb38aefda374606deffbe92f0ec09ee27d1ce564c18846"
       }
     }
   ]
