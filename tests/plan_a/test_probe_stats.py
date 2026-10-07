@@ -2,6 +2,7 @@ import pytest
 
 from scripts.probe_stats import (
     classify_output,
+    classify_structured,
     has_thinking,
     mb_or_not_measured,
     p95_index,
@@ -128,3 +129,11 @@ def test_summarize_counts_repair_thinking_separately_from_first_pass():
     assert s["thinking_any"] == 0
     assert s["repair_calls"] == 2
     assert s["thinking_repair"] == 1
+
+
+def test_classify_structured_uses_wrapper_parse_and_raw_text_for_thinking():
+    assert classify_structured('{"a": 1}', {"a": 1}, None) == "json_valid"
+    assert classify_structured('{"a": ', None, ValueError("bad json")) == "json_invalid"
+    assert classify_structured("", None, None) == "json_invalid"
+    # Thinking in the raw text is a failure even when the wrapper managed to parse an object.
+    assert classify_structured('<think>x</think>{"a": 1}', {"a": 1}, None) == "thinking_present"

@@ -1,4 +1,4 @@
-"""Measure qwen3:8b for the drafting profile (AM-31). Run in an ISOLATED environment:
+"""Measure qwen3:8b in the AM-31 drafting profile. Run in an ISOLATED environment:
 
 uv run --isolated --no-project --python 3.13 --with "langchain-ollama==1.1.0" --with "jsonschema" python -I scripts/probe.py
 
@@ -6,6 +6,11 @@ Preconditions: evals/holdout.sha256 exists (T03 sealed), Ollama is running. Writ
 reports/model-probe-qwen3-8b.md, reports/model-probe-freeze.txt, data/model-pins.json.
 This is measurement, not prompt tuning: the prompts are the sealed starters, unchanged.
 The model is unloaded first so the first call is a true cold start.
+
+Measured configuration (AM-31): ChatOllama(reasoning=False, num_ctx=16384, num_predict=1000, temperature=0)
+wrapped in with_structured_output(<model-draft schema>, method="json_schema", include_raw=True), plus
+application-side jsonschema validation of the parsed object. First-pass, repair and repeat calls use
+that wrapper; the mid-generation cancel and the following `ok` call use the same ChatOllama unwrapped.
 """
 
 from __future__ import annotations
@@ -25,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.probe_stats import (
     VRAM_INTERVAL_S,
-    classify_output,
+    classify_structured,
     has_thinking,
     mb_or_not_measured,
     summarize,
@@ -129,8 +134,22 @@ async def run_probe(cases: list[dict]) -> dict:
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_ollama import ChatOllama
 
-    validator = jsonschema.Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8")))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(schema)
     llm = ChatOllama(model=MODEL, base_url=OLLAMA, reasoning=False, num_ctx=16384, num_predict=1000, temperature=0)
+    # AM-31: constrained output (Ollama `format` = the JSON schema) plus application-side validation.
+    drafter = llm.with_structured_output(schema, method="json_schema", include_raw=True)
+
+    def raw_text(out: dict) -> str:
+        content = out["raw"].content
+        return content if isinstance(content, str) else json.dumps(content)
+
+    def raw_reasoning(out: dict) -> object:
+        return out["raw"].additional_kwargs.get("reasoning_content")
+
+    def schema_errors(parsed: object) -> list[str]:
+        return [e.message for e in validator.iter_errors(parsed)]
+
     system = PROMPT_DRAFT.read_text(encoding="utf-8")
     repair_system = PROMPT_REPAIR.read_text(encoding="utf-8")
     results: list[dict] = []
@@ -140,22 +159,25 @@ async def run_probe(cases: list[dict]) -> dict:
         user = json.dumps({"request": c["request_text"], "evidence": c["evidence"]}, ensure_ascii=False)
         t0 = time.perf_counter()
         text, err, meta_thinking = "", None, False
+        kind = "error"
+        parsed: object = None
         try:
-            msg = await vram.during(
+            out = await vram.during(
                 asyncio.wait_for(
-                    llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)]), timeout=TIMEOUT_S
+                    drafter.ainvoke([SystemMessage(content=system), HumanMessage(content=user)]), timeout=TIMEOUT_S
                 )
             )
-            text = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
-            meta_thinking = bool(msg.additional_kwargs.get("reasoning_content"))
+            text = raw_text(out)
+            meta_thinking = bool(raw_reasoning(out))
+            parsed = out["parsed"]
+            kind = classify_structured(text, parsed, out["parsing_error"])
         except Exception as e:  # noqa: BLE001 - record, never hide
             err = f"{type(e).__name__}: {e}"
         dt = time.perf_counter() - t0
-        kind = classify_output(text) if err is None else "error"
         errors: list[str] = []
         schema_ok = False
         if kind == "json_valid":
-            errors = [e.message for e in validator.iter_errors(json.loads(text))]
+            errors = schema_errors(parsed)
             schema_ok = not errors
         repaired_ok = schema_ok
         repair_called = repair_thinking = False
@@ -168,15 +190,14 @@ async def run_probe(cases: list[dict]) -> dict:
             try:
                 fix = await vram.during(
                     asyncio.wait_for(
-                        llm.ainvoke([SystemMessage(content=repair_system), HumanMessage(content=repair_user)]),
+                        drafter.ainvoke([SystemMessage(content=repair_system), HumanMessage(content=repair_user)]),
                         timeout=TIMEOUT_S,
                     )
                 )
-                ftext = fix.content if isinstance(fix.content, str) else json.dumps(fix.content)
-                repair_thinking = has_thinking(ftext, fix.additional_kwargs.get("reasoning_content"))
-                repaired_ok = classify_output(ftext) == "json_valid" and not list(
-                    validator.iter_errors(json.loads(ftext))
-                )
+                ftext = raw_text(fix)
+                repair_thinking = has_thinking(ftext, raw_reasoning(fix))
+                fkind = classify_structured(ftext, fix["parsed"], fix["parsing_error"])
+                repaired_ok = fkind == "json_valid" and not schema_errors(fix["parsed"])
             except Exception:  # noqa: BLE001 - a failed repair is a measured failure
                 repaired_ok = False
         results.append(
@@ -201,14 +222,15 @@ async def run_probe(cases: list[dict]) -> dict:
         outs = []
         try:
             for _ in range(3):
-                msg = await vram.during(
+                rep_out = await vram.during(
                     asyncio.wait_for(
-                        llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)]), timeout=TIMEOUT_S
+                        drafter.ainvoke([SystemMessage(content=system), HumanMessage(content=user)]),
+                        timeout=TIMEOUT_S,
                     )
                 )
-                rtext = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+                rtext = raw_text(rep_out)
                 extra_calls += 1
-                extra_thinking += has_thinking(rtext, msg.additional_kwargs.get("reasoning_content"))
+                extra_thinking += has_thinking(rtext, raw_reasoning(rep_out))
                 outs.append(rtext)
             repeats.append(len(set(outs)) == 1)
         except Exception as e:  # noqa: BLE001 - record, never abort the run
@@ -266,7 +288,7 @@ def render_report(data: dict, digest: str, version: str, probed_at: str) -> str:
     return f"""# Model probe: {MODEL} (AM-31, T02)
 
 Measurement only; prompts unchanged (sha256 verified against the hashes pinned in probe.py; evals/holdout.sha256 present). Distinct inputs: {n}. Date: {probed_at}.
-Ollama version: {version}. Model digest: `{digest}`. Interpreter: {sys.version.split()[0]}. Settings: reasoning=False, num_ctx=16384, num_predict=1000, temperature=0, {TIMEOUT_S}s cap per call. Model unloaded before the first call.
+Configuration measured (AM-31): model `{MODEL}`, digest `{digest}`, Ollama {version}, `ChatOllama(reasoning=False, num_ctx=16384, num_predict=1000, temperature=0)` wrapped in `with_structured_output(schemas/model-draft.schema.json, method="json_schema", include_raw=True)`, plus application-side jsonschema validation of the parsed object. First-pass, repair and repeat calls use the wrapper; JSON-valid means the wrapper parsed an object (`parsing_error` is None) and the raw text has no thinking. The mid-generation cancel and the following `ok` call use the same ChatOllama unwrapped. {TIMEOUT_S}s cap per call. Interpreter: {sys.version.split()[0]}. Model unloaded before the first call.
 
 | Metric | Value | Wilson 95% CI |
 |---|---|---|

@@ -28,6 +28,19 @@ def classify_output(text: str) -> str:
     return "json_valid"
 
 
+def classify_structured(raw_text: str, parsed: object, parsing_error: object) -> str:
+    """Classify a with_structured_output(include_raw=True) result.
+
+    Validity comes from the wrapper's own parse (parsed / parsing_error); thinking is checked on the raw
+    text and counts as invalid even when the wrapper produced an object (never stripped).
+    """
+    if classify_output(raw_text) == "thinking_present":
+        return "thinking_present"
+    if parsing_error is not None or parsed is None:
+        return "json_invalid"
+    return "json_valid"
+
+
 def has_thinking(text: str, reasoning_content: object) -> bool:
     """Thinking in the output text (a <think> tag) or in the message metadata; counted, never stripped."""
     return classify_output(text) == "thinking_present" or bool(reasoning_content)
