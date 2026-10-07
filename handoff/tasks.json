@@ -295,7 +295,7 @@
       "id": "T07",
       "milestone": "M01",
       "title": "Contracts, state machine, schema alignment and reference migration",
-      "instructions": "Pydantic contracts; canonical JSON v1; transition table incl. ESCALATED, ABANDONED_UNVERIFIED and the slot rule; apply every AM-80 schema/example/fixture change incl. new schemas and error codes; update verify_handoff.py (renamed field, tools/ and evals/ schemas, skip dirs); port the pure-core reference tests and write reference/TRACEABILITY.md mapping all 58 to port/replace/drop. Before contract code, commit at least one negative example per AM-80 row (with its failure reason in index.json). Checker reads/writes UTF-8 and rejects \r in fixtures, schemas, examples and prompts.",
+      "instructions": "Pydantic contracts; canonical JSON v1; transition table incl. ESCALATED, ABANDONED_UNVERIFIED and the slot rule; apply every AM-80 schema/example/fixture change incl. new schemas and error codes; update verify_handoff.py (renamed field, tools/ and evals/ schemas, skip dirs); port the pure-core reference tests and write reference/TRACEABILITY.md mapping all 58 to port/replace/drop. Before contract code, commit at least one negative example per AM-80 row (with its failure reason in index.json). Checker reads/writes UTF-8 and rejects \\r in fixtures, schemas, examples and prompts.",
       "depends_on": [
         "T04"
       ],
@@ -313,7 +313,7 @@
         "`verify_handoff.py --contracts` passes with the AM-80 negative probes.",
         "Every allowed transition tested; disallowed ones rejected; revision from BLOCKED_REVIEW needs a free slot.",
         "reference/TRACEABILITY.md covers all 58 tests with an owning task for each replacement.",
-        "Every AM-80 negative example fails for its stated reason; no \r in governed text files."
+        "Every AM-80 negative example fails for its stated reason; no \\r in governed text files."
       ],
       "external_approval_required": false
     },

@@ -520,8 +520,7 @@ The delivered `schemas/`, `schemas/examples/` and `data/handoff-fixtures/` still
 - Meta-validate `schemas/tools/*.json` and `evals/*.schema.json`.
 - Skip `.venv*`, `node_modules` and `reference/` build outputs in its `rglob` scans.
 - Read and write all files with `encoding="utf-8"` (this machine's locale is cp1252).
-- Reject `
-` in fixtures, schemas, examples and prompts, so hashes match across platforms [R4-E5].
+- Reject `\r` in fixtures, schemas, examples and prompts, so hashes match across platforms [R4-E5].
 
 **Negative probes:** before writing contract code, T07 commits **at least one negative example per AM-80 row**, each listed in `schemas/examples/index.json` with the reason it must fail. R104 passes only if every one fails for that stated reason.
 
