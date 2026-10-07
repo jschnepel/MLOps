@@ -31,8 +31,23 @@ def test_minimal_valid_case():
     "bad",
     [
         {"case_id": "HO-001", "tenant": "alpha", "asset_id": "A17", "request_text": "long enough", "hours": 24},
-        {"case_id": "HO-001", "tenant": "gamma", "asset_id": "A17", "request_text": "long enough", "hours": 24, "intent": "investigate"},
-        {"case_id": "HO-001", "tenant": "alpha", "asset_id": "A17", "request_text": "long enough", "hours": 24, "intent": "investigate", "expected_outcome": "SUCCEEDED"},
+        {
+            "case_id": "HO-001",
+            "tenant": "gamma",
+            "asset_id": "A17",
+            "request_text": "long enough",
+            "hours": 24,
+            "intent": "investigate",
+        },
+        {
+            "case_id": "HO-001",
+            "tenant": "alpha",
+            "asset_id": "A17",
+            "request_text": "long enough",
+            "hours": 24,
+            "intent": "investigate",
+            "expected_outcome": "SUCCEEDED",
+        },
     ],
 )
 def test_invalid_cases_rejected(bad):

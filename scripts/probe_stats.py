@@ -1,4 +1,5 @@
 """Pure functions used by the probe and its tests. Stdlib only."""
+
 from __future__ import annotations
 
 import json

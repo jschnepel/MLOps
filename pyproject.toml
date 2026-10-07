@@ -1,0 +1,36 @@
+[project]
+name = "operations-copilot-workspace"
+version = "0.0.1"
+description = "Operations Copilot: uv workspace root (ADR-0001). Not a package."
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["core", "api", "worker", "mcp-read", "mcp-write", "asset-sim", "incident-sim"]
+exclude = ["reference"]
+
+[dependency-groups]
+dev = [
+  "pytest>=9.0,<10",
+  "ruff>=0.14,<1",
+  "mypy>=1.19,<2",
+  "jsonschema>=4.26,<5",
+  "hypothesis>=6.140,<7",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/plan_a"]
+norecursedirs = ["reference", ".venv", "node_modules", "build"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 120
+extend-exclude = ["reference", "docs"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+exclude = ["^reference/"]

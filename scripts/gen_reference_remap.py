@@ -1,4 +1,5 @@
 """Map original reference-code paths to their new locations under reference/ (same sha256). Stdlib only."""
+
 from __future__ import annotations
 
 import hashlib
@@ -12,7 +13,7 @@ PREFIXES = [("src/", "reference/src/"), ("tests/", "reference/tests/"), ("integr
 def remap_path(old: str) -> str:
     for a, b in PREFIXES:
         if old.startswith(a):
-            return b + old[len(a):]
+            return b + old[len(a) :]
     raise ValueError(f"no remap rule for {old}")
 
 
@@ -29,5 +30,7 @@ def build() -> dict[str, str]:
 
 
 if __name__ == "__main__":
-    Path("provenance/reference-code-hashes.remap.json").write_text(json.dumps(build(), indent=2) + "\n", encoding="utf-8", newline="\n")
+    Path("provenance/reference-code-hashes.remap.json").write_text(
+        json.dumps(build(), indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     print("wrote provenance/reference-code-hashes.remap.json", file=sys.stderr)

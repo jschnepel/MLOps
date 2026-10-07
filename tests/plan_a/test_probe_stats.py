@@ -40,9 +40,33 @@ def test_p95_index_small_and_large():
 
 def test_summarize_counts_metadata_thinking_and_separates_cold():
     results = [
-        {"cold": True, "seconds": 50.0, "kind": "json_valid", "schema_valid": True, "repaired_valid": True, "thinking_in_metadata": False, "error": None},
-        {"cold": False, "seconds": 4.0, "kind": "json_valid", "schema_valid": False, "repaired_valid": True, "thinking_in_metadata": True, "error": None},
-        {"cold": False, "seconds": 5.0, "kind": "thinking_present", "schema_valid": False, "repaired_valid": False, "thinking_in_metadata": False, "error": None},
+        {
+            "cold": True,
+            "seconds": 50.0,
+            "kind": "json_valid",
+            "schema_valid": True,
+            "repaired_valid": True,
+            "thinking_in_metadata": False,
+            "error": None,
+        },
+        {
+            "cold": False,
+            "seconds": 4.0,
+            "kind": "json_valid",
+            "schema_valid": False,
+            "repaired_valid": True,
+            "thinking_in_metadata": True,
+            "error": None,
+        },
+        {
+            "cold": False,
+            "seconds": 5.0,
+            "kind": "thinking_present",
+            "schema_valid": False,
+            "repaired_valid": False,
+            "thinking_in_metadata": False,
+            "error": None,
+        },
     ]
     s = summarize(results)
     assert s["n"] == 3

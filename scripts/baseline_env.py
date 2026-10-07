@@ -2,6 +2,7 @@
 
 Usage: python -I scripts/baseline_env.py <path-to-venv-python>
 """
+
 from __future__ import annotations
 
 import json

@@ -10,7 +10,10 @@ CHECKER = [sys.executable, "-I", "scripts/verify_handoff.py"]
 
 
 def test_remap_file_covers_every_original_entry_with_identical_hash():
-    original = {e["path"]: e["sha256"] for e in json.loads(Path("provenance/reference-code-hashes.json").read_text(encoding="utf-8"))["files"]}
+    original = {
+        e["path"]: e["sha256"]
+        for e in json.loads(Path("provenance/reference-code-hashes.json").read_text(encoding="utf-8"))["files"]
+    }
     remap = json.loads(Path("provenance/reference-code-hashes.remap.json").read_text(encoding="utf-8"))
     assert set(remap) == set(original)
     for old, new in remap.items():

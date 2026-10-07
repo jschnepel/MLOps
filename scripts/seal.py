@@ -2,6 +2,7 @@
 
 Usage: python -I scripts/seal.py <file> [<file> ...]
 """
+
 from __future__ import annotations
 
 import hashlib
