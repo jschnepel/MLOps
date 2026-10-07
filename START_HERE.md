@@ -31,6 +31,15 @@ Use the prompt in [`handoff/KICKOFF_PROMPT.md`](handoff/KICKOFF_PROMPT.md). In s
 | `docs/diagrams/` | Six corrected stage charts |
 | `provenance/`, `docs/archive/`, `reports/historical/` | Provenance and historical context only |
 
+## Quick start
+
+```bash
+uv sync --locked
+uv run python scripts/check.py
+```
+
+The workspace root depends on all seven members, so a plain `uv sync` / `uv run` installs them; `check.py` runs ruff, mypy and pytest and prints `CHECK: GREEN` or `CHECK: RED`.
+
 ## First local checks
 
 ```bash

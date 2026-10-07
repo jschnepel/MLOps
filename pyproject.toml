@@ -3,10 +3,27 @@ name = "operations-copilot-workspace"
 version = "0.0.1"
 description = "Operations Copilot: uv workspace root (ADR-0001). Not a package."
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+  "ops-core",
+  "ops-api",
+  "ops-worker",
+  "ops-mcp-read",
+  "ops-mcp-write",
+  "ops-asset-sim",
+  "ops-incident-sim",
+]
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+ops-core = { workspace = true }
+ops-api = { workspace = true }
+ops-worker = { workspace = true }
+ops-mcp-read = { workspace = true }
+ops-mcp-write = { workspace = true }
+ops-asset-sim = { workspace = true }
+ops-incident-sim = { workspace = true }
 
 [tool.uv.workspace]
 members = ["core", "api", "worker", "mcp-read", "mcp-write", "asset-sim", "incident-sim"]

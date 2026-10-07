@@ -285,6 +285,15 @@ wheels = [
 name = "operations-copilot-workspace"
 version = "0.0.1"
 source = { virtual = "." }
+dependencies = [
+    { name = "ops-api" },
+    { name = "ops-asset-sim" },
+    { name = "ops-core" },
+    { name = "ops-incident-sim" },
+    { name = "ops-mcp-read" },
+    { name = "ops-mcp-write" },
+    { name = "ops-worker" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -297,6 +306,15 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [
+    { name = "ops-api", editable = "api" },
+    { name = "ops-asset-sim", editable = "asset-sim" },
+    { name = "ops-core", editable = "core" },
+    { name = "ops-incident-sim", editable = "incident-sim" },
+    { name = "ops-mcp-read", editable = "mcp-read" },
+    { name = "ops-mcp-write", editable = "mcp-write" },
+    { name = "ops-worker", editable = "worker" },
+]
 
 [package.metadata.requires-dev]
 dev = [

@@ -1,4 +1,9 @@
-"""The one command: ruff, mypy, pytest. Exit 0 only if all pass. Usage: uv run python scripts/check.py"""
+"""The one command: ruff, mypy, pytest. Exit 0 only if all pass.
+
+Usage (a fresh clone needs nothing else; `uv run` syncs the root, which depends on every member):
+    uv sync --locked
+    uv run python scripts/check.py
+"""
 
 from __future__ import annotations
 
@@ -13,7 +18,18 @@ def run(cmd: list[str]) -> int:
     return subprocess.run(cmd, check=False).returncode
 
 
+def members_importable() -> bool:
+    try:
+        import ops_core  # noqa: F401
+    except ImportError as exc:
+        print(f"CHECK: RED: workspace members are not installed ({exc}); run: uv sync --locked", flush=True)
+        return False
+    return True
+
+
 def main() -> int:
+    if not members_importable():
+        return 1
     steps = [
         [sys.executable, "-m", "ruff", "check", "."],
         [sys.executable, "-m", "ruff", "format", "--check", "."],
