@@ -28,6 +28,30 @@ def classify_output(text: str) -> str:
     return "json_valid"
 
 
+def has_thinking(text: str, reasoning_content: object) -> bool:
+    """Thinking in the output text (a <think> tag) or in the message metadata; counted, never stripped."""
+    return classify_output(text) == "thinking_present" or bool(reasoning_content)
+
+
+NOT_MEASURED_VRAM = "not measured (nvidia-smi unavailable)"
+VRAM_INTERVAL_S = 0.5
+
+
+def mb_or_not_measured(mb: int | None) -> str:
+    return NOT_MEASURED_VRAM if mb is None else f"{mb} MB"
+
+
+def vram_row(samples: list[int], gpu_name: str | None) -> str:
+    """Markdown row for peak VRAM; no samples renders 'not measured', never 0 MB."""
+    if not samples:
+        return f"| Peak VRAM | {NOT_MEASURED_VRAM} | |"
+    gpu = gpu_name or "GPU name unavailable"
+    return (
+        f"| Peak VRAM (max of {len(samples)} whole-GPU samples at {VRAM_INTERVAL_S} s during calls, {gpu}) "
+        f"| {max(samples)} MB | |"
+    )
+
+
 def p95_index(n: int) -> int:
     """Index of the 95th percentile in a sorted list of n items (nearest-rank, clamped)."""
     if n <= 0:
@@ -45,6 +69,8 @@ def summarize(results: list[dict]) -> dict:
         "schema_valid": sum(bool(r["schema_valid"]) for r in results),
         "repaired_valid": sum(bool(r["repaired_valid"]) for r in results),
         "thinking_any": sum(r["kind"] == "thinking_present" or bool(r["thinking_in_metadata"]) for r in results),
+        "repair_calls": sum(bool(r.get("repair_called")) for r in results),
+        "thinking_repair": sum(bool(r.get("repair_thinking")) for r in results),
         "errors": [r for r in results if r["error"]],
         "cold_seconds": cold,
         "warm_p50": warm[len(warm) // 2] if warm else None,

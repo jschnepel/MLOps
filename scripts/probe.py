@@ -23,7 +23,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.probe_stats import classify_output, summarize, wilson
+from scripts.probe_stats import (
+    VRAM_INTERVAL_S,
+    classify_output,
+    has_thinking,
+    mb_or_not_measured,
+    summarize,
+    vram_row,
+    wilson,
+)
 from scripts.seal import sha256_of
 
 MODEL = "qwen3:8b"
@@ -61,18 +69,59 @@ def unload_model() -> None:
     ollama_json("/api/generate", {"model": MODEL, "keep_alive": 0})
 
 
-def vram_mb() -> int | None:
+def _nvidia_smi(query: str) -> str | None:
+    """First line of an nvidia-smi query, or None when nvidia-smi is missing or fails."""
     try:
         out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            ["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
             timeout=10,
             check=False,
         )
-        return int(out.stdout.strip().splitlines()[0])
+        if out.returncode != 0:
+            return None
+        return out.stdout.strip().splitlines()[0].strip()
     except Exception:  # noqa: BLE001 - measurement only
         return None
+
+
+def vram_mb() -> int | None:
+    """Whole-GPU memory.used in MB, or None (never 0) when it cannot be read."""
+    value = _nvidia_smi("memory.used")
+    try:
+        return int(value) if value is not None else None
+    except ValueError:
+        return None
+
+
+def gpu_name() -> str | None:
+    return _nvidia_smi("name")
+
+
+class VramSampler:
+    """Samples whole-GPU memory.used every VRAM_INTERVAL_S seconds while a model call is pending."""
+
+    def __init__(self) -> None:
+        self.samples: list[int] = []
+
+    async def during(self, awaitable):
+        stop = asyncio.Event()
+
+        async def sample() -> None:
+            while not stop.is_set():
+                value = await asyncio.to_thread(vram_mb)
+                if value is not None:
+                    self.samples.append(value)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), VRAM_INTERVAL_S)
+
+        sampler = asyncio.create_task(sample())
+        try:
+            return await awaitable
+        finally:
+            stop.set()
+            await sampler
 
 
 async def run_probe(cases: list[dict]) -> dict:
@@ -85,15 +134,17 @@ async def run_probe(cases: list[dict]) -> dict:
     system = PROMPT_DRAFT.read_text(encoding="utf-8")
     repair_system = PROMPT_REPAIR.read_text(encoding="utf-8")
     results: list[dict] = []
-    peak = 0
+    vram = VramSampler()
     unload_model()
     for i, c in enumerate(cases):
         user = json.dumps({"request": c["request_text"], "evidence": c["evidence"]}, ensure_ascii=False)
         t0 = time.perf_counter()
         text, err, meta_thinking = "", None, False
         try:
-            msg = await asyncio.wait_for(
-                llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)]), timeout=TIMEOUT_S
+            msg = await vram.during(
+                asyncio.wait_for(
+                    llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)]), timeout=TIMEOUT_S
+                )
             )
             text = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
             meta_thinking = bool(msg.additional_kwargs.get("reasoning_content"))
@@ -107,25 +158,27 @@ async def run_probe(cases: list[dict]) -> dict:
             errors = [e.message for e in validator.iter_errors(json.loads(text))]
             schema_ok = not errors
         repaired_ok = schema_ok
-        repair_meta_thinking = False
+        repair_called = repair_thinking = False
         if not schema_ok and err is None:
+            repair_called = True
             repair_user = json.dumps(
                 {"invalid_output": text, "validation_errors": errors[:10] or [kind], "evidence": c["evidence"]},
                 ensure_ascii=False,
             )
             try:
-                fix = await asyncio.wait_for(
-                    llm.ainvoke([SystemMessage(content=repair_system), HumanMessage(content=repair_user)]),
-                    timeout=TIMEOUT_S,
+                fix = await vram.during(
+                    asyncio.wait_for(
+                        llm.ainvoke([SystemMessage(content=repair_system), HumanMessage(content=repair_user)]),
+                        timeout=TIMEOUT_S,
+                    )
                 )
-                repair_meta_thinking = bool(fix.additional_kwargs.get("reasoning_content"))
                 ftext = fix.content if isinstance(fix.content, str) else json.dumps(fix.content)
+                repair_thinking = has_thinking(ftext, fix.additional_kwargs.get("reasoning_content"))
                 repaired_ok = classify_output(ftext) == "json_valid" and not list(
                     validator.iter_errors(json.loads(ftext))
                 )
             except Exception:  # noqa: BLE001 - a failed repair is a measured failure
                 repaired_ok = False
-        peak = max(peak, vram_mb() or 0)
         results.append(
             {
                 "probe_id": c["probe_id"],
@@ -134,23 +187,29 @@ async def run_probe(cases: list[dict]) -> dict:
                 "kind": kind,
                 "schema_valid": schema_ok,
                 "repaired_valid": repaired_ok,
-                "thinking_in_metadata": meta_thinking or repair_meta_thinking,
+                "thinking_in_metadata": meta_thinking,
+                "repair_called": repair_called,
+                "repair_thinking": repair_thinking,
                 "error": err,
             }
         )
     repeats = []
     repeat_errors: list[str] = []
-    extra_thinking = 0
+    extra_thinking = extra_calls = 0
     for c in cases[:5]:
         user = json.dumps({"request": c["request_text"], "evidence": c["evidence"]}, ensure_ascii=False)
         outs = []
         try:
             for _ in range(3):
-                msg = await asyncio.wait_for(
-                    llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)]), timeout=TIMEOUT_S
+                msg = await vram.during(
+                    asyncio.wait_for(
+                        llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)]), timeout=TIMEOUT_S
+                    )
                 )
-                extra_thinking += bool(msg.additional_kwargs.get("reasoning_content"))
-                outs.append(msg.content)
+                rtext = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+                extra_calls += 1
+                extra_thinking += has_thinking(rtext, msg.additional_kwargs.get("reasoning_content"))
+                outs.append(rtext)
             repeats.append(len(set(outs)) == 1)
         except Exception as e:  # noqa: BLE001 - record, never abort the run
             repeats.append(False)
@@ -164,31 +223,37 @@ async def run_probe(cases: list[dict]) -> dict:
             ]
         )
     )
-    await asyncio.sleep(3)
+    await vram.during(asyncio.sleep(3))
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError, Exception):
         await asyncio.wait_for(task, timeout=TIMEOUT_S)
+    vram_after_cancel = vram_mb()
     next_start: float | None = None
     ps_after_cancel: dict = {}
     t1 = time.perf_counter()
     try:
         ps_after_cancel = ollama_json("/api/ps")
-        ok = await asyncio.wait_for(
-            llm.ainvoke([HumanMessage(content="Reply with the single word ok.")]), timeout=TIMEOUT_S
+        ok = await vram.during(
+            asyncio.wait_for(llm.ainvoke([HumanMessage(content="Reply with the single word ok.")]), timeout=TIMEOUT_S)
         )
-        extra_thinking += bool(ok.additional_kwargs.get("reasoning_content"))
+        otext = ok.content if isinstance(ok.content, str) else json.dumps(ok.content)
+        extra_calls += 1
+        extra_thinking += has_thinking(otext, ok.additional_kwargs.get("reasoning_content"))
         next_start = round(time.perf_counter() - t1, 2)
     except Exception as e:  # noqa: BLE001 - record, still return
         cancel_error = f"{type(e).__name__}: {e}"
     return {
         "results": results,
-        "peak_vram_mb": peak,
+        "vram_samples": vram.samples,
+        "gpu_name": gpu_name(),
+        "vram_after_cancel_mb": vram_after_cancel,
         "repeat_identical": repeats,
         "ps_after_cancel": ps_after_cancel,
         "next_call_seconds_after_cancel": next_start,
         "repeat_errors": repeat_errors,
         "cancel_error": cancel_error,
         "extra_thinking_calls": extra_thinking,
+        "extra_calls": extra_calls,
     }
 
 
@@ -208,14 +273,16 @@ Ollama version: {version}. Model digest: `{digest}`. Interpreter: {sys.version.s
 | JSON-valid (first pass) | {s["json_valid"]}/{n} | [{lo1:.3f}, {hi1:.3f}] |
 | Schema-valid (first pass) | {s["schema_valid"]}/{n} | [{lo2:.3f}, {hi2:.3f}] |
 | Schema-valid after one repair | {s["repaired_valid"]}/{n} | [{lo3:.3f}, {hi3:.3f}] |
-| Thinking present (text tag or metadata) | {s["thinking_any"]}/{n} | any > 0 fails the no-thinking setting |
+| Thinking present in first-pass outputs (text tag or metadata) | {s["thinking_any"]}/{n} inputs | any > 0 fails the no-thinking setting |
+| Thinking present in repair outputs (text tag or metadata) | {s["thinking_repair"]}/{s["repair_calls"]} repair calls | any > 0 fails the no-thinking setting |
 | Cold-start latency (after unload) | {s["cold_seconds"]} s | |
 | Warm latency p50 / p95 | {s["warm_p50"]} s / {s["warm_p95"]} s | |
-| Peak VRAM (nvidia-smi) | {data["peak_vram_mb"]} MB | |
-| Thinking present in repair/repeat/post-cancel calls | {data["extra_thinking_calls"]} | any > 0 fails the no-thinking setting |
+{vram_row(data["vram_samples"], data["gpu_name"])}
+| Thinking present in repeat and post-cancel outputs (text tag or metadata) | {data["extra_thinking_calls"]}/{data["extra_calls"]} calls | any > 0 fails the no-thinking setting |
 | Identical outputs on 3 repeats (5 inputs) | {sum(data["repeat_identical"])}/5 | |
-| Next call start after mid-generation cancel | {data["next_call_seconds_after_cancel"]} s | |
+| Full `ok` call after mid-generation cancel, incl. /api/ps | {data["next_call_seconds_after_cancel"]} s | |
 
+Whole-GPU memory.used immediately after cancel (nvidia-smi): {mb_or_not_measured(data["vram_after_cancel_mb"])}.
 `/api/ps` immediately after cancel: `{json.dumps(data["ps_after_cancel"])[:300]}`
 
 Errors: {[(e["probe_id"], e["error"]) for e in s["errors"]]}
