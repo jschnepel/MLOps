@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -75,7 +76,7 @@ def p95_index(n: int) -> int:
 def summarize(results: list[dict]) -> dict:
     n = len(results)
     warm = sorted(r["seconds"] for r in results if not r["cold"] and r["error"] is None)
-    cold = next((r["seconds"] for r in results if r["cold"]), None)
+    cold_row = next((r for r in results if r["cold"]), None)
     return {
         "n": n,
         "json_valid": sum(r["kind"] == "json_valid" for r in results),
@@ -85,7 +86,38 @@ def summarize(results: list[dict]) -> dict:
         "repair_calls": sum(bool(r.get("repair_called")) for r in results),
         "thinking_repair": sum(bool(r.get("repair_thinking")) for r in results),
         "errors": [r for r in results if r["error"]],
-        "cold_seconds": cold,
+        "cold_seconds": cold_row["seconds"] if cold_row is not None and cold_row["error"] is None else None,
+        "cold_error": cold_row["error"] if cold_row is not None else None,
         "warm_p50": warm[len(warm) // 2] if warm else None,
         "warm_p95": warm[p95_index(len(warm))] if warm else None,
     }
+
+
+def cold_cell(summary: dict) -> str:
+    """Cold-start cell: a latency only when the cold call succeeded; otherwise its error, never a timeout as latency."""
+    if summary["cold_seconds"] is not None:
+        return f"{summary['cold_seconds']} s"
+    if summary.get("cold_error"):
+        return f"not measured (cold call failed: {summary['cold_error']})"
+    return "not measured (no cold call)"
+
+
+SEAL_LINE = re.compile(r"[0-9a-f]{64}  \S+")
+
+
+def seal_problem(text: str, expected: dict[str, str]) -> str | None:
+    """None if evals/holdout.sha256 is well formed, else a message naming the failing line.
+
+    Exactly 3 lines of `<sha256>  <name>`; lines 2-3 must be `<expected hash>  <name>` for the two prompts,
+    in the order of `expected`.
+    """
+    lines = text.splitlines()
+    if len(lines) != 3:
+        return f"seal must have exactly 3 lines, found {len(lines)}"
+    for number, line in enumerate(lines, start=1):
+        if not SEAL_LINE.fullmatch(line):
+            return f"line {number} is not '<64 lowercase hex>  <name>': {line!r}"
+    for number, (name, digest) in enumerate(expected.items(), start=2):
+        if lines[number - 1] != f"{digest}  {name}":
+            return f"line {number} must be '{digest}  {name}', found {lines[number - 1]!r}"
+    return None

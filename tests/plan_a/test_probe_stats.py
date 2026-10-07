@@ -3,9 +3,11 @@ import pytest
 from scripts.probe_stats import (
     classify_output,
     classify_structured,
+    cold_cell,
     has_thinking,
     mb_or_not_measured,
     p95_index,
+    seal_problem,
     summarize,
     vram_row,
     wilson,
@@ -137,3 +139,63 @@ def test_classify_structured_uses_wrapper_parse_and_raw_text_for_thinking():
     assert classify_structured("", None, None) == "json_invalid"
     # Thinking in the raw text is a failure even when the wrapper managed to parse an object.
     assert classify_structured('<think>x</think>{"a": 1}', {"a": 1}, None) == "thinking_present"
+
+
+def _row(cold: bool, seconds: float, error: str | None) -> dict:
+    return {
+        "cold": cold,
+        "seconds": seconds,
+        "kind": "error" if error else "json_valid",
+        "schema_valid": error is None,
+        "repaired_valid": error is None,
+        "thinking_in_metadata": False,
+        "error": error,
+    }
+
+
+def test_cold_row_uses_first_row_only_without_error():
+    ok = summarize([_row(True, 53.2, None), _row(False, 4.0, None)])
+    assert ok["cold_seconds"] == 53.2 and ok["cold_error"] is None
+    assert cold_cell(ok) == "53.2 s"
+
+
+def test_cold_row_renders_the_error_not_a_timeout_as_latency():
+    s = summarize([_row(True, 60.01, "TimeoutError: "), _row(False, 4.0, None)])
+    assert s["cold_seconds"] is None
+    assert s["cold_error"] == "TimeoutError: "
+    assert cold_cell(s) == "not measured (cold call failed: TimeoutError: )"
+    assert "60.01" not in cold_cell(s)
+
+
+EXPECTED_PROMPTS = {"incident-draft-v1.md": "a" * 64, "schema-repair-v1.md": "b" * 64}
+GOOD_SEAL = f"{'c' * 64}  holdout-cases.jsonl\n{'a' * 64}  incident-draft-v1.md\n{'b' * 64}  schema-repair-v1.md\n"
+
+
+def test_seal_problem_accepts_well_formed_seal():
+    assert seal_problem(GOOD_SEAL, EXPECTED_PROMPTS) is None
+
+
+def test_seal_problem_names_the_failing_line():
+    assert "3 lines" in (seal_problem("", EXPECTED_PROMPTS) or "")
+    two = "\n".join(GOOD_SEAL.splitlines()[:2]) + "\n"
+    assert "3 lines" in (seal_problem(two, EXPECTED_PROMPTS) or "")
+    bad1 = GOOD_SEAL.replace("c" * 64, "C" * 64)
+    assert (seal_problem(bad1, EXPECTED_PROMPTS) or "").startswith("line 1")
+    bad2 = GOOD_SEAL.replace("a" * 64, "d" * 64)
+    assert (seal_problem(bad2, EXPECTED_PROMPTS) or "").startswith("line 2")
+    bad3 = GOOD_SEAL.replace("  schema-repair-v1.md", " schema-repair-v1.md")
+    assert (seal_problem(bad3, EXPECTED_PROMPTS) or "").startswith("line 3")
+
+
+def test_probe_main_refuses_malformed_or_missing_seal(tmp_path, monkeypatch, capsys):
+    from scripts import probe
+
+    seal = tmp_path / "holdout.sha256"
+    seal.write_text("not a seal\n", encoding="utf-8")
+    monkeypatch.setattr(probe, "SEAL", seal)
+    monkeypatch.setattr(probe, "model_digest", lambda: pytest.fail("network reached past the seal gate"))
+    assert probe.main() == 2
+    assert "line" in capsys.readouterr().err
+    monkeypatch.setattr(probe, "SEAL", tmp_path / "missing.sha256")
+    assert probe.main() == 2
+    assert "missing" in capsys.readouterr().err

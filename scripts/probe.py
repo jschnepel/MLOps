@@ -31,8 +31,10 @@ sys.path.insert(0, str(ROOT))
 from scripts.probe_stats import (
     VRAM_INTERVAL_S,
     classify_structured,
+    cold_cell,
     has_thinking,
     mb_or_not_measured,
+    seal_problem,
     summarize,
     vram_row,
     wilson,
@@ -297,7 +299,7 @@ Configuration measured (AM-31): model `{MODEL}`, digest `{digest}`, Ollama {vers
 | Schema-valid after one repair | {s["repaired_valid"]}/{n} | [{lo3:.3f}, {hi3:.3f}] |
 | Thinking present in first-pass outputs (text tag or metadata) | {s["thinking_any"]}/{n} inputs | any > 0 fails the no-thinking setting |
 | Thinking present in repair outputs (text tag or metadata) | {s["thinking_repair"]}/{s["repair_calls"]} repair calls | any > 0 fails the no-thinking setting |
-| Cold-start latency (after unload) | {s["cold_seconds"]} s | |
+| Cold-start latency (after unload) | {cold_cell(s)} | |
 | Warm latency p50 / p95 | {s["warm_p50"]} s / {s["warm_p95"]} s | |
 {vram_row(data["vram_samples"], data["gpu_name"])}
 | Thinking present in repeat and post-cancel outputs (text tag or metadata) | {data["extra_thinking_calls"]}/{data["extra_calls"]} calls | any > 0 fails the no-thinking setting |
@@ -322,10 +324,14 @@ def main() -> int:
             "evals/holdout.sha256 is missing: T03 must seal the holdout before the probe runs (AM-50)", file=sys.stderr
         )
         return 2
+    problem = seal_problem(SEAL.read_text(encoding="utf-8"), EXPECTED)
+    if problem is not None:
+        print(f"evals/holdout.sha256 is malformed: {problem}; refusing to run (AM-50)", file=sys.stderr)
+        return 2
     for name, h in EXPECTED.items():
         actual = sha256_of(ROOT / "handoff/prompts" / name)
         if actual != h:
-            print(f"prompt {name} hash {actual} != sealed {h}; refusing to run", file=sys.stderr)
+            print(f"prompt {name} hash {actual} != sealed/pinned {h}; refusing to run", file=sys.stderr)
             return 2
     cases = [json.loads(l) for l in (ROOT / "evals/probe/inputs.jsonl").read_text(encoding="utf-8").splitlines()]
     if len(cases) < 30:
