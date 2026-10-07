@@ -1,6 +1,6 @@
 {
-  "specification": "OPS-BUILD-1.3.1 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
-  "note": "Target acceptance requirements, not passing tests. Milestone = earliest owning task; R097 accrues across T24/T27/T29/T32. R081-R123 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement.",
+  "specification": "OPS-BUILD-1.3.2 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "note": "Target acceptance requirements, not passing tests. Milestone = earliest owning task; R097 accrues across T24/T27/T29/T32. R081-R126 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement.",
   "requirements": [
     {
       "id": "R001",
@@ -1581,7 +1581,7 @@
     {
       "id": "R104",
       "category": "contracts",
-      "requirement": "Schemas, examples and fixtures match the 1.3.1 contract",
+      "requirement": "Schemas, examples and fixtures match the 1.3.2 contract",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
       "expected_evidence": "verify_handoff.py --contracts passes including AM-80 negative probes.",
       "evidence_status": "NOT_RUN",
@@ -1615,7 +1615,7 @@
       "category": "security",
       "requirement": "Definer functions are hardened and tenant-isolated",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "search_path fixed, PUBLIC execute revoked, owner is not a table owner, FORCE RLS; cross-tenant access through functions fails.",
+      "expected_evidence": "search_path fixed, PUBLIC execute revoked, owner is not a table owner, FORCE RLS; cross-tenant access through functions fails. Includes the read functions search_procedures_scoped and asset_scope and raw-handle hashing inside resolve_invocation.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
@@ -1896,6 +1896,55 @@
       "milestone": "M01",
       "owning_tasks": [
         "T07"
+      ],
+      "blocking_for_v1": true
+    },
+    {
+      "id": "R124",
+      "category": "security",
+      "requirement": "Runtime roles hold only their matrix privileges",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Per-role tests: api/worker/sweeper/operator cannot write tables outside AM-20.12; audit tables reject UPDATE/DELETE; decisions only via record_decision.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "suggested_test": "tests/acceptance/test_r124_runtime_roles_hold_only_their_matrix_privileges.py",
+      "milestone": "M02",
+      "owning_tasks": [
+        "T09"
+      ],
+      "blocking_for_v1": true
+    },
+    {
+      "id": "R125",
+      "category": "safety",
+      "requirement": "A second incident for the same asset and interval is never created silently",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Two approved runs on one asset/interval: after the first SUCCEEDED, the second grant is refused -> BLOCKED_REVIEW asset_incident_exists.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "suggested_test": "tests/acceptance/test_r125_a_second_incident_for_the_same_asset_and_interva.py",
+      "milestone": "M08",
+      "owning_tasks": [
+        "T21",
+        "T22"
+      ],
+      "blocking_for_v1": true
+    },
+    {
+      "id": "R126",
+      "category": "security",
+      "requirement": "Test time cannot be shifted outside the test profile",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "In dev/demo, app.test_clock does not exist and SET of any GUC does not change app.current_time(); in test only the harness role can write the offset.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "suggested_test": "tests/acceptance/test_r126_test_time_cannot_be_shifted_outside_the_test_pro.py",
+      "milestone": "M02",
+      "owning_tasks": [
+        "T09"
       ],
       "blocking_for_v1": true
     }

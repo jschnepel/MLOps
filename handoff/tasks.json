@@ -1,5 +1,5 @@
 {
-  "specification": "OPS-BUILD-1.3.1 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "specification": "OPS-BUILD-1.3.2 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
   "current_milestone": "M00",
   "note": "Dependency graph. IDs stable since 1.2; T41 appended in 1.3. Requirements sit with the first task able to test them. review_notes carry round-3 LATER items for the owning task. M15 is optional. See SPEC_AMENDMENTS.md AM-60.",
   "milestones": [
@@ -206,7 +206,10 @@
         "No holdout content in the repo or agent-readable paths.",
         "Recorded before T02 (probe) and T19 (prompts) begin."
       ],
-      "external_approval_required": true
+      "external_approval_required": true,
+      "review_notes": [
+        "Hash procedure: sha256 of the exact file bytes via `python -c \"import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())\" <file>`; the owner attests the external record (dated email) in SESSION_STATE.md."
+      ]
     },
     {
       "id": "T02",
@@ -232,7 +235,7 @@
       "id": "T04",
       "milestone": "M01",
       "title": "uv workspace with per-service directories and locks",
-      "instructions": "ADR-0001 layout (core/, api/, worker/, mcp-server/, asset-sim/, incident-sim/). Move the whole reference unit unchanged into reference/ (src, tests, pyproject, Makefile, Dockerfile, compose, integrations, scripts/init_demo.py, scripts/check_reference.sh), excluded from the uv workspace and from root ruff/mypy/pytest with provenance/reference-code-hashes.remap.json and checker support; root pyproject becomes the uv workspace root. Create data/seed-ids.json (tenant/persona UUIDs). Resolve versions per AM-30, commit uv.lock, add jsonschema to the dev group; checker skips .venv*/node_modules. ruff, mypy, pytest via one Python entry point (`uv run python scripts/check.py`; no make on this machine). Re-create the reference venv from reference/ and re-run its suite.",
+      "instructions": "ADR-0001 layout (core/, api/, worker/, mcp-server/, asset-sim/, incident-sim/). Move the whole reference unit unchanged into reference/ (src, tests, pyproject, Makefile, Dockerfile, compose, integrations, scripts/init_demo.py, scripts/check_reference.sh), excluded from the uv workspace and from root ruff/mypy/pytest with provenance/reference-code-hashes.remap.json and checker support; root pyproject becomes the uv workspace root. Create data/seed-ids.json (tenant/persona UUIDs). Resolve versions per AM-30, commit uv.lock, add jsonschema to the dev group; checker skips .venv*/node_modules. ruff, mypy, pytest via one Python entry point (`uv run python scripts/check.py`; no make on this machine). Re-create the reference venv from reference/ and re-run its suite. Move MANIFEST.sha256 to provenance/MANIFEST-1.0.sha256; `--manifest` then verifies against commit 61cc504 blobs via git (AM-00).",
       "depends_on": [
         "T01"
       ],
@@ -246,7 +249,8 @@
         "`uv sync --locked` succeeds from a clean clone.",
         "`verify_handoff.py --reference-code` passes via the remap, and the reference suite passes again from reference/ in its external venv.",
         "One command runs ruff + mypy + pytest green; data/seed-ids.json committed.",
-        "Each service README states ownership and trust boundary."
+        "Each service README states ownership and trust boundary.",
+        "`verify_handoff.py --manifest` passes against the 1.0 snapshot in git, not the working tree."
       ],
       "external_approval_required": false
     },
@@ -254,7 +258,7 @@
       "id": "T05",
       "milestone": "M01",
       "title": "Dev bootstrap: Compose dev profile, Keycloak realm, secrets, seed IDs",
-      "instructions": "Compose dev profile with PostgreSQL+pgvector and Keycloak 26.8.x (pinned digest); fixed KC_HOSTNAME so iss matches for host and container callers; documented dev topology (which processes run in containers vs host); realm export with 5 personas (UUIDs from data/seed-ids.json), workload clients and hardcoded-audience mappers (MCP_RESOURCE_URL parameter, incident-sim); view-users service account; Windows-friendly secret generation outside git; host Ollama bridge.",
+      "instructions": "Compose dev profile with PostgreSQL+pgvector and Keycloak 26.8.x (pinned digest); fixed KC_HOSTNAME so iss matches for host and container callers; documented dev topology (which processes run in containers vs host); realm export with 5 personas (UUIDs from data/seed-ids.json), workload clients and hardcoded-audience mappers (MCP_RESOURCE_URL parameter, incident-sim); view-users service account; Windows-friendly secret generation outside git; host Ollama bridge. Bind every published port to 127.0.0.1. Secrets live under %LOCALAPPDATA%\\ops-copilot and reach containers via Compose `secrets:` (never env vars). Delete the temporary Keycloak bootstrap admin after realm import. Write docs/runbooks/ollama-network.md with the owner-applied firewall commands restricting Ollama to loopback + the Docker/WSL subnet (the agent does not change system settings).",
       "depends_on": [
         "T04"
       ],
@@ -266,9 +270,14 @@
       "definition_of_done": [
         "One command brings up the dev profile from a clean clone on Windows.",
         "Tokens for each workload client carry the expected aud and azp; user tokens' sub equals the Keycloak user ID (asserted).",
-        "No secret committed; generated secrets live in an ignored file."
+        "No secret committed; generated secrets live in an ignored file.",
+        "`docker compose ps` shows only 127.0.0.1 bindings; no secrets in `docker inspect` env; bootstrap admin removed; Ollama runbook committed."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Pin the PostgreSQL major version (image digest). Realm secrets via import placeholders. A dev-only direct-grant test client for the sub/iss assertions.",
+        "Do not route host callers through host.docker.internal: it resolves to the LAN IP and cannot reach 127.0.0.1-bound ports. Keycloak: KC_HOSTNAME=http://localhost:<port> plus KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true (verified in the round-4 dry run)."
+      ]
     },
     {
       "id": "T06",
@@ -295,7 +304,7 @@
       "id": "T07",
       "milestone": "M01",
       "title": "Contracts, state machine, schema alignment and reference migration",
-      "instructions": "Pydantic contracts; canonical JSON v1; transition table incl. ESCALATED, ABANDONED_UNVERIFIED and the slot rule; apply every AM-80 schema/example/fixture change incl. new schemas and error codes; update verify_handoff.py (renamed field, tools/ and evals/ schemas, skip dirs); port the pure-core reference tests and write reference/TRACEABILITY.md mapping all 58 to port/replace/drop. Before contract code, commit at least one negative example per AM-80 row (with its failure reason in index.json). Checker reads/writes UTF-8 and rejects \\r in fixtures, schemas, examples and prompts.",
+      "instructions": "Pydantic contracts; canonical JSON v1; transition table incl. ESCALATED, ABANDONED_UNVERIFIED and the slot rule; apply every AM-80 schema/example/fixture change incl. new schemas and error codes; update verify_handoff.py (renamed field, tools/ and evals/ schemas, skip dirs); port the pure-core reference tests and write reference/TRACEABILITY.md mapping all 58 to port/replace/drop. Before contract code, commit at least one negative example per AM-80 row (with its failure reason in index.json). Checker reads/writes UTF-8 and rejects \\r in fixtures, schemas, examples and prompts. Include the shared reason enum, the job-type schema (AM-15), the tombstone object and REJECTED key state, and state_version-only-on-transition semantics.",
       "depends_on": [
         "T04"
       ],
@@ -352,7 +361,9 @@
         "R009",
         "R084",
         "R106",
-        "R122"
+        "R122",
+        "R124",
+        "R126"
       ],
       "status": "PLANNED",
       "definition_of_done": [
@@ -364,7 +375,10 @@
       "review_notes": [
         "RLS bootstrap: RLS-free run_directory(run_id, tenant_id) + invocation_context readable only by app_definer/sweeper; named cross-tenant sweeper policy for expire_proposals, membership sync, session lookup.",
         "Definer functions declare SET app.tenant_id='' as an attribute; test that a preset tenant from mcp_exec is ignored.",
-        "app.current_time() test offset gated by PROFILE=test."
+        "app.current_time() test offset gated by PROFILE=test.",
+        "Role x table privilege matrix (AM-20.12) with per-role tests (R124); decisions/revisions/manual proposals/freezing only via definer functions; audit tables insert-only.",
+        "app.test_clock exists only in the test-profile migration; app.current_time() never reads GUCs (R126).",
+        "resolve_invocation takes the raw handle and hashes it inside; read definer functions search_procedures_scoped and asset_scope."
       ]
     },
     {
@@ -389,7 +403,8 @@
       "external_approval_required": false,
       "review_notes": [
         "Destination at READ COMMITTED; keep GET /internal/actions/{id}; abort stores grant hash; POST onto ABORTED returns tombstone regardless of hash (late-POST fault test).",
-        "Fault factory lives in shared core.testing.faults (R098 co-owned with T13)."
+        "Fault factory lives in shared core.testing.faults (R098 co-owned with T13).",
+        "incident-sim requires azp = mcp-server client in addition to aud; REJECTED is a permanent key state with tombstone shape; add a detective check that every destination key matches a grant hash."
       ]
     },
     {
@@ -415,7 +430,10 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Admin-API check: 2 s timeout, cached service-account token, fail closed 503 retryable when Keycloak is down/slow. The 'grants blocked <=60 s' half of R086 is verified in T21."
+        "Admin-API check: 2 s timeout, cached service-account token, fail closed 503 retryable when Keycloak is down/slow. The 'grants blocked <=60 s' half of R086 is verified in T21.",
+        "Membership sync fails closed: grants refuse if the last successful sync is older than 120 s; a deleted user (admin API 404) maps to 401. Run the admin-API check before opening the DB transaction.",
+        "Back-channel logout: verify signature with an alg allowlist, exp, sid/sub, and a durable (Postgres) jti store; exempt the endpoint from CSRF/Idempotency-Key with a forged-token negative test.",
+        "Start a core logging redaction filter here (OIDC code, connection strings, tokens, handles) with a canary test; T28 extends it to telemetry."
       ]
     },
     {
@@ -439,7 +457,10 @@
         "Replay same body returns same result; different body 409.",
         "Each status code has a test proving the mapping."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Slot rule: partial unique index on runs(conversation_id) over AM-10 active states, plus a concurrent admission test."
+      ]
     },
     {
       "id": "T13",
@@ -468,7 +489,9 @@
         "Transactions that write run_lease take FOR UPDATE from the start (no FOR SHARE upgrade).",
         "Owner re-fence path hands the new fence to the heartbeat thread atomically.",
         "Lock order includes the asset-guard advisory lock and memberships (AM-12); also place jobs, invocation_context, model_permit, sessions.",
-        "Gate heartbeat renewal on event-loop liveness and the 90 s compute budget."
+        "Gate heartbeat renewal on event-loop liveness and the 90 s compute budget.",
+        "Advisory lock: asset_id NOT NULL and read before locking; use hashtextextended; test that app_definer may call pg_advisory_xact_lock.",
+        "Lock order now includes messages, decisions and operator_resolutions; the outbox appends notification.failed in a separate transaction (AM-12)."
       ]
     },
     {
@@ -516,7 +539,8 @@
       "external_approval_required": false,
       "review_notes": [
         "status=error-only-before-grant applies to authorized callers; auth failures never reveal action_id.",
-        "Allowlist checks attempt state (create_incident only with no attempt or INTENT, not cancelled, before deadline)."
+        "Allowlist checks attempt state (create_incident only with no attempt or INTENT, not cancelled, before deadline).",
+        "mcp-server reads asset data via asset_scope + asset-sim, and procedures via search_procedures_scoped; it never has table access."
       ]
     },
     {
@@ -653,7 +677,8 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "LangGraph 1.2.14: explicit checkpoint_id => is_replaying, pending writes NOT re-applied (_loop.py:330, 766-770); Command(resume) keeps RESUME writes; invoke(None, checkpoint_id) forks (886-912). Store IDs from stream_mode='checkpoints'/aget_state, update after forks, make every node idempotent, test kill-mid-superstep and kill-at-interrupt, join stale in-process tasks before re-acquiring."
+        "LangGraph 1.2.14: explicit checkpoint_id => is_replaying, pending writes NOT re-applied (_loop.py:330, 766-770); Command(resume) keeps RESUME writes; invoke(None, checkpoint_id) forks (886-912). Store IDs from stream_mode='checkpoints'/aget_state, update after forks, make every node idempotent, test kill-mid-superstep and kill-at-interrupt, join stale in-process tasks before re-acquiring.",
+        "Fork writes are non-blocking (_loop.py:1262-1266) and sync durability waits only after the tick (main.py:3526): store only checkpoint IDs confirmed by aget_tuple; treat a missing stored ID as an error; prefer Command(resume) when a resume event exists; test two crashes in a row. Define revision re-entry (new thread per revision or explicit edges back to retrieval)."
       ]
     },
     {
@@ -678,7 +703,8 @@
         "R100",
         "R113",
         "R116",
-        "R120"
+        "R120",
+        "R125"
       ],
       "status": "PLANNED",
       "definition_of_done": [
@@ -690,7 +716,10 @@
       "review_notes": [
         "Asset guard via pg_advisory_xact_lock(tenant, asset) first in lock order; refusal 409 ASSET_ACTION_UNRESOLVED.",
         "Revision from BLOCKED_REVIEW requires a free conversation slot (SLOT_OCCUPIED 409).",
-        "Verify R086's grant-blocking half (membership sync <=60 s)."
+        "Verify R086's grant-blocking half (membership sync <=60 s).",
+        "Manual proposals must reference assets/evidence of the caller's tenant (alpha proposal for B22 -> 404, nothing written).",
+        "Guard predicate = grant exists and latest attempt not RESOLVED, evaluated atomically with grant insert; also refuse when another run recorded SUCCEEDED for the same asset/interval after this proposal was frozen (R125, owner decision).",
+        "Refusals move the run to BLOCKED_REVIEW with reason asset_action_unresolved / asset_incident_exists."
       ]
     },
     {
@@ -712,7 +741,8 @@
         "R110",
         "R046",
         "R118",
-        "R119"
+        "R119",
+        "R125"
       ],
       "status": "PLANNED",
       "definition_of_done": [
@@ -725,7 +755,8 @@
         "Redispatch skips the section 13 gate via lookup_action -> mark_sent; mark_sent re-checks cancel/deadline under runs lock.",
         "Cancellation after SENT aborts immediately; otherwise abort at dispatch deadline (<=5 min FAILED latency stated).",
         "Operator CLI `ops resolve-escalation` -> ABANDONED_UNVERIFIED with operator_resolutions audit row.",
-        "Late destination evidence on ABANDONED_UNVERIFIED emits action.late_evidence; record_outcome never transitions terminal runs; recover jobs stay allowed."
+        "Late destination evidence on ABANDONED_UNVERIFIED emits action.late_evidence; record_outcome never transitions terminal runs; recover jobs stay allowed.",
+        "request_abort is invoked inside create_incident after mark_sent returns cancelled/expired; allow abort after ABANDONED_UNVERIFIED (tombstone recorded as late evidence) with a bounded reconciliation job budget."
       ]
     },
     {
@@ -823,7 +854,8 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Include ANSWERED ('answered, no action'), CANCELLED and ABANDONED_UNVERIFIED in the state views; the reconnect assertion (state 8) lands in T27."
+        "Include ANSWERED ('answered, no action'), CANCELLED and ABANDONED_UNVERIFIED in the state views; the reconnect assertion (state 8) lands in T27.",
+        "Add a run-state -> UI-state table: ESCALATED and ABANDONED_UNVERIFIED are not 'failed'; APPROVED and BLOCKED_REVIEW are mapped; name the three panels (Conversation+Activity, Evidence, Approvals)."
       ]
     },
     {

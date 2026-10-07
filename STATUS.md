@@ -49,3 +49,8 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 - The round-3 blocking items are resolved in the plan (`docs/reviews/plan-review-r3-2026-10-06.md`). LATER items are attached to their owning tasks.
 - Still **no target capability implemented**. All of R001–R123 are `NOT_RUN`.
 - Next: an implementation plan for T01–T08, then build. From here, review happens per slice against code and tests.
+
+## Update — OPS-BUILD-1.3.2 (2026-10-06)
+
+- Round-5 blocking and high items are fixed in the plan. README, START_HERE and KICKOFF_PROMPT no longer claim tested Kubernetes.
+- Still **no target capability implemented**. All of R001–R126 are `NOT_RUN`.

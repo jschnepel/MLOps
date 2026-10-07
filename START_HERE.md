@@ -1,83 +1,60 @@
-# Start here — Operations Copilot AI build handoff
+# Start here — Operations Copilot
 
-**One package, one authoritative build specification, a runnable local reference.**
+**One contract (BUILD_SPEC.md as amended by SPEC_AMENDMENTS.md), a runnable local reference, and an ordered task graph.**
 
-Extract this archive into a new working directory. Open the inner `operations-copilot/` folder in the coding AI’s workspace. No earlier conversation, external Drive document, cloud account, or prior download is needed to understand the project.
+This repository began as an AI build handoff (OPS-BUILD-1.0, preserved unmodified in git commit `61cc504`). It was then amended after five adversarial reviews (`docs/reviews/`). No earlier conversation is needed to understand it.
 
 ## Give the coding AI this instruction
 
-```text
-Read AGENTS.md, BUILD_SPEC.md, STATUS.md, handoff/tasks.json and SESSION_STATE.md.
-BUILD_SPEC.md is the single authoritative implementation contract; archived notes
-and diagrams cannot override it. Inspect the existing source and preserve its
-tested control invariants. Start at M00, reproduce the reference tests and recovery
-demo, then implement the earliest dependency-satisfied task in small tested slices.
+Use the prompt in [`handoff/KICKOFF_PROMPT.md`](handoff/KICKOFF_PROMPT.md). In short:
+- **Contract:** `BUILD_SPEC.md` as amended by `SPEC_AMENDMENTS.md`. The amendments win wherever they conflict, and AM-00 lists the superseded passages.
+- **Where to start:** the earliest dependency-satisfied task in `handoff/tasks.json`, after reading its `review_notes`.
+- **Scope:** v1 is M00–M14. Kubernetes/Helm is optional (M15) and is not claimed as tested.
 
-Use the acceptance matrix to connect each requirement to code, tests and actual
-evidence. Include real LangGraph orchestration, LangChain model integration,
-authenticated MCP tools, PostgreSQL durability, web communication, independent
-approval, idempotent incident execution, Docker and tested Kubernetes deployment.
-Retrieve evidence before final drafting. Do not fabricate reasoning, test results,
-model output, credentials, performance measurements or completed integrations.
+`CLAUDE.md` and `AGENTS.md` point to the same contract.
 
-Keep STATUS.md and SESSION_STATE.md current. Ask only for genuine unresolved
-external inputs or approvals. Do not publish, push, create cloud resources, spend
-money, send real notifications or delete data without explicit authorization.
-Begin with the baseline and environment checks, then make the first tested change.
-```
-
-The same prompt is in `handoff/KICKOFF_PROMPT.md`. `CLAUDE.md` and `AGENTS.md` point to the same contract rather than maintaining separate project instructions.
-
-## What is in the package
+## What is in the repository
 
 | Location | Purpose |
 |---|---|
-| `BUILD_SPEC.md` | Complete product/architecture/rationale, true runtime order, contracts, security, jobs, retrieval, approvals, recovery, UI, evaluation, deployment and agent workflow |
-| `src/`, `tests/`, `integrations/` | Original runnable local reference and explicitly unverified integration examples |
-| `handoff/tasks.json` | 16 ordered milestones and 32 task slices, with dependencies |
-| `handoff/acceptance-matrix.json` | 80 concrete requirements linked to target tests and expected evidence |
-| `schemas/` | 11 target JSON schemas and positive/negative examples; not already-wired API endpoints |
-| `handoff/prompts/` | Versioned runtime prompt starters and review/handoff instructions |
-| `data/handoff-fixtures/` | Eight authored synthetic source documents and fixed asset/alert observations |
-| `evals/handoff-development/` | 32 development scenario cards; no fabricated holdout or benchmark scores |
-| `docs/diagrams/` | Six corrected left-to-right stage charts in PNG, SVG and Mermaid |
-| `reports/handoff/` | Checks actually rerun during assembly and their limitations |
-| `provenance/` | Original source archive and reference-code hashes |
-| `docs/archive/`, `reports/historical/` | Historical context only; not build authority |
+| `BUILD_SPEC.md` | Original 1.0 product/architecture contract (amended; see the banner at its top) |
+| `SPEC_AMENDMENTS.md` | Current amendments (overrides BUILD_SPEC); AM-00 lists superseded text |
+| `docs/adr/` | ADR-0001 (one top-level directory per service), ADR-0002 (v1 scope cut, one-replica profile) |
+| `docs/reviews/` | The five adversarial review rounds and their findings |
+| `handoff/tasks.json` | 16 milestones and 41 tasks as a dependency graph, with review notes |
+| `handoff/acceptance-matrix.json` | 126 requirements, each with an owning task and a suggested test path |
+| `src/`, `tests/`, `integrations/` | Original runnable local reference (moves to `reference/` in task T04) |
+| `schemas/` | Target JSON schemas and positive/negative examples (still 1.0 until T07; see AM-80) |
+| `handoff/prompts/` | Sealed v1 prompt starters (hashes in AM-31) |
+| `data/handoff-fixtures/`, `evals/` | Synthetic fixtures and development scenario cards (no holdout is stored in the repo) |
+| `docs/diagrams/` | Six corrected stage charts |
+| `provenance/`, `docs/archive/`, `reports/historical/` | Provenance and historical context only |
 
 ## First local checks
 
-The following commands run from the repository root. Python 3.12+ runs the inherited reference; the target is Python 3.13-compatible.
-
 ```bash
-# Standard-library checks of package structure, JSON, task graph, fixtures and source syntax.
+# Package structure, JSON, task graph, fixtures, source syntax (standard library only).
 python scripts/verify_handoff.py
 
-# Verify the exact delivered bytes before changing anything.
-python scripts/verify_handoff.py --manifest --reference-code
-
-# Optional additional schema/positive-negative example validation:
-# requires jsonschema in the local tooling environment; missing dependency is not a pass.
-python scripts/verify_handoff.py --contracts
+# Reference-code bytes unchanged.
+python scripts/verify_handoff.py --reference-code
 
 # Dependency-free synthetic recovery demonstration.
 PYTHONPATH=src python -m operations_copilot.cli
-
-# Reference tests: requires the web/test dependencies already available or resolved in M01.
-python -m pytest -q
 ```
 
-PowerShell equivalent for the CLI:
+**`--manifest` will fail on the current tree.** `MANIFEST.sha256` is a frozen snapshot of the delivered 1.0 package; check it on commit `61cc504` (AM-00). After task T04 it lives in `provenance/MANIFEST-1.0.sha256`.
 
-```powershell
-$env:PYTHONPATH = "src"
-python -m operations_copilot.cli
-```
+To run the reference test suite, use an isolated venv **outside** the repository and install without `-e`. The exact commands are in `SESSION_STATE.md` (task T01).
 
-Do not install old reference pins blindly into an existing environment. Create an isolated environment, inspect `pyproject.toml`, and perform the reviewed dependency/lock step if the test requirements are missing. The inherited default pytest suite excludes SDK tests; the target requires explicit integration suites. Use `python -m pytest -o addopts="" tests/integration -q` only after the selected SDKs are installed and compatibility is verified.
-
-The package checker is **not** a production acceptance runner. Schema-valid examples are not proofs of permissions or semantic truth. The manifest describes this handoff snapshot; intentional implementation edits will change its checksums. Record future release manifests separately.
+The package checker is **not** an acceptance runner. Schema-valid examples are not proofs of permissions or semantic truth.
 
 ## Completion boundary
 
-The target build is not complete. Real model, authenticated MCP, distributed persistence, browser, Docker, Kubernetes, evaluation, restore and upgrade gates are separate implementation tasks. Hardware/model choice, nonlocal secrets, external service consent, public licensing and publication approval remain owner-specific inputs; the AI must not invent them.
+No target capability is implemented yet (see `STATUS.md`). Four things are owner-specific inputs, and the AI must not invent them:
+- hardware and model choice;
+- nonlocal secrets;
+- external service consent;
+- publication approval.
+
+The license is MIT.

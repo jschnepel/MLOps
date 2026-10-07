@@ -1,6 +1,6 @@
-# OPS-BUILD-1.3.1 — Amendments to BUILD_SPEC.md
+# OPS-BUILD-1.3.2 — Amendments to BUILD_SPEC.md
 
-**Status:** Approved by the owner on 2026-10-06. The history: 1.1 was "amend + cut", 1.2 came from the round-2 review, 1.3 fixes the round-3 BLOCKS-START items, and 1.3.1 applies round-4 edits E1–E6 (`docs/reviews/plan-review-r4-2026-10-06.md`).
+**Status:** Approved by the owner on 2026-10-06. The history: 1.1 was "amend + cut", 1.2 came from the round-2 review, 1.3 fixes the round-3 BLOCKS-START items, 1.3.1 applies round-4 edits E1–E6 (`docs/reviews/plan-review-r4-2026-10-06.md`), and 1.3.2 fixes round-5 items S1–S9 and H1–H5 (`docs/reviews/plan-review-r5-2026-10-06.md`, cited `[R5-…]`). Owner decisions for 1.3.2: block a second incident for the same asset and interval (H3); restrict Ollama to loopback plus the Docker/WSL subnet (S9).
 **Precedence:** This file overrides `BUILD_SPEC.md` (OPS-BUILD-1.0) wherever they conflict. Everything not amended here stays in force. ADRs in `docs/adr/` record the reasoning.
 
 **Sources:**
@@ -8,7 +8,7 @@
 - `docs/reviews/plan-review-2026-10-06.md` (round 2, cited `[R2#n]`)
 - `docs/reviews/plan-review-r3-2026-10-06.md` (round 3, cited `[R3-Bn]`)
 
-New acceptance requirements are R081–R123 in `handoff/acceptance-matrix.json`. Round-3 LATER items are attached to their owning tasks as `review_notes` in `handoff/tasks.json`. From now on, review happens per slice against code and tests, not through further spec rounds.
+New acceptance requirements are R081–R126 in `handoff/acceptance-matrix.json`. Round-3 LATER items are attached to their owning tasks as `review_notes` in `handoff/tasks.json`. From now on, review happens per slice against code and tests, not through further spec rounds.
 
 **Changes in 1.3** (all from round 3):
 - abort hash semantics (B1);
@@ -39,6 +39,13 @@ These 1.0 passages are superseded and must not be implemented as written:
 - **§22:** all of it: deferred to M15.
 - **§23:** kind smoke test and SBOM/provenance as mandatory gates: deferred to M15 (ADR-0002).
 - **§25:** the milestone table: replaced by `handoff/tasks.json`.
+- **§4:** the tenant-administrator row: there is no admin surface in v1 (AM-02).
+- **§6:** the `invocation_context` "allowed tools" field and the "diagnostics" credential: replaced by AM-20.2 and the AM-20.12 matrix.
+- **§8:** "a documented single-writer development profile is not a substitute for passing that target gate": v1 *is* the one-replica profile (ADR-0002); the distributed gate (R021) is M15.
+- **§12:** `prompts/`: versioned prompts live in `core/prompts/` once T19 promotes them; `handoff/prompts/` stays the sealed v1 starters.
+- **§16:** four tabs: replaced by AM-40's three panels.
+- **R098's "default" profile** means the `dev` and `demo` profiles.
+- **`MANIFEST.sha256`** is a frozen snapshot of the delivered 1.0 package [R5-S8]. `verify_handoff.py --manifest` is meaningful only on commit `61cc504`. T04 moves it to `provenance/MANIFEST-1.0.sha256`, and the checker then verifies it against that commit's blobs (`git show 61cc504:<path>`), not the working tree.
 
 **Changes in 1.2:**
 - execution ownership and attempt protocol (AM-13);
@@ -93,7 +100,7 @@ V1 is M00–M14 of `handoff/tasks.json`. The optional milestone M15 holds:
 Also reduced for v1:
 - **Observability:** an OTel collector and one trace backend.
 - **UI:** three panels covering eight states (AM-40).
-- **Database roles:** `migrator`, `api`, `worker`, `mcp_exec` (functions only), `app_definer` (NOLOGIN, owns functions, does not own tables), and `incident` (separate database).
+- **Database roles:** `migrator` (DDL only, never used at runtime), `api`, `worker`, `sweeper`, `operator`, `mcp_exec` (functions only), `app_definer` (NOLOGIN, owns functions, does not own tables), and `incident` (separate database). Their privileges are fixed by the AM-20.12 matrix [R5-H1, R5-S7].
 - **No tenant-administration surface.**
 - **Workers:** **one worker replica** in the demo profile (AM-12).
 
@@ -113,7 +120,7 @@ Also reduced for v1:
 
 **New terminal state `ABANDONED_UNVERIFIED`** [R3-B3]:
 - Reachable only from ESCALATED, through the operator CLI `ops resolve-escalation <run_id> --acknowledge-unverified --reason "<text>"`.
-- The CLI runs locally against the migrator connection. It records the operator identity, the reason and the time in an append-only `operator_resolutions` table, and emits `run.abandoned_unverified`.
+- The CLI connects as the `operator` role, which may only `EXECUTE` the definer function `resolve_escalation(run_id, operator_name, reason)`. The operator name is a **required argument and is self-asserted** (documented as unauthenticated local identity). The function records it, with the reason and time, in the insert-only `operator_resolutions` table and emits `run.abandoned_unverified`.
 - It never claims success or failure. Reconciliation keeps running. On destination evidence it appends **`action.late_evidence`** (payload: `outcome ∈ {SUCCEEDED, FAILED_NO_COMMIT}` plus the receipt or tombstone) and the run status stays ABANDONED_UNVERIFIED [R4-E4].
 - `record_outcome` makes **no state transition** from any terminal state; it only records evidence.
 - Recover jobs remain allowed for ABANDONED_UNVERIFIED runs (AM-15).
@@ -135,11 +142,18 @@ Also reduced for v1:
 **Clarification signal:** a draft asks for clarification with `kind=abstain` **plus** a non-empty `question` (AM-80). Without `question`, abstain means INSUFFICIENT_EVIDENCE [R3-B5].
 
 - **Enforcement:** the transition table is data in `core/`, and a single function enforces it (R082).
+- **Asset-guard refusals** [R5-S4, R5-H3]: DRAFTING (at freeze) or APPROVED (at grant) → BLOCKED_REVIEW with reason `asset_action_unresolved` or `asset_incident_exists`, emitting `review.blocked`. The requester resubmits by revision. Refusals never leave a run holding the slot in APPROVED.
+- **`state_version`** increases **only on state transitions**. Appending events, heartbeats and attempt-state changes do not bump it, so user cancels and decisions don't get spurious 409s [R5-S5].
+- **Reasons** on terminal and blocked states come from one enum in `core/`: `cancelled_before_send`, `aborted_no_commit`, `rejected`, `asset_action_unresolved`, `asset_incident_exists`, `expired`, `stale_evidence`, `authority_revoked`, `conflict`, `escalation_deadline`. A cancel in INTENT ends FAILED with `cancelled_before_send` [R5-S6].
 - **The ANSWERED path** (read-only answer, no proposal) has its own test (R114).
 
 **Clock rule:**
 - Every lease, expiry, freshness and deadline comparison uses `clock_timestamp()`, evaluated **after** the relevant row locks are acquired. Never use `now()`, which is the transaction start time.
-- Tests inject time through the database function `app.current_time()`. It wraps `clock_timestamp()` plus a test-only offset.
+- Tests inject time through the database function `app.current_time()`. It wraps `clock_timestamp()` plus an offset read from the table `app.test_clock`.
+  - **Only the test-profile migration creates `app.test_clock`.** In dev and demo it does not exist, and the function returns `clock_timestamp()` unchanged.
+  - No runtime role can write it; only the test harness role can.
+  - **Session settings (GUCs) are never consulted**, so no role can shift time with `SET`.
+  - Tested by R126 [R5-H5].
 
 ## AM-11 Proposal identity and grants (amends §6, §7, §10, §13)
 
@@ -165,7 +179,7 @@ A missing row aborts the transaction.
 
 **Writes without a lease:** API and sweeper mutations (decision, cancel, revision, expiry) hold no lease. They serialize with `SELECT … FROM runs … FOR UPDATE` plus `expected_version`.
 
-**Lock order:** `asset guard advisory lock → run_lease → runs → proposals → memberships → execution_grant → action_attempt → events → outbox`.
+**Lock order:** `asset guard advisory lock → run_lease → runs → messages → proposals → decisions → memberships → execution_grant → action_attempt → operator_resolutions → events → outbox`. Idempotency rows are written last, before commit. The outbox delivery loop records results in its own transaction and appends any `notification.failed` event in a **separate** transaction, so it never takes `runs` after `outbox`.
 - The asset guard lock is `pg_advisory_xact_lock(hashtext(tenant_id || ':' || asset_id))`. Proposal freezing and `grant_execution` take it first.
 - Every transaction and definer function follows this order.
 - Any transaction that will write `run_lease` takes `FOR UPDATE` from the start; it never upgrades from `FOR SHARE`. A two-connection interleaving test and a concurrent stress test prove fencing and deadlock freedom (R107).
@@ -234,7 +248,10 @@ A missing row aborts the transaction.
 Tested by R109.
 
 **Destination (incident-sim):**
-- A single table `action_key(action_id PK, payload_sha256, state ∈ {COMMITTED, ABORTED}, incident_id NULL, decided_at)`.
+- A single table `action_key(action_id PK, payload_sha256, state ∈ {COMMITTED, ABORTED, REJECTED}, incident_id NULL, reason NULL, decided_at)`. All three states are permanent and terminal [R5-S3].
+- **Tombstone shape** (returned for ABORTED and REJECTED): `{action_id, state, payload_sha256, reason, decided_at}`.
+- A validation rejection (malformed or disallowed payload) writes a permanent `REJECTED` key, so a lost response is recoverable by lookup.
+- incident-sim also requires the token's `azp` to be the mcp-server client.
 - Both `POST /internal/incidents` and `POST /internal/actions/{id}/abort` use `INSERT … ON CONFLICT (action_id) DO NOTHING` and then read the row, at **READ COMMITTED** isolation. The first writer wins atomically.
 - An incident row is inserted in the same transaction only when the key commits.
 - **Rows are never deleted or expired**, not even tombstones.
@@ -248,16 +265,18 @@ Tested by R109.
 
 | Layer | Values |
 |---|---|
-| Destination | `COMMITTED` / `ABORTED` |
+| Destination | `COMMITTED` / `ABORTED` / `REJECTED` |
 | Tool outcome | `SUCCEEDED` / `FAILED_NO_COMMIT` / `UNKNOWN` / `CONFLICT` |
 | Run | SUCCEEDED / FAILED / OUTCOME_UNKNOWN / ESCALATED / ABANDONED_UNVERIFIED |
 
-`FAILED_NO_COMMIT` carries `reason ∈ {aborted_no_commit, rejected}`.
+`FAILED_NO_COMMIT` carries `reason ∈ {aborted_no_commit, cancelled_before_send, rejected}`, mapped from destination ABORTED, ABORTED-after-cancel, or REJECTED.
 
 **Asset guard:**
-- Proposal freezing and grants refuse while another run in the same tenant has an unresolved action (EXECUTING, OUTCOME_UNKNOWN or ESCALATED) for the same asset and an overlapping half-open interval.
+- Proposal freezing and grants refuse while another run in the same tenant has an unresolved action for the same asset and an overlapping half-open interval.
+  - "Unresolved" means a grant exists and its latest attempt is not RESOLVED, evaluated inside the same transaction that inserts a grant.
+- **Owner decision (H3):** `grant_execution` **also refuses** when another run in the same tenant recorded a SUCCEEDED outcome (or SUCCEEDED late evidence) for the same asset and an overlapping interval **after** this proposal was frozen. The reviewer must re-review with fresh evidence. A second incident is never created silently (R125).
 - They serialize on the per-(tenant, asset) advisory lock (AM-12), so two conversations cannot both pass the check (R110).
-- A refusal returns 409 `ASSET_ACTION_UNRESOLVED`, listing the blocking run only if the caller may see it.
+- A refusal returns 409 `ASSET_ACTION_UNRESOLVED` or `ASSET_INCIDENT_EXISTS`, listing the blocking run only if the caller may see it. The run moves to BLOCKED_REVIEW (AM-10).
 
 **Defaults** (configurable; tests use `app.current_time()`):
 
@@ -304,6 +323,18 @@ Tested by R109.
 | `get_incident_receipt(proposal_id)` | `recover` jobs only, including on ESCALATED and ABANDONED_UNVERIFIED runs |
 | `abort_incident(proposal_id)` | `recover` jobs only, including on ESCALATED runs (not after ABANDONED_UNVERIFIED) |
 
+**Job types** [R5-S2]. Every job has exactly one `type`. Allowed tools are derived from type plus run state plus attempt state.
+
+| `job.type` | Created by | Purpose | Allowed tools | Run states |
+|---|---|---|---|---|
+| `investigate` | API at admission and after a revision | Retrieval, drafting, freezing | read tools | QUEUED, RETRIEVING, DRAFTING |
+| `resume_input` | API with a clarification reply | Resume after a clarification | read tools | AWAITING_INPUT → QUEUED |
+| `execute` | API with an approving decision | Final grant and first dispatch | `create_incident` | APPROVED, EXECUTING (attempt absent or INTENT) |
+| `recover` | Worker timeout path; sweeper; `create_incident` after cancel or expiry | Redispatch, lookup, abort | `create_incident` (INTENT only), `get_incident_receipt`, `abort_incident` | EXECUTING, OUTCOME_UNKNOWN, ESCALATED, ABANDONED_UNVERIFIED |
+| `expire_proposals`, `sync_memberships`, `sweep_wakeups` | Scheduler (sweeper role) | Maintenance | none | n/a (no run lease) |
+
+Read tools are `get_asset_status`, `get_recent_alerts` and `search_procedures`. After `mark_sent` returns `cancelled` or `expired`, `create_incident` itself calls `request_abort` and returns `FAILED_NO_COMMIT`. `request_abort` locks `runs`, marks the attempt RESOLVED and records the tombstone returned by the destination.
+
 - Every tool has an input JSON Schema in `schemas/tools/`. Arguments that supply a role, tenant, actor, approval or destination are rejected.
 - **The envelope must agree with the data:**
   - `status=ok` only for a read with data, or `SUCCEEDED`;
@@ -317,7 +348,11 @@ Tested by R109.
 ## AM-20 Authority boundaries (amends §6, §9, §13)
 
 1. **Definer functions are the MCP role's only access.**
-   - `mcp_exec` has no table privileges. It has `EXECUTE` only on `resolve_invocation(handle_sha256, client_azp)`, `grant_execution`, `mark_sent`, `record_outcome`, `lookup_action`, `request_abort`.
+   - `mcp_exec` has no table privileges. It has `EXECUTE` only on:
+     - `resolve_invocation(raw_handle, client_azp)` (hashes the raw handle inside the function, so stored hashes are never usable credentials);
+     - `grant_execution`, `mark_sent`, `record_outcome`, `lookup_action`, `request_abort`;
+     - **read functions** [R5-H2]: `search_procedures_scoped(raw_handle, query, asset_type, limit)` (tenant-, approval- and effective-filtered lexical/vector search returning permitted chunks only) and `asset_scope(raw_handle)` (the resolved run's tenant, asset and interval, which mcp-server forwards to asset-sim).
+   - asset-sim trusts only the mcp-server workload token and the tenant/asset context it forwards, and applies its own tenant filter.
    - All are `SECURITY DEFINER`, owned by `app_definer` (NOLOGIN, **not** a table owner), with `SET search_path = app, pg_temp`.
    - Each migration creates the function, runs `REVOKE ALL ON FUNCTION … FROM PUBLIC` and `GRANT EXECUTE … TO mcp_exec` in the same transaction.
    - Application tables use `FORCE ROW LEVEL SECURITY`. Functions set `app.tenant_id` (transaction-local) from the resolved run before touching tenant rows.
@@ -356,6 +391,17 @@ Tested by R109.
 9. **Fault hooks are test-only.** They exist only in an app factory, shared as `core.testing.faults`, that refuses to start unless `PROFILE=test` (R098; first used in T10, completed in T13). The test-time offset in `app.current_time()` is also gated by profile.
 10. **Browser sessions are server-side.** A Postgres `sessions` table holds an opaque random ID (stored hashed) in an HttpOnly cookie. authlib's OIDC state lives in that store, not in Starlette's signed-cookie `SessionMiddleware`.
 11. **`X-Ops-Invocation` is a capability lookup key only.** It is never trusted as identity and never logged. The SDK warns that headers are client-supplied.
+12. **Role × table privilege matrix** [R5-H1]. Enforced by migrations and tested per role (R124):
+
+    | Role | Write access | Never |
+    |---|---|---|
+    | `api` | conversations, messages, runs (admission, cancel flag), idempotency, sessions, feedback, outbox; **decisions, revisions and manual proposals only via definer functions** `record_decision`, `create_revision`, `create_manual_proposal` | UPDATE/DELETE on decisions, proposals, execution_grant, action_attempt, events, operator_resolutions |
+    | `worker` | run_lease, jobs, invocation_context (insert; revocation via fence bump), events (insert), checkpoints schema DML; **freezing via definer function** `freeze_proposal` | INSERT/UPDATE on decisions, memberships, execution_grant, action_attempt; UPDATE/DELETE on events |
+    | `sweeper` | jobs, runs (expiry transitions via `expire_proposal`), memberships (sync), outbox | decisions, grants, attempts |
+    | `operator` | EXECUTE `resolve_escalation` only | everything else |
+    | `mcp_exec` | EXECUTE on the AM-20.1 functions only | every table |
+
+    Audit tables (decisions, proposals, execution_grant, action_attempt, events, operator_resolutions) are insert-only for every runtime role.
 
 ## AM-30 Protocol, libraries and versions (amends §2, §10, §19, §22, §29)
 
@@ -387,6 +433,10 @@ Tested by R109.
 - **Model:** `qwen3:8b`. Record its digest.
 - **Settings:** `ChatOllama(reasoning=False)` (maps to Ollama `think:false`), `num_ctx=16384`, `num_predict=1000`, `temperature=0`, 60 s timeout, `with_structured_output(method="json_schema")` **plus** application-side validation.
 - **Warm-up:** a cold model load took 53 s in the round-4 dry run, against the 60 s timeout. The worker therefore issues a warm-up call (with `keep_alive`) at startup, before it accepts drafting jobs, and T02 measures cold vs warm latency.
+- **Digest check:** at warm-up the worker compares the model digest (`/api/show`) with the pinned digest and **fails closed** on mismatch [R5-S9].
+- **Network exposure (owner decision):** Ollama is reachable only from loopback and the Docker/WSL subnet.
+  - The owner applies the firewall restriction, using commands documented in `docs/runbooks/ollama-network.md` (T05). The agent does not change system settings.
+  - Every other published port (Postgres, Keycloak, services) binds to `127.0.0.1`.
 - **T02 probe** [R3-B11]:
   - Uses **at least 30 distinct inputs**, authored for the probe under `evals/probe/`. These are separate from the 10 development seeds and from the holdout.
   - Runs in an isolated environment (`uv run --isolated --with langchain-ollama==1.1.0 …`), with the dependency freeze saved next to the report.
@@ -535,7 +585,8 @@ The delivered `schemas/`, `schemas/examples/` and `data/handoff-fixtures/` still
 | `error.schema.json` | Codes `ASSET_ACTION_UNRESOLVED`, `GRANT_EXISTS` (409 on revision after grant), `SLOT_OCCUPIED` |
 | New: `evals/holdout-case.schema.json`, `evals/quality-gates.schema.json` | Defined in T03 and T23 respectively; meta-validated by the checker |
 | `schemas/tools/*.json` | Create input schemas for all six tools |
-| `action-outcome.schema.json` | `FAILED_NO_COMMIT.reason`; mapping from `ABORTED` |
+| `action-outcome.schema.json` | `FAILED_NO_COMMIT.reason` (shared reason enum); mapping from ABORTED/REJECTED; tombstone object |
+| New: `schemas/job.schema.json` | The AM-15 job-type table as an enum with allowed tools and run states |
 | `decision.schema.json` + examples | `expected_payload_sha256` |
 | `examples/tool-get_incident_receipt-valid.json` | Uses `status=outcome` |
 | `examples/draft-valid.json` / `tool-get_recent_alerts-valid.json` | Make the alerts consistent (the draft says "two warnings", the alerts example returns `[]`) |
