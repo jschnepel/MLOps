@@ -1,7 +1,7 @@
 {
-  "specification": "OPS-BUILD-1.3.3 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "specification": "OPS-BUILD-1.3.4 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
   "current_milestone": "M00",
-  "note": "Dependency graph. IDs stable since 1.2; T41 (1.3) and T42-T46 (1.3.3 splits) appended. Requirements sit with the first task able to test them. review_notes carry later-round items for the owning task. M15 is optional. See SPEC_AMENDMENTS.md AM-60.",
+  "note": "Dependency graph. IDs stable since 1.2; T41 (1.3) and T42-T46 (1.3.3 splits) and T47 (1.3.4 mcp-write) appended. Requirements sit with the first task able to test them. review_notes carry later-round items for the owning task. M15 is optional. See SPEC_AMENDMENTS.md AM-60.",
   "milestones": [
     {
       "id": "M00",
@@ -64,12 +64,13 @@
     },
     {
       "id": "M05",
-      "title": "Authenticated MCP boundary and governed corpus",
+      "title": "MCP read and write servers and governed corpus",
       "required_for_v1": true,
       "task_ids": [
         "T15",
-        "T16",
-        "T17"
+        "T47",
+        "T17",
+        "T16"
       ],
       "status": "PLANNED"
     },
@@ -240,7 +241,7 @@
       "id": "T04",
       "milestone": "M01",
       "title": "uv workspace, locks, check entry point and seed IDs",
-      "instructions": "ADR-0001 layout (core/, api/, worker/, mcp-server/, asset-sim/, incident-sim/ with trust-boundary READMEs); root pyproject becomes the uv workspace root with `[tool.uv.workspace] exclude=[\"reference\"]`; resolve versions per AM-30 and commit uv.lock; add jsonschema to the dev group; `scripts/check.py` runs ruff + mypy + pytest (no make on Windows); create data/seed-ids.json (tenant/persona UUIDs). Hyphenated service dirs get explicit import names; none is named `mcp`.",
+      "instructions": "ADR-0001 layout (core/, api/, worker/, mcp-read/, mcp-write/, asset-sim/, incident-sim/ with trust-boundary READMEs); root pyproject becomes the uv workspace root with `[tool.uv.workspace] exclude=[\"reference\"]`; resolve versions per AM-30 and commit uv.lock; add jsonschema to the dev group; `scripts/check.py` runs ruff + mypy + pytest (no make on Windows); create data/seed-ids.json (tenant/persona UUIDs). Hyphenated service dirs get explicit import names; none is named `mcp`.",
       "depends_on": [
         "T01"
       ],
@@ -298,7 +299,8 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Do not route host callers through host.docker.internal: it resolves to the LAN IP and cannot reach 127.0.0.1-bound ports. Keycloak: KC_HOSTNAME=http://localhost:<port> plus KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true (verified in the round-4 dry run)."
+        "Do not route host callers through host.docker.internal: it resolves to the LAN IP and cannot reach 127.0.0.1-bound ports. Keycloak: KC_HOSTNAME=http://localhost:<port> plus KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true (verified in the round-4 dry run).",
+        "Two MCP audiences and clients: MCP_READ_RESOURCE_URL / MCP_WRITE_RESOURCE_URL; the worker holds one client but two handle types."
       ]
     },
     {
@@ -422,8 +424,8 @@
     {
       "id": "T08",
       "milestone": "M01",
-      "title": "Walking skeleton: api, worker, mcp-server, incident-sim",
-      "instructions": "Fake model; PostgreSQL and Keycloak from T05; processes api, worker, mcp-server, incident-sim. Real client-credentials tokens from T05 (no shared secrets). POST run -> job -> worker -> mcp-server create_incident -> incident-sim -> receipt -> event. Schema is Alembic revision 1 (extended by T09); incident-sim code is the base T10 extends. The skeleton-debt list in SESSION_STATE.md is committed BEFORE coding; the skeleton must include a decision step (second persona) and route every transition through T07's table even though definer functions arrive in T09.",
+      "title": "Walking skeleton: api, worker, mcp-read, mcp-write, incident-sim",
+      "instructions": "Fake model; PostgreSQL and Keycloak from T05; processes api, worker, mcp-read, mcp-write, incident-sim. Real client-credentials tokens from T05 (no shared secrets). POST run -> job -> worker -> mcp-read (one read tool) -> fake draft -> decision -> mcp-write create_incident -> incident-sim -> receipt -> event. Schema is Alembic revision 1 (extended by T09); incident-sim code is the base T10 extends. The skeleton-debt list in SESSION_STATE.md is committed BEFORE coding; the skeleton must include a decision step (second persona) and route every transition through T07's table even though definer functions arrive in T09.",
       "depends_on": [
         "T05",
         "T07"
@@ -433,7 +435,7 @@
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "One e2e test drives a run to SUCCEEDED across the four processes with real tokens.",
+        "One e2e test drives a run to SUCCEEDED across the five processes with real tokens, crossing both MCP servers.",
         "Skeleton shortcuts listed in SESSION_STATE.md as debt with owning tasks; no throwaway auth.",
         "Schema created as Alembic revision 1 (owner role; T09 re-owns and enables RLS in later revisions)."
       ],
@@ -498,7 +500,7 @@
       "review_notes": [
         "Destination at READ COMMITTED; keep GET /internal/actions/{id}; abort stores grant hash; POST onto ABORTED returns tombstone regardless of hash (late-POST fault test).",
         "Fault factory lives in shared core.testing.faults (R098 co-owned with T13).",
-        "incident-sim requires azp = mcp-server client in addition to aud; REJECTED is a permanent key state with tombstone shape; add a detective check that every destination key matches a grant hash.",
+        "incident-sim requires azp = mcp-write client in addition to aud; REJECTED is a permanent key state with tombstone shape; add a detective check that every destination key matches a grant hash.",
         "POST onto REJECTED returns the REJECTED tombstone; abort onto REJECTED likewise; both in R096 fault tests."
       ]
     },
@@ -535,7 +537,7 @@
       "id": "T12",
       "milestone": "M03",
       "title": "Durable admission API and error mapping",
-      "instructions": "/api/v1 conversations/messages/runs; message+run+job+event committed before 202; scoped Idempotency-Key (24 h); one active run per conversation; interval resolved once; safe error schema and 401/403/404/409/422/429/503 mapping.",
+      "instructions": "/api/v1 conversations/messages/runs; message+run+job+event committed before 202; scoped Idempotency-Key (24 h); one active run per conversation; interval resolved once; safe error schema and 401/403/404/409/422/429/503 mapping; the AM-16 admission router with its five routes as a table in core/routing.py, deterministic-first, optional model hint may only downgrade.",
       "depends_on": [
         "T09"
       ],
@@ -544,13 +546,15 @@
         "R016",
         "R017",
         "R018",
-        "R115"
+        "R115",
+        "R129"
       ],
       "status": "PLANNED",
       "definition_of_done": [
         "Crash-before-commit leaves no ack; after commit the job exists.",
         "Replay same body returns same result; different body 409.",
-        "Each status code has a test proving the mapping."
+        "Each status code has a test proving the mapping.",
+        "Every admission route has a test; unroutable or conflicting input yields 422/clarification and never a job (R129)."
       ],
       "external_approval_required": false,
       "review_notes": [
@@ -609,14 +613,14 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Jobs carry dedup_key UNIQUE per AM-20.4; recover jobs never created by mcp-server."
+        "Jobs carry dedup_key UNIQUE per AM-20.4; recover jobs never created by either MCP server."
       ]
     },
     {
       "id": "T15",
       "milestone": "M05",
-      "title": "Authenticated MCP server, token verifier and invocation handles",
-      "instructions": "mcp 2.3.x over Streamable HTTP pinned to 2026-07-28; custom TokenVerifier (iss, aud resource URL, azp, exp); X-Ops-Invocation as lookup key only; resolve_invocation with azp binding and server-derived allowlist.",
+      "title": "Authenticated MCP read server (mcp-read), token verifier and invocation handles",
+      "instructions": "mcp-read on official SDK 2.x over Streamable HTTP pinned to 2026-07-28; custom TokenVerifier (iss, aud = MCP_READ_RESOURCE_URL, azp, exp); X-Ops-Invocation as lookup key only; resolve_invocation with azp binding, server binding (read handles only) and server-derived allowlist; DB role mcp_read holds EXECUTE on resolve_invocation, asset_scope and search_procedures_scoped only.",
       "depends_on": [
         "T13",
         "T05"
@@ -626,45 +630,45 @@
         "R026",
         "R027",
         "R031",
-        "R085"
+        "R085",
+        "R131"
       ],
       "status": "PLANNED",
       "definition_of_done": [
         "Independent-process client lists and calls tools.",
         "Missing/wrong aud, browser token, replayed/expired/other-run/other-azp handle all rejected.",
-        "Protocol-version header/_meta mismatch rejected."
+        "Protocol-version header/_meta mismatch rejected.",
+        "mcp_read cannot execute any write-path function; an execute/recover handle presented to mcp-read is rejected (R131 read half)."
       ],
       "external_approval_required": false,
       "review_notes": [
         "status=error-only-before-grant applies to authorized callers; auth failures never reveal action_id.",
         "Allowlist checks attempt state (create_incident only with no attempt or INTENT, not cancelled, before deadline).",
-        "mcp-server reads asset data via asset_scope + asset-sim, and procedures via search_procedures_scoped; it never has table access."
+        "mcp-read reads asset data via asset_scope + asset-sim, and procedures via search_procedures_scoped; it never has table access."
       ]
     },
     {
-      "id": "T16",
+      "id": "T47",
       "milestone": "M05",
-      "title": "Read tools, asset-sim and recovery tools",
-      "instructions": "asset-sim service; get_asset_status, get_recent_alerts (absolute interval, next_cursor), search_procedures over the governed store; get_incident_receipt and abort_incident for recover jobs only; fail-closed result validation.",
+      "title": "Authenticated MCP write server (mcp-write) and recovery tools",
+      "instructions": "mcp-write on the same SDK/protocol pin; TokenVerifier with aud = MCP_WRITE_RESOURCE_URL; accepts execute/recover handles only; DB role mcp_exec holds EXECUTE on resolve_invocation, grant_execution, mark_sent, record_outcome, request_abort, lookup_action only; hosts create_incident, get_incident_receipt (recover only) and abort_incident; sole caller of incident-sim with the incident-sim audience and azp.",
       "depends_on": [
         "T15",
-        "T10",
-        "T17"
+        "T10"
       ],
       "requirement_ids": [
-        "R028",
-        "R029",
-        "R030"
+        "R030",
+        "R131"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "Cross-tenant reads denied; unexpected tools and malformed results fail closed.",
-        "Recovery tools unavailable to read/execute jobs and to any model-facing adapter."
+        "mcp_exec cannot execute any read function; a read handle presented to mcp-write is rejected (R131 write half).",
+        "Receipt lookup unavailable outside recover jobs and cannot create actions (R030).",
+        "incident-sim accepts only mcp-write's token and azp; mcp-read cannot reach incident-sim (network test in T30)."
       ],
       "external_approval_required": false,
       "review_notes": [
-        "search_procedures reads the governed store built in T17.",
-        "search_procedures vector mode: mcp-server computes the nomic search_query embedding and passes it to search_procedures_scoped."
+        "Handle server binding is checked inside resolve_invocation by comparing the handle's server field with session_user (mcp_read vs mcp_exec)."
       ]
     },
     {
@@ -687,6 +691,31 @@
         "Lexical retrieval measured on labelled dev queries with denominators."
       ],
       "external_approval_required": false
+    },
+    {
+      "id": "T16",
+      "milestone": "M05",
+      "title": "Read tools and asset-sim on mcp-read",
+      "instructions": "asset-sim service (trusts only the mcp-read workload token and forwarded tenant/asset context, applies its own tenant filter); get_asset_status, get_recent_alerts (absolute interval, next_cursor), search_procedures over the governed store (vector mode: mcp-read computes the nomic search_query embedding); fail-closed result validation.",
+      "depends_on": [
+        "T15",
+        "T10",
+        "T17"
+      ],
+      "requirement_ids": [
+        "R028",
+        "R029"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Cross-tenant asset reads denied; unexpected tools and malformed results fail closed.",
+        "asset-sim rejects worker, api and mcp-write tokens."
+      ],
+      "external_approval_required": false,
+      "review_notes": [
+        "search_procedures reads the governed store built in T17.",
+        "search_procedures vector mode: mcp-read computes the nomic search_query embedding and passes it to search_procedures_scoped."
+      ]
     },
     {
       "id": "T18",
@@ -729,7 +758,7 @@
       "id": "T19",
       "milestone": "M07",
       "title": "Async LangChain ChatOllama DraftGenerator",
-      "instructions": "Versioned prompts; ChatOllama.ainvoke with AM-31 settings; structural validation incl. citation membership; one bounded repair; explicit MODEL_MODE fake|ollama, no fallback. Warm-up call at startup compares /api/show digest with data/model-pins.json and fails closed on mismatch (R127).",
+      "instructions": "Versioned prompts; ChatOllama.ainvoke with AM-31 settings; structural validation incl. citation membership; one bounded repair; the AM-16 model router (DraftGenerator factory: fake | qwen3:8b | future named model) with no silent fallback; writes the run manifest {run_id, model_route, model_digest, prompt_version, corpus_version, retrieval_mode} and records the route in explanation.ready. Warm-up call at startup compares /api/show digest with data/model-pins.json and fails closed on mismatch (R127).",
       "depends_on": [
         "T07",
         "T17",
@@ -743,7 +772,8 @@
         "R039",
         "R040",
         "R041",
-        "R127"
+        "R127",
+        "R130"
       ],
       "status": "PLANNED",
       "definition_of_done": [
@@ -756,7 +786,7 @@
       "id": "T20",
       "milestone": "M07",
       "title": "LangGraph workflow with sync durability and stored checkpoint IDs",
-      "instructions": "Nodes per BUILD_SPEC section 8; retrieval before drafting; durability=sync; runs.checkpoint_id stored under fence and used on resume; idempotent pre-interrupt logic; ID-only interrupts; human waits release the lease; ANSWERED path.",
+      "instructions": "Nodes per AM-12 incl. the route_request graph router whose conditional edges are generated from the core/routing.py table; retrieval before drafting; durability=sync; runs.checkpoint_id stored under fence and used on resume; idempotent pre-interrupt logic; ID-only interrupts; human waits release the lease; ANSWERED path.",
       "depends_on": [
         "T19",
         "T14",
@@ -768,13 +798,15 @@
         "R042",
         "R091",
         "R108",
-        "R114"
+        "R114",
+        "R129"
       ],
       "status": "PLANNED",
       "definition_of_done": [
         "Trace shows MCP reads complete before drafting.",
         "Pause/resume survives worker restart from the stored checkpoint_id; a newer stray head is ignored.",
-        "Checkpoint blobs contain no evidence or proposal text."
+        "Checkpoint blobs contain no evidence or proposal text.",
+        "A test enumerates every graph-router row and asserts the node reached (R129)."
       ],
       "external_approval_required": false,
       "review_notes": [
@@ -829,7 +861,8 @@
       "title": "Attempt protocol, recovery, abort and escalation",
       "instructions": "grant inserts INTENT; mark_sent before I/O; record_outcome; recover jobs with redispatch/abort rules; reconciliation backoff; transport-timeout rule; CONFLICT and deadlines to ESCALATED; asset guard; receipt retention.",
       "depends_on": [
-        "T21"
+        "T21",
+        "T47"
       ],
       "requirement_ids": [
         "R048",
@@ -919,7 +952,8 @@
         "R072",
         "R073",
         "R074",
-        "R071"
+        "R071",
+        "R130"
       ],
       "status": "PLANNED",
       "definition_of_done": [
@@ -928,7 +962,8 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Condition A deterministic metrics only; blind shuffled B/C groundedness labelling; ~20% re-label for intra-rater kappa; safety metrics any-trial; report ~30-point detectability floor."
+        "Condition A deterministic metrics only; blind shuffled B/C groundedness labelling; ~20% re-label for intra-rater kappa; safety metrics any-trial; report ~30-point detectability floor.",
+        "Reads each run's manifest (model route, digest, prompt and corpus versions) into the eval report; conditions B and C must show identical model_route."
       ]
     },
     {
@@ -984,7 +1019,7 @@
       "id": "T28",
       "milestone": "M11",
       "title": "OpenTelemetry tracing with redaction",
-      "instructions": "OTel in api, worker, mcp-server, incident-sim; collector + one trace backend; bounded labels; redaction of tokens, handles and evidence.",
+      "instructions": "OTel in api, worker, mcp-read, mcp-write, incident-sim; collector + one trace backend; bounded labels; redaction of tokens, handles and evidence.",
       "depends_on": [
         "T22"
       ],
@@ -1043,7 +1078,8 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Enforce one worker replica: startup advisory lock; a second worker refuses to start (tested)."
+        "Enforce one worker replica: startup advisory lock; a second worker refuses to start (tested).",
+        "Docker network tests include: mcp-read cannot reach incident-sim; mcp-write cannot reach asset-sim; worker cannot reach either sim."
       ]
     },
     {
@@ -1126,7 +1162,8 @@
       ],
       "external_approval_required": true,
       "review_notes": [
-        "README must carry the sentences AM-10 (escalation/abandonment risk), AM-13 (abort latency <=5 min), AM-50 (30-point detectability floor, owner-authored holdout) require, and link docs/PROJECT_HISTORY.md."
+        "README must carry the sentences AM-10 (escalation/abandonment risk), AM-13 (abort latency <=5 min), AM-50 (30-point detectability floor, owner-authored holdout) require, and link docs/PROJECT_HISTORY.md.",
+        "Keep docs/ARCHITECTURE.md current: it maps least privilege, routers, orchestrator and the two MCP servers to requirement IDs and demos; the README's 'What this demonstrates' table links to it."
       ]
     },
     {

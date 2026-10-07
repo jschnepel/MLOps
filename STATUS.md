@@ -59,3 +59,8 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 - AM-20 rewritten (grants, function contracts, RLS policies, test clock); round-6 items fixed; `provenance/handoff-1.0.zip` committed; `docs/PROJECT_HISTORY.md` added.
 - Still **no target capability implemented**. All of R001–R128 are `NOT_RUN`.
+
+## Update — OPS-BUILD-1.3.4 (2026-10-07)
+
+- Routers named (AM-16), MCP split into read and write servers (ADR-0003), `docs/ARCHITECTURE.md` added as the showcase map.
+- Still **no target capability implemented**. All of R001–R131 are `NOT_RUN`.

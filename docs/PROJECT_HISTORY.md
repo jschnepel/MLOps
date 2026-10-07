@@ -88,6 +88,12 @@ Each entry gives the problem, where it was found, and the change. The round numb
 
 **Change.** The entry documents now state that implementation has not started and make no Kubernetes claim; the original package is committed as a zip and verified byte-for-byte; the corruption was fixed and a no-carriage-return check added; the network exposure was reported to the owner, who chose to restrict it (the runbook is a task; the agent changes no system settings).
 
-## 15. What the process taught
+## 15. The four concepts the project exists to show were not visible
+
+**Problem.** After six rounds the plan specified least privilege and the orchestrator in detail, but nowhere a reader could find them; routing existed only as scattered rules; and one MCP server hosted both reads and the guarded write, which hid the privilege story behind a single process and database role. (Owner review after round 6.)
+
+**Change.** Three named routers with enumerable route tables and their own requirement (admission, graph, model); the MCP server split into `mcp-read` and `mcp-write` with disjoint database functions, audiences and handle types; and `docs/ARCHITECTURE.md`, which maps each concept to its components, the requirement IDs that prove it and the demo that shows it (ADR-0003).
+
+## 16. What the process taught
 
 Six rounds found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth round, which dry-ran the first tasks on the real machine, found more actionable problems per hour than any prose review. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.

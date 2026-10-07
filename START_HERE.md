@@ -19,10 +19,11 @@ Use the prompt in [`handoff/KICKOFF_PROMPT.md`](handoff/KICKOFF_PROMPT.md). In s
 |---|---|
 | `BUILD_SPEC.md` | Original 1.0 product/architecture contract (amended; see the banner at its top) |
 | `SPEC_AMENDMENTS.md` | Current amendments (overrides BUILD_SPEC); AM-00 lists superseded text |
-| `docs/adr/` | ADR-0001 (one top-level directory per service), ADR-0002 (v1 scope cut, one-replica profile) |
+| `docs/adr/` | ADR-0001 (one top-level directory per service), ADR-0002 (v1 scope cut, one-replica profile), ADR-0003 (routers and the read/write MCP split) |
+| `docs/ARCHITECTURE.md` | The showcase map: least privilege, routers, orchestrator, MCP servers → components, requirements, demos |
 | `docs/reviews/` | The six adversarial review rounds and their findings |
-| `handoff/tasks.json` | 16 milestones and 46 tasks as a dependency graph, with review notes |
-| `handoff/acceptance-matrix.json` | 128 requirements, each with an owning task and a suggested test path |
+| `handoff/tasks.json` | 16 milestones and 47 tasks as a dependency graph, with review notes |
+| `handoff/acceptance-matrix.json` | 131 requirements, each with an owning task and a suggested test path |
 | `src/`, `tests/`, `integrations/` | Original runnable local reference (moves to `reference/` in task T42) |
 | `schemas/` | Target JSON schemas and positive/negative examples (still 1.0 until T45; see AM-80) |
 | `handoff/prompts/` | Sealed v1 prompt starters (hashes in AM-31) |

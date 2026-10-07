@@ -1,6 +1,6 @@
 # Session state
 
-**Specification:** OPS-BUILD-1.3.3 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
+**Specification:** OPS-BUILD-1.3.4 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
 **Next task:** T01 (agent) and T03 (owner, off-machine) in parallel. Then T04, and T02 once T03's seal is recorded externally.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `main`. Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
@@ -96,10 +96,18 @@
 - Task splits: T04 → T04 + T42; T05 → T05 + T43 + T44; T07 → T07 + T45 + T46. 46 tasks, 128 requirements, critical path 15.
 - `docs/PROJECT_HISTORY.md` added: the problems found across all rounds and what changed, for portfolio readers.
 
+## 1.3.4 (2026-10-07): showcase
+
+- Owner direction: the project must properly show least privilege, routers, orchestrators and MCPs. ADR-0003.
+- New AM-16 (admission router, graph router node, model router; R129, R130). MCP server split into `mcp-read` (role `mcp_read`, 3 functions) and `mcp-write` (role `mcp_exec`, 6 functions) with disjoint handles and audiences (R131); T15 = mcp-read, new T47 = mcp-write; T08 runs both.
+- `docs/ARCHITECTURE.md` maps the four concepts to components, requirement IDs and demos; the README has a "What this demonstrates" table.
+- 47 tasks, 131 requirements.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
 - single owner DB role, no AM-20.2 grants, no RLS → T09;
+- both MCP servers run but with the single owner DB role (their function-only roles arrive in T09; the server split itself is NOT debt);
 - plain INSERTs and UPDATEs instead of `transition_run`, `append_event`, `record_decision`, `freeze_proposal`, `grant_execution`, `mark_sent`, `record_outcome`, `resolve_invocation` → T09/T13/T22;
 - no `app.current_time()` / test clock → T09;
 - no lease, fence, heartbeat or model permit → T13;
@@ -108,7 +116,7 @@ Allowed shortcuts in T08, each with its owning task:
 - raw handle not hashed → T09/T15;
 - fake model → T19; no LangGraph or durability → T20.
 
-Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss checks in mcp-server and incident-sim; `action_key` ON CONFLICT; a decision step by a second persona; every transition routed through T07's table.
+Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss checks in mcp-read, mcp-write and incident-sim; `action_key` ON CONFLICT; a decision step by a second persona; every transition routed through T07's table.
 
 ## Environment (observed)
 

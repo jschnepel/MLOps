@@ -11,8 +11,19 @@ Start with **[START_HERE.md](START_HERE.md)**. The implementation contract is [B
 - Re-running them on the owner's machine is task T01.
 - Its recovery CLI has been run locally.
 
+## What this demonstrates
+
+| Concept | Where | Proven by |
+|---|---|---|
+| **Least privilege** | Column-level DB grants per role; MCP servers with no table access; a function-only final gate; capability handles; token audiences; loopback-bound ports | R084, R124, R128, R106, R131 |
+| **Routers** | An admission router, a graph router node and a model router, each with an enumerable route table; model output can only downgrade a route | R129, R130 |
+| **Orchestrator** | One explicit LangGraph graph: evidence before drafting, durable pauses, synchronous checkpoints, idempotent nodes, never the authority | R038, R042, R108 |
+| **MCP servers** | `mcp-read` (asset status, alerts, procedure search) and `mcp-write` (guarded incident write and recovery), disjoint functions, disjoint handles | R025–R031, R131 |
+
+The full map, with diagrams and the demo that shows each, is **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
 **Target v1 stack:**
-- **Services:** FastAPI, a LangGraph worker with LangChain + local Ollama (`qwen3:8b`), and an authenticated MCP server.
+- **Services:** FastAPI, a LangGraph worker with LangChain + local Ollama (`qwen3:8b`), and two authenticated MCP servers (read, write).
 - **Data:** PostgreSQL/pgvector, plus an independent synthetic incident destination.
 - **Identity and UI:** Keycloak, a React workspace.
 - **Deployment:** Docker Compose.

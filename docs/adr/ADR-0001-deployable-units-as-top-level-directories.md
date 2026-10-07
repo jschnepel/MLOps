@@ -20,14 +20,15 @@ Each independently deployed process gets its own top-level directory. Each has i
 core/          shared library (uv workspace member): domain, application, adapters, contracts
 api/           FastAPI: sessions, admission, decisions, SSE, health
 worker/        run-lease worker: LangGraph graph, LangChain draft node, MCP client
-mcp-server/    authenticated MCP server: read tools, guarded write, receipt lookup
+mcp-read/      authenticated MCP server: read tools only
+mcp-write/     authenticated MCP server: guarded write and recovery tools only
 asset-sim/     synthetic asset/alert API
 incident-sim/  synthetic incident destination with its own database
 web/           React + TypeScript + Vite
 ```
 
 - **`core/` is a library, not a service.** Every service imports domain rules from it. No domain logic is duplicated, and none is exposed over the network.
-- **Network boundaries stay where §3 puts them:** browser → api, worker → mcp-server, mcp-server → asset-sim / incident-sim, worker → Ollama.
+- **Network boundaries stay where §3 puts them:** browser → api, worker → mcp-read / mcp-write, mcp-read → asset-sim, mcp-write → incident-sim, worker → Ollama (ADR-0003).
 - **Images:** the API and worker may share a base image.
 - **Python packaging:** one `uv` workspace and one `uv.lock` at the repository root.
 - **Cross-service tests:** end-to-end tests that span services live in `tests/e2e/` at the root.

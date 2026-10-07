@@ -1,6 +1,6 @@
-# OPS-BUILD-1.3.3 — Amendments to BUILD_SPEC.md
+# OPS-BUILD-1.3.4 — Amendments to BUILD_SPEC.md
 
-**Status:** Approved by the owner on 2026-10-06. The history: 1.1 was "amend + cut", 1.2 came from the round-2 review, 1.3 fixes the round-3 BLOCKS-START items, 1.3.1 applies round-4 edits E1–E6 (`docs/reviews/plan-review-r4-2026-10-06.md`), 1.3.2 fixes round-5 items S1–S9 and H1–H5 (`docs/reviews/plan-review-r5-2026-10-06.md`, cited `[R5-…]`), and **1.3.3 rewrites AM-20 (privilege matrix, function contracts, RLS policies) and fixes round-6 items B1–B7 and H1–H6** (`docs/reviews/plan-review-r6-2026-10-06.md`, cited `[R6-…]`). Owner decision for 1.3.3: a grant is refused whenever **any** committed incident overlaps the same tenant, asset and interval, unless the proposal declares `supersedes_run_id` (R6-H5). Owner decisions for 1.3.2: block a second incident for the same asset and interval (H3); restrict Ollama to loopback plus the Docker/WSL subnet (S9).
+**Status:** Approved by the owner on 2026-10-06. The history: 1.1 was "amend + cut", 1.2 came from the round-2 review, 1.3 fixes the round-3 BLOCKS-START items, 1.3.1 applies round-4 edits E1–E6 (`docs/reviews/plan-review-r4-2026-10-06.md`), 1.3.2 fixes round-5 items S1–S9 and H1–H5 (`docs/reviews/plan-review-r5-2026-10-06.md`, cited `[R5-…]`), and **1.3.3 rewrites AM-20 (privilege matrix, function contracts, RLS policies) and fixes round-6 items B1–B7 and H1–H6** (`docs/reviews/plan-review-r6-2026-10-06.md`, cited `[R6-…]`). Owner decision for 1.3.3: a grant is refused whenever **any** committed incident overlaps the same tenant, asset and interval, unless the proposal declares `supersedes_run_id` (R6-H5). **1.3.4** (2026-10-07, ADR-0003): named routers (new AM-16), the MCP server split into `mcp-read` and `mcp-write`, a model router, and `docs/ARCHITECTURE.md` as the showcase map. Owner decisions for 1.3.2: block a second incident for the same asset and interval (H3); restrict Ollama to loopback plus the Docker/WSL subnet (S9).
 **Precedence:** This file overrides `BUILD_SPEC.md` (OPS-BUILD-1.0) wherever they conflict. Everything not amended here stays in force. ADRs in `docs/adr/` record the reasoning.
 
 **Sources:**
@@ -10,7 +10,7 @@
 - `docs/reviews/plan-review-r4-2026-10-06.md` (round 4, `[R4-En]`), `…-r5-…` (`[R5-…]`), `…-r6-…` (`[R6-…]`)
 - `docs/PROJECT_HISTORY.md`: the problems found across all rounds and what changed, written for readers of the portfolio
 
-New acceptance requirements are R081–R128 in `handoff/acceptance-matrix.json`. Round-3 LATER items are attached to their owning tasks as `review_notes` in `handoff/tasks.json`. From now on, review happens per slice against code and tests, not through further spec rounds.
+New acceptance requirements are R081–R131 in `handoff/acceptance-matrix.json`. Round-3 LATER items are attached to their owning tasks as `review_notes` in `handoff/tasks.json`. From now on, review happens per slice against code and tests, not through further spec rounds.
 
 **Changes in 1.3** (all from round 3):
 - abort hash semantics (B1);
@@ -73,7 +73,8 @@ Each independently deployed process gets its own top-level directory, each with 
 |---|---|
 | `api/` | FastAPI: sessions, admission, decisions, SSE, health |
 | `worker/` | Run-lease worker: LangGraph graph, LangChain draft node, MCP client |
-| `mcp-server/` | Authenticated MCP server: read tools, guarded write and recovery tools |
+| `mcp-read/` | Authenticated MCP server for read tools only (asset status, alerts, procedure search); DB role `mcp_read` |
+| `mcp-write/` | Authenticated MCP server for the guarded write and recovery tools only; DB role `mcp_exec` |
 | `asset-sim/` | Synthetic asset/alert API (deterministic, injected clock) |
 | `incident-sim/` | Synthetic incident destination with its own database |
 | `web/` | React + TypeScript + Vite workspace |
@@ -102,7 +103,7 @@ V1 is M00–M14 of `handoff/tasks.json`. The optional milestone M15 holds:
 Also reduced for v1:
 - **Observability:** an OTel collector and one trace backend.
 - **UI:** three panels covering eight states (AM-40).
-- **Database roles:** `migrator` (DDL only, never used at runtime), `api`, `worker`, `sweeper`, `operator`, `mcp_exec` (functions only), `app_definer` (NOLOGIN, owns functions, does not own tables), and `incident` (separate database). Their privileges are fixed by the AM-20.2 grant table [R5-H1, R5-S7].
+- **Database roles:** `migrator` (DDL only, never used at runtime), `api`, `worker`, `sweeper`, `operator`, `mcp_read` and `mcp_exec` (functions only), `app_definer` (NOLOGIN, owns functions, does not own tables), and `incident` (separate database). Their privileges are fixed by the AM-20.2 grant table [R5-H1, R5-S7].
 - **No tenant-administration surface.**
 - **Workers:** **one worker replica** in the demo profile (AM-12).
 
@@ -200,6 +201,8 @@ A missing row aborts the transaction.
 - A `model_permit` row, leased and polled with `SKIP LOCKED` plus backoff, enforces global model concurrency (1).
 - Whether a cancelled request actually stops Ollama's generation is **measured** in T02. If it doesn't, the permit is held until `ollama ps` shows idle or the 60 s cap passes.
 
+**The graph (orchestrator):** one explicit LangGraph graph with nodes `load_run`, `route_request` (the graph router, AM-16), `await_clarification`, `retrieve_evidence` (mcp-read), `draft_with_langchain`, `validate_and_freeze` (`freeze_proposal`), `await_independent_decision`, `execute_approved_proposal` (mcp-write), `reconcile_outcome`, `publish_state`. Conditional edges come only from the route table in `core/`. There is no free-running think→tool→act loop; the model never sees a tool. `docs/ARCHITECTURE.md` §3 is the reader's map.
+
 **Checkpoints (ADR-0002):**
 - Invoke graphs with `durability="sync"`. The LangGraph default `"async"` persists while the next step runs.
 - **Stored checkpoint ID.** After each superstep, the worker stores the accepted `checkpoint_id` in `runs.checkpoint_id` under the fence. It reads that ID from `stream_mode="checkpoints"` (or `aget_state` after the step). At an interrupt, the stored ID is the checkpoint holding the interrupt's pending write (R108).
@@ -215,7 +218,7 @@ A missing row aborts the transaction.
 
 **Who does what:**
 - The worker never contacts the destination.
-- The MCP server is the only caller of incident-sim. It records every step through fenced `SECURITY DEFINER` functions (AM-20).
+- **mcp-write** is the only caller of incident-sim. It records every step through fenced `SECURITY DEFINER` functions (AM-20). mcp-read cannot reach incident-sim and holds no write-path function.
 - The worker drives the process by calling MCP tools under an `execute` or `recover` job.
 
 **Attempt protocol** (`action_attempt(action_id, attempt_no, state, …)`):
@@ -253,7 +256,7 @@ Tested by R109.
 - A single table `action_key(action_id PK, payload_sha256, state ∈ {COMMITTED, ABORTED, REJECTED}, incident_id NULL, reason NULL, decided_at)`. All three states are permanent and terminal [R5-S3].
 - **Tombstone shape** (returned for ABORTED and REJECTED): `{action_id, state, payload_sha256, reason, decided_at}`.
 - A validation rejection (malformed or disallowed payload) writes a permanent `REJECTED` key, so a lost response is recoverable by lookup.
-- incident-sim also requires the token's `azp` to be the mcp-server client.
+- incident-sim also requires the token's `azp` to be the mcp-write client.
 - Both `POST /internal/incidents` and `POST /internal/actions/{id}/abort` use `INSERT … ON CONFLICT (action_id) DO NOTHING` and then read the row, at **READ COMMITTED** isolation. The first writer wins atomically.
 - An incident row is inserted in the same transaction only when the key commits.
 - **Rows are never deleted or expired**, not even tombstones.
@@ -321,24 +324,24 @@ Tested by R109.
 
 **Tools and the job types that may call them:**
 
-| Tool | Callable by |
-|---|---|
-| `get_asset_status`, `get_recent_alerts` (absolute interval, `next_cursor`), `search_procedures` | read jobs |
-| `create_incident(proposal_id)` | `execute` jobs; `recover` jobs for same-key redispatch |
-| `get_incident_receipt(proposal_id)` | `recover` jobs only, including on ESCALATED and ABANDONED_UNVERIFIED runs |
-| `abort_incident(proposal_id)` | `recover` jobs only, including on ESCALATED and ABANDONED_UNVERIFIED runs (the tombstone is recorded as late evidence) [R5] |
+| Tool | Server | Callable by |
+|---|---|---|
+| `get_asset_status`, `get_recent_alerts` (absolute interval, `next_cursor`), `search_procedures` | **mcp-read** | `investigate` and `resume_input` jobs (read handles) |
+| `create_incident(proposal_id)` | **mcp-write** | `execute` jobs; `recover` jobs for same-key redispatch |
+| `get_incident_receipt(proposal_id)` | **mcp-write** | `recover` jobs only, including on ESCALATED and ABANDONED_UNVERIFIED runs |
+| `abort_incident(proposal_id)` | **mcp-write** | `recover` jobs only, including on ESCALATED and ABANDONED_UNVERIFIED runs (the tombstone is recorded as late evidence) [R5] |
 
-**Job types** [R5-S2]. Every job has exactly one `type`. Allowed tools are derived from type plus run state plus attempt state.
+**Job types** [R5-S2]. Every job has exactly one `type`. Allowed tools are derived from type plus run state plus attempt state. **A handle is bound to one server:** `investigate`/`resume_input` handles are accepted only by mcp-read; `execute`/`recover` handles only by mcp-write (R131).
 
 | `job.type` | Created by | Purpose | Allowed tools | Run states |
 |---|---|---|---|---|
 | `investigate` | API at admission and after a revision | Retrieval, drafting, freezing | read tools | QUEUED, RETRIEVING, DRAFTING |
 | `resume_input` | API with a clarification reply | Resume after a clarification | read tools | AWAITING_INPUT → QUEUED |
 | `execute` | API with an approving decision | Final grant and first dispatch | `create_incident` | APPROVED, EXECUTING (attempt absent or INTENT) |
-| `recover` | `mark_unknown` (worker timeout path); the worker after a `cancelled`/`expired` tool result; `reclaim_leases` (sweeper). Never by mcp-server. Dedup keys in AM-20.4 [R6] | Redispatch, lookup, abort | `create_incident` (INTENT only), `get_incident_receipt`, `abort_incident` | EXECUTING, OUTCOME_UNKNOWN, ESCALATED, ABANDONED_UNVERIFIED |
+| `recover` | `mark_unknown` (worker timeout path); the worker after a `cancelled`/`expired` tool result; `reclaim_leases` (sweeper). Never by either MCP server. Dedup keys in AM-20.4 [R6] | Redispatch, lookup, abort | `create_incident` (INTENT only), `get_incident_receipt`, `abort_incident` | EXECUTING, OUTCOME_UNKNOWN, ESCALATED, ABANDONED_UNVERIFIED |
 | `expire_proposals`, `sync_memberships`, `sweep_wakeups` | Scheduler (sweeper role) | Maintenance | none | n/a (no run lease) |
 
-Read tools are `get_asset_status`, `get_recent_alerts` and `search_procedures`. After `mark_sent` returns `cancelled` or `expired`, `create_incident` itself calls `request_abort`, POSTs the abort to incident-sim, calls `record_outcome` with the tombstone, and returns `FAILED_NO_COMMIT` (reason `cancelled_before_send` or `expired`). No job is created by mcp-server. For `search_procedures` in vector mode, mcp-server computes the query embedding with `nomic-embed-text` (`search_query:` prefix) and passes it to `search_procedures_scoped` [R6].
+Read tools are `get_asset_status`, `get_recent_alerts` and `search_procedures`. After `mark_sent` returns `cancelled` or `expired`, `create_incident` itself calls `request_abort`, POSTs the abort to incident-sim, calls `record_outcome` with the tombstone, and returns `FAILED_NO_COMMIT` (reason `cancelled_before_send` or `expired`). No job is created by either MCP server. For `search_procedures` in vector mode, mcp-read computes the query embedding with `nomic-embed-text` (`search_query:` prefix) and passes it to `search_procedures_scoped` [R6].
 
 - Every tool has an input JSON Schema in `schemas/tools/`. Arguments that supply a role, tenant, actor, approval or destination are rejected.
 - **The envelope must agree with the data:**
@@ -349,6 +352,28 @@ Read tools are `get_asset_status`, `get_recent_alerts` and `search_procedures`. 
 - `abort_incident` result `data`: `{action_id, outcome: SUCCEEDED|FAILED_NO_COMMIT, receipt|tombstone}`.
 - The old `unknown` envelope status is removed.
 - The caller verifies that a `SUCCEEDED` receipt's hash equals the proposal hash. A mismatch becomes `CONFLICT`.
+
+## AM-16 Routers (new in 1.3.4) → ADR-0003
+
+Routing is explicit, enumerable and deterministic-first. Model output may hint at a route; it never selects one. An input the router cannot classify becomes a clarification or a 422 and never starts work (R129).
+
+**Admission router** (`api`, replaces the implicit §7 rules):
+
+| Route | Trigger | Effect |
+|---|---|---|
+| `investigate` | `kind=investigate` with a resolvable asset and interval, no active run in the conversation | message + run + `investigate` job + event in one transaction, 202 |
+| `clarification_reply` | reply bound to an outstanding clarification ID and expected version | message + `resume_input` job, 202 |
+| `status_question` | `kind=status` or text matching the status grammar with no asset/interval change | answered from recorded events and state; **no job** |
+| `readonly_answer` | `kind=ask` (a question about evidence, no incident intent) | `investigate` job flagged `answer_only`; the graph can end ANSWERED but never freezes a proposal |
+| `reject` | unroutable, conflicting structured fields vs text, over limits, or a second active run | 422 / 409 with a safe error; nothing written except the idempotency record |
+
+Optional model-assisted intent classification runs **after** the deterministic rules and can only downgrade a route to `reject`/clarification, never upgrade one.
+
+**Graph router** (`route_request` node in the orchestrator): a route table in `core/routing.py` maps `(run state, context resolved?, evidence sufficient?, draft kind, decision present?, attempt state)` to exactly one of `clarify`, `retrieve`, `draft`, `answer_only`, `abstain`, `freeze`, `await_decision`, `execute`, `recover`, `publish`. Conditional edges are generated from that table; a test enumerates every row and asserts the node reached (R129).
+
+**Model router** (`DraftGenerator` factory in the worker): selects `fake` (deterministic substitute), `qwen3:8b` (local Ollama) or a future named model from `MODEL_MODE` and policy; the choice, model digest and prompt version are written to the run manifest and the `explanation.ready` event; there is **no silent fallback** between routes (R130, R041).
+
+`docs/ARCHITECTURE.md` §2 is the reader's map; AM-80 adds `schemas/route.schema.json` (the three route enums) and `schemas/run-manifest.schema.json`.
 
 ## AM-20 Authority boundaries (amends §6, §9, §13) — rewritten in 1.3.3 [R6-H1..H6]
 
@@ -367,7 +392,8 @@ The 1.3.2 matrix could not run the system (the API could not create jobs or even
 | `api` | yes | FastAPI process |
 | `worker` | yes | Workflow worker |
 | `sweeper` | yes | Scheduler process (expiry, membership sync, wake-up sweep, outbox delivery) |
-| `mcp_exec` | yes | mcp-server; functions only |
+| `mcp_read` | yes | mcp-read; read-path functions only |
+| `mcp_exec` | yes | mcp-write; write-path functions only |
 | `operator` | yes | Local operator CLI; one function only |
 | `test_harness` | yes, **test profile only** | Writes `app.test_clock`; created by the `testclock` Alembic branch |
 | `incident` | yes (separate database) | incident-sim |
@@ -376,7 +402,7 @@ The 1.3.2 matrix could not run the system (the API could not create jobs or even
 
 Only these grants exist. Anything not listed is denied. "ins" = INSERT, "upd(cols)" = UPDATE on exactly those columns, "sel" = SELECT, "del" = DELETE.
 
-| Table | `api` | `worker` | `sweeper` | `app_definer` | `mcp_exec` / `operator` |
+| Table | `api` | `worker` | `sweeper` | `app_definer` | `mcp_read` / `mcp_exec` / `operator` |
 |---|---|---|---|---|---|
 | `tenants`, `memberships` | sel | sel | sel, upd(`active`, `permission_version`, `synced_at`) | sel | — |
 | `sessions` | sel, ins, upd(`last_seen_at`, `revoked_at`), del | — | del (expired) | — | — |
@@ -403,7 +429,7 @@ Only these grants exist. Anything not listed is denied. "ins" = INSERT, "upd(col
 | schema `checkpoints` | — | all DML | — | — | — |
 
 Notes:
-- `mcp_exec` and `operator` have **no table grants**; the right-hand column is only for `test_harness`.
+- `mcp_read`, `mcp_exec` and `operator` have **no table grants**; the right-hand column is only for `test_harness`.
 - `runs.state` is written only by `app_definer` (through `transition_run`). The `api` column grant on `cancel_requested` cannot set state, because UPDATE is column-scoped.
 - `execution_grant` has no `state` column; grant status is derived from the latest `action_attempt_state` row.
 - `proposals` rows are inserted already frozen by `freeze_proposal`, so proposals never need UPDATE. Pre-freeze drafts live in `drafts`.
@@ -422,9 +448,9 @@ All functions: `SECURITY DEFINER`, owner `app_definer`, `SET search_path = app, 
 | `create_manual_proposal(run_id, payload, author)` | `api` | payload per `manual-proposal` schema | same as `freeze_proposal` | Tenant-scopes asset and evidence IDs (404 otherwise); otherwise identical to `freeze_proposal` with `authored_by = [author]` | `proposal.ready` |
 | `expire_proposal(run_id)` | `sweeper`; also invoked internally by `record_decision`/`grant_execution` | run ID | `runs` FOR UPDATE → `proposals` FOR SHARE | If the active proposal's `expires_at < app.current_time()`: transition AWAITING_APPROVAL/APPROVED → BLOCKED_REVIEW(`expired`) | `review.blocked` |
 | `request_cancel(run_id, expected_version)` | `api` | as named | `runs` FOR UPDATE → `execution_grant` FOR SHARE | Sets `cancel_requested`; if no grant exists, transition → CANCELLED now; otherwise returns `{grant_exists, attempt_state}` for the cancel-response | `run.cancelled` or none |
-| `resolve_invocation(raw_handle, client_azp)` | `mcp_exec` | the header value and the token's `azp` | `invocation_context` FOR SHARE → `run_lease` FOR SHARE | Hashes the handle inside; checks azp binding, expiry, current run fence; returns `{run_id, tenant_id, job_type, run_state, attempt_state, allowed_tools}` with the allowlist derived per AM-15 | none |
-| `asset_scope(raw_handle)` | `mcp_exec` | handle | as above | Returns the run's `tenant_id`, `asset_id`, `[start_at, end_at)` for forwarding to asset-sim | none |
-| `search_procedures_scoped(raw_handle, query, query_embedding vector(768) NULL, asset_type, limit, mode)` | `mcp_exec` | handle, text query, optional embedding computed by mcp-server with the `search_query:` prefix | as above | Lexical (`mode=lexical`) or exact vector (`mode=vector`, requires the embedding) search over approved, effective, tenant-permitted chunks; returns IDs, versions, section, hash, excerpt | none |
+| `resolve_invocation(raw_handle, client_azp)` | `mcp_read`, `mcp_exec` | the header value and the token's `azp` | `invocation_context` FOR SHARE → `run_lease` FOR SHARE | Hashes the handle inside; checks azp binding, **that the handle's server matches the calling role** (read handles only for `mcp_read`, execute/recover handles only for `mcp_exec`), expiry, current run fence; returns `{run_id, tenant_id, job_type, run_state, attempt_state, allowed_tools}` with the allowlist derived per AM-15 | none |
+| `asset_scope(raw_handle)` | `mcp_read` | handle | as above | Returns the run's `tenant_id`, `asset_id`, `[start_at, end_at)` for forwarding to asset-sim | none |
+| `search_procedures_scoped(raw_handle, query, query_embedding vector(768) NULL, asset_type, limit, mode)` | `mcp_read` | handle, text query, optional embedding computed by mcp-read with the `search_query:` prefix | as above | Lexical (`mode=lexical`) or exact vector (`mode=vector`, requires the embedding) search over approved, effective, tenant-permitted chunks; returns IDs, versions, section, hash, excerpt | none |
 | `grant_execution(raw_handle, proposal_id)` | `mcp_exec` | as named | advisory(tenant, asset) → `run_lease` FOR SHARE → `runs` FOR UPDATE → `proposals` FOR SHARE → `decisions` FOR SHARE → `memberships` FOR SHARE → `execution_grant` → `action_attempt` | The §13 final gate: proposal belongs to the handle's run and tenant; approved, unexpired, hash-matching; requester and reviewer currently active; not cancelled; asset freshness (5 min); **asset guard (AM-13)**; inserts `execution_grant` (random `action_id`, `UNIQUE(run_id)`), `action_attempt` 1 and `action_attempt_state` INTENT; transition APPROVED → EXECUTING (or → BLOCKED_REVIEW with the refusal reason) | `action.granted` (new type) or `review.blocked` |
 | `mark_sent(action_id)` | `mcp_exec` | action ID | `run_lease` FOR SHARE → `runs` FOR UPDATE → `action_attempt_state` | Re-checks `cancel_requested` and the dispatch deadline; inserts state SENT, or returns `cancelled`/`expired` without inserting | `action.dispatched` |
 | `record_outcome(action_id, outcome, receipt_or_tombstone)` | `mcp_exec` | the verified destination result | `run_lease` FOR SHARE → `runs` FOR UPDATE → `action_attempt_state` → `events` | Idempotent; inserts state RESOLVED; verifies the hash; transition EXECUTING/OUTCOME_UNKNOWN/ESCALATED → SUCCEEDED, FAILED(reason) or ESCALATED(`conflict`); on a terminal run, records late evidence without a transition | `action.confirmed` / `action.failed` / `action.conflict` / `action.late_evidence`, all with `source=destination` |
@@ -512,9 +538,9 @@ The retained 1.3.2 items, unchanged in substance:
 
    Tested by R086.
 6. **MCP token verification.**
-   - Keycloak "Hardcoded audience" mappers set `aud` to the **resource URL** of mcp-server and to `incident-sim`. The URL is a parameter (`MCP_RESOURCE_URL`), not a hard-coded container name.
+   - Keycloak "Hardcoded audience" mappers set `aud` to the **resource URLs** of mcp-read (`MCP_READ_RESOURCE_URL`) and mcp-write (`MCP_WRITE_RESOURCE_URL`) and to `incident-sim`; each is a parameter, not a hard-coded container name. asset-sim trusts only the mcp-read workload token and the tenant/asset context it forwards, and applies its own tenant filter; incident-sim trusts only mcp-write.
    - T05 fixes `KC_HOSTNAME`, so that `iss` is identical for host and container callers.
-   - mcp-server uses a custom `TokenVerifier` that checks iss, aud ∋ resource URL, azp ∈ allowed workload clients, and exp.
+   - Both MCP servers use a custom `TokenVerifier` that checks iss, aud ∋ its own resource URL, azp ∈ its allowed workload clients, and exp.
    - Tests cover a missing `aud`, a wrong `aud`, and a browser token.
 7. **Checkpoint tables.**
    - `migrator` runs `PostgresSaver.setup()` with `autocommit=True`, `row_factory=dict_row` and `options=-c search_path=checkpoints` (the saver has no schema parameter).
@@ -552,7 +578,7 @@ The retained 1.3.2 items, unchanged in substance:
 
 ## AM-31 Model runtime profile (amends §12, §17)
 
-- **Model:** `qwen3:8b`. Record its digest.
+- **Model:** `qwen3:8b`, selected by the model router (AM-16); the route, digest and prompt version are recorded per run. Record its digest.
 - **Settings:** `ChatOllama(reasoning=False)` (maps to Ollama `think:false`), `num_ctx=16384`, `num_predict=1000`, `temperature=0`, 60 s timeout, `with_structured_output(method="json_schema")` **plus** application-side validation.
 - **Warm-up:** a cold model load took 53 s in the round-4 dry run, against the 60 s timeout. The worker therefore issues a warm-up call (with `keep_alive`) at startup, before it accepts drafting jobs, and T02 measures cold vs warm latency.
 - **Digest check:** at warm-up the worker compares the model digest (`/api/show`) with the pin in **`data/model-pins.json`** (`{model, digest, ollama_version, probed_at}`, written by T02) and **fails closed** on mismatch. Owned by T19 and tested by R127 [R5-S9, R6-B4].
@@ -639,7 +665,12 @@ Each state has a Playwright assertion (R117). State 8's reconnect assertion land
 
 ## AM-60 Task graph (amends §25, `handoff/tasks.json`)
 
-`handoff/tasks.json` 1.3.3 has 46 tasks. IDs are stable since 1.2; new tasks are appended.
+`handoff/tasks.json` 1.3.4 has 47 tasks. IDs are stable since 1.2; new tasks are appended.
+
+**1.3.4 changes** [ADR-0003]:
+- T15 becomes mcp-read; new **T47** builds mcp-write (R030, R131). T16 keeps the read tools; recovery tools move to T47. T22 depends on T47. T08 runs both servers.
+- T12 implements the admission router (R129); T20 the graph router node (R129); T19 the model router and run-manifest recording (R130). T25 reads the manifest.
+- `docs/ARCHITECTURE.md` is the showcase map; T34 keeps it current and the README links it.
 
 **1.3.3 changes** [R6]:
 - Splits: T04 → T04 (workspace, lock, `scripts/check.py`, seed IDs, jsonschema) + **T42** (reference move, hash remap, manifest to provenance, zip-based `--manifest`). T05 → T05 (what T08 needs) + **T43** (remaining personas, `view-users` service account, bootstrap-admin deletion, topology doc) + **T44** (Ollama bridge, `docs/runbooks/ollama-network.md`). T07 → T07 (core contracts, state machine, job model, reason enum) + **T45** (AM-80 schema alignment, negative probes, checker) + **T46** (reference traceability and pure-core port).
@@ -667,7 +698,7 @@ Each state has a Playwright assertion (R117). State 8's reconnect assertion land
 - T03 owner holdout authoring;
 - T05 dev bootstrap (Compose dev profile, Keycloak realm and workload clients, secret generation, seed UUIDs);
 - T06 early secret-free CI;
-- T08 **walking skeleton**: fake model, real Postgres, real HTTP across api → worker → mcp-server → incident-sim, before hardening;
+- T08 **walking skeleton**: fake model, real Postgres, real HTTP across api → worker → MCP → incident-sim, before hardening;
 - T23 development eval set and rubric.
 
 **Other changes:**
@@ -717,6 +748,7 @@ The delivered `schemas/`, `schemas/examples/` and `data/handoff-fixtures/` still
 | `schemas/tools/*.json` | Create input schemas for all six tools |
 | `action-outcome.schema.json` | `FAILED_NO_COMMIT.reason` (shared reason enum); mapping from ABORTED/REJECTED; tombstone object `{action_id, state, payload_sha256, reason, decided_at}` |
 | New: `schemas/model-pins.schema.json` | `{model, digest, ollama_version, probed_at}` (AM-31) |
+| New: `schemas/route.schema.json`, `schemas/run-manifest.schema.json` | The three route enums (AM-16); the per-run manifest `{run_id, model_route, model_digest, prompt_version, corpus_version, retrieval_mode}` |
 | `event.schema.json` (addition) | New type `action.granted`; `source=destination` only for `action.confirmed/failed/conflict/late_evidence` |
 | New: `schemas/job.schema.json` | The AM-15 job-type table as an enum with allowed tools and run states |
 | `decision.schema.json` + examples | `expected_payload_sha256` |
