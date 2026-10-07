@@ -36,7 +36,7 @@ Fencing LangGraph checkpoint writes needs a custom `BaseCheckpointSaver`. The st
 4. **Reduced v1 profiles:**
    - **Observability:** OTel collector plus one trace backend.
    - **UI:** three panels covering eight states.
-   - **Database roles:** migrator, api, worker, a function-only mcp_exec, a non-owner app_definer, plus a separate destination database.
+   - **Database roles:** migrator (DDL only), api, worker, sweeper, operator, a function-only mcp_exec, a non-owner app_definer, a test-profile-only test_harness, plus a separate destination database (AM-20.1).
    - **Administration:** no admin surface.
 5. **One worker replica in v1.**
    - Graphs run with `durability="sync"`.

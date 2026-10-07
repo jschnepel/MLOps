@@ -2,7 +2,7 @@
 
 **One contract (BUILD_SPEC.md as amended by SPEC_AMENDMENTS.md), a runnable local reference, and an ordered task graph.**
 
-This repository began as an AI build handoff (OPS-BUILD-1.0, preserved unmodified in git commit `61cc504`). It was then amended after five adversarial reviews (`docs/reviews/`). No earlier conversation is needed to understand it.
+This repository began as an AI build handoff (OPS-BUILD-1.0; the delivered package is preserved byte-for-byte as `provenance/handoff-1.0.zip`). It was then amended after six adversarial reviews (`docs/reviews/`); `docs/PROJECT_HISTORY.md` lists the problems found and what changed. No earlier conversation is needed to understand it.
 
 ## Give the coding AI this instruction
 
@@ -20,11 +20,11 @@ Use the prompt in [`handoff/KICKOFF_PROMPT.md`](handoff/KICKOFF_PROMPT.md). In s
 | `BUILD_SPEC.md` | Original 1.0 product/architecture contract (amended; see the banner at its top) |
 | `SPEC_AMENDMENTS.md` | Current amendments (overrides BUILD_SPEC); AM-00 lists superseded text |
 | `docs/adr/` | ADR-0001 (one top-level directory per service), ADR-0002 (v1 scope cut, one-replica profile) |
-| `docs/reviews/` | The five adversarial review rounds and their findings |
-| `handoff/tasks.json` | 16 milestones and 41 tasks as a dependency graph, with review notes |
-| `handoff/acceptance-matrix.json` | 126 requirements, each with an owning task and a suggested test path |
-| `src/`, `tests/`, `integrations/` | Original runnable local reference (moves to `reference/` in task T04) |
-| `schemas/` | Target JSON schemas and positive/negative examples (still 1.0 until T07; see AM-80) |
+| `docs/reviews/` | The six adversarial review rounds and their findings |
+| `handoff/tasks.json` | 16 milestones and 46 tasks as a dependency graph, with review notes |
+| `handoff/acceptance-matrix.json` | 128 requirements, each with an owning task and a suggested test path |
+| `src/`, `tests/`, `integrations/` | Original runnable local reference (moves to `reference/` in task T42) |
+| `schemas/` | Target JSON schemas and positive/negative examples (still 1.0 until T45; see AM-80) |
 | `handoff/prompts/` | Sealed v1 prompt starters (hashes in AM-31) |
 | `data/handoff-fixtures/`, `evals/` | Synthetic fixtures and development scenario cards (no holdout is stored in the repo) |
 | `docs/diagrams/` | Six corrected stage charts |
@@ -43,7 +43,7 @@ python scripts/verify_handoff.py --reference-code
 PYTHONPATH=src python -m operations_copilot.cli
 ```
 
-**`--manifest` will fail on the current tree.** `MANIFEST.sha256` is a frozen snapshot of the delivered 1.0 package; check it on commit `61cc504` (AM-00). After task T04 it lives in `provenance/MANIFEST-1.0.sha256`.
+**`--manifest` will fail on the current tree until task T42**, which moves `MANIFEST.sha256` to `provenance/` and verifies it against `provenance/handoff-1.0.zip` (the delivered package, byte-for-byte; AM-00).
 
 To run the reference test suite, use an isolated venv **outside** the repository and install without `-e`. The exact commands are in `SESSION_STATE.md` (task T01).
 

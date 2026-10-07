@@ -1,6 +1,6 @@
 {
-  "specification": "OPS-BUILD-1.3.2 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
-  "note": "Target acceptance requirements, not passing tests. Milestone = earliest owning task; R097 accrues across T24/T27/T29/T32. R081-R126 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement.",
+  "specification": "OPS-BUILD-1.3.3 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "note": "Target acceptance requirements, not passing tests. Milestone = earliest owning task; R097 accrues across T24/T27/T29/T32. R081-R128 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement.",
   "requirements": [
     {
       "id": "R001",
@@ -1211,7 +1211,7 @@
       "category": "model",
       "requirement": "Local model runtime profile is measured before use",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "Probe report: >=30 distinct inputs, isolated env freeze, thinking disabled, num_ctx set, first-pass and post-repair validity with Wilson CIs, identical-repeat rate, latency, VRAM, cancellation behaviour, digest; owner decision recorded.",
+      "expected_evidence": "Probe report with >=30 distinct inputs, isolated env freeze, thinking disabled, num_ctx set, first-pass/post-repair validity with Wilson CIs, identical-repeat rate, cold vs warm latency, VRAM, cancellation behaviour; data/model-pins.json written.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
@@ -1250,7 +1250,7 @@
       "milestone": "M01",
       "blocking_for_v1": true,
       "owning_tasks": [
-        "T07"
+        "T45"
       ],
       "suggested_test": "tests/acceptance/test_r083_schemas_forbid_model_asserted_outcomes_and_envel.py"
     },
@@ -1451,7 +1451,7 @@
       "category": "destination",
       "requirement": "Destination key table is atomic, permanent and executor-only",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "Abort stores the grant hash; a POST onto an ABORTED key returns the tombstone regardless of hash; concurrent POST/abort yield one state; keys never deleted; non-executor tokens 403.",
+      "expected_evidence": "Concurrent POST/abort on one key yield one state; POST and abort onto ABORTED or REJECTED keys return that tombstone; hash recomputed; keys never deleted; non-executor tokens or wrong azp 403.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
@@ -1542,7 +1542,9 @@
       "milestone": "M01",
       "blocking_for_v1": true,
       "owning_tasks": [
-        "T05"
+        "T05",
+        "T43",
+        "T44"
       ],
       "suggested_test": "tests/acceptance/test_r101_development_environment_starts_from_a_clean_clon.py"
     },
@@ -1558,7 +1560,8 @@
       "milestone": "M01",
       "blocking_for_v1": true,
       "owning_tasks": [
-        "T05"
+        "T05",
+        "T43"
       ],
       "suggested_test": "tests/acceptance/test_r102_workload_clients_receive_correctly_scoped_tokens.py"
     },
@@ -1581,7 +1584,7 @@
     {
       "id": "R104",
       "category": "contracts",
-      "requirement": "Schemas, examples and fixtures match the 1.3.2 contract",
+      "requirement": "Schemas, examples and fixtures match the 1.3.3 contract",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
       "expected_evidence": "verify_handoff.py --contracts passes including AM-80 negative probes.",
       "evidence_status": "NOT_RUN",
@@ -1590,7 +1593,7 @@
       "milestone": "M01",
       "blocking_for_v1": true,
       "owning_tasks": [
-        "T07"
+        "T45"
       ],
       "suggested_test": "tests/acceptance/test_r104_schemas_examples_and_fixtures_match_the_1_2_cont.py"
     },
@@ -1613,9 +1616,9 @@
     {
       "id": "R106",
       "category": "security",
-      "requirement": "Definer functions are hardened and tenant-isolated",
+      "requirement": "Definer functions are hardened and tenant-isolated by explicit policies",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "search_path fixed, PUBLIC execute revoked, owner is not a table owner, FORCE RLS; cross-tenant access through functions fails. Includes the read functions search_procedures_scoped and asset_scope and raw-handle hashing inside resolve_invocation.",
+      "expected_evidence": "search_path fixed, PUBLIC execute revoked, GRANT EXECUTE only to named callers, owner app_definer is not a table owner, FORCE RLS and the AM-20.5 policy text present per table; cross-tenant access through functions fails.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
@@ -1863,7 +1866,7 @@
       "suggested_test": "tests/acceptance/test_r121_relocated_reference_stays_byte_identical_and_run.py",
       "milestone": "M01",
       "owning_tasks": [
-        "T04"
+        "T42"
       ],
       "blocking_for_v1": true
     },
@@ -1895,16 +1898,16 @@
       "suggested_test": "tests/acceptance/test_r123_every_reference_test_is_traced_to_a_port_replace.py",
       "milestone": "M01",
       "owning_tasks": [
-        "T07"
+        "T46"
       ],
       "blocking_for_v1": true
     },
     {
       "id": "R124",
       "category": "security",
-      "requirement": "Runtime roles hold only their matrix privileges",
+      "requirement": "Runtime roles hold exactly their AM-20.2 grants",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "Per-role tests: api/worker/sweeper/operator cannot write tables outside AM-20.12; audit tables reject UPDATE/DELETE; decisions only via record_decision.",
+      "expected_evidence": "Per-role tests enumerate pg_class grants against AM-20.2; any extra or missing grant fails; audit tables reject UPDATE/DELETE for every runtime role.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
@@ -1918,9 +1921,9 @@
     {
       "id": "R125",
       "category": "safety",
-      "requirement": "A second incident for the same asset and interval is never created silently",
+      "requirement": "A second incident for the same asset and interval requires an explicit supersession",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "Two approved runs on one asset/interval: after the first SUCCEEDED, the second grant is refused -> BLOCKED_REVIEW asset_incident_exists.",
+      "expected_evidence": "Two approved runs on one asset/interval: the second grant is refused (asset_incident_exists) whenever a committed incident exists, in any order; it proceeds only when its proposal names supersedes_run_id and the reviewer approved that payload.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
@@ -1942,6 +1945,38 @@
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r126_test_time_cannot_be_shifted_outside_the_test_pro.py",
+      "milestone": "M02",
+      "owning_tasks": [
+        "T09"
+      ],
+      "blocking_for_v1": true
+    },
+    {
+      "id": "R127",
+      "category": "model",
+      "requirement": "The pinned model digest is verified at worker warm-up",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Worker start with a mismatching digest in data/model-pins.json fails closed; matching digest proceeds; probe date recorded.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "suggested_test": "tests/acceptance/test_r127_the_pinned_model_digest_is_verified_at_worker_wa.py",
+      "milestone": "M07",
+      "owning_tasks": [
+        "T19"
+      ],
+      "blocking_for_v1": true
+    },
+    {
+      "id": "R128",
+      "category": "security",
+      "requirement": "Every run transition and event goes through a definer function",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Direct INSERT into events/decisions/proposals/execution_grant/action_attempt_state and UPDATE of runs.state are denied for api, worker and sweeper; transition_run rejects callers outside its list and transitions outside the table.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "suggested_test": "tests/acceptance/test_r128_every_run_transition_and_event_goes_through_a_de.py",
       "milestone": "M02",
       "owning_tasks": [
         "T09"

@@ -1,6 +1,6 @@
 # Session state
 
-**Specification:** OPS-BUILD-1.3.2 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
+**Specification:** OPS-BUILD-1.3.3 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
 **Next task:** T01 (agent) and T03 (owner, off-machine) in parallel. Then T04, and T02 once T03's seal is recorded externally.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `main`. Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
@@ -88,6 +88,28 @@
 - **Ollama network exposure (owner decision):** restrict to loopback plus the Docker/WSL subnet. **Observed now:** `OLLAMA_HOST=0.0.0.0:11434`, with firewall rules allowing `ollama.exe` inbound from any address on Public and Private profiles. T05 writes `docs/runbooks/ollama-network.md` for the owner to apply; the agent changes no system settings.
 - Checks: `verify_handoff.py` passes (41 tasks, 126 requirements); cross-references resolve; critical path 15 tasks; no CR bytes.
 
+## Round 6 and 1.3.3 (2026-10-06)
+
+- Round 6 (`docs/reviews/plan-review-r6-2026-10-06.md`): 3 of 14 round-5 items closed, 11 partial; 6 high findings, all in text 1.3.2 added. The owner chose a full prose round that rewrites the privilege matrix and function contracts first.
+- **1.3.3:** AM-20 rewritten as exact column-level grants (AM-20.2), a function-contract table with callers, inputs, locks, transitions and events (AM-20.3), job dedup keys (AM-20.4), explicit RLS policies incl. `app_definer` (AM-20.5), and the test clock as an Alembic branch (AM-20.6). Append-only state rows replace UPDATEs on audit tables. `GRANT EXECUTE` goes only to named callers. REJECTED is in every destination sentence. The asset guard refuses any overlapping committed incident regardless of timing unless `supersedes_run_id` names it (**owner decision**). `data/model-pins.json` written by T02 and checked by T19 (R127). R128: every transition and event via a definer function.
+- **Mistake found and fixed:** commit `61cc504` was not byte-identical to the delivered package (`.gitignore`). The package zip is now committed as `provenance/handoff-1.0.zip` and `--manifest` will verify against it (T42).
+- Task splits: T04 → T04 + T42; T05 → T05 + T43 + T44; T07 → T07 + T45 + T46. 46 tasks, 128 requirements, critical path 15.
+- `docs/PROJECT_HISTORY.md` added: the problems found across all rounds and what changed, for portfolio readers.
+
+## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
+
+Allowed shortcuts in T08, each with its owning task:
+- single owner DB role, no AM-20.2 grants, no RLS → T09;
+- plain INSERTs and UPDATEs instead of `transition_run`, `append_event`, `record_decision`, `freeze_proposal`, `grant_execution`, `mark_sent`, `record_outcome`, `resolve_invocation` → T09/T13/T22;
+- no `app.current_time()` / test clock → T09;
+- no lease, fence, heartbeat or model permit → T13;
+- no idempotency keys, outbox or `next_event_seq` lock → T14;
+- no asset guard or expiry → T12/T21;
+- raw handle not hashed → T09/T15;
+- fake model → T19; no LangGraph or durability → T20.
+
+Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss checks in mcp-server and incident-sim; `action_key` ON CONFLICT; a decision step by a second persona; every transition routed through T07's table.
+
 ## Environment (observed)
 
 | Item | Observed |
@@ -121,7 +143,7 @@
 
 ## Exact next step
 
-Write the implementation plan for M00–M01 (T01–T08), then run T01:
+Write the implementation plan for M00–M01 (T01, T03, T02, T04, T42, T05, T43, T44, T06, T07, T45, T46, T08), then run T01:
 
 ```powershell
 uv venv "$env:LOCALAPPDATA\ops-ref-venv" --python 3.13

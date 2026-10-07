@@ -54,3 +54,8 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 - Round-5 blocking and high items are fixed in the plan. README, START_HERE and KICKOFF_PROMPT no longer claim tested Kubernetes.
 - Still **no target capability implemented**. All of R001–R126 are `NOT_RUN`.
+
+## Update — OPS-BUILD-1.3.3 (2026-10-06)
+
+- AM-20 rewritten (grants, function contracts, RLS policies, test clock); round-6 items fixed; `provenance/handoff-1.0.zip` committed; `docs/PROJECT_HISTORY.md` added.
+- Still **no target capability implemented**. All of R001–R128 are `NOT_RUN`.

@@ -23,7 +23,7 @@ Start with **[START_HERE.md](START_HERE.md)**. The implementation contract is [B
 
 Kubernetes/Helm is an optional later extension and is **not** claimed for v1 ([ADR-0002](docs/adr/ADR-0002-v1-scope-cut.md)).
 
-[Ordered backlog](handoff/BUILD_BACKLOG.md) · [ADRs](docs/adr/) · [Adversarial reviews](docs/reviews/) · [Target schemas](schemas/README.md) · [Stage diagrams](docs/diagrams/README.md)
+[Ordered backlog](handoff/BUILD_BACKLOG.md) · [ADRs](docs/adr/) · [Adversarial reviews](docs/reviews/) · [Problems found and what changed](docs/PROJECT_HISTORY.md) · [Target schemas](schemas/README.md) · [Stage diagrams](docs/diagrams/README.md)
 
 ## Dependency-free local recovery reference
 
