@@ -96,37 +96,54 @@ async def run_probe(cases: list[dict]) -> dict:
             errors = [e.message for e in validator.iter_errors(json.loads(text))]
             schema_ok = not errors
         repaired_ok = schema_ok
+        repair_meta_thinking = False
         if not schema_ok and err is None:
             repair_user = json.dumps({"invalid_output": text, "validation_errors": errors[:10] or [kind], "evidence": c["evidence"]}, ensure_ascii=False)
             try:
                 fix = await asyncio.wait_for(llm.ainvoke([SystemMessage(content=repair_system), HumanMessage(content=repair_user)]), timeout=TIMEOUT_S)
+                repair_meta_thinking = bool(fix.additional_kwargs.get("reasoning_content"))
                 ftext = fix.content if isinstance(fix.content, str) else json.dumps(fix.content)
                 repaired_ok = classify_output(ftext) == "json_valid" and not list(validator.iter_errors(json.loads(ftext)))
             except Exception:  # noqa: BLE001 - a failed repair is a measured failure
                 repaired_ok = False
         peak = max(peak, vram_mb() or 0)
         results.append({"probe_id": c["probe_id"], "cold": i == 0, "seconds": round(dt, 2), "kind": kind, "schema_valid": schema_ok,
-                        "repaired_valid": repaired_ok, "thinking_in_metadata": meta_thinking, "error": err})
+                        "repaired_valid": repaired_ok, "thinking_in_metadata": meta_thinking or repair_meta_thinking, "error": err})
     repeats = []
+    repeat_errors: list[str] = []
+    extra_thinking = 0
     for c in cases[:5]:
         user = json.dumps({"request": c["request_text"], "evidence": c["evidence"]}, ensure_ascii=False)
         outs = []
-        for _ in range(3):
-            msg = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
-            outs.append(msg.content)
-        repeats.append(len(set(outs)) == 1)
+        try:
+            for _ in range(3):
+                msg = await asyncio.wait_for(llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)]), timeout=TIMEOUT_S)
+                extra_thinking += bool(msg.additional_kwargs.get("reasoning_content"))
+                outs.append(msg.content)
+            repeats.append(len(set(outs)) == 1)
+        except Exception as e:  # noqa: BLE001 - record, never abort the run
+            repeats.append(False)
+            repeat_errors.append(f"{c['probe_id']}: {type(e).__name__}: {e}")
+    cancel_error = None
     task = asyncio.create_task(llm.ainvoke([SystemMessage(content=system), HumanMessage(content="Write a very long incident narrative with 40 numbered sections.")]))
     await asyncio.sleep(3)
     task.cancel()
     try:
-        await task
+        await asyncio.wait_for(task, timeout=TIMEOUT_S)
     except (asyncio.CancelledError, Exception):  # noqa: BLE001
         pass
+    next_start: float | None = None
+    ps_after_cancel: dict = {}
     t1 = time.perf_counter()
-    ps_after_cancel = ollama_json("/api/ps")
-    await llm.ainvoke([HumanMessage(content="Reply with the single word ok.")])
-    next_start = time.perf_counter() - t1
-    return {"results": results, "peak_vram_mb": peak, "repeat_identical": repeats, "ps_after_cancel": ps_after_cancel, "next_call_seconds_after_cancel": round(next_start, 2)}
+    try:
+        ps_after_cancel = ollama_json("/api/ps")
+        ok = await asyncio.wait_for(llm.ainvoke([HumanMessage(content="Reply with the single word ok.")]), timeout=TIMEOUT_S)
+        extra_thinking += bool(ok.additional_kwargs.get("reasoning_content"))
+        next_start = round(time.perf_counter() - t1, 2)
+    except Exception as e:  # noqa: BLE001 - record, still return
+        cancel_error = f"{type(e).__name__}: {e}"
+    return {"results": results, "peak_vram_mb": peak, "repeat_identical": repeats, "ps_after_cancel": ps_after_cancel, "next_call_seconds_after_cancel": next_start,
+            "repeat_errors": repeat_errors, "cancel_error": cancel_error, "extra_thinking_calls": extra_thinking}
 
 
 def render_report(data: dict, digest: str, version: str, probed_at: str) -> str:
@@ -137,7 +154,7 @@ def render_report(data: dict, digest: str, version: str, probed_at: str) -> str:
     lo3, hi3 = wilson(s["repaired_valid"], n)
     return f"""# Model probe: {MODEL} (AM-31, T02)
 
-Measurement only; prompts unchanged (sha256 verified against evals/holdout.sha256). Distinct inputs: {n}. Date: {probed_at}.
+Measurement only; prompts unchanged (sha256 verified against the hashes pinned in probe.py; evals/holdout.sha256 present). Distinct inputs: {n}. Date: {probed_at}.
 Ollama version: {version}. Model digest: `{digest}`. Interpreter: {sys.version.split()[0]}. Settings: reasoning=False, num_ctx=16384, num_predict=1000, temperature=0, {TIMEOUT_S}s cap per call. Model unloaded before the first call.
 
 | Metric | Value | Wilson 95% CI |
@@ -149,12 +166,15 @@ Ollama version: {version}. Model digest: `{digest}`. Interpreter: {sys.version.s
 | Cold-start latency (after unload) | {s['cold_seconds']} s | |
 | Warm latency p50 / p95 | {s['warm_p50']} s / {s['warm_p95']} s | |
 | Peak VRAM (nvidia-smi) | {data['peak_vram_mb']} MB | |
+| Thinking present in repair/repeat/post-cancel calls | {data['extra_thinking_calls']} | any > 0 fails the no-thinking setting |
 | Identical outputs on 3 repeats (5 inputs) | {sum(data['repeat_identical'])}/5 | |
 | Next call start after mid-generation cancel | {data['next_call_seconds_after_cancel']} s | |
 
 `/api/ps` immediately after cancel: `{json.dumps(data['ps_after_cancel'])[:300]}`
 
 Errors: {[(e['probe_id'], e['error']) for e in s['errors']]}
+Repeat errors: {data['repeat_errors']}
+Cancel/post-cancel error: {data['cancel_error']}
 
 Owner decision (R081): [proceed | change model | adjust prompts]
 model_permit release rule (AM-12, chosen from the cancel row above): [release on cancel | hold until /api/ps idle or the 60 s cap]
