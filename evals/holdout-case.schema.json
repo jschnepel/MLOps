@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ops-copilot/evals/holdout-case",
+  "title": "Holdout case intent (part 1, sealed in T03; labels are added in T41 under a separate schema)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "tenant", "asset_id", "request_text", "hours", "intent"],
+  "properties": {
+    "case_id": {"type": "string", "pattern": "^HO-[0-9]{3}$"},
+    "tenant": {"type": "string", "enum": ["alpha", "beta"]},
+    "asset_id": {"type": "string", "pattern": "^[A-Z][0-9]{2}$"},
+    "request_text": {"type": "string", "minLength": 10, "maxLength": 2000},
+    "hours": {"type": "integer", "minimum": 1, "maximum": 168},
+    "intent": {"type": "string", "enum": ["investigate", "answer_only"]},
+    "notes_for_owner": {"type": "string", "maxLength": 2000}
+  }
+}
