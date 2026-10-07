@@ -6,7 +6,7 @@
 **Purpose:** Implement and verify the target project by extending the included local reference.  
 **Status:** BUILD CONTRACT, NOT A CLAIM OF COMPLETED IMPLEMENTATION.
 
-> **Amended (OPS-BUILD-1.3, 2026-10-06):** [`SPEC_AMENDMENTS.md`](SPEC_AMENDMENTS.md) takes precedence over this document wherever they conflict. That includes the repository layout (ADR-0001), the v1 scope cut and one-replica profile (ADR-0002), the state machine, leases and locking, the execution and recovery protocol, authority boundaries, MCP and library facts, the model profile, evaluation, schema alignment, and `handoff/tasks.json`. AM-00 lists the superseded 1.0 passages explicitly. This file is otherwise unchanged from the delivered handoff.
+> **Amended (OPS-BUILD-1.3.1, 2026-10-06):** [`SPEC_AMENDMENTS.md`](SPEC_AMENDMENTS.md) takes precedence over this document wherever they conflict. That includes the repository layout (ADR-0001), the v1 scope cut and one-replica profile (ADR-0002), the state machine, leases and locking, the execution and recovery protocol, authority boundaries, MCP and library facts, the model profile, evaluation, schema alignment, and `handoff/tasks.json`. AM-00 lists the superseded 1.0 passages explicitly. This file is otherwise unchanged from the delivered handoff.
 
 ## 0. Start here: authority, scope, and current evidence
 

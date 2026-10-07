@@ -1,5 +1,5 @@
 {
-  "specification": "OPS-BUILD-1.3 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "specification": "OPS-BUILD-1.3.1 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
   "note": "Target acceptance requirements, not passing tests. Milestone = earliest owning task; R097 accrues across T24/T27/T29/T32. R081-R123 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement.",
   "requirements": [
     {
@@ -1581,7 +1581,7 @@
     {
       "id": "R104",
       "category": "contracts",
-      "requirement": "Schemas, examples and fixtures match the 1.2 contract",
+      "requirement": "Schemas, examples and fixtures match the 1.3.1 contract",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
       "expected_evidence": "verify_handoff.py --contracts passes including AM-80 negative probes.",
       "evidence_status": "NOT_RUN",

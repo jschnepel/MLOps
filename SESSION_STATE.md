@@ -1,6 +1,6 @@
 # Session state
 
-**Specification:** OPS-BUILD-1.3 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
+**Specification:** OPS-BUILD-1.3.1 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
 **Next task:** T01 (agent) and T03 (owner, off-machine) in parallel. Then T04, and T02 once T03's seal is recorded externally.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `main`. Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
@@ -102,7 +102,7 @@ Write the implementation plan for M00–M01 (T01–T08), then run T01:
 
 ```powershell
 uv venv "$env:LOCALAPPDATA\ops-ref-venv" --python 3.13
-uv pip install --python "$env:LOCALAPPDATA\ops-ref-venv" -e ".[web,test]"
+uv pip install --python "$env:LOCALAPPDATA\ops-ref-venv" ".[web,test]"   # not -e: T04 moves the code (re-create the venv from reference/ afterwards)
 & "$env:LOCALAPPDATA\ops-ref-venv\Scripts\python" -m pytest -q
 ```
 

@@ -1,6 +1,6 @@
-# OPS-BUILD-1.3 — Amendments to BUILD_SPEC.md
+# OPS-BUILD-1.3.1 — Amendments to BUILD_SPEC.md
 
-**Status:** Approved by the owner on 2026-10-06. The history: 1.1 was "amend + cut", 1.2 came from the round-2 review, and 1.3 fixes the round-3 BLOCKS-START items.
+**Status:** Approved by the owner on 2026-10-06. The history: 1.1 was "amend + cut", 1.2 came from the round-2 review, 1.3 fixes the round-3 BLOCKS-START items, and 1.3.1 applies round-4 edits E1–E6 (`docs/reviews/plan-review-r4-2026-10-06.md`).
 **Precedence:** This file overrides `BUILD_SPEC.md` (OPS-BUILD-1.0) wherever they conflict. Everything not amended here stays in force. ADRs in `docs/adr/` record the reasoning.
 
 **Sources:**
@@ -71,7 +71,9 @@ Each independently deployed process gets its own top-level directory, each with 
 | `core/` | Shared library (uv workspace member). **Not** a service. |
 
 **The reference moves in T04** [R3-B8]:
-- T04 moves the whole reference unit, unchanged, into `reference/`: `src/operations_copilot/`, `tests/`, its `pyproject.toml`, `Makefile`, `Dockerfile`, `compose.yaml` and `integrations/`.
+- T04 moves the whole reference unit, unchanged, into `reference/`: `src/operations_copilot/`, `tests/`, its `pyproject.toml`, `Makefile`, `Dockerfile`, `compose.yaml`, `integrations/`, `scripts/init_demo.py` and `scripts/check_reference.sh` [R4-E1].
+- `reference/` is **not** a uv workspace member (`[tool.uv.workspace] exclude = ["reference"]`). Root ruff, mypy and pytest exclude it, and it runs from its own external venv.
+- The "one command" check is a Python entry point (`uv run python scripts/check.py`), not `make`. This machine has no `make`.
 - In the same commit it adds `provenance/reference-code-hashes.remap.json` (old path → new path, same sha256) and teaches `scripts/verify_handoff.py --reference-code` to use it.
 - The root `pyproject.toml` becomes the uv workspace root.
 - The reference stays runnable from `reference/` (R001).
@@ -112,7 +114,9 @@ Also reduced for v1:
 **New terminal state `ABANDONED_UNVERIFIED`** [R3-B3]:
 - Reachable only from ESCALATED, through the operator CLI `ops resolve-escalation <run_id> --acknowledge-unverified --reason "<text>"`.
 - The CLI runs locally against the migrator connection. It records the operator identity, the reason and the time in an append-only `operator_resolutions` table, and emits `run.abandoned_unverified`.
-- It never claims success or failure. Reconciliation keeps running and, on destination evidence, appends `action.confirmed` or `action.failed` events for the record. The run state stays ABANDONED_UNVERIFIED.
+- It never claims success or failure. Reconciliation keeps running. On destination evidence it appends **`action.late_evidence`** (payload: `outcome ∈ {SUCCEEDED, FAILED_NO_COMMIT}` plus the receipt or tombstone) and the run status stays ABANDONED_UNVERIFIED [R4-E4].
+- `record_outcome` makes **no state transition** from any terminal state; it only records evidence.
+- Recover jobs remain allowed for ABANDONED_UNVERIFIED runs (AM-15).
 - After this acknowledgement the asset guard no longer blocks that asset and interval. The README documents the risk: the destination may still hold the incident.
 
 | From | Added / changed transition |
@@ -279,6 +283,7 @@ Tested by R109.
   - `action.conflict`
   - `run.escalated`
   - `run.abandoned_unverified`
+  - `action.late_evidence` (status = the run's terminal status; `outcome` field carries the destination result)
   - `feedback.recorded`
   - `explanation.ready`
 - **Who may assert outcomes.**
@@ -296,8 +301,8 @@ Tested by R109.
 |---|---|
 | `get_asset_status`, `get_recent_alerts` (absolute interval, `next_cursor`), `search_procedures` | read jobs |
 | `create_incident(proposal_id)` | `execute` jobs; `recover` jobs for same-key redispatch |
-| `get_incident_receipt(proposal_id)` | `recover` jobs only |
-| `abort_incident(proposal_id)` | `recover` jobs only |
+| `get_incident_receipt(proposal_id)` | `recover` jobs only, including on ESCALATED and ABANDONED_UNVERIFIED runs |
+| `abort_incident(proposal_id)` | `recover` jobs only, including on ESCALATED runs (not after ABANDONED_UNVERIFIED) |
 
 - Every tool has an input JSON Schema in `schemas/tools/`. Arguments that supply a role, tenant, actor, approval or destination are rejected.
 - **The envelope must agree with the data:**
@@ -381,11 +386,19 @@ Tested by R109.
 
 - **Model:** `qwen3:8b`. Record its digest.
 - **Settings:** `ChatOllama(reasoning=False)` (maps to Ollama `think:false`), `num_ctx=16384`, `num_predict=1000`, `temperature=0`, 60 s timeout, `with_structured_output(method="json_schema")` **plus** application-side validation.
+- **Warm-up:** a cold model load took 53 s in the round-4 dry run, against the 60 s timeout. The worker therefore issues a warm-up call (with `keep_alive`) at startup, before it accepts drafting jobs, and T02 measures cold vs warm latency.
 - **T02 probe** [R3-B11]:
   - Uses **at least 30 distinct inputs**, authored for the probe under `evals/probe/`. These are separate from the 10 development seeds and from the holdout.
   - Runs in an isolated environment (`uv run --isolated --with langchain-ollama==1.1.0 …`), with the dependency freeze saved next to the report.
   - Measures the **identical-repeat rate** (the same input 3× at temperature 0), which tells T25 whether repeated trials carry information.
-  - The probe is a measurement, **not prompt tuning**. Its prompt is the sealed starter prompt.
+  - The probe is a measurement, **not prompt tuning** [R4-E2]. It uses the delivered prompts unchanged:
+    - `handoff/prompts/incident-draft-v1.md` (sha256 `e3c26da349dcb0a9bfafb6c786a06f15fece389c21fa63b1b64fef7659b6a942`);
+    - `handoff/prompts/schema-repair-v1.md` (sha256 `8b6658eb0f08136699b78e7ab1d76972f88f4399db720e92e5be5335b0c7c343`).
+  - T03 records both hashes externally together with the holdout seal.
+  - Outputs are validated against the 1.0 `schemas/model-draft.schema.json`.
+  - Each probe input carries a small synthetic evidence bundle, because the corpus doesn't exist yet.
+  - Command form: `uv run --isolated --no-project --with langchain-ollama==1.1.0 …`. The dependency freeze is written via `importlib.metadata`, because uv environments have no pip.
+  - Cold-start and warm latency are reported separately.
   - It records:
   - JSON-valid and schema-valid rates, both first-pass and after one repair, with Wilson 95% CIs;
   - p50/p95 latency;
@@ -456,6 +469,8 @@ Each state has a Playwright assertion (R117). State 8's reconnect assertion land
 
 `handoff/tasks.json` 1.3 has 41 tasks. IDs are stable since 1.2; new tasks are appended (T41).
 
+**1.3.1 changes** [R4]: E1–E6 applied to T01, T02, T03, T04 and T07; M00 order is now T01, T03, T02.
+
 **1.3 changes** [R3]:
 - T03 is split: T03 seals the holdout intents, and the new **T41** gold-labels them against the frozen corpus. T02 and T19 depend on T03; T25 depends on T41.
 - T04 no longer depends on T02. T04 moves the reference to `reference/`, creates `data/seed-ids.json`, adds `jsonschema` to the dev group, and makes the checker skip venv and `node_modules` directories.
@@ -504,12 +519,17 @@ The delivered `schemas/`, `schemas/examples/` and `data/handoff-fixtures/` still
 - Read `expected_payload_sha256` from the decision example.
 - Meta-validate `schemas/tools/*.json` and `evals/*.schema.json`.
 - Skip `.venv*`, `node_modules` and `reference/` build outputs in its `rglob` scans.
+- Read and write all files with `encoding="utf-8"` (this machine's locale is cp1252).
+- Reject `
+` in fixtures, schemas, examples and prompts, so hashes match across platforms [R4-E5].
+
+**Negative probes:** before writing contract code, T07 commits **at least one negative example per AM-80 row**, each listed in `schemas/examples/index.json` with the reason it must fail. R104 passes only if every one fails for that stated reason.
 
 `jsonschema` is a dev dependency (T04).
 
 | Artifact | Required change |
 |---|---|
-| `event.schema.json` | Add `ESCALATED` and `ABANDONED_UNVERIFIED` and the AM-14 event types; payload `reason`; `action.confirmed` requires a receipt and SUCCEEDED; source rules |
+| `event.schema.json` | Add `ESCALATED` and `ABANDONED_UNVERIFIED` and the AM-14 event types; payload `reason` and `outcome`; `action.confirmed` requires a receipt and SUCCEEDED; `action.late_evidence` requires `outcome` plus a receipt or tombstone; source rules |
 | `tool-result.schema.json` | `status=outcome`; remove `unknown`; envelope/data agreement; `action_id` required on outcomes for authorized callers; `next_cursor`; `abort_incident` result shape |
 | `model-draft.schema.json` | Add optional `question` (required for clarification; AM-10) |
 | New: `feedback`, `manual-proposal`, `revision`, `cancel-response` schemas | Per §7 and AM-14. `cancel-response` reports whether a grant or dispatch already occurred. |

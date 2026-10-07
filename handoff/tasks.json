@@ -1,5 +1,5 @@
 {
-  "specification": "OPS-BUILD-1.3 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "specification": "OPS-BUILD-1.3.1 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
   "current_milestone": "M00",
   "note": "Dependency graph. IDs stable since 1.2; T41 appended in 1.3. Requirements sit with the first task able to test them. review_notes carry round-3 LATER items for the owning task. M15 is optional. See SPEC_AMENDMENTS.md AM-60.",
   "milestones": [
@@ -9,8 +9,8 @@
       "required_for_v1": true,
       "task_ids": [
         "T01",
-        "T02",
-        "T03"
+        "T03",
+        "T02"
       ],
       "status": "PLANNED"
     },
@@ -178,7 +178,7 @@
       "id": "T01",
       "milestone": "M00",
       "title": "Reproduce reference baseline on this machine",
-      "instructions": "Create the venv OUTSIDE the repo (e.g. %LOCALAPPDATA%\\ops-ref-venv) with the reference web+test extras; run the 58 tests and the recovery CLI on Windows; save outputs under reports/baseline/. Do not modify reference code.",
+      "instructions": "Create the venv OUTSIDE the repo (e.g. %LOCALAPPDATA%\\ops-ref-venv) and install the reference web+test extras WITHOUT -e; run the 58 tests and the recovery CLI on Windows; save outputs under reports/baseline/. Do not modify reference code.",
       "depends_on": [],
       "requirement_ids": [
         "R001"
@@ -186,15 +186,33 @@
       "status": "PLANNED",
       "definition_of_done": [
         "58-test result and CLI output saved with exact commands and environment.",
-        "Failures recorded verbatim; nothing skipped or edited to pass."
+        "Failures recorded verbatim; nothing skipped or edited to pass.",
+        "Venv path recorded and outside the repo; `git status` clean apart from reports/baseline/."
       ],
       "external_approval_required": false
+    },
+    {
+      "id": "T03",
+      "milestone": "M00",
+      "title": "Owner authors and seals holdout intents",
+      "instructions": "Define evals/holdout-case.schema.json. Owner writes ~25 case intents/requests without AI assistance, stores them off-machine or encrypted, commits only sha256 + count, and records the hash outside the local repo (push or dated email to self) before T02 starts. Gold labels come later in T41. Also record externally, with the holdout hash, the sha256 of handoff/prompts/incident-draft-v1.md and schema-repair-v1.md (the probe's unchanged prompts).",
+      "depends_on": [],
+      "requirement_ids": [
+        "R071"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "evals/holdout-case.schema.json and evals/holdout.sha256 committed; hash also recorded externally with date.",
+        "No holdout content in the repo or agent-readable paths.",
+        "Recorded before T02 (probe) and T19 (prompts) begin."
+      ],
+      "external_approval_required": true
     },
     {
       "id": "T02",
       "milestone": "M00",
       "title": "Environment inventory and qwen3:8b probe",
-      "instructions": "Per AM-31: author >=30 distinct probe inputs under evals/probe/ (not dev seeds, not holdout); run in `uv run --isolated --with langchain-ollama==1.1.0` and save the freeze; reasoning=False, num_ctx=16384; first-pass and post-repair validity with Wilson CIs; identical-repeat rate at temperature 0; latency; VRAM; thinking leakage; mid-generation cancellation via `ollama ps`/GPU. Sealed starter prompt only; this is measurement, not tuning.",
+      "instructions": "Per AM-31: author >=30 distinct probe inputs under evals/probe/, each with a small synthetic evidence bundle (not dev seeds, not holdout); use handoff/prompts/incident-draft-v1.md and schema-repair-v1.md unchanged at their recorded hashes; validate against 1.0 model-draft.schema.json; run via `uv run --isolated --no-project --with langchain-ollama==1.1.0` and save the freeze via importlib.metadata; reasoning=False, num_ctx=16384; first-pass and post-repair validity with Wilson CIs; identical-repeat rate at temperature 0; cold-start vs warm latency; VRAM; thinking leakage; mid-generation cancellation via `ollama ps`/GPU. Measurement, not tuning.",
       "depends_on": [
         "T01",
         "T03"
@@ -211,27 +229,10 @@
       "external_approval_required": false
     },
     {
-      "id": "T03",
-      "milestone": "M00",
-      "title": "Owner authors and seals holdout intents",
-      "instructions": "Define evals/holdout-case.schema.json. Owner writes ~25 case intents/requests without AI assistance, stores them off-machine or encrypted, commits only sha256 + count, and records the hash outside the local repo (push or dated email to self) before T02 starts. Gold labels come later in T41.",
-      "depends_on": [],
-      "requirement_ids": [
-        "R071"
-      ],
-      "status": "PLANNED",
-      "definition_of_done": [
-        "evals/holdout-case.schema.json and evals/holdout.sha256 committed; hash also recorded externally with date.",
-        "No holdout content in the repo or agent-readable paths.",
-        "Recorded before T02 (probe) and T19 (prompts) begin."
-      ],
-      "external_approval_required": true
-    },
-    {
       "id": "T04",
       "milestone": "M01",
       "title": "uv workspace with per-service directories and locks",
-      "instructions": "ADR-0001 layout (core/, api/, worker/, mcp-server/, asset-sim/, incident-sim/). Move the whole reference unit unchanged into reference/ (src, tests, pyproject, Makefile, Dockerfile, compose, integrations) with provenance/reference-code-hashes.remap.json and checker support; root pyproject becomes the uv workspace root. Create data/seed-ids.json (tenant/persona UUIDs). Resolve versions per AM-30, commit uv.lock, add jsonschema to the dev group; checker skips .venv*/node_modules. ruff, mypy, pytest via one command.",
+      "instructions": "ADR-0001 layout (core/, api/, worker/, mcp-server/, asset-sim/, incident-sim/). Move the whole reference unit unchanged into reference/ (src, tests, pyproject, Makefile, Dockerfile, compose, integrations, scripts/init_demo.py, scripts/check_reference.sh), excluded from the uv workspace and from root ruff/mypy/pytest with provenance/reference-code-hashes.remap.json and checker support; root pyproject becomes the uv workspace root. Create data/seed-ids.json (tenant/persona UUIDs). Resolve versions per AM-30, commit uv.lock, add jsonschema to the dev group; checker skips .venv*/node_modules. ruff, mypy, pytest via one Python entry point (`uv run python scripts/check.py`; no make on this machine). Re-create the reference venv from reference/ and re-run its suite.",
       "depends_on": [
         "T01"
       ],
@@ -243,7 +244,7 @@
       "status": "PLANNED",
       "definition_of_done": [
         "`uv sync --locked` succeeds from a clean clone.",
-        "`verify_handoff.py --reference-code` passes via the remap and the reference still runs from reference/.",
+        "`verify_handoff.py --reference-code` passes via the remap, and the reference suite passes again from reference/ in its external venv.",
         "One command runs ruff + mypy + pytest green; data/seed-ids.json committed.",
         "Each service README states ownership and trust boundary."
       ],
@@ -294,7 +295,7 @@
       "id": "T07",
       "milestone": "M01",
       "title": "Contracts, state machine, schema alignment and reference migration",
-      "instructions": "Pydantic contracts; canonical JSON v1; transition table incl. ESCALATED, ABANDONED_UNVERIFIED and the slot rule; apply every AM-80 schema/example/fixture change incl. new schemas and error codes; update verify_handoff.py (renamed field, tools/ and evals/ schemas, skip dirs); port the pure-core reference tests and write reference/TRACEABILITY.md mapping all 58 to port/replace/drop.",
+      "instructions": "Pydantic contracts; canonical JSON v1; transition table incl. ESCALATED, ABANDONED_UNVERIFIED and the slot rule; apply every AM-80 schema/example/fixture change incl. new schemas and error codes; update verify_handoff.py (renamed field, tools/ and evals/ schemas, skip dirs); port the pure-core reference tests and write reference/TRACEABILITY.md mapping all 58 to port/replace/drop. Before contract code, commit at least one negative example per AM-80 row (with its failure reason in index.json). Checker reads/writes UTF-8 and rejects \r in fixtures, schemas, examples and prompts.",
       "depends_on": [
         "T04"
       ],
@@ -311,7 +312,8 @@
       "definition_of_done": [
         "`verify_handoff.py --contracts` passes with the AM-80 negative probes.",
         "Every allowed transition tested; disallowed ones rejected; revision from BLOCKED_REVIEW needs a free slot.",
-        "reference/TRACEABILITY.md covers all 58 tests with an owning task for each replacement."
+        "reference/TRACEABILITY.md covers all 58 tests with an owning task for each replacement.",
+        "Every AM-80 negative example fails for its stated reason; no \r in governed text files."
       ],
       "external_approval_required": false
     },
@@ -330,7 +332,8 @@
       "status": "PLANNED",
       "definition_of_done": [
         "One e2e test drives a run to SUCCEEDED across the four processes with real tokens.",
-        "Skeleton shortcuts listed in SESSION_STATE.md as debt with owning tasks; no throwaway auth."
+        "Skeleton shortcuts listed in SESSION_STATE.md as debt with owning tasks; no throwaway auth.",
+        "Schema created as Alembic revision 1 (owner role; T09 re-owns and enables RLS in later revisions)."
       ],
       "external_approval_required": false
     },
@@ -721,7 +724,8 @@
       "review_notes": [
         "Redispatch skips the section 13 gate via lookup_action -> mark_sent; mark_sent re-checks cancel/deadline under runs lock.",
         "Cancellation after SENT aborts immediately; otherwise abort at dispatch deadline (<=5 min FAILED latency stated).",
-        "Operator CLI `ops resolve-escalation` -> ABANDONED_UNVERIFIED with operator_resolutions audit row."
+        "Operator CLI `ops resolve-escalation` -> ABANDONED_UNVERIFIED with operator_resolutions audit row.",
+        "Late destination evidence on ABANDONED_UNVERIFIED emits action.late_evidence; record_outcome never transitions terminal runs; recover jobs stay allowed."
       ]
     },
     {
