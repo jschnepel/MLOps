@@ -2,8 +2,9 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** execute Plan A (`docs/superpowers/plans/2026-10-07-first-slice-a-baseline-workspace.md`): T01 (agent) and T03 (owner, off-machine) in parallel, then T02 (after the seal), T42, T04, T06.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `main`. Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
+**Next task:** owner inputs pending: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) `gh auth login`, then push, then record the first CI run URL (T06 step 7); the Ollama firewall runbook lands in T44. Then write Plan B (T05, T43, T44) and Plan C (T07, T45, T46, T08) from the real artifacts and dry-run on scratch copies before executing.
+**Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-a` (Plan A work; not merged). Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
 
 ## Done in the planning session (2026-10-06)
 
@@ -164,12 +165,22 @@ Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss 
 
 ## Exact next step
 
-Execute Plan A, starting with T01:
+On a fresh clone or after any `uv sync`:
 
-```powershell
-uv venv "$env:LOCALAPPDATA\ops-ref-venv" --python 3.13
-uv pip install --python "$env:LOCALAPPDATA\ops-ref-venv" ".[web,test]"   # not -e: T04 moves the code (re-create the venv from reference/ afterwards)
-& "$env:LOCALAPPDATA\ops-ref-venv\Scripts\python" -m pytest -q
+```bash
+uv sync --locked
+uv run python scripts/check.py
+python -I scripts/verify_handoff.py --reference-code --manifest
 ```
+
+Reference test suite (T01 procedure, as re-run from `reference/` in T42; Git Bash; venv outside the repo, installed without `-e`; delete the in-tree `build/` and `*.egg-info` afterwards):
+
+```bash
+uv venv "$LOCALAPPDATA/ops-ref-venv" --python 3.13
+uv pip install --python "$LOCALAPPDATA/ops-ref-venv" "./reference[web,test]"
+(cd reference && "$LOCALAPPDATA/ops-ref-venv/Scripts/python" -m pytest -q)
+```
+
+Then wait for the owner inputs above (holdout seal, then live probe; push, then first CI run) and write Plan B and Plan C as described in the Next task line.
 
 Do not store secrets or private reasoning in this file.

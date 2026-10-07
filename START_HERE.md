@@ -24,7 +24,9 @@ Use the prompt in [`handoff/KICKOFF_PROMPT.md`](handoff/KICKOFF_PROMPT.md). In s
 | `docs/reviews/` | The six adversarial review rounds and their findings |
 | `handoff/tasks.json` | 16 milestones and 47 tasks as a dependency graph, with review notes |
 | `handoff/acceptance-matrix.json` | 131 requirements, each with an owning task and a suggested test path |
-| `src/`, `tests/`, `integrations/` | Original runnable local reference (moves to `reference/` in task T42) |
+| `reference/` | Original runnable local reference (moved by T42; byte-identical to the delivered package, enforced by `verify_handoff.py --reference-code`) |
+| `core/`, `api/`, `worker/`, `mcp-read/`, `mcp-write/`, `asset-sim/`, `incident-sim/` | uv workspace members, one top-level directory per service (ADR-0001) |
+| `tests/plan_a/` | Workspace tests run by `scripts/check.py` |
 | `schemas/` | Target JSON schemas and positive/negative examples (still 1.0 until T45; see AM-80) |
 | `handoff/prompts/` | Sealed v1 prompt starters (hashes in AM-31) |
 | `data/handoff-fixtures/`, `evals/` | Synthetic fixtures and development scenario cards (no holdout is stored in the repo) |
@@ -46,16 +48,14 @@ The workspace root depends on all seven members, so a plain `uv sync` / `uv run`
 # Package structure, JSON, task graph, fixtures, source syntax (standard library only).
 python scripts/verify_handoff.py
 
-# Reference-code bytes unchanged.
-python scripts/verify_handoff.py --reference-code
+# Reference bytes unchanged (the whole reference/ tree) and the 1.0 manifest verified against provenance/handoff-1.0.zip.
+python scripts/verify_handoff.py --reference-code --manifest
 
 # Dependency-free synthetic recovery demonstration.
-PYTHONPATH=src python -m operations_copilot.cli
+cd reference && PYTHONPATH=src python -m operations_copilot.cli
 ```
 
-**`--manifest` will fail on the current tree until task T42**, which moves `MANIFEST.sha256` to `provenance/` and verifies it against `provenance/handoff-1.0.zip` (the delivered package, byte-for-byte; AM-00).
-
-To run the reference test suite, use an isolated venv **outside** the repository and install without `-e`. The exact commands are in `SESSION_STATE.md` (task T01).
+To run the reference test suite, use an isolated venv **outside** the repository and install without `-e`. The exact commands are in `SESSION_STATE.md` ("Exact next step"; the T01 procedure, run from `reference/`).
 
 The package checker is **not** an acceptance runner. Schema-valid examples are not proofs of permissions or semantic truth.
 

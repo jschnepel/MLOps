@@ -74,3 +74,14 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 - Round-8 regressions fixed; Plan A (T01, T03, T02, T42, T04, T06) rewritten after a builder dry-run found it unexecutable.
 - Still **no target capability implemented**. All of R001–R131 are `NOT_RUN`.
+
+## Update — Plan A executed (2026-10-07, branch `plan-a`)
+
+- Plan A (T01, T03, T02, T42, T04, T06) executed on branch `plan-a` (commits a638801..HEAD), followed by a final-review fix wave (five Important findings fixed).
+- `uv run python scripts/check.py` is `CHECK: GREEN`: ruff, ruff format, mypy on the seven members, and pytest `54 passed, 1 skipped`. The one skip is `tests/plan_a/test_seal.py` (owner has not sealed the holdout yet).
+- `python -I scripts/verify_handoff.py --reference-code --manifest` passes, including the whole-tree check of `reference/` against `provenance/handoff-1.0.zip`.
+- **Pending owner inputs:**
+  - T03 step 9: author the holdout off-machine, seal it into `evals/holdout.sha256`, and record the hash outside this repo;
+  - T02: the live `qwen3:8b` probe run, after the seal (the probe refuses to run without it);
+  - T06 step 7: `gh auth login`, choose visibility, create the remote, push; the first CI run is R103's evidence.
+- Still **no target capability implemented**. R001–R131 remain `NOT_RUN` in the acceptance matrix. Partially evidenced by Plan A (per the plan's coverage notes): R001 (reference baseline reproduced), R071 (holdout schema and seal procedure; the seal itself is pending), R081 partial (probe built; live run pending), R101 partial (seed IDs only), R103 up to the owner's push, R121.
