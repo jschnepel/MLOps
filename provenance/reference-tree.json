@@ -1,0 +1,32 @@
+{
+  "description": "Every delivered file under reference/ (paths relative to reference/). Each must be byte-identical to zip member <zip_prefix><path> in provenance/handoff-1.0.zip; reference/README.md is the only repository-owned file allowed besides these.",
+  "zip_prefix": "operations-copilot/",
+  "files": [
+    ".dockerignore",
+    "Dockerfile",
+    "Makefile",
+    "compose.yaml",
+    "integrations/README.md",
+    "integrations/__init__.py",
+    "integrations/langgraph_workflow.py",
+    "integrations/mcp_tools.py",
+    "pyproject.toml",
+    "scripts/check_reference.sh",
+    "scripts/init_demo.py",
+    "src/operations_copilot/__init__.py",
+    "src/operations_copilot/api.py",
+    "src/operations_copilot/cli.py",
+    "src/operations_copilot/domain.py",
+    "src/operations_copilot/models.py",
+    "src/operations_copilot/service.py",
+    "src/operations_copilot/store.py",
+    "src/operations_copilot/synthetic.py",
+    "src/operations_copilot/web/app.js",
+    "src/operations_copilot/web/index.html",
+    "src/operations_copilot/web/style.css",
+    "tests/conftest.py",
+    "tests/integration/test_sdk_contracts.py",
+    "tests/test_api.py",
+    "tests/test_control.py"
+  ]
+}

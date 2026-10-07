@@ -54,3 +54,67 @@ def test_checker_skips_venv_dirs():
         assert out.returncode == 0, out.stdout + out.stderr
     finally:
         shutil.rmtree(junk)
+
+
+def _tracked_copy(tmp_path: Path) -> Path:
+    """Copy every git-tracked file (the repository as a fresh clone sees it) to a temporary root."""
+    root = tmp_path / "repo"
+    listed = subprocess.run(["git", "ls-files", "-z"], capture_output=True, check=True).stdout.decode("utf-8")
+    for rel in filter(None, listed.split("\0")):
+        dst = root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(rel, dst)
+    return root
+
+
+def _run_tree(root: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-I", str(root / "scripts/verify_handoff.py"), "--reference-code"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_reference_tree_passes_on_untouched_copy(tmp_path: Path):
+    out = _run_tree(_tracked_copy(tmp_path))
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "PASS: 26 delivered reference/ files" in out.stdout
+
+
+def test_reference_tree_fails_on_modified_unhashed_file(tmp_path: Path):
+    root = _tracked_copy(tmp_path)
+    with (root / "reference/Makefile").open("ab") as f:
+        f.write(b"\n# tampered\n")
+    out = _run_tree(root)
+    assert out.returncode != 0
+    assert "FAIL: modified: reference/Makefile" in out.stdout
+
+
+def test_reference_tree_fails_on_deleted_file(tmp_path: Path):
+    root = _tracked_copy(tmp_path)
+    (root / "reference/Dockerfile").unlink()
+    out = _run_tree(root)
+    assert out.returncode != 0
+    assert "FAIL: missing: reference/Dockerfile" in out.stdout
+
+
+def test_reference_tree_fails_on_added_file(tmp_path: Path):
+    root = _tracked_copy(tmp_path)
+    (root / "reference/src/operations_copilot/evil.py").write_text("import os\n", encoding="utf-8")
+    out = _run_tree(root)
+    assert out.returncode != 0
+    assert "FAIL: unexpected file: reference/src/operations_copilot/evil.py" in out.stdout
+
+
+def test_reference_tree_fails_on_remap_outside_reference(tmp_path: Path):
+    root = _tracked_copy(tmp_path)
+    remap_path = root / "provenance/reference-code-hashes.remap.json"
+    remap = json.loads(remap_path.read_text(encoding="utf-8"))
+    remap["tests/conftest.py"] = "scripts/conftest.py"
+    shutil.copyfile(root / "reference/tests/conftest.py", root / "scripts/conftest.py")
+    remap_path.write_text(json.dumps(remap, indent=2) + "\n", encoding="utf-8", newline="\n")
+    out = _run_tree(root)
+    assert out.returncode != 0
+    assert "FAIL: remap target outside reference/: tests/conftest.py -> scripts/conftest.py" in out.stdout

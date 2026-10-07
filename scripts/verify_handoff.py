@@ -3,6 +3,12 @@
 
 Default checks need only Python's standard library. --contracts requires the
 jsonschema package. Snapshot/reference hash checks are intended before edits.
+
+--reference-tree (implied by --reference-code) enforces the whole reference/ tree against
+provenance/reference-tree.json: every listed file must be byte-identical to its zip member in
+the delivered 1.0 package (--zip), no listed file may be missing, no other file may exist under
+reference/ except the repository-owned reference/README.md (caches and build output skipped),
+and every reference-code-hashes.remap.json target must lie under reference/.
 """
 
 from __future__ import annotations
@@ -75,6 +81,58 @@ def check_reference_code() -> int:
     return 0
 
 
+TREE_SKIP_DIRS = {"__pycache__", "build", ".pytest_cache"}
+TREE_REPO_OWNED = {"README.md"}
+
+
+def reference_tree_files() -> set[str]:
+    """Files under reference/, relative to it, skipping caches and build output."""
+    base = ROOT / "reference"
+    found = set()
+    for path in base.rglob("*"):
+        if not path.is_file() or path.suffix == ".pyc":
+            continue
+        rel = path.relative_to(base)
+        if any(part in TREE_SKIP_DIRS or part.endswith(".egg-info") for part in rel.parts[:-1]):
+            continue
+        found.add(rel.as_posix())
+    return found
+
+
+def check_reference_tree(zip_path: Path) -> int:
+    spec = load("provenance/reference-tree.json")
+    prefix, listed = spec["zip_prefix"], spec["files"]
+    bad = []
+    with zipfile.ZipFile(zip_path) as z:
+        for rel in listed:
+            path = within("reference/" + rel)
+            if not path.is_file():
+                bad.append(f"missing: reference/{rel}")
+                continue
+            try:
+                expected = z.read(prefix + rel)
+            except KeyError:
+                bad.append(f"missing in zip: {prefix}{rel}")
+                continue
+            if path.read_bytes() != expected:
+                bad.append(f"modified: reference/{rel}")
+    allowed = set(listed) | TREE_REPO_OWNED
+    actual = reference_tree_files()
+    bad += [f"unexpected file: reference/{rel}" for rel in sorted(actual - allowed)]
+    bad += [f"missing: reference/{rel}" for rel in sorted(TREE_REPO_OWNED - actual)]
+    remap = load("provenance/reference-code-hashes.remap.json")
+    bad += [f"remap target outside reference/: {k} -> {v}" for k, v in remap.items() if not v.startswith("reference/")]
+    for b in bad:
+        print("FAIL:", b)
+    if bad:
+        return 1
+    print(
+        f"PASS: {len(listed)} delivered reference/ files byte-identical to {zip_path.name}; "
+        f"no extra or missing files; {len(remap)} remap targets under reference/"
+    )
+    return 0
+
+
 def load(relative: str):
     return json.loads((ROOT / relative).read_text(encoding="utf-8"))
 
@@ -97,7 +155,14 @@ def main() -> int:
     )
     parser.add_argument("--manifest", action="store_true", help="Verify delivered snapshot checksums before editing")
     parser.add_argument(
-        "--reference-code", action="store_true", help="Compare inherited source/test bytes to original archive"
+        "--reference-code",
+        action="store_true",
+        help="Compare inherited source/test bytes to original archive (also runs --reference-tree)",
+    )
+    parser.add_argument(
+        "--reference-tree",
+        action="store_true",
+        help="Every file under reference/ byte-identical to the --zip package; no extra/missing files; remap under reference/",
     )
     parser.add_argument(
         "--zip",
@@ -231,6 +296,8 @@ def main() -> int:
     rc = 0
     if args.reference_code:
         rc |= check_reference_code()
+    if args.reference_code or args.reference_tree:
+        rc |= check_reference_tree(Path(args.zip))
     if args.manifest:
         rc |= check_manifest(Path(args.zip))
     print(
