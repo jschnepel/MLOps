@@ -64,3 +64,8 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 - Routers named (AM-16), MCP split into read and write servers (ADR-0003), `docs/ARCHITECTURE.md` added as the showcase map.
 - Still **no target capability implemented**. All of R001–R131 are `NOT_RUN`.
+
+## Update — OPS-BUILD-1.3.5 (2026-10-07)
+
+- Round-7 high and blocking items fixed; showcase and history corrected for truthfulness.
+- Still **no target capability implemented**. All of R001–R131 are `NOT_RUN`.

@@ -1,5 +1,5 @@
 {
-  "specification": "OPS-BUILD-1.3.4 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "specification": "OPS-BUILD-1.3.5 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
   "note": "Target acceptance requirements, not passing tests. Milestone = earliest owning task; R097 accrues across T24/T27/T29/T32. R081-R131 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement.",
   "requirements": [
     {
@@ -220,7 +220,7 @@
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
       "suggested_test": "tests/acceptance/test_r015_accepted_work_is_committed_before_acknowledgemen.py",
-      "expected_evidence": "Kill around admission commit; every acknowledged run has message/run/job; no volatile acceptance.",
+      "expected_evidence": "create_run commits message, run, directory, history, job and run.accepted in one transaction before the 202; a crash before commit leaves nothing; no other path creates a run.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "owning_tasks": [
@@ -1584,7 +1584,7 @@
     {
       "id": "R104",
       "category": "contracts",
-      "requirement": "Schemas, examples and fixtures match the 1.3.4 contract",
+      "requirement": "Schemas, examples and fixtures match the 1.3.5 contract",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
       "expected_evidence": "verify_handoff.py --contracts passes including AM-80 negative probes.",
       "evidence_status": "NOT_RUN",
@@ -1923,7 +1923,7 @@
       "category": "safety",
       "requirement": "A second incident for the same asset and interval requires an explicit supersession",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "Two approved runs on one asset/interval: the second grant is refused (asset_incident_exists) whenever a committed incident exists, in any order; it proceeds only when its proposal names supersedes_run_id and the reviewer approved that payload.",
+      "expected_evidence": "Two approved runs on one asset/interval: the second grant is refused (asset_incident_exists) whenever a committed incident exists, in any order; it proceeds only when runs.supersedes_run_id, set from the requester's structured request, names that run and the reviewer approved the payload that freeze_proposal built from it; a draft carrying supersedes_run_id fails validation.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
@@ -1988,7 +1988,7 @@
       "category": "routing",
       "requirement": "Every route is enumerable and unroutable input never starts work",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "Admission router: each of the five routes tested; conflicting/unroutable input gives 422 or a clarification and writes no job. Graph router: a test walks every row of the route table and asserts the node reached; the model hint can only downgrade.",
+      "expected_evidence": "Admission router: each of the six routes tested; conflicting text/fields yields a stored clarification and no job; unroutable kinds 422. Graph router: a test walks every row of the route table and asserts the node reached; a model hint can only produce clarify.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
@@ -2020,9 +2020,9 @@
     {
       "id": "R131",
       "category": "security",
-      "requirement": "The read and write MCP servers hold disjoint functions and reject each other's handles",
+      "requirement": "The read and write MCP servers hold disjoint tool functions and reject each other's handles",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "mcp_read cannot EXECUTE any write-path function and mcp_exec cannot EXECUTE any read function (pg_proc ACL test); an execute/recover handle at mcp-read and a read handle at mcp-write are rejected; incident-sim rejects mcp-read's token.",
+      "expected_evidence": "mcp_read can EXECUTE only resolve_invocation, asset_scope, search_procedures_scoped; mcp_exec only resolve_invocation, grant_execution, mark_sent, record_outcome, request_abort, lookup_action (pg_proc ACL test); an execute/recover handle at mcp-read and a read handle at mcp-write are rejected; incident-sim rejects mcp-read's token.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",

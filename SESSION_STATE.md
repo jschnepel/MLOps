@@ -1,6 +1,6 @@
 # Session state
 
-**Specification:** OPS-BUILD-1.3.4 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
+**Specification:** OPS-BUILD-1.3.5 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
 **Next task:** T01 (agent) and T03 (owner, off-machine) in parallel. Then T04, and T02 once T03's seal is recorded externally.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `main`. Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
@@ -95,6 +95,13 @@
 - **Mistake found and fixed:** commit `61cc504` was not byte-identical to the delivered package (`.gitignore`). The package zip is now committed as `provenance/handoff-1.0.zip` and `--manifest` will verify against it (T42).
 - Task splits: T04 → T04 + T42; T05 → T05 + T43 + T44; T07 → T07 + T45 + T46. 46 tasks, 128 requirements, critical path 15.
 - `docs/PROJECT_HISTORY.md` added: the problems found across all rounds and what changed, for portfolio readers.
+
+## 1.3.5 (2026-10-07): round-7 fixes
+
+- `docs/reviews/plan-review-r7-2026-10-07.md`: 10 of 13 round-6 items closed; 5 high, all in 1.3.3/1.3.4 text; the `session_user` mechanism verified sound.
+- Fixes: `supersedes_run_id` and `intent` are requester-asserted fields on `runs`, injected by `freeze_proposal`, rejected in drafts; `transition_run` is worker-only with pre-grant targets; `create_run` creates runs (∅ → QUEUED row); seeds via `migrator` `BYPASSRLS`; `sweeper_all` policies; `revoke_handles`; `record_status_answer`; `clock_offset`; `set_config(…, true)`; admission `clarify` route (R018 kept); `action.granted`/`action.redispatched` owners; `deliver_outbox` job type.
+- Showcase corrected: "Planned proof", "Where the code will live (not yet written)", the graph redrawn from the ten-route table with interrupts marked, host-side Ollama stated, a "Not claimed" block, README "Target tests" and limit sentences. PROJECT_HISTORY round attributions corrected against the review files and the author's mistakes listed.
+- 47 tasks, 131 requirements.
 
 ## 1.3.4 (2026-10-07): showcase
 

@@ -13,11 +13,11 @@ Start with **[START_HERE.md](START_HERE.md)**. The implementation contract is [B
 
 ## What this demonstrates
 
-| Concept | Where | Proven by |
+| Concept | Where | Target tests |
 |---|---|---|
-| **Least privilege** | Column-level DB grants per role; MCP servers with no table access; a function-only final gate; capability handles; token audiences; loopback-bound ports | R084, R124, R128, R106, R131 |
+| **Least privilege** | Column-level DB grants per role; MCP servers with no table access; a function-only final gate; capability handles; token audiences | R084, R124, R128, R106, R131, R026, R027, R085 |
 | **Routers** | An admission router, a graph router node and a model router, each with an enumerable route table; model output can only downgrade a route | R129, R130 |
-| **Orchestrator** | One explicit LangGraph graph: evidence before drafting, durable pauses, synchronous checkpoints, idempotent nodes, never the authority | R038, R042, R108 |
+| **Orchestrator** | One explicit LangGraph graph: evidence before drafting, durable pauses, synchronous checkpoints, never the authority | R038, R042, R108, R091 |
 | **MCP servers** | `mcp-read` (asset status, alerts, procedure search) and `mcp-write` (guarded incident write and recovery), disjoint functions, disjoint handles | R025–R031, R131 |
 
 The full map, with diagrams and the demo that shows each, is **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
@@ -32,7 +32,7 @@ The full map, with diagrams and the demo that shows each, is **[docs/ARCHITECTUR
 - Evidence retrieval precedes final drafting.
 - Approval and actual destination receipts, not model text, control actions and result claims.
 
-Kubernetes/Helm is an optional later extension and is **not** claimed for v1 ([ADR-0002](docs/adr/ADR-0002-v1-scope-cut.md)).
+**Limits stated up front** ([ADR-0002](docs/adr/ADR-0002-v1-scope-cut.md), AM-10, AM-13, AM-50): Kubernetes/Helm is optional and not claimed for v1; one worker replica runs (multi-replica checkpoint fencing is deferred); the evaluation holdout is owner-authored, and with about 25 cases only differences of roughly 30 points are detectable; an action with a lost response can take up to 5 minutes to be declared failed; an escalated action may be acknowledged as unverified by an operator, and the destination may still hold the incident. Nothing is ever undone automatically.
 
 [Ordered backlog](handoff/BUILD_BACKLOG.md) · [ADRs](docs/adr/) · [Adversarial reviews](docs/reviews/) · [Problems found and what changed](docs/PROJECT_HISTORY.md) · [Target schemas](schemas/README.md) · [Stage diagrams](docs/diagrams/README.md)
 

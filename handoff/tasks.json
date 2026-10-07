@@ -1,5 +1,5 @@
 {
-  "specification": "OPS-BUILD-1.3.4 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "specification": "OPS-BUILD-1.3.5 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
   "current_milestone": "M00",
   "note": "Dependency graph. IDs stable since 1.2; T41 (1.3) and T42-T46 (1.3.3 splits) and T47 (1.3.4 mcp-write) appended. Requirements sit with the first task able to test them. review_notes carry later-round items for the owning task. M15 is optional. See SPEC_AMENDMENTS.md AM-60.",
   "milestones": [
@@ -283,7 +283,7 @@
       "id": "T05",
       "milestone": "M01",
       "title": "Dev bootstrap: what the walking skeleton needs",
-      "instructions": "Compose dev profile with PostgreSQL+pgvector (pinned major version and digest) and Keycloak 26.8.x (pinned digest); every published port bound to 127.0.0.1; KC_HOSTNAME=http://localhost:<port> plus KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true so iss matches for host and container callers; documented host-vs-container topology; realm import (secrets via placeholders) with workload clients and hardcoded-audience mappers (MCP_RESOURCE_URL parameter, incident-sim), a dev-only direct-grant test client, and two personas (requester alex, reviewer sam) from data/seed-ids.json; secrets generated under %LOCALAPPDATA%\\ops-copilot and delivered via Compose `secrets:` (entrypoint wrapper exports from /run/secrets; Keycloak has no _FILE variant); Windows-friendly bootstrap script.",
+      "instructions": "Compose dev profile with PostgreSQL+pgvector (pinned major version and digest) and Keycloak 26.8.x (pinned digest); every published port bound to 127.0.0.1; KC_HOSTNAME=http://localhost:<port> plus KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true so iss matches for host and container callers; documented host-vs-container topology; realm import (secrets via placeholders) with workload clients and hardcoded-audience mappers (MCP_READ_RESOURCE_URL and MCP_WRITE_RESOURCE_URL parameters, incident-sim), a dev-only direct-grant test client, and two personas (requester alex, reviewer sam) from data/seed-ids.json; secrets generated under %LOCALAPPDATA%\\ops-copilot and delivered via Compose `secrets:` (entrypoint wrapper exports from /run/secrets; Keycloak has no _FILE variant); Windows-friendly bootstrap script.",
       "depends_on": [
         "T04"
       ],
@@ -365,7 +365,7 @@
       "id": "T07",
       "milestone": "M01",
       "title": "Core contracts, state machine, job model and reason enum",
-      "instructions": "Pydantic contracts; canonical JSON v1; transition table incl. ESCALATED, ABANDONED_UNVERIFIED, the BLOCKED_REVIEW rows and the slot rule; shared reason enum; job-type model (AM-20.4 dedup keys); tombstone object; supersedes_run_id in the hashed payload; state_version-only-on-transition defined here (tested in T09/T21).",
+      "instructions": "Pydantic contracts; canonical JSON v1; transition table incl. the creation row (null -> QUEUED), ESCALATED, ABANDONED_UNVERIFIED, the BLOCKED_REVIEW rows and the slot rule; runs.intent and requester-asserted supersedes_run_id as run fields (never from drafts); shared reason enum; job-type model (AM-20.4 dedup keys); tombstone object; supersedes_run_id in the hashed payload; state_version-only-on-transition defined here (tested in T09/T21).",
       "depends_on": [
         "T04"
       ],
@@ -378,7 +378,8 @@
       "status": "PLANNED",
       "definition_of_done": [
         "Property tests (Hypothesis) show canonical bytes stable and authority fields rejected.",
-        "Every allowed transition tested; every disallowed transition rejected; revision from BLOCKED_REVIEW needs a free slot."
+        "Every allowed transition tested; every disallowed transition rejected; revision from BLOCKED_REVIEW needs a free slot.",
+        "A draft containing supersedes_run_id fails validation; the creation row and the answer_only refusal are in the table (R125, R114)."
       ],
       "external_approval_required": false,
       "review_notes": []
@@ -387,7 +388,7 @@
       "id": "T45",
       "milestone": "M01",
       "title": "Schema, example and fixture alignment with negative probes",
-      "instructions": "Apply every AM-80 row (event, tool-result, model-draft question, feedback/manual-proposal/revision/cancel-response, error codes incl. ASSET_INCIDENT_EXISTS and AUTHORITY_VIOLATION, tools/, job, model-pins, action-outcome tombstone, decision expected_payload_sha256, proposal supersedes_run_id/authored_by, fixtures UUID mapping); commit at least one negative example per row before code; update verify_handoff.py (renamed field, tools/ and evals/ meta-validation, UTF-8, reject CR); evals/holdout-case.schema.json is T03's, tolerate absence.",
+      "instructions": "Apply every AM-80 row (event, tool-result, model-draft question, feedback/manual-proposal/revision/cancel-response, error codes incl. ASSET_INCIDENT_EXISTS and AUTHORITY_VIOLATION, tools/, job, model-pins, action-outcome tombstone, decision expected_payload_sha256, proposal supersedes_run_id injected from runs and authored_by, message/revision schemas with structured supersedes_run_id and kind enum incl. ask/status, route schema, fixtures UUID mapping); commit at least one negative example per row before code; update verify_handoff.py (renamed field, tools/ and evals/ meta-validation, UTF-8, reject CR); evals/holdout-case.schema.json is T03's, tolerate absence.",
       "depends_on": [
         "T07",
         "T42"
@@ -445,7 +446,7 @@
       "id": "T09",
       "milestone": "M02",
       "title": "Migrations, roles, RLS and hardened definer functions",
-      "instructions": "Implement AM-20 in code: Alembic schema (incl. run_state_history, action_attempt_state, drafts, run_directory, run_lease, jobs with dedup keys, execution_grant UNIQUE(run_id), sessions); roles per AM-20.1 incl. test_harness via the `testclock` Alembic branch; exact grants per AM-20.2; every AM-20.3 definer function with search_path/REVOKE/GRANT-to-named-callers and session_user checks; RLS policies per AM-20.5 incl. FORCE; app.current_time() per AM-20.6.",
+      "instructions": "Implement AM-20 in code: Alembic schema (incl. run_state_history, action_attempt_state, drafts, run_directory, run_lease, jobs with dedup keys, execution_grant UNIQUE(run_id), sessions); roles per AM-20.1 incl. test_harness via the `testclock` Alembic branch; exact grants per AM-20.2; every AM-20.3 definer function (incl. create_run, revoke_handles, record_status_answer) with search_path/REVOKE/GRANT-to-named-callers, session_user checks and transaction-local set_config; transition_run restricted to worker and pre-grant targets; seed data migrations under migrator BYPASSRLS; sweeper_all policies on memberships and jobs; action_attempt_state seq ordering; clock_offset column; RLS policies per AM-20.5 incl. FORCE; app.current_time() per AM-20.6.",
       "depends_on": [
         "T08",
         "T45"
@@ -467,14 +468,16 @@
         "Migrations up/down on real PostgreSQL; dev/demo bootstrap refuses to start if app.test_clock exists.",
         "Per-role tests: each role can do exactly its AM-20.2 grants and nothing else; direct INSERT into events/decisions/proposals and UPDATE of runs.state fail for every runtime role (R124, R128).",
         "pg_policies text matches AM-20.5 per table; definer path cannot cross tenants (R106); mcp_exec cannot SELECT any table (R084).",
-        "GUC SET does not alter app.current_time(); only test_harness can write test_clock (R126)."
+        "GUC SET does not alter app.current_time(); only test_harness can write test_clock (R126).",
+        "transition_run rejects any post-grant target and any caller other than worker; create_run is the only path to a new run; a plain SET inside a function body is caught by a test asserting the caller's app.tenant_id is unchanged after the call (R106)."
       ],
       "external_approval_required": false,
       "review_notes": [
         "RLS bootstrap: RLS-free run_directory(run_id, tenant_id) + invocation_context readable only by app_definer/sweeper; named cross-tenant sweeper policy for expire_proposals, membership sync, session lookup.",
         "Definer functions declare SET app.tenant_id='' as an attribute; test that a preset tenant from mcp_exec is ignored.",
         "app.test_clock exists only in the test-profile migration; app.current_time() never reads GUCs (R126).",
-        "session_user remains the invoking login role inside SECURITY DEFINER; functions branch on it for allowed-caller checks."
+        "session_user remains the invoking login role inside SECURITY DEFINER; functions branch on it for allowed-caller checks.",
+        "Every service asserts at start that app.test_clock is absent outside the test profile; the demo bootstrap check alone is not enough."
       ]
     },
     {
@@ -537,7 +540,7 @@
       "id": "T12",
       "milestone": "M03",
       "title": "Durable admission API and error mapping",
-      "instructions": "/api/v1 conversations/messages/runs; message+run+job+event committed before 202; scoped Idempotency-Key (24 h); one active run per conversation; interval resolved once; safe error schema and 401/403/404/409/422/429/503 mapping; the AM-16 admission router with its five routes as a table in core/routing.py, deterministic-first, optional model hint may only downgrade.",
+      "instructions": "/api/v1 conversations/messages/runs; message+run+job+event committed before 202; scoped Idempotency-Key (24 h); one active run per conversation; interval resolved once; safe error schema and 401/403/404/409/422/429/503 mapping; the AM-16 admission router with its six routes (investigate, clarification_reply, status_question, readonly_answer, clarify, reject) as a table in core/routing.py, deterministic-first; a model hint can only produce clarify; investigate/readonly_answer go through create_run with intent; status questions are stored via record_status_answer.",
       "depends_on": [
         "T09"
       ],
@@ -554,11 +557,12 @@
         "Crash-before-commit leaves no ack; after commit the job exists.",
         "Replay same body returns same result; different body 409.",
         "Each status code has a test proving the mapping.",
-        "Every admission route has a test; unroutable or conflicting input yields 422/clarification and never a job (R129)."
+        "Every admission route has a test; conflicting text/fields yields a stored clarification (R018) and never a job; unroutable kinds yield 422 (R129)."
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Slot rule: partial unique index on runs(conversation_id) over AM-10 active states, plus a concurrent admission test."
+        "Slot rule: partial unique index on runs(conversation_id) over AM-10 active states, plus a concurrent admission test.",
+        "status_question stores question and answer as messages and emits a conversation-scoped status.answered event, so it is audited."
       ]
     },
     {
@@ -590,7 +594,8 @@
         "Lock order includes the asset-guard advisory lock and memberships (AM-12); also place jobs, invocation_context, model_permit, sessions.",
         "Gate heartbeat renewal on event-loop liveness and the 90 s compute budget.",
         "Advisory lock: asset_id NOT NULL and read before locking; use hashtextextended (AM-12 wording updated); test that app_definer may call pg_advisory_xact_lock.",
-        "Lock order now includes messages, decisions and operator_resolutions; the outbox appends notification.failed in a separate transaction (AM-12)."
+        "Lock order now includes messages, decisions and operator_resolutions; the outbox appends notification.failed in a separate transaction (AM-12).",
+        "Handle revocation goes through revoke_handles(run_id, fence); the worker has no column grant on invocation_context.revoked_at."
       ]
     },
     {
@@ -613,7 +618,8 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Jobs carry dedup_key UNIQUE per AM-20.4; recover jobs never created by either MCP server."
+        "Jobs carry dedup_key UNIQUE per AM-20.4; recover jobs never created by either MCP server.",
+        "append_event enforces payload rules inside the function (no status field from api/worker on tool.completed); action.granted emitted by grant_execution; action.redispatched by mark_sent when attempt_no > 1; deliver_outbox is a job type."
       ]
     },
     {
@@ -644,7 +650,8 @@
       "review_notes": [
         "status=error-only-before-grant applies to authorized callers; auth failures never reveal action_id.",
         "Allowlist checks attempt state (create_incident only with no attempt or INTENT, not cancelled, before deadline).",
-        "mcp-read reads asset data via asset_scope + asset-sim, and procedures via search_procedures_scoped; it never has table access."
+        "mcp-read reads asset data via asset_scope + asset-sim, and procedures via search_procedures_scoped; it never has table access.",
+        "resolve_invocation derives job_type from the jobs row and server from job_type; the worker-written server column is a hint only."
       ]
     },
     {
@@ -668,7 +675,8 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Handle server binding is checked inside resolve_invocation by comparing the handle's server field with session_user (mcp_read vs mcp_exec)."
+        "Handle server binding is checked inside resolve_invocation by comparing the handle's server field with session_user (mcp_read vs mcp_exec).",
+        "record_outcome verifies the receipt hash against the grant hash, but both reach it through mcp-write: v1 states plainly in the threat model that mcp-write is trusted for outcome truth, with T10's detective check as the control. Optional hardening for v1.1: incident-sim HMAC-signs receipts with a key held in an app_definer-only table. R131 wording: named function sets (both roles share resolve_invocation)."
       ]
     },
     {
@@ -1163,7 +1171,8 @@
       "external_approval_required": true,
       "review_notes": [
         "README must carry the sentences AM-10 (escalation/abandonment risk), AM-13 (abort latency <=5 min), AM-50 (30-point detectability floor, owner-authored holdout) require, and link docs/PROJECT_HISTORY.md.",
-        "Keep docs/ARCHITECTURE.md current: it maps least privilege, routers, orchestrator and the two MCP servers to requirement IDs and demos; the README's 'What this demonstrates' table links to it."
+        "Keep docs/ARCHITECTURE.md current: it maps least privilege, routers, orchestrator and the two MCP servers to requirement IDs and demos; the README's 'What this demonstrates' table links to it.",
+        "docs/ARCHITECTURE.md uses 'Planned proof' and 'Where the code will live' until the code exists; switch to present tense only when each directory and test file is real."
       ]
     },
     {

@@ -2,7 +2,9 @@
 
 Operations Copilot exists to show four things an interviewer should be able to verify in the code, the tests and the demos: **least privilege**, **routers**, an **orchestrator**, and **MCP servers**. This page is the map. Each section names the components, the requirement IDs whose tests prove the claim (`handoff/acceptance-matrix.json`), and the demo that shows it. The rules themselves live in `SPEC_AMENDMENTS.md` (cited as AM-nn).
 
-> Status: this is the target design. `STATUS.md` says what is built. Nothing below is a claim that the code exists yet.
+> **Status: target design; no code exists yet.** `STATUS.md` says what is built. Every "Planned proof" table names the tests that will exist when the owning task is done, and "Where the code will live" is a plan, not a listing.
+>
+> **Not claimed for v1:** a tested Kubernetes deployment; multiple fenced worker replicas (one worker runs); a third-party-reviewed holdout (the owner writes it); detection of evaluation differences under about 30 points (n≈25); instant failure after a lost response (abort waits up to 5 minutes); automatic undo of anything (ADR-0002, AM-13, AM-50).
 
 ## The system in one picture
 
@@ -42,7 +44,7 @@ flowchart LR
   MW --> IS
 ```
 
-The model (bottom right) has no credential, no database access, no network reach and no tool it can call. It receives evidence and returns text. Everything that can change the world sits on the left and is gated three times: at admission, at independent review, and at the final grant inside the database.
+The model (bottom right) has no credential, no database access, no network reach and no tool it can call. It receives evidence and returns text. Everything that can change the world sits on the left. A write needs an independent reviewer's decision bound to the exact payload hash, and then the final grant inside the database, which re-checks membership, hash, expiry, cancellation and the asset guard in one transaction (AM-13, AM-20.3).
 
 ---
 
@@ -55,14 +57,14 @@ The model (bottom right) has no credential, no database access, no network reach
 | Principal | Credential | Database access | Can reach | Cannot |
 |---|---|---|---|---|
 | Browser user | Opaque server-side session cookie | none | api only | hold a token, reach MCP or the databases |
-| `api` | Keycloak client; DB role `api` | Column-level grants on conversations, messages, runs (`cancel_requested` only), sessions, idempotency, feedback, outbox, jobs (insert) | PostgreSQL, Keycloak admin API (`view-users` only) | update `runs.state`; insert decisions, proposals, grants, attempts or events directly; reach incident-sim |
-| `worker` | Keycloak client; DB role `worker` | run_lease, jobs, drafts, checkpoints schema; `runs` columns `checkpoint_id`, `next_event_seq`, `budget_used` | PostgreSQL, mcp-read, mcp-write, Ollama | write decisions, memberships, grants, attempts or events; reach asset-sim or incident-sim |
-| `sweeper` | DB role `sweeper` | leases (reclaim), jobs, memberships (sync), outbox, expired sessions | PostgreSQL, Keycloak | decisions, grants, attempts |
+| `api` | Keycloak client; DB role `api` | SELECT on conversation and audit tables; INSERT on messages, idempotency, feedback, outbox, `resume_input` jobs; UPDATE on `runs.cancel_requested` only; runs, decisions, revisions and status answers only through `create_run`, `record_decision`, `create_revision`, `record_status_answer` | PostgreSQL, Keycloak (login, `view-users` check) | update `runs.state`; insert decisions, proposals, grants, attempts or events directly; reach either sim |
+| `worker` | Keycloak client; DB role `worker` | run_lease, jobs, drafts, invocation_context (insert), outbox (insert), corpus tables (ingestion), model_permit, checkpoints schema; `runs` columns `checkpoint_id`, `budget_used`; transitions only through `transition_run` (pre-grant states) and `freeze_proposal` | PostgreSQL, mcp-read, mcp-write, Ollama | write decisions, memberships, grants, attempts or events; mark a run SUCCEEDED; reach either sim |
+| `sweeper` | DB role `sweeper`; Keycloak `view-users` service account | leases (reclaim), jobs, memberships (sync), outbox, expired sessions and idempotency rows | PostgreSQL, Keycloak admin API (read) | decisions, grants, attempts, any run transition |
 | `mcp-read` | Keycloak client; DB role `mcp_read` | **no tables**; `EXECUTE` on `resolve_invocation`, `asset_scope`, `search_procedures_scoped` | PostgreSQL (functions), asset-sim | any write-path function; incident-sim |
-| `mcp-write` | Keycloak client; DB role `mcp_exec` | **no tables**; `EXECUTE` on `resolve_invocation`, `grant_execution`, `mark_sent`, `record_outcome`, `request_abort`, `lookup_action` | PostgreSQL (functions), incident-sim | any read function; asset-sim; reading evidence text |
+| `mcp-write` | Keycloak client; DB role `mcp_exec` | **no tables**; `EXECUTE` on `resolve_invocation`, `grant_execution`, `mark_sent`, `record_outcome`, `request_abort`, `lookup_action` | PostgreSQL (functions), incident-sim | the search and asset functions; asset-sim; it sees only the frozen payload bytes, never corpus text |
 | `operator` CLI | DB role `operator` | `EXECUTE` on `resolve_escalation` only | PostgreSQL | everything else |
 | `app_definer` | no login | owns the functions, owns no tables; sees rows only through explicit RLS policies | — | be used by a process |
-| Model | **none** | none | none | call a tool, see a credential, assert an outcome |
+| Model | **none** | none | nothing outbound; it answers requests from the worker only | call a tool, see a credential, assert an outcome, select a route |
 
 The full grant table is AM-20.2; the function contracts (callers, inputs, locks, transitions, events) are AM-20.3; the policies are AM-20.5.
 
@@ -72,11 +74,11 @@ The full grant table is AM-20.2; the function contracts (callers, inputs, locks,
 - **Token audiences.** Each MCP server verifies `aud` against its own resource URL and `azp` against the allowed workload clients. A browser token or a worker token presented to incident-sim is rejected (AM-20.7).
 - **The final gate is a database function.** `grant_execution` re-checks membership, hash, expiry, cancellation and the asset guard inside one transaction, and only `mcp_exec` may call it. Approval text, model text and chat text never grant anything.
 - **Append-only audit.** Decisions, proposals, grants, attempt states, events and operator resolutions are insert-only for every runtime role; "state" is the latest row.
-- **Network.** Every published port binds to 127.0.0.1; the model-to-destination and browser-to-internal paths are denied at the Docker network level (R066); Ollama is restricted to loopback and the Docker subnet.
+- **Network.** Every published port binds to 127.0.0.1 (T05); the worker-to-sims and browser-to-internal paths are denied at the Docker network level (R066); Ollama runs on the host and is restricted to loopback and the Docker subnet by an owner-applied firewall rule (AM-31), so "the model cannot reach the destination" is a host-firewall fact, not a container test.
 
-### Proof
+### Planned proof
 
-| Requirement | What its test shows |
+| Requirement | What its test will show |
 |---|---|
 | R084, R124, R128 | `mcp_read`/`mcp_exec` cannot SELECT any table; every role holds exactly its grants; direct writes to audit tables fail |
 | R106 | Definer functions are hardened and tenant-isolated by explicit policy text |
@@ -84,7 +86,7 @@ The full grant table is AM-20.2; the function contracts (callers, inputs, locks,
 | R026, R027, R085, R100 | Wrong audience, replayed handle, worker-chosen allowlist and cross-run proposal all fail |
 | R043, R093, R044 | Self-approval and author-approval denied; approval bound to the exact payload hash |
 
-**Demo 2 (denial):** a cross-tenant or injected attempt is rejected with no write and a clear user state.
+**Demo 2 (denial):** a cross-team or injected attempt is rejected with no incident written and a clear user state (BUILD_SPEC §28).
 
 ---
 
@@ -96,20 +98,18 @@ There are three routers (AM-16):
 
 | Router | Lives in | Input | Routes | Rule |
 |---|---|---|---|---|
-| **Admission router** | `api` | an authenticated message | `investigate` (new run), `clarification_reply` (resume), `status_question` (answer from records, no run), `readonly_answer` (read-only run, no proposal), `reject` | Structured fields and `kind` decide; a status question never creates a job; a conflict between text and structured fields becomes a clarification, not a guess |
-| **Graph router** | the orchestrator's `route_request` node | run state, resolved context, evidence sufficiency | `clarify`, `retrieve`, `draft`, `answer_only`, `abstain`, `freeze`, `await_decision`, `execute`, `recover` | A route table in `core/`; conditional edges only from that table; the model's classification of intent is one input, never the deciding one |
+| **Admission router** | `api` | an authenticated message | `investigate` (new run), `clarification_reply` (resume), `status_question` (answer from records, no run), `readonly_answer` (read-only run, no proposal), `clarify` (conflicting or missing fields), `reject` | Structured fields and `kind` decide; a status question never creates a job; a conflict between text and structured fields becomes a clarification, not a guess (R018) |
+| **Graph router** | the orchestrator's `route_request` node | run state, `runs.intent`, resolved context, evidence sufficiency (a code rule), the validated draft kind | `clarify`, `retrieve`, `draft`, `answer_only`, `abstain`, `freeze`, `await_decision`, `execute`, `recover`, `publish` | A route table in `core/routing.py`; conditional edges only from that table; the model's output can only choose between abstaining and drafting, and `freeze` is additionally gated by the requester's intent |
 | **Model router** | `DraftGenerator` factory in the worker | `MODEL_MODE` and policy | `fake` (deterministic, tests), `qwen3:8b` (local), a future larger model | Chosen by configuration, recorded in every run's manifest and `explanation.ready` event; **no silent fallback** between routes |
 
-Why this matters: an "agent" that decides its own next step cannot be audited, budgeted or tested exhaustively. A router with an enumerable table can be: every route has a test, and the set of things the system might do is closed.
+### Planned proof
 
-### Proof
-
-| Requirement | What its test shows |
+| Requirement | What its test will show |
 |---|---|
 | R129 | Every admission and graph route is enumerated; an unroutable or ambiguous input produces a clarification or a 422 and never a job |
 | R017, R018 | One active run per conversation; relative intervals resolve once and conflicts clarify |
 | R130, R041 | The model route is recorded; a missing model fails clearly instead of falling back |
-| R036 | Instructions found in retrieved documents cannot change the route or add a tool |
+| R036, R125 | Instructions found in retrieved documents cannot add a tool or authority, and a draft cannot assert a supersession |
 
 **Demo 1 (success)** shows the admission router creating one run and the graph router moving it through retrieve → draft → freeze → await decision → execute.
 
@@ -123,20 +123,24 @@ Why this matters: an "agent" that decides its own next step cannot be audited, b
 
 ```mermaid
 flowchart LR
-  L[load_run] --> R[route_request]
-  R -->|clarify| C[await_clarification]
-  C --> L
+  L[load_run] --> R{route_request}
+  R -->|clarify| C[await_clarification<br/>interrupt: ends here,<br/>resumed by a resume_input job]
   R -->|retrieve| E[retrieve_evidence<br/>via mcp-read]
-  E --> D[draft_with_langchain]
-  D --> V[validate_and_freeze<br/>freeze_proposal]
-  V -->|answer_only / abstain| P[publish_state]
-  V -->|proposal| A[await_independent_decision]
-  A --> X[execute_approved_proposal<br/>via mcp-write]
-  X --> O[reconcile_outcome]
-  O --> P
+  R -->|draft| D[draft_with_langchain]
+  R -->|answer_only / abstain| P[publish_state]
+  R -->|freeze| V[validate_and_freeze<br/>freeze_proposal]
+  R -->|await_decision| A[await_independent_decision<br/>interrupt: ends here,<br/>resumed by an execute job]
+  R -->|execute| X[execute_approved_proposal<br/>via mcp-write]
+  R -->|recover| O[reconcile_outcome<br/>via mcp-write]
+  R -->|publish| P
+  E --> R
+  D --> R
+  V --> R
+  X --> R
+  O --> R
 ```
 
-Nodes are deterministic Python; only `draft_with_langchain` calls the model, and only `retrieve_evidence`, `execute_approved_proposal` and `reconcile_outcome` call MCP servers. Edges come from the route table in section 2.
+Every node returns to `route_request`, and every labelled edge is one row of the AM-16 route table (ten routes). The two interrupt nodes end the graph run; a committed human event and its wake-up job start a new run of the graph from the stored checkpoint. Nodes are deterministic Python; only `draft_with_langchain` calls the model, and only `retrieve_evidence`, `execute_approved_proposal` and `reconcile_outcome` call MCP servers.
 
 ### Properties
 
@@ -144,11 +148,9 @@ Nodes are deterministic Python; only `draft_with_langchain` calls the model, and
 - **Durable pauses.** Clarification and review are `interrupt()`s with a persisted checkpoint; the human's reply arrives as a committed event and a wake-up job, never as trusted resume content (R022, R023, R042).
 - **Crash-safe.** Checkpoints are written synchronously; the accepted checkpoint ID is stored on the run under the lease fence; every node is idempotent because LangGraph re-runs a node from its start on resume (AM-12, R108).
 - **Not the authority.** Graph state carries IDs and hashes only (R091). The run's state, the approval and the destination receipt live in PostgreSQL and are rechecked by every node. A checkpoint can never approve or execute anything.
-- **Not a free agent loop.** There is no "think → pick tool → act" cycle. The spec forbids a raw write loop; the model never sees a tool.
+### Planned proof
 
-### Proof
-
-| Requirement | What its test shows |
+| Requirement | What its test will show |
 |---|---|
 | R038 | A trace shows MCP reads complete before the draft node |
 | R042, R108 | Pause/resume survives a worker restart from the stored checkpoint; a stray newer head is ignored |
@@ -170,37 +172,37 @@ Nodes are deterministic Python; only `draft_with_langchain` calls the model, and
 | Token audience | `MCP_READ_RESOURCE_URL` | `MCP_WRITE_RESOURCE_URL` |
 | DB role | `mcp_read` (3 functions) | `mcp_exec` (6 functions) |
 | Downstream | asset-sim, governed corpus (through functions) | incident-sim |
-| Cannot | grant, dispatch, abort, see receipts | search, read asset data, see evidence text |
+| Cannot | grant, dispatch, abort, see receipts | search, read asset data, see corpus text (it sees only frozen payload bytes) |
 
 - Protocol revision 2026-07-28 over Streamable HTTP; per-request protocol version validated (AM-30).
 - Tool inputs have JSON schemas; arguments that try to supply a role, tenant, actor or approval are rejected (AM-15).
 - Results are typed envelopes; a transport success can still be an application failure, and the caller verifies receipt hashes before recording success.
 - The model never calls either server. The orchestrator's deterministic nodes do, with a handle the server resolves to a run, a fence and an allowlist.
-- What MCP is **not** here: not the scheduler, not the permission policy, not a place where "approved=true" means anything.
+- Neither server is the scheduler or the permission policy; an argument saying "approved=true" is rejected at the schema.
 
-### Proof
+### Planned proof
 
-| Requirement | What its test shows |
+| Requirement | What its test will show |
 |---|---|
 | R025 | An independent process lists and calls tools over the network |
 | R026, R027 | Wrong or missing audience, browser token, replayed or expired handle rejected |
 | R028, R029, R030 | Read tools enforce current access; unexpected tools fail closed; receipt lookup is restricted to recovery |
-| R131 | mcp-read holds no write function and rejects write handles; mcp-write holds no read function and rejects read handles |
+| R131 | mcp-read holds only the three read-path functions and rejects write handles; mcp-write holds only the six write-path functions and rejects read handles (both share `resolve_invocation`) |
 | R096 | The destination's action key is atomic, permanent and accepts only mcp-write's identity |
 
-All three demos cross the MCP boundary; demo 2 exercises its denials.
+All three demos cross the MCP boundary.
 
 ---
 
-## Reading the code
+## Where the code will live (not yet written)
 
 | Directory | What to look at first |
 |---|---|
-| `core/domain/` | the transition table, route tables, reason enum, canonical JSON |
+| `core/domain/`, `core/routing.py` | the transition table, the route tables, the reason enum, canonical JSON |
 | `core/db/migrations/` | roles, grants, definer functions, RLS policies (AM-20 in SQL) |
 | `api/` | the admission router and the decision endpoint |
 | `worker/graph/` | the orchestrator's nodes and edges |
 | `mcp-read/`, `mcp-write/` | the two tool servers and their token verifiers |
 | `incident-sim/` | the destination's atomic action-key table |
-| `tests/acceptance/` | one file per requirement ID |
+| `tests/acceptance/` | one file per requirement ID, created by the owning task |
 | `docs/PROJECT_HISTORY.md` | the problems found while designing this, and what changed |

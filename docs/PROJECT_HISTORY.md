@@ -6,7 +6,7 @@ Each entry gives the problem, where it was found, and the change. The round numb
 
 ## 1. The diagrams had the pipeline backwards
 
-**Problem.** The overview diagrams showed the LLM reasoning first, choosing its own tools, and then handing "tool call intents" to the tool layer. The detailed specs said the opposite: the workflow engine retrieves evidence first, then the model drafts from that evidence, and the model never chooses tools. (Round 0, the diagram comparison.)
+**Problem.** The overview diagrams showed the LLM reasoning first, choosing its own tools, and then handing "tool call intents" to the tool layer. The detailed specs said the opposite: the workflow engine retrieves evidence first, then the model drafts from that evidence, and the model never chooses tools. (The diagram comparison that preceded round 1; round 1 recorded the same ordering error in the package.)
 
 **Change.** The detailed specs were adopted as authoritative and the overview diagrams were marked for correction. The runtime order is fixed as: admit → retrieve through controlled tools → draft → independent review → guarded write → receipt-backed result.
 
@@ -18,19 +18,19 @@ Each entry gives the problem, where it was found, and the change. The round numb
 
 ## 3. "Exactly-once" was promised and cannot be delivered
 
-**Problem.** The marketing diagrams said "ensure exactly-once semantics". There is no universal exactly-once guarantee across arbitrary services. (Rounds 0–1.)
+**Problem.** The marketing diagrams said "ensure exactly-once semantics". There is no universal exactly-once guarantee across arbitrary services. (Round 1.)
 
 **Change.** The system is honest about uncertainty: an action can end **unknown**, then **escalated**, then (by an audited operator decision) **abandoned-unverified**. The destination owns the truth through an idempotent action key that is never deleted. Retries always reuse the same key; nothing is ever retried under a new identity.
 
 ## 4. The write-fencing did not actually fence
 
-**Problem.** Fences were per job, but the work was per run, so two workers could both believe they owned a run. The fence check was a plain read, which a stale worker could pass. Expiry checks used `now()`, which PostgreSQL freezes at transaction start, so a slow transaction could pass a check after its lease had expired. (Rounds 2–3.)
+**Problem.** Fences were per job, but the work was per run, so two workers could both believe they owned a run. The fence check was a plain read, which a stale worker could pass. Expiry checks used `now()`, which PostgreSQL freezes at transaction start, so a slow transaction could pass a check after its lease had expired. (Per-job fencing: round 1; the lock and clock defects: rounds 2–3.)
 
 **Change.** One lease and one monotonic fence **per run**; every fenced write first locks the lease row (`FOR SHARE`, acquisition `FOR UPDATE`); all time comparisons use `clock_timestamp()` after locks are taken; one published lock order; the heartbeat runs on its own thread and connection so a long model call cannot lose the lease.
 
 ## 5. The checkpoint library behaved differently from what the spec assumed
 
-**Problem.** The spec assumed graph checkpoints were written before the next step. LangGraph's default is asynchronous: it persists *while the next step runs*. Resuming from a stored checkpoint ID re-runs already-finished tasks instead of restoring their writes, and a crash-recovery resume forks the checkpoint. The library has no option to put its tables in a separate schema. (Rounds 2–3 and 5, verified in the library source.)
+**Problem.** The spec assumed graph checkpoints were written before the next step. LangGraph's default is asynchronous: it persists *while the next step runs*. Resuming from a stored checkpoint ID re-runs already-finished tasks instead of restoring their writes, and a crash-recovery resume forks the checkpoint. The library has no option to put its tables in a separate schema. (The custom-saver need: round 1; durability, resume and schema: rounds 2–3 and 5, verified in the library source.)
 
 **Change.** Synchronous durability is required; the accepted checkpoint ID is stored on the run and read only after the library confirms it; every node must be idempotent; the saver's schema is set through the connection's search path. Version 1 runs a single worker replica and says so, instead of claiming fenced multi-worker checkpoints it cannot prove.
 
@@ -54,13 +54,13 @@ Each entry gives the problem, where it was found, and the change. The round numb
 
 ## 9. Identity revocation was not what the spec thought
 
-**Problem.** Disabling a user in Keycloak does not trigger back-channel logout; the auth library has no helper for it; introspection is audience-checked in current Keycloak; the MCP SDK's built-in audience check expects a URL, not a client ID; token issuer differs between host and container callers. (Rounds 2, 4.)
+**Problem.** Disabling a user in Keycloak does not trigger back-channel logout; the auth library has no helper for it; introspection is audience-checked in current Keycloak; the MCP SDK's built-in audience check expects a URL, not a client ID; token issuer differs between host and container callers. (Disable ≠ logout: round 1; the rest: rounds 2 and 4.)
 
 **Change.** Decision-class actions check the user's status through the admin API with a fail-closed timeout; a membership sync bounds the window; audiences are resource URLs; the Keycloak hostname settings that make the issuer identical were verified in a live container before being written into the plan.
 
 ## 10. The evaluation could not support its claims
 
-**Problem.** The test corpus was 463 words, smaller than one planned chunk. Only 2 of 32 scenario cards exercised the model. With 25 holdout cases, differences under about 30 points are not reliably detectable, not 15–20 as first written. Repeated trials were clustered and the 2-of-3 rule inflated rates. The owner would author the holdout, write the manual baseline and label the outputs, so the comparison was biased. A hash proves a holdout was not edited, not that it was not seen. (Rounds 1, 3, 5.)
+**Problem.** The test corpus was 463 words, smaller than one planned chunk. Only 2 of 32 scenario cards exercised the model. With 25 holdout cases, differences under about 30 points are not reliably detectable; the amendments had first written 15–20, a figure the round-2 review itself introduced and round 3 corrected. Repeated trials were clustered and the 2-of-3 rule inflated rates. The owner would author the holdout, write the manual baseline and label the outputs, so the comparison was biased. A hash proves a holdout was not edited, not that it was not seen. (Rounds 1, 3, 5.)
 
 **Change.** A larger corpus; the deterministic scenario suite is separated from the model-quality evaluation; case-level Wilson intervals and paired McNemar tests; safety metrics fail a case on any single bad trial; the manual condition is scored only with deterministic metrics; labelling is blind; the holdout is written before any prompt tuning, kept off the machine, and its hash is recorded outside the repository. The README is required to state the 30-point detectability floor.
 
@@ -72,7 +72,7 @@ Each entry gives the problem, where it was found, and the change. The round numb
 
 ## 12. The task plan could not be executed in order
 
-**Problem.** All 32 tasks formed one serial chain; requirements were scheduled before the capabilities they test existed; every task had the same copied definition of done; evaluation sat behind Kubernetes and restore drills; nothing was showable until the last tasks. Later, three tasks had grown to 6–14 days each. (Rounds 2, 3, 6.)
+**Problem.** All 32 tasks formed one serial chain; requirements were scheduled before the capabilities they test existed; every task had the same copied definition of done; evaluation sat behind Kubernetes and restore drills; nothing was showable until the last tasks. Later, three tasks had grown to between 4 and 14 days each. (The serial chain: round 1; placement and the walking skeleton: round 3; the splits: round 6.)
 
 **Change.** A dependency graph; each requirement placed where it first becomes testable; a walking skeleton through every service before any hardening; early secret-free CI; the holdout sealed first; oversized tasks split; a critical path of 15 tasks.
 
@@ -84,7 +84,9 @@ Each entry gives the problem, where it was found, and the change. The round numb
 
 ## 14. The plan's own documents over-claimed
 
-**Problem.** The README, the start guide and the agent prompt said "tested Kubernetes deployment" and "production-ready"; the first git commit labelled "unmodified" had one modified file; an edit of mine corrupted a rule by writing a real line break where the literal `\r` belonged; the machine's local model server was listening on every network interface with permissive firewall rules. (Rounds 5–6, and the environment checks.)
+**Problem.** The README, the start guide and the agent prompt said "tested Kubernetes deployment" and "production-ready"; the first git commit labelled "unmodified" had one modified file; an edit of mine corrupted a rule by writing a real line break where the literal `\r` belonged; the machine's local model server was listening on every network interface with permissive firewall rules. ("Production-ready": round 1; the rest: rounds 5–6 and the environment checks.)
+
+The author's own mistakes, in the order found: the first amendment (1.1) introduced three critical defects of its own (round 2); the checker read files without an encoding under a cp1252 locale (round 4); an ADR and the amendments disagreed about which task moves the reference code (rounds 3 and 7); the README sentences stating the plan's limits were lost in a rewrite and only restored after round 7; the "unmodified" import commit had one modified file (round 6); a carriage-return escaping error corrupted a rule (round 5); the showcase document described unwritten code in the present tense and cited a test that cannot exist for a host-side process (round 7).
 
 **Change.** The entry documents now state that implementation has not started and make no Kubernetes claim; the original package is committed as a zip and verified byte-for-byte; the corruption was fixed and a no-carriage-return check added; the network exposure was reported to the owner, who chose to restrict it (the runbook is a task; the agent changes no system settings).
 
@@ -96,4 +98,4 @@ Each entry gives the problem, where it was found, and the change. The round numb
 
 ## 16. What the process taught
 
-Six rounds found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth round, which dry-ran the first tasks on the real machine, found more actionable problems per hour than any prose review. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.
+Six rounds found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth round, which dry-ran the first tasks on the real machine, produced the findings that changed the first slice most. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.

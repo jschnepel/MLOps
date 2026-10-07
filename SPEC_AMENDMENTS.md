@@ -1,6 +1,6 @@
-# OPS-BUILD-1.3.4 — Amendments to BUILD_SPEC.md
+# OPS-BUILD-1.3.5 — Amendments to BUILD_SPEC.md
 
-**Status:** Approved by the owner on 2026-10-06. The history: 1.1 was "amend + cut", 1.2 came from the round-2 review, 1.3 fixes the round-3 BLOCKS-START items, 1.3.1 applies round-4 edits E1–E6 (`docs/reviews/plan-review-r4-2026-10-06.md`), 1.3.2 fixes round-5 items S1–S9 and H1–H5 (`docs/reviews/plan-review-r5-2026-10-06.md`, cited `[R5-…]`), and **1.3.3 rewrites AM-20 (privilege matrix, function contracts, RLS policies) and fixes round-6 items B1–B7 and H1–H6** (`docs/reviews/plan-review-r6-2026-10-06.md`, cited `[R6-…]`). Owner decision for 1.3.3: a grant is refused whenever **any** committed incident overlaps the same tenant, asset and interval, unless the proposal declares `supersedes_run_id` (R6-H5). **1.3.4** (2026-10-07, ADR-0003): named routers (new AM-16), the MCP server split into `mcp-read` and `mcp-write`, a model router, and `docs/ARCHITECTURE.md` as the showcase map. Owner decisions for 1.3.2: block a second incident for the same asset and interval (H3); restrict Ollama to loopback plus the Docker/WSL subnet (S9).
+**Status:** Approved by the owner on 2026-10-06. The history: 1.1 was "amend + cut", 1.2 came from the round-2 review, 1.3 fixes the round-3 BLOCKS-START items, 1.3.1 applies round-4 edits E1–E6 (`docs/reviews/plan-review-r4-2026-10-06.md`), 1.3.2 fixes round-5 items S1–S9 and H1–H5 (`docs/reviews/plan-review-r5-2026-10-06.md`, cited `[R5-…]`), and **1.3.3 rewrites AM-20 (privilege matrix, function contracts, RLS policies) and fixes round-6 items B1–B7 and H1–H6** (`docs/reviews/plan-review-r6-2026-10-06.md`, cited `[R6-…]`). Owner decision for 1.3.3: a grant is refused whenever **any** committed incident overlaps the same tenant, asset and interval, unless the proposal declares `supersedes_run_id` (R6-H5). **1.3.4** (2026-10-07, ADR-0003): named routers (new AM-16), the MCP server split into `mcp-read` and `mcp-write`, a model router, and `docs/ARCHITECTURE.md` as the showcase map. **1.3.5** (2026-10-07) fixes round-7 H1–H5 and S1–S5 (`docs/reviews/plan-review-r7-2026-10-07.md`, cited `[R7-…]`): requester-asserted supersession, worker transition scope, run creation as a function, seed path, test-clock SQL, router/R018 agreement, `runs.intent`. Owner decisions for 1.3.2: block a second incident for the same asset and interval (H3); restrict Ollama to loopback plus the Docker/WSL subnet (S9).
 **Precedence:** This file overrides `BUILD_SPEC.md` (OPS-BUILD-1.0) wherever they conflict. Everything not amended here stays in force. ADRs in `docs/adr/` record the reasoning.
 
 **Sources:**
@@ -131,6 +131,8 @@ Also reduced for v1:
 
 | From | Added / changed transition |
 |---|---|
+| ∅ (creation) | → QUEUED only via `create_run` (AM-20.3), which inserts the run, its directory row, the first `run_state_history` row, the first job and `run.accepted` in one transaction [R7-H3] |
+| AWAITING_INPUT | → QUEUED by the worker's `resume_input` job through `transition_run`, after the clarification event is committed |
 | RETRIEVING | → AWAITING_INPUT when required context is missing or ambiguous |
 | DRAFTING | → AWAITING_INPUT on `kind=abstain` with a question, at most 2 clarification rounds; on a third round → INSUFFICIENT_EVIDENCE; **→ BLOCKED_REVIEW** on asset-guard refusal at freeze (`asset_action_unresolved` / `asset_incident_exists`) [R6-B3] |
 | AWAITING_APPROVAL | → BLOCKED_REVIEW on expiry: evaluated lazily inside any decision or grant transaction, plus by the scheduled `expire_proposals` job (60 s) |
@@ -148,7 +150,8 @@ Also reduced for v1:
 - **Asset-guard refusals** [R5-S4, R5-H3]: DRAFTING (at freeze) or APPROVED (at grant) → BLOCKED_REVIEW with reason `asset_action_unresolved` or `asset_incident_exists`, emitting `review.blocked`. The requester resubmits by revision. Refusals never leave a run holding the slot in APPROVED.
 - **`state_version`** increases **only on state transitions**. Appending events, heartbeats and attempt-state changes do not bump it, so user cancels and decisions don't get spurious 409s [R5-S5].
 - **Reasons** on terminal and blocked states come from one enum in `core/`: `cancelled_before_send`, `aborted_no_commit`, `rejected`, `asset_action_unresolved`, `asset_incident_exists`, `expired`, `stale_evidence`, `authority_revoked`, `conflict`, `escalation_deadline`. A cancel in INTENT ends FAILED with `cancelled_before_send` [R5-S6].
-- **The ANSWERED path** (read-only answer, no proposal) has its own test (R114).
+- **The ANSWERED path** (read-only answer, no proposal) has its own test (R114). It is selected by `runs.intent = 'answer_only'`, set by the admission router; `freeze_proposal` refuses such runs, so a read-only run can never produce a proposal [R7-S2].
+- **Requester-asserted fields on `runs`** [R7-H1]: `intent ∈ {investigate, answer_only}` and optional `supersedes_run_id` are written only by `create_run`/`create_revision` from the authenticated request's structured fields. Model output is never a source for either; a draft carrying `supersedes_run_id` is rejected by `freeze_proposal`.
 
 **Clock rule:**
 - Every lease, expiry, freshness and deadline comparison uses `clock_timestamp()`, evaluated **after** the relevant row locks are acquired. Never use `now()`, which is the transaction start time.
@@ -183,7 +186,7 @@ A missing row aborts the transaction.
 **Writes without a lease:** API and sweeper mutations (decision, cancel, revision, expiry) hold no lease. They serialize with `SELECT … FROM runs … FOR UPDATE` plus `expected_version`.
 
 **Lock order:** `asset guard advisory lock → run_lease → runs → messages → proposals → decisions → memberships → execution_grant → action_attempt → operator_resolutions → events → outbox`. Idempotency rows are written last, before commit. The outbox delivery loop records results in its own transaction and appends any `notification.failed` event in a **separate** transaction, so it never takes `runs` after `outbox`.
-- The asset guard lock is `pg_advisory_xact_lock(hashtext(tenant_id || ':' || asset_id))`. Proposal freezing and `grant_execution` take it first.
+- The asset guard lock is `pg_advisory_xact_lock(hashtextextended(tenant_id || ':' || asset_id, 0))`; `asset_id` is NOT NULL and read before locking. Proposal freezing and `grant_execution` take it first.
 - Every transaction and definer function follows this order.
 - Any transaction that will write `run_lease` takes `FOR UPDATE` from the start; it never upgrades from `FOR SHARE`. A two-connection interleaving test and a concurrent stress test prove fencing and deadlock freedom (R107).
 
@@ -280,7 +283,7 @@ Tested by R109.
 - **Overlap** means the same tenant and asset and half-open intervals with `a < d ∧ c < b`. A requester who chooses a disjoint interval is not blocked; that is by design and documented.
 - `freeze_proposal` and `grant_execution` both apply the guard, inside the per-(tenant, asset) advisory lock, against two sets:
   - **(a) unresolved actions:** any other run with a grant whose latest `action_attempt_state` is not RESOLVED (EXECUTING, OUTCOME_UNKNOWN, ESCALATED), excluding runs already ABANDONED_UNVERIFIED → refusal `asset_action_unresolved`;
-  - **(b) committed incidents:** any other run with a SUCCEEDED outcome **or** SUCCEEDED late evidence, **regardless of when it was recorded** [R6-H5, owner decision] → refusal `asset_incident_exists`, **unless** this proposal declares `supersedes_run_id` naming that run. The approval card shows the referenced incident, so the reviewer sees what is being superseded. `supersedes_run_id` is part of the hashed payload.
+  - **(b) committed incidents:** any other run with a SUCCEEDED outcome **or** SUCCEEDED late evidence, **regardless of when it was recorded** [R6-H5, owner decision] → refusal `asset_incident_exists`, **unless** `runs.supersedes_run_id` names that run. That field is set only from the requester's structured request (admission or revision), stored by `create_run`/`create_revision`, validated to name a run in the same tenant and asset, and **injected into the hashed payload by `freeze_proposal`**; a draft that carries its own `supersedes_run_id` is rejected [R7-H1]. The approval card shows the referenced incident, so the reviewer sees what is being superseded.
 - A refusal transitions the run to BLOCKED_REVIEW (AM-10) and never leaves a grant behind. A second incident is therefore created only when a reviewer approved a proposal that explicitly named the first (R125).
 - They serialize on the per-(tenant, asset) advisory lock (AM-12), so two conversations cannot both pass the check (R110).
 - A refusal returns 409 `ASSET_ACTION_UNRESOLVED` or `ASSET_INCIDENT_EXISTS`, listing the blocking run only if the caller may see it. The run moves to BLOCKED_REVIEW (AM-10).
@@ -305,7 +308,8 @@ Tested by R109.
   - `run.answered`
   - `run.insufficient_evidence`
   - `run.rejected`
-  - `action.redispatched`
+  - `action.granted` (emitted by `grant_execution`)
+  - `action.redispatched` (emitted by `mark_sent` when `attempt_no > 1`)
   - `action.failed` (with `reason`)
   - `action.conflict`
   - `run.escalated`
@@ -339,7 +343,7 @@ Tested by R109.
 | `resume_input` | API with a clarification reply | Resume after a clarification | read tools | AWAITING_INPUT → QUEUED |
 | `execute` | API with an approving decision | Final grant and first dispatch | `create_incident` | APPROVED, EXECUTING (attempt absent or INTENT) |
 | `recover` | `mark_unknown` (worker timeout path); the worker after a `cancelled`/`expired` tool result; `reclaim_leases` (sweeper). Never by either MCP server. Dedup keys in AM-20.4 [R6] | Redispatch, lookup, abort | `create_incident` (INTENT only), `get_incident_receipt`, `abort_incident` | EXECUTING, OUTCOME_UNKNOWN, ESCALATED, ABANDONED_UNVERIFIED |
-| `expire_proposals`, `sync_memberships`, `sweep_wakeups` | Scheduler (sweeper role) | Maintenance | none | n/a (no run lease) |
+| `expire_proposals`, `sync_memberships`, `sweep_wakeups`, `deliver_outbox` | Scheduler (sweeper role) | Maintenance | none | n/a (no run lease) |
 
 Read tools are `get_asset_status`, `get_recent_alerts` and `search_procedures`. After `mark_sent` returns `cancelled` or `expired`, `create_incident` itself calls `request_abort`, POSTs the abort to incident-sim, calls `record_outcome` with the tombstone, and returns `FAILED_NO_COMMIT` (reason `cancelled_before_send` or `expired`). No job is created by either MCP server. For `search_procedures` in vector mode, mcp-read computes the query embedding with `nomic-embed-text` (`search_query:` prefix) and passes it to `search_procedures_scoped` [R6].
 
@@ -361,15 +365,16 @@ Routing is explicit, enumerable and deterministic-first. Model output may hint a
 
 | Route | Trigger | Effect |
 |---|---|---|
-| `investigate` | `kind=investigate` with a resolvable asset and interval, no active run in the conversation | message + run + `investigate` job + event in one transaction, 202 |
+| `investigate` | `kind=investigate` with a resolvable asset and interval, no active run in the conversation; optional structured `supersedes_run_id` | `create_run(intent='investigate', …)`: message + run + directory + history + `investigate` job + `run.accepted` in one transaction, 202 |
 | `clarification_reply` | reply bound to an outstanding clarification ID and expected version | message + `resume_input` job, 202 |
-| `status_question` | `kind=status` or text matching the status grammar with no asset/interval change | answered from recorded events and state; **no job** |
-| `readonly_answer` | `kind=ask` (a question about evidence, no incident intent) | `investigate` job flagged `answer_only`; the graph can end ANSWERED but never freezes a proposal |
-| `reject` | unroutable, conflicting structured fields vs text, over limits, or a second active run | 422 / 409 with a safe error; nothing written except the idempotency record |
+| `status_question` | `kind=status` | answered from recorded events and state; the question and answer are stored as messages and a `status.answered` event on the conversation; **no run, no job** |
+| `readonly_answer` | `kind=ask` (a question about evidence, no incident intent) | `create_run(intent='answer_only', …)`; the graph can end ANSWERED; `freeze_proposal` refuses runs with this intent |
+| `clarify` | structured fields and text disagree (asset or interval), or a required field is missing | a stored clarification question on the conversation, 200; no run (R018: ambiguity clarifies, never guesses) [R7-S1] |
+| `reject` | unroutable `kind`, over limits, or a second active run | 422 / 409 with a safe error; nothing written except the idempotency record |
 
-Optional model-assisted intent classification runs **after** the deterministic rules and can only downgrade a route to `reject`/clarification, never upgrade one.
+Optional model-assisted intent classification runs **after** the deterministic rules and can only turn a route into `clarify`; it can never produce `reject`, `investigate` or `readonly_answer` on its own.
 
-**Graph router** (`route_request` node in the orchestrator): a route table in `core/routing.py` maps `(run state, context resolved?, evidence sufficient?, draft kind, decision present?, attempt state)` to exactly one of `clarify`, `retrieve`, `draft`, `answer_only`, `abstain`, `freeze`, `await_decision`, `execute`, `recover`, `publish`. Conditional edges are generated from that table; a test enumerates every row and asserts the node reached (R129).
+**Graph router** (`route_request` node in the orchestrator): a route table in `core/routing.py` maps `(run state, runs.intent, context resolved?, evidence sufficient?, validated draft kind, decision present?, attempt state)` to exactly one of `clarify`, `retrieve`, `draft`, `answer_only`, `abstain`, `freeze`, `await_decision`, `execute`, `recover`, `publish`. Conditional edges are generated from that table; a test enumerates every row and asserts the node reached (R129). "Evidence sufficient?" is a code rule (at least one permitted status observation and at least one effective procedure chunk, all within freshness), never a model judgement; "validated draft kind" is the draft **after** structural validation, and the only route it can select is `abstain`/`clarify`/`answer_only` versus `freeze`, with `freeze` additionally gated by `runs.intent`.
 
 **Model router** (`DraftGenerator` factory in the worker): selects `fake` (deterministic substitute), `qwen3:8b` (local Ollama) or a future named model from `MODEL_MODE` and policy; the choice, model digest and prompt version are written to the run manifest and the `explanation.ready` event; there is **no silent fallback** between routes (R130, R041).
 
@@ -380,18 +385,18 @@ Optional model-assisted intent classification runs **after** the deterministic r
 The 1.3.2 matrix could not run the system (the API could not create jobs or events; the worker could not update runs) and its definer functions were names only. This section replaces it. Three principles:
 
 1. **Every state transition, decision, grant, attempt step and event goes through a `SECURITY DEFINER` function.** Runtime roles never UPDATE `runs.state`, never INSERT into `events`, `decisions`, `proposals`, `execution_grant` or `action_attempt_state` directly.
-2. **Audit tables are append-only, so "state" is the latest row, never an UPDATE.** `action_attempt_state` and `run_state_history` are insert-only; `runs.state` is a denormalized copy maintained only by `transition_run`.
+2. **Audit tables are append-only, so "state" is the latest row, never an UPDATE.** `action_attempt_state(action_id, attempt_no, seq, state, at)` and `run_state_history` are insert-only; "latest" is the highest `seq`, never a timestamp. `runs.state` is a denormalized copy maintained only by the definer functions.
 3. **Functions decide by `session_user`,** which stays the invoking login role inside a `SECURITY DEFINER` body. Each function has an allowed-caller list and raises for any other role.
 
 ### AM-20.1 Roles
 
 | Role | Login | Purpose |
 |---|---|---|
-| `migrator` | yes (DDL only) | Alembic; owns tables and schemas; never used at runtime |
+| `migrator` | yes (DDL and data migrations only) | Alembic; owns tables and schemas; holds `BYPASSRLS` so seed and backfill data migrations can write RLS tables; never used at runtime [R7-H4] |
 | `app_definer` | **no** | Owns every definer function; **owns no tables**; has the AM-20.5 RLS policies |
 | `api` | yes | FastAPI process |
 | `worker` | yes | Workflow worker |
-| `sweeper` | yes | Scheduler process (expiry, membership sync, wake-up sweep, outbox delivery) |
+| `sweeper` | yes | Scheduler process (expiry, membership sync, wake-up sweep, outbox delivery); holds the Keycloak `view-users` service account for the membership sync |
 | `mcp_read` | yes | mcp-read; read-path functions only |
 | `mcp_exec` | yes | mcp-write; write-path functions only |
 | `operator` | yes | Local operator CLI; one function only |
@@ -404,14 +409,14 @@ Only these grants exist. Anything not listed is denied. "ins" = INSERT, "upd(col
 
 | Table | `api` | `worker` | `sweeper` | `app_definer` | `mcp_read` / `mcp_exec` / `operator` |
 |---|---|---|---|---|---|
-| `tenants`, `memberships` | sel | sel | sel, upd(`active`, `permission_version`, `synced_at`) | sel | — |
+| `tenants`, `memberships` | sel | sel | sel, upd(`active`, `permission_version`, `synced_at`) | sel | — (seeded by `migrator` data migrations) |
 | `sessions` | sel, ins, upd(`last_seen_at`, `revoked_at`), del | — | del (expired) | — | — |
 | `conversations`, `messages` | sel, ins | sel | — | sel | — |
-| `runs` | sel, ins, upd(`cancel_requested`, `cancel_requested_at`) | sel, upd(`checkpoint_id`, `next_event_seq`, `budget_used`) | sel | sel, upd(`state`, `state_version`, `reason`, `active_proposal_id`, `next_event_seq`, `slot_held`) | — |
-| `run_directory` (run_id, tenant_id; no RLS) | ins | sel | sel | sel | — |
+| `runs` | sel, upd(`cancel_requested`, `cancel_requested_at`) (insert only via `create_run`) | sel, upd(`checkpoint_id`, `budget_used`) | sel | ins, sel, upd(`state`, `state_version`, `reason`, `active_proposal_id`, `next_event_seq`, `slot_held`, `supersedes_run_id`) | — |
+| `run_directory` (run_id, tenant_id; no RLS) | sel | sel | sel | ins, sel (via `create_run`) | — |
 | `run_state_history` | — | — | — | ins | — |
 | `run_lease` | — | sel, ins, upd(all) | sel, upd(`lease_until`) (reclaim) | sel | — |
-| `jobs` | ins | sel, ins, upd(`claimed_by`, `claimed_at`, `done_at`, `attempts`) | sel, ins, upd(same) | sel | — |
+| `jobs` | ins (`resume_input` only) | sel, ins, upd(`claimed_by`, `claimed_at`, `done_at`, `attempts`) | sel, ins, upd(same) | ins, sel | — |
 | `invocation_context` (no RLS) | — | ins | sel | sel, upd(`revoked_at`) | — |
 | `drafts` (pre-freeze model output, IDs only) | — | ins, sel | — | sel | — |
 | `proposals` | sel | sel | sel | ins, sel | — |
@@ -424,27 +429,30 @@ Only these grants exist. Anything not listed is denied. "ins" = INSERT, "upd(col
 | `idempotency_request` | sel, ins | — | del (expired) | — | — |
 | `operator_resolutions` | sel | — | — | ins | — |
 | `documents`, `chunks`, `embeddings` | — | ins, sel (ingestion) | — | sel | — |
-| `model_permit` | — | sel, upd(all) | upd(`leased_until`) (reclaim) | — | — |
+| `model_permit` | — | sel, upd(all) | upd(`leased_until`) (reclaim) | — | — (seeded by `migrator`) |
 | `app.test_clock` (test profile only) | — | — | — | sel | `test_harness`: ins, upd, del |
 | schema `checkpoints` | — | all DML | — | — | — |
 
 Notes:
 - `mcp_read`, `mcp_exec` and `operator` have **no table grants**; the right-hand column is only for `test_harness`.
-- `runs.state` is written only by `app_definer` (through `transition_run`). The `api` column grant on `cancel_requested` cannot set state, because UPDATE is column-scoped.
+- `runs.state` is written only by `app_definer` (through `create_run`, `transition_run` and the functions below). The `api` column grant on `cancel_requested` cannot set state, because UPDATE is column-scoped.
+- `runs.next_event_seq` is written only inside `append_event` (the worker's former column grant is removed, so the gap-free sequence cannot be bypassed) [R7].
+- Seed data (tenants, personas' memberships, the `model_permit` row) is written by `migrator` data migrations under `BYPASSRLS`; no runtime role can insert it [R7-H4].
 - `execution_grant` has no `state` column; grant status is derived from the latest `action_attempt_state` row.
 - `proposals` rows are inserted already frozen by `freeze_proposal`, so proposals never need UPDATE. Pre-freeze drafts live in `drafts`.
 
 ### AM-20.3 Definer functions
 
-All functions: `SECURITY DEFINER`, owner `app_definer`, `SET search_path = app, pg_temp`, `SET app.tenant_id = ''` as a function attribute. Each migration that creates one runs, in the same transaction, `REVOKE ALL ON FUNCTION … FROM PUBLIC` and then `GRANT EXECUTE … TO <exactly the callers listed below>` [R6-H2]. Every function first resolves `tenant_id` through `run_directory` (or the handle) and sets `app.tenant_id` before touching tenant rows, takes locks in the AM-12 order, and raises `authority_violation` when `session_user` is not an allowed caller.
+All functions: `SECURITY DEFINER`, owner `app_definer`, `SET search_path = app, pg_temp`, `SET app.tenant_id = ''` as a function attribute. Each migration that creates one runs, in the same transaction, `REVOKE ALL ON FUNCTION … FROM PUBLIC` and then `GRANT EXECUTE … TO <exactly the callers listed below>` [R6-H2]. Every function first resolves `tenant_id` through `run_directory` (or the handle) and sets `app.tenant_id` with `set_config(name, value, true)` (**transaction-local**; a plain `SET` would persist into the caller's session) before touching tenant rows, takes locks in the AM-12 order, and raises `authority_violation` when `session_user` is not an allowed caller. Reads of the setting use `NULLIF(current_setting('app.tenant_id', true), '')::uuid` [R7].
 
 | Function | Callers | Inputs | Locks (in order) | Effect | Event |
 |---|---|---|---|---|---|
-| `transition_run(run_id, from_state, to_state, reason, expected_version)` | `api` (only → CANCELLED before grant, → QUEUED on revision), `worker`, `sweeper` (only → BLOCKED_REVIEW on expiry) | as named | `runs` FOR UPDATE | Validates the AM-10 table, the caller's allowed targets and `expected_version`; updates `runs.state`/`state_version`/`reason`; inserts `run_state_history`; maintains `slot_held` and the conversation slot (partial unique index on `runs(conversation_id) WHERE slot_held`) | the matching `run.*` / `review.blocked` event via `append_event` |
+| `create_run(conversation_id, request, intent, supersedes_run_id)` | `api` | the validated admission request | `runs` (conversation slot index) | Inserts `runs` (QUEUED, `intent`, `supersedes_run_id` validated against the tenant/asset), `run_directory`, the first `run_state_history` row and the `investigate` job (dedup `run_id:1`) in one transaction [R7-H3] | `run.accepted` |
+| `transition_run(run_id, from_state, to_state, reason, expected_version)` | `worker` only. Allowed targets: QUEUED → RETRIEVING; RETRIEVING → DRAFTING / AWAITING_INPUT / INSUFFICIENT_EVIDENCE / FAILED; DRAFTING → AWAITING_INPUT / ANSWERED / INSUFFICIENT_EVIDENCE / FAILED; AWAITING_INPUT → QUEUED. **Never** any post-grant state and never SUCCEEDED [R7-H2] | as named | `runs` FOR UPDATE | Validates the AM-10 table, the caller's allowed targets and `expected_version`; updates `runs.state`/`state_version`/`reason`; inserts `run_state_history`; maintains `slot_held` and the conversation slot (partial unique index on `runs(conversation_id) WHERE slot_held`) | the matching `run.*` event via `append_event` |
 | `append_event(run_id, type, payload)` | `api`, `worker`, `sweeper` | as named | `runs` FOR UPDATE (for `next_event_seq`) | Inserts an event with `source` derived from `session_user` (`api`/`worker`/`sweeper` → `application`; `worker` may pass `source=model_summary` only for `explanation.ready`). **Refuses** `action.*`, `run.*` and `review.*` types from these callers; those are emitted only by the functions below | the event |
-| `freeze_proposal(run_id, draft_id, authored_by[])` | `worker` | run and draft IDs | advisory(tenant, asset) → `run_lease` FOR SHARE → `runs` FOR UPDATE → `proposals` | Asset guard (AM-13); canonicalizes bytes, computes hash, inserts the immutable `proposals` row with `revision = max+1`; sets `runs.active_proposal_id`; transition DRAFTING → AWAITING_APPROVAL, or → BLOCKED_REVIEW on guard refusal | `proposal.ready` or `review.blocked` |
+| `freeze_proposal(run_id, draft_id)` | `worker` | run and draft IDs; `authored_by` is derived from `runs` (requester plus revision authors), never passed by the worker [R7] | advisory(tenant, asset) → `run_lease` FOR SHARE → `runs` FOR UPDATE → `proposals` | Refuses when `runs.intent = 'answer_only'` or when the draft carries `supersedes_run_id`; injects `runs.supersedes_run_id` into the payload; asset guard (AM-13); canonicalizes bytes, computes hash, inserts the immutable `proposals` row with `revision = max+1`; sets `runs.active_proposal_id`; transition DRAFTING → AWAITING_APPROVAL, or → BLOCKED_REVIEW on guard refusal | `proposal.ready` or `review.blocked` |
 | `record_decision(proposal_id, expected_payload_sha256, decision, reason, idempotency_key)` | `api` (reviewer identity = the API's authenticated `sub`; the API is the identity trust anchor) | as named | `runs` FOR UPDATE → `proposals` FOR SHARE → `decisions` → `memberships` FOR SHARE | Checks current membership, reviewer ∉ `authored_by`, active unexpired revision, hash equality, first-decision-wins, lazy expiry (→ BLOCKED_REVIEW); inserts the decision; transition → APPROVED or REJECTED; on approval inserts the `execute` job (dedup `proposal_id`) | `approval.recorded` / `run.rejected` |
-| `create_revision(run_id, expected_version, author)` | `api` | as named | `runs` FOR UPDATE → `execution_grant` FOR SHARE | Refuses (`GRANT_EXISTS`) if a grant exists; refuses (`SLOT_OCCUPIED`) if the conversation has another active run; transition APPROVED/BLOCKED_REVIEW/AWAITING_APPROVAL → QUEUED; appends `author` to `authored_by`; inserts an `investigate` job (dedup `run_id:revision+1`) | `proposal.revised` |
+| `create_revision(run_id, expected_version, author, supersedes_run_id)` | `api` | as named; `supersedes_run_id` from the requester's structured revision request, validated against the tenant/asset | `runs` FOR UPDATE → `execution_grant` FOR SHARE | Refuses (`GRANT_EXISTS`) if a grant exists; refuses (`SLOT_OCCUPIED`) if the conversation has another active run; transition APPROVED/BLOCKED_REVIEW/AWAITING_APPROVAL → QUEUED; appends `author` to `authored_by`; inserts an `investigate` job (dedup `run_id:revision+1`) | `proposal.revised` |
 | `create_manual_proposal(run_id, payload, author)` | `api` | payload per `manual-proposal` schema | same as `freeze_proposal` | Tenant-scopes asset and evidence IDs (404 otherwise); otherwise identical to `freeze_proposal` with `authored_by = [author]` | `proposal.ready` |
 | `expire_proposal(run_id)` | `sweeper`; also invoked internally by `record_decision`/`grant_execution` | run ID | `runs` FOR UPDATE → `proposals` FOR SHARE | If the active proposal's `expires_at < app.current_time()`: transition AWAITING_APPROVAL/APPROVED → BLOCKED_REVIEW(`expired`) | `review.blocked` |
 | `request_cancel(run_id, expected_version)` | `api` | as named | `runs` FOR UPDATE → `execution_grant` FOR SHARE | Sets `cancel_requested`; if no grant exists, transition → CANCELLED now; otherwise returns `{grant_exists, attempt_state}` for the cancel-response | `run.cancelled` or none |
@@ -452,15 +460,17 @@ All functions: `SECURITY DEFINER`, owner `app_definer`, `SET search_path = app, 
 | `asset_scope(raw_handle)` | `mcp_read` | handle | as above | Returns the run's `tenant_id`, `asset_id`, `[start_at, end_at)` for forwarding to asset-sim | none |
 | `search_procedures_scoped(raw_handle, query, query_embedding vector(768) NULL, asset_type, limit, mode)` | `mcp_read` | handle, text query, optional embedding computed by mcp-read with the `search_query:` prefix | as above | Lexical (`mode=lexical`) or exact vector (`mode=vector`, requires the embedding) search over approved, effective, tenant-permitted chunks; returns IDs, versions, section, hash, excerpt | none |
 | `grant_execution(raw_handle, proposal_id)` | `mcp_exec` | as named | advisory(tenant, asset) → `run_lease` FOR SHARE → `runs` FOR UPDATE → `proposals` FOR SHARE → `decisions` FOR SHARE → `memberships` FOR SHARE → `execution_grant` → `action_attempt` | The §13 final gate: proposal belongs to the handle's run and tenant; approved, unexpired, hash-matching; requester and reviewer currently active; not cancelled; asset freshness (5 min); **asset guard (AM-13)**; inserts `execution_grant` (random `action_id`, `UNIQUE(run_id)`), `action_attempt` 1 and `action_attempt_state` INTENT; transition APPROVED → EXECUTING (or → BLOCKED_REVIEW with the refusal reason) | `action.granted` (new type) or `review.blocked` |
-| `mark_sent(action_id)` | `mcp_exec` | action ID | `run_lease` FOR SHARE → `runs` FOR UPDATE → `action_attempt_state` | Re-checks `cancel_requested` and the dispatch deadline; inserts state SENT, or returns `cancelled`/`expired` without inserting | `action.dispatched` |
+| `mark_sent(action_id)` | `mcp_exec` | action ID | `run_lease` FOR SHARE → `runs` FOR UPDATE → `action_attempt_state` | Re-checks `cancel_requested` and the dispatch deadline; inserts state SENT (with `seq`), or returns `cancelled`/`expired` without inserting | `action.dispatched`, or `action.redispatched` when `attempt_no > 1` |
 | `record_outcome(action_id, outcome, receipt_or_tombstone)` | `mcp_exec` | the verified destination result | `run_lease` FOR SHARE → `runs` FOR UPDATE → `action_attempt_state` → `events` | Idempotent; inserts state RESOLVED; verifies the hash; transition EXECUTING/OUTCOME_UNKNOWN/ESCALATED → SUCCEEDED, FAILED(reason) or ESCALATED(`conflict`); on a terminal run, records late evidence without a transition | `action.confirmed` / `action.failed` / `action.conflict` / `action.late_evidence`, all with `source=destination` |
-| `request_abort(action_id, reason)` | `mcp_exec` | reason ∈ {`cancelled_before_send`, `expired`, `deadline`} | as `record_outcome` | Marks the current attempt as aborting; the caller then POSTs abort to incident-sim and calls `record_outcome` with the tombstone. If the attempt is INTENT (never sent), the outcome is FAILED(`cancelled_before_send` or `expired`) | via `record_outcome` |
+| `request_abort(action_id, reason)` | `mcp_exec` | reason ∈ {`cancelled_before_send`, `expired`, `deadline`} | as `record_outcome` | Inserts an `ABORT_REQUESTED` state row (append-only); the caller then POSTs abort to incident-sim and calls `record_outcome` with the tombstone. If the attempt is INTENT (never sent), the outcome is FAILED(`cancelled_before_send` or `expired`) | via `record_outcome` |
 | `lookup_action(raw_handle)` | `mcp_exec` | handle | `run_lease` FOR SHARE | Returns the grant's `action_id`, canonical bytes and hash for same-key redispatch (no gate re-run) | none |
 | `mark_unknown(run_id, fence)` | `worker` (transport-timeout path, AM-13) | as named | `run_lease` FOR UPDATE → `runs` FOR UPDATE → `execution_grant` FOR SHARE | Bumps the fence (revoking handles); if a grant exists, transition EXECUTING → OUTCOME_UNKNOWN and inserts a `recover` job | `action.uncertain` |
 | `escalate_run(run_id, reason)` | `worker`, `sweeper` | reason ∈ {`conflict`, `escalation_deadline`} | `runs` FOR UPDATE | Transition EXECUTING/OUTCOME_UNKNOWN → ESCALATED; releases the conversation slot | `run.escalated` |
 | `resolve_escalation(run_id, operator_name, reason)` | `operator` | self-asserted operator name, reason | `runs` FOR UPDATE → `operator_resolutions` | Transition ESCALATED → ABANDONED_UNVERIFIED; inserts the resolution row | `run.abandoned_unverified` |
 | `sync_memberships(payload)` | `sweeper` | the Keycloak sync result | `memberships` FOR UPDATE | Deactivates memberships of disabled or deleted users; records `synced_at` | none |
 | `reclaim_leases()` | `sweeper` | none | `run_lease` FOR UPDATE | Expired leases become reclaimable; stale `model_permit` released; lost wake-ups re-enqueued (dedup keys) | none |
+| `revoke_handles(run_id, fence)` | `worker` | as named | `run_lease` FOR SHARE → `invocation_context` | Sets `revoked_at` on the run's handles (the worker has no column grant for this) [R7] | none |
+| `record_status_answer(conversation_id, question, answer)` | `api` | as named | `conversations` | Stores the status question and answer as messages | `status.answered` (conversation-scoped) |
 
 Internal helpers (`_canonicalize`, `_asset_guard`, `_allowlist`) are not granted to any role.
 
@@ -468,11 +478,12 @@ Internal helpers (`_canonicalize`, `_asset_guard`, `_allowlist`) are not granted
 
 | Transition | Function |
 |---|---|
-| QUEUED → RETRIEVING → DRAFTING → AWAITING_INPUT / ANSWERED / INSUFFICIENT_EVIDENCE / FAILED | `transition_run` called by `worker` |
+| ∅ → QUEUED | `create_run` |
+| QUEUED → RETRIEVING → DRAFTING → AWAITING_INPUT / ANSWERED / INSUFFICIENT_EVIDENCE / FAILED; AWAITING_INPUT → QUEUED | `transition_run` called by `worker` (pre-grant states only) |
 | DRAFTING → AWAITING_APPROVAL / BLOCKED_REVIEW | `freeze_proposal` |
 | AWAITING_APPROVAL → APPROVED / REJECTED / BLOCKED_REVIEW | `record_decision` (and `expire_proposal`) |
 | APPROVED / BLOCKED_REVIEW → QUEUED | `create_revision` |
-| any active state → CANCELLED (no grant) | `request_cancel` |
+| any pre-grant active state → CANCELLED | `request_cancel` |
 | APPROVED → EXECUTING / BLOCKED_REVIEW | `grant_execution` |
 | EXECUTING → OUTCOME_UNKNOWN | `mark_unknown` |
 | EXECUTING / OUTCOME_UNKNOWN / ESCALATED → SUCCEEDED / FAILED | `record_outcome` (FAILED(`cancelled_before_send`) included) |
@@ -482,6 +493,8 @@ Internal helpers (`_canonicalize`, `_asset_guard`, `_allowlist`) are not granted
 ### AM-20.4 Jobs, dedup keys and creators
 
 `jobs(id, type, run_id, dedup_key UNIQUE, available_at, claimed_by, claimed_at, attempts, done_at)`.
+
+`invocation_context(handle_sha256 PK, run_id, job_id, server ∈ {read, write}, fence, azp, expires_at, revoked_at)`. `resolve_invocation` derives `job_type` from the referenced `jobs` row and `server` from that type (read for `investigate`/`resume_input`, write for `execute`/`recover`); it never trusts the worker-written `server` column alone [R7]. `drafts(id, run_id, draft_sha256, validated, kind, created_at)` holds only identifiers and the validation verdict; draft text lives in the checkpoint or is re-derived, never in `drafts`.
 
 | `type` | Inserted by | `dedup_key` |
 |---|---|---|
@@ -505,13 +518,15 @@ CREATE POLICY tenant_isolation ON <table>
 ```
 
 - `app_definer` is a non-owner, so without this policy every definer function would see zero rows.
+- `memberships` and `jobs` carry one extra policy, `sweeper_all FOR ALL TO sweeper USING (true)`, because the sweeper's sync and sweep have no run from which to resolve a tenant. These two are the only cross-tenant policies [R7].
+- `migrator` holds `BYPASSRLS` for data migrations only; it is never a runtime role.
 - `api`, `worker` and `sweeper` set `app.tenant_id` themselves per transaction, so for them RLS is **defense in depth** against application bugs, not a boundary against a compromised credential. The threat model says so.
 - `run_directory`, `invocation_context`, `run_lease`, `sessions`, `idempotency_request`, `operator_resolutions`, `model_permit`, `tenants` and `app.test_clock` have **no RLS**; their grants (AM-20.2) are the control.
 - R106 asserts the policy text per table (`pg_policies`) and that the definer path cannot read another tenant's rows.
 
 ### AM-20.6 Test clock
 
-- `app.current_time()` is defined as: if `to_regclass('app.test_clock') IS NULL` then `clock_timestamp()`, else `clock_timestamp() + (EXECUTE 'SELECT offset FROM app.test_clock LIMIT 1')`. The dynamic `EXECUTE` avoids a static reference to a missing table.
+- `app.current_time()` is defined as: if `to_regclass('app.test_clock') IS NULL` then `clock_timestamp()`, else `clock_timestamp() + (EXECUTE 'SELECT clock_offset FROM app.test_clock LIMIT 1')` (`offset` is a reserved word [R7-S5]). The dynamic `EXECUTE` avoids a static reference to a missing table. Every service, not only the bootstrap, asserts at start that the table is absent outside the test profile.
 - The table is created by the Alembic branch `testclock`, which only `scripts/check.py --profile test` applies. The `dev` and `demo` bootstraps assert `to_regclass('app.test_clock') IS NULL` and refuse to start otherwise.
 - Only `test_harness` may write it. GUCs are never read (R126).
 
@@ -530,7 +545,7 @@ The retained 1.3.2 items, unchanged in substance:
      - The call has a 2 s timeout and uses a cached service-account token.
      - If Keycloak is down or slow, it **fails closed** with 503 `retryable`.
      - The user ID it checks is the token's `sub`, which T05 asserts equals the Keycloak user ID.
-   - (c) A membership sync job (every 60 s) deactivates memberships of disabled users, and `grant_execution` reads membership.
+   - (c) A membership sync job (every 60 s, run by the sweeper with the same `view-users` service account) deactivates memberships of disabled or deleted users, and `grant_execution` reads membership.
    - Bounds:
      - a disabled user's next decision-class mutation gets 401;
      - a disabled requester or reviewer blocks grants within ≤60 s;
@@ -667,6 +682,8 @@ Each state has a Playwright assertion (R117). State 8's reconnect assertion land
 
 `handoff/tasks.json` 1.3.4 has 47 tasks. IDs are stable since 1.2; new tasks are appended.
 
+**1.3.5 changes** [R7]: `create_run` and `record_status_answer` functions; worker-only `transition_run` with pre-grant targets; requester-asserted `supersedes_run_id` and `runs.intent` (T07 contract, T45 schemas, T12 router); seed data via `migrator` `BYPASSRLS` (T09, T43); `revoke_handles`; `clock_offset`; `clarify` admission route. ADR-0001/0002 and T05 text corrected. `docs/ARCHITECTURE.md` and `docs/PROJECT_HISTORY.md` corrected for truthfulness.
+
 **1.3.4 changes** [ADR-0003]:
 - T15 becomes mcp-read; new **T47** builds mcp-write (R030, R131). T16 keeps the read tools; recovery tools move to T47. T22 depends on T47. T08 runs both servers.
 - T12 implements the admission router (R129); T20 the graph router node (R129); T19 the model router and run-manifest recording (R130). T25 reads the manifest.
@@ -748,6 +765,7 @@ The delivered `schemas/`, `schemas/examples/` and `data/handoff-fixtures/` still
 | `schemas/tools/*.json` | Create input schemas for all six tools |
 | `action-outcome.schema.json` | `FAILED_NO_COMMIT.reason` (shared reason enum); mapping from ABORTED/REJECTED; tombstone object `{action_id, state, payload_sha256, reason, decided_at}` |
 | New: `schemas/model-pins.schema.json` | `{model, digest, ollama_version, probed_at}` (AM-31) |
+| `message.schema.json`, `revision` schema | Optional structured `supersedes_run_id` (requester-asserted); `kind ∈ {investigate, ask, status, clarification}` |
 | New: `schemas/route.schema.json`, `schemas/run-manifest.schema.json` | The three route enums (AM-16); the per-run manifest `{run_id, model_route, model_digest, prompt_version, corpus_version, retrieval_mode}` |
 | `event.schema.json` (addition) | New type `action.granted`; `source=destination` only for `action.confirmed/failed/conflict/late_evidence` |
 | New: `schemas/job.schema.json` | The AM-15 job-type table as an enum with allowed tools and run states |
@@ -756,4 +774,4 @@ The delivered `schemas/`, `schemas/examples/` and `data/handoff-fixtures/` still
 | `examples/draft-valid.json` / `tool-get_recent_alerts-valid.json` | Make the alerts consistent (the draft says "two warnings", the alerts example returns `[]`) |
 | `examples/index.json` | Version 1.3.3; a stated reason for each negative example |
 | `data/handoff-fixtures/` | Tenant UUID mapping; alert UUIDs + revisions; per-section hashes (expanded in T17) |
-| `proposal.schema.json` | `start_at < end_at` and UTC-only offsets (enforced in code where JSON Schema cannot). `authored_by` sits **outside** the hashed payload, as a sibling of `payload`, stored and checked at decision time. Optional `supersedes_run_id` **inside** the hashed payload (AM-13). |
+| `proposal.schema.json` | `start_at < end_at` and UTC-only offsets (enforced in code where JSON Schema cannot). `authored_by` sits **outside** the hashed payload, as a sibling of `payload`, stored and checked at decision time. `supersedes_run_id` **inside** the hashed payload, injected by `freeze_proposal` from `runs`; a draft containing it fails validation (AM-13). |
