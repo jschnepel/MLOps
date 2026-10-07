@@ -1,8 +1,8 @@
 # Session state
 
-**Specification:** OPS-BUILD-1.2 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
-**Current milestone:** M00 (baseline, environment and model probe)
-**Next task:** T01, then T02. T03 (owner holdout authoring) can start now, in parallel and off-machine.
+**Specification:** OPS-BUILD-1.3 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
+**Current milestone:** M00 (baseline, sealed holdout intents and model probe)
+**Next task:** T01 (agent) and T03 (owner, off-machine) in parallel. Then T04, and T02 once T03's seal is recorded externally.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `main`. Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
 
 ## Done in the planning session (2026-10-06)
@@ -41,6 +41,30 @@
 - `scripts/verify_handoff.py` passes the structure checks. A cross-reference check found no unknown task or requirement IDs in the amendments or ADRs.
 - **Schemas, examples and fixtures are deliberately still at 1.0.** T07 updates them under contract tests (AM-80, R104).
 
+## Third review and 1.3 revision (2026-10-06)
+
+- Ran round 3 with three fresh reviewers: `docs/reviews/plan-review-r3-2026-10-06.md`. It found 14 items that block starting T01–T08; the rest were LATER items.
+- Updated to `SPEC_AMENDMENTS.md` 1.3:
+  - AM-00 lists the superseded BUILD_SPEC passages;
+  - abort carries the grant hash, and a POST onto an aborted key returns the tombstone;
+  - `mark_sent` re-checks cancellation;
+  - an audited ABANDONED_UNVERIFIED operator exit from ESCALATED;
+  - the conversation-slot rule on revision;
+  - the draft `question` field and a completed AM-80;
+  - the reference moves in T04, plus a traceability map in T07;
+  - checker updates;
+  - the holdout is split (T03 seals intents, T41 adds gold labels), with the seal recorded externally;
+  - the probe uses ≥30 distinct inputs in an isolated environment;
+  - `seed-ids.json` and the Keycloak topology;
+  - the walking skeleton's processes are named and it uses real tokens;
+  - the venv lives outside the repo;
+  - LangGraph resume rules verified against the 1.2.14 source;
+  - the asset-guard advisory lock;
+  - corrected evaluation power (only ~30-point differences are detectable at n≈25).
+- `handoff/tasks.json`: 41 tasks (T41 appended), with LATER items attached as `review_notes`. The acceptance matrix has 123 requirements. The critical path is 15 tasks: T01→T04→T05→T08→T09→T13→T15→T16→T20→T21→T22→T26→T27→T33→T34.
+- `verify_handoff.py` structure checks pass, as does a cross-reference check of the amendments and ADRs.
+- **Process change:** no more spec-wide review rounds. Review happens per slice, against code and tests.
+
 ## Environment (observed)
 
 | Item | Observed |
@@ -69,15 +93,17 @@
 
 - `gh auth login`, then approval to push.
 - Review of OPS-BUILD-1.2, then the implementation plan for M00–M01.
-- T03: the owner writes and seals about 25 holdout cases off-machine before any prompt tuning.
+- T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
+- T06: decide whether to publish early (public repo at M01) or start private and make it public at T34.
 
 ## Exact next step
 
 Write the implementation plan for M00–M01 (T01–T08), then run T01:
 
 ```powershell
-uv venv .venv-ref --python 3.13
-uv pip install --python .venv-ref -e ".[web,test]"
+uv venv "$env:LOCALAPPDATA\ops-ref-venv" --python 3.13
+uv pip install --python "$env:LOCALAPPDATA\ops-ref-venv" -e ".[web,test]"
+& "$env:LOCALAPPDATA\ops-ref-venv\Scripts\python" -m pytest -q
 .venv-ref\Scripts\python -m pytest -q
 ```
 

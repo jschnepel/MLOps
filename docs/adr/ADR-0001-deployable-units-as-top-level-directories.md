@@ -31,7 +31,7 @@ web/           React + TypeScript + Vite
 - **Images:** the API and worker may share a base image.
 - **Python packaging:** one `uv` workspace and one `uv.lock` at the repository root.
 - **Cross-service tests:** end-to-end tests that span services live in `tests/e2e/` at the root.
-- **The reference implementation** (`src/operations_copilot/`) stays as a reference until its behaviours are re-expressed as `core/` tests (task T04). After that it moves to `reference/`, unchanged.
+- **The reference implementation** moves unchanged into `reference/` in task T04: `src/operations_copilot/`, its `tests/`, `pyproject.toml`, `Makefile`, `Dockerfile`, `compose.yaml` and `integrations/`. A hash remap keeps `verify_handoff.py --reference-code` passing, and the reference stays runnable there. Task T07 traces all 58 reference tests to port, replace or drop in `reference/TRACEABILITY.md`.
 
 ## Consequences
 

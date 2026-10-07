@@ -43,3 +43,9 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 - The plan was revised after a second adversarial review (`docs/reviews/plan-review-2026-10-06.md`).
 - Still **no target capability implemented**. All of R001–R117 are `NOT_RUN`.
 - Schemas, examples and fixtures still describe 1.0 until T07.
+
+## Update — OPS-BUILD-1.3 (2026-10-06)
+
+- The round-3 blocking items are resolved in the plan (`docs/reviews/plan-review-r3-2026-10-06.md`). LATER items are attached to their owning tasks.
+- Still **no target capability implemented**. All of R001–R123 are `NOT_RUN`.
+- Next: an implementation plan for T01–T08, then build. From here, review happens per slice against code and tests.

@@ -1,13 +1,44 @@
-# OPS-BUILD-1.2 — Amendments to BUILD_SPEC.md
+# OPS-BUILD-1.3 — Amendments to BUILD_SPEC.md
 
-**Status:** Approved by the owner on 2026-10-06. 1.1 ("amend + cut") was revised to 1.2 after the second adversarial review.
+**Status:** Approved by the owner on 2026-10-06. The history: 1.1 was "amend + cut", 1.2 came from the round-2 review, and 1.3 fixes the round-3 BLOCKS-START items.
 **Precedence:** This file overrides `BUILD_SPEC.md` (OPS-BUILD-1.0) wherever they conflict. Everything not amended here stays in force. ADRs in `docs/adr/` record the reasoning.
 
 **Sources:**
 - `docs/reviews/handoff-review-2026-10-06.md` (round 1, cited `[R1#n]`)
 - `docs/reviews/plan-review-2026-10-06.md` (round 2, cited `[R2#n]`)
+- `docs/reviews/plan-review-r3-2026-10-06.md` (round 3, cited `[R3-Bn]`)
 
-New acceptance requirements are R081–R117 in `handoff/acceptance-matrix.json`.
+New acceptance requirements are R081–R123 in `handoff/acceptance-matrix.json`. Round-3 LATER items are attached to their owning tasks as `review_notes` in `handoff/tasks.json`. From now on, review happens per slice against code and tests, not through further spec rounds.
+
+**Changes in 1.3** (all from round 3):
+- abort hash semantics (B1);
+- cancel vs `mark_sent` (B2);
+- operator resolution of ESCALATED (B3);
+- conversation slot on revision (B4);
+- AM-80 completed (B5, B6);
+- reference traceability and move in T04 (B7, B8);
+- checker updates (B9);
+- holdout split and external seal (B10);
+- probe inputs (B11);
+- seed IDs and Keycloak topology (B12);
+- walking-skeleton scope (B13);
+- venv location (B14);
+- also corrected: the LangGraph resume rules (AM-12), the asset-guard advisory lock (AM-13), and the evaluation-power statement (AM-50).
+
+## AM-00 Superseded BUILD_SPEC text (explicit list)
+
+These 1.0 passages are superseded and must not be implemented as written:
+- **§6:** "job … lease_until, fence": replaced by run-level `run_lease` (AM-12).
+- **§9:** the `ops-mcp` audience and "distinct service scope" wording: replaced by AM-20.6.
+- **§9:** the handle's "allowed tool names": replaced by AM-20.2.
+- **§10:** "negotiation": replaced by AM-30. The four tools become six (AM-15).
+- **§14:** "authoritative terminal no-commit record": produced by the AM-13 abort tombstone.
+- **§16:** the full state list: replaced by AM-40.
+- **§20:** 80/40 cases with a separate reviewer: replaced by AM-50.
+- **§21:** profile names: v1 profiles are `dev`, `test` and `demo` (§21's integration/real-model checks run under `test` and `demo`).
+- **§22:** all of it: deferred to M15.
+- **§23:** kind smoke test and SBOM/provenance as mandatory gates: deferred to M15 (ADR-0002).
+- **§25:** the milestone table: replaced by `handoff/tasks.json`.
 
 **Changes in 1.2:**
 - execution ownership and attempt protocol (AM-13);
@@ -39,7 +70,13 @@ Each independently deployed process gets its own top-level directory, each with 
 | `web/` | React + TypeScript + Vite workspace |
 | `core/` | Shared library (uv workspace member). **Not** a service. |
 
-The original `src/operations_copilot/` reference stays until T07 re-expresses its 58 behaviours as `core/` tests. T07 then moves it, unchanged, to `reference/`.
+**The reference moves in T04** [R3-B8]:
+- T04 moves the whole reference unit, unchanged, into `reference/`: `src/operations_copilot/`, `tests/`, its `pyproject.toml`, `Makefile`, `Dockerfile`, `compose.yaml` and `integrations/`.
+- In the same commit it adds `provenance/reference-code-hashes.remap.json` (old path → new path, same sha256) and teaches `scripts/verify_handoff.py --reference-code` to use it.
+- The root `pyproject.toml` becomes the uv workspace root.
+- The reference stays runnable from `reference/` (R001).
+
+**T07 traceability** [R3-B7]: T07 ports only the pure-core reference tests and commits `reference/TRACEABILITY.md`. That file maps each of the 58 tests to *port*, *replace by* (target test plus owning task) or *drop* (with the AM-70 reason).
 
 ## AM-02 Version 1 scope (amends §2, §25, §28) → ADR-0002
 
@@ -72,16 +109,26 @@ Also reduced for v1:
 - Reconciliation continues. `ESCALATED → SUCCEEDED | FAILED` is allowed only on destination evidence.
 - SSE streams and the UI keep ESCALATED runs live.
 
+**New terminal state `ABANDONED_UNVERIFIED`** [R3-B3]:
+- Reachable only from ESCALATED, through the operator CLI `ops resolve-escalation <run_id> --acknowledge-unverified --reason "<text>"`.
+- The CLI runs locally against the migrator connection. It records the operator identity, the reason and the time in an append-only `operator_resolutions` table, and emits `run.abandoned_unverified`.
+- It never claims success or failure. Reconciliation keeps running and, on destination evidence, appends `action.confirmed` or `action.failed` events for the record. The run state stays ABANDONED_UNVERIFIED.
+- After this acknowledgement the asset guard no longer blocks that asset and interval. The README documents the risk: the destination may still hold the incident.
+
 | From | Added / changed transition |
 |---|---|
 | RETRIEVING | → AWAITING_INPUT when required context is missing or ambiguous |
 | DRAFTING | → AWAITING_INPUT on `kind=abstain` with a question, at most 2 clarification rounds; on a third round → INSUFFICIENT_EVIDENCE |
 | AWAITING_APPROVAL | → BLOCKED_REVIEW on expiry: evaluated lazily inside any decision or grant transaction, plus by the scheduled `expire_proposals` job (60 s) |
-| BLOCKED_REVIEW | Frees the conversation slot. → QUEUED on revision; → CANCELLED |
+| BLOCKED_REVIEW | Frees the conversation slot. → QUEUED on revision **only if the conversation has no other active run, else 409** [R3-B4]; → CANCELLED |
 | APPROVED | → QUEUED only via revision **before the grant exists** |
 | EXECUTING / OUTCOME_UNKNOWN | → ESCALATED on CONFLICT, or when the escalation deadline passes (AM-13) |
-| ESCALATED | → SUCCEEDED / FAILED only on verified destination evidence |
-| REJECTED, CANCELLED, ANSWERED, INSUFFICIENT_EVIDENCE, SUCCEEDED, FAILED | Terminal |
+| ESCALATED | → SUCCEEDED / FAILED only on verified destination evidence; → ABANDONED_UNVERIFIED by operator CLI only |
+| REJECTED, CANCELLED, ANSWERED, INSUFFICIENT_EVIDENCE, SUCCEEDED, FAILED, ABANDONED_UNVERIFIED | Terminal |
+
+**Active states** (the ones that hold the conversation slot): QUEUED, AWAITING_INPUT, RETRIEVING, DRAFTING, AWAITING_APPROVAL, APPROVED, EXECUTING, OUTCOME_UNKNOWN.
+
+**Clarification signal:** a draft asks for clarification with `kind=abstain` **plus** a non-empty `question` (AM-80). Without `question`, abstain means INSUFFICIENT_EVIDENCE [R3-B5].
 
 - **Enforcement:** the transition table is data in `core/`, and a single function enforces it (R082).
 - **The ANSWERED path** (read-only answer, no proposal) has its own test (R114).
@@ -114,7 +161,10 @@ A missing row aborts the transaction.
 
 **Writes without a lease:** API and sweeper mutations (decision, cancel, revision, expiry) hold no lease. They serialize with `SELECT … FROM runs … FOR UPDATE` plus `expected_version`.
 
-**Lock order:** `run_lease → runs → proposals → execution_grant → action_attempt → events → outbox`. Every transaction and definer function follows it. A two-connection interleaving test and a concurrent stress test prove fencing and deadlock freedom (R107).
+**Lock order:** `asset guard advisory lock → run_lease → runs → proposals → memberships → execution_grant → action_attempt → events → outbox`.
+- The asset guard lock is `pg_advisory_xact_lock(hashtext(tenant_id || ':' || asset_id))`. Proposal freezing and `grant_execution` take it first.
+- Every transaction and definer function follows this order.
+- Any transaction that will write `run_lease` takes `FOR UPDATE` from the start; it never upgrades from `FOR SHARE`. A two-connection interleaving test and a concurrent stress test prove fencing and deadlock freedom (R107).
 
 **Heartbeat:**
 - Runs on a **dedicated thread with its own DB connection**: renew every 10 s, lease 30 s.
@@ -132,8 +182,12 @@ A missing row aborts the transaction.
 
 **Checkpoints (ADR-0002):**
 - Invoke graphs with `durability="sync"`. The LangGraph default `"async"` persists while the next step runs.
-- After each superstep, the worker stores the accepted `checkpoint_id` in `runs.checkpoint_id` under the fence. It always resumes with that explicit `checkpoint_id`, and any newer head is ignored (R108).
-- Nodes re-execute from the start on resume, so every node before an `interrupt()` is idempotent and side-effect free.
+- **Stored checkpoint ID.** After each superstep, the worker stores the accepted `checkpoint_id` in `runs.checkpoint_id` under the fence. It reads that ID from `stream_mode="checkpoints"` (or `aget_state` after the step). At an interrupt, the stored ID is the checkpoint holding the interrupt's pending write (R108).
+- **How to resume** (verified against langgraph 1.2.14 `pregel/_loop.py`):
+  - *Human resume:* `Command(resume=<event_id>)` with the stored `checkpoint_id`. This keeps RESUME writes and does not fork.
+  - *Crash recovery:* `invoke(None)` with the stored `checkpoint_id` is treated as time travel and **forks**. The worker immediately stores the forked checkpoint's ID as the new accepted ID.
+  - With an explicit `checkpoint_id`, LangGraph re-runs pending tasks rather than re-applying their writes (`_reapplies_pending_writes = not is_replaying`). So **every node** (not only nodes before an interrupt) must be idempotent and must reread authoritative application state.
+- Nodes re-execute from the start on resume.
 - **V1 runs one worker replica.** Fencing still protects application writes, and the stored checkpoint ID protects the head.
 - R021 (fencing `put`/`put_writes` themselves, enabling multi-replica) stays open in M15.
 
@@ -147,6 +201,9 @@ A missing row aborts the transaction.
 **Attempt protocol** (`action_attempt(action_id, attempt_no, state, …)`):
 1. `grant_execution` performs the §13 final gate. It inserts the grant **and** attempt 1 in state `INTENT` in one transaction, then returns `(action_id, canonical_bytes, sha256)`.
 2. `mark_sent(action_id)` commits `INTENT → SENT` **before** network I/O. So `INTENT` means the request was definitely not sent.
+   - `mark_sent` locks `runs` (in lock order) and re-checks `cancel_requested` and the dispatch deadline.
+   - If either fails, it returns `cancelled` or `expired` and nothing is sent. The caller then aborts [R3-B2].
+   - This lock is what makes "cancel in INTENT = guaranteed no-commit" true (R118).
 3. The MCP server POSTs to incident-sim.
 4. `record_outcome(action_id, outcome)` commits `RESOLVED` with the verified receipt, tombstone or rejection. It also updates the run state and appends the event.
 
@@ -154,15 +211,15 @@ A missing row aborts the transaction.
 
 | Attempt state | Rule |
 |---|---|
-| INTENT, before dispatch deadline, not cancelled | Redispatch with the same `action_id` and bytes (`create_incident` is idempotent per grant). |
+| INTENT, before dispatch deadline, not cancelled | Redispatch with the same `action_id` and bytes. Redispatch **skips the §13 gate** (the grant was the linearization point). It loads the bytes through `lookup_action` and then goes through `mark_sent`. `create_incident` is allowed only when there is no attempt, or the attempt is INTENT, not cancelled and before the deadline. |
 | INTENT, after deadline or cancelled | `abort_incident`. |
 | SENT, no response | OUTCOME_UNKNOWN. `get_incident_receipt` with backoff 1, 2, 4, 8 s + jitter, then scheduled jobs. When the dispatch deadline passes, call `abort_incident`: the destination returns either the existing receipt (→ SUCCEEDED) or a fresh tombstone (→ FAILED, `reason=aborted_no_commit`). |
 | Destination unreachable | Keep retrying lookup or abort. When the escalation deadline passes, → ESCALATED (applies to INTENT and SENT). |
 | Receipt received but not persisted | Lookup replays the same receipt; `record_outcome` is idempotent. |
 
 **Cancellation:**
-- In INTENT, cancellation leads to abort, a guaranteed no-commit.
-- After SENT, cancellation also requests abort. The truthful outcome is whatever the destination returns: an existing receipt is reported as SUCCEEDED with a "cancellation arrived after dispatch" note. Nothing is ever claimed as undone.
+- In INTENT, cancellation leads to abort, a guaranteed no-commit, because of the `mark_sent` re-check.
+- After SENT, cancellation triggers an **immediate** abort request; without a cancellation, abort waits for the dispatch deadline. A SENT action with a lost response can therefore take up to 5 minutes to become FAILED. The README states this latency. The truthful outcome is whatever the destination returns: an existing receipt is reported as SUCCEEDED with a "cancellation arrived after dispatch" note. Nothing is ever claimed as undone.
 
 **Worker transport timeout during `create_incident`** [R2#10]:
 1. Take the run lease row lock (`FOR UPDATE`).
@@ -174,10 +231,13 @@ Tested by R109.
 
 **Destination (incident-sim):**
 - A single table `action_key(action_id PK, payload_sha256, state ∈ {COMMITTED, ABORTED}, incident_id NULL, decided_at)`.
-- Both `POST /internal/incidents` and `POST /internal/actions/{id}/abort` use `INSERT … ON CONFLICT (action_id) DO NOTHING` and then read the row. The first writer wins atomically.
+- Both `POST /internal/incidents` and `POST /internal/actions/{id}/abort` use `INSERT … ON CONFLICT (action_id) DO NOTHING` and then read the row, at **READ COMMITTED** isolation. The first writer wins atomically.
 - An incident row is inserted in the same transaction only when the key commits.
 - **Rows are never deleted or expired**, not even tombstones.
-- The destination recomputes `sha256` over the received bytes. A different hash under an existing key → CONFLICT.
+- **Abort carries the grant's `payload_sha256`**, which the tombstone stores [R3-B1].
+- **Hash comparison applies only to `COMMITTED` keys.** A POST onto an `ABORTED` key returns the tombstone (→ `FAILED_NO_COMMIT`, `reason=aborted_no_commit`) whatever hash it carries, and never commits. Fault test: a late POST after abort (R096).
+- The destination recomputes `sha256` over the received bytes. A different hash under an existing `COMMITTED` key → CONFLICT.
+- `GET /internal/actions/{action_id}` (restricted lookup, §14) is retained. It returns COMMITTED with the receipt, ABORTED with the tombstone, or NOT_FOUND. NOT_FOUND is never treated as a no-commit.
 - It accepts only the `incident-sim` audience workload token.
 
 **Outcome vocabulary:**
@@ -186,11 +246,14 @@ Tested by R109.
 |---|---|
 | Destination | `COMMITTED` / `ABORTED` |
 | Tool outcome | `SUCCEEDED` / `FAILED_NO_COMMIT` / `UNKNOWN` / `CONFLICT` |
-| Run | SUCCEEDED / FAILED / OUTCOME_UNKNOWN / ESCALATED |
+| Run | SUCCEEDED / FAILED / OUTCOME_UNKNOWN / ESCALATED / ABANDONED_UNVERIFIED |
 
 `FAILED_NO_COMMIT` carries `reason ∈ {aborted_no_commit, rejected}`.
 
-**Asset guard:** proposal freezing and grants refuse while another run in the same tenant has an unresolved action (EXECUTING, OUTCOME_UNKNOWN or ESCALATED) for the same asset and an overlapping interval (R110).
+**Asset guard:**
+- Proposal freezing and grants refuse while another run in the same tenant has an unresolved action (EXECUTING, OUTCOME_UNKNOWN or ESCALATED) for the same asset and an overlapping half-open interval.
+- They serialize on the per-(tenant, asset) advisory lock (AM-12), so two conversations cannot both pass the check (R110).
+- A refusal returns 409 `ASSET_ACTION_UNRESOLVED`, listing the blocking run only if the caller may see it.
 
 **Defaults** (configurable; tests use `app.current_time()`):
 
@@ -215,6 +278,7 @@ Tested by R109.
   - `action.failed` (with `reason`)
   - `action.conflict`
   - `run.escalated`
+  - `run.abandoned_unverified`
   - `feedback.recorded`
   - `explanation.ready`
 - **Who may assert outcomes.**
@@ -239,7 +303,10 @@ Tested by R109.
 - **The envelope must agree with the data:**
   - `status=ok` only for a read with data, or `SUCCEEDED`;
   - `status=outcome` for `UNKNOWN` / `CONFLICT` / `FAILED_NO_COMMIT`, with `data.action_id` required;
-  - `status=error` only before any grant exists.
+  - for an **authenticated, authorized** caller, `status=error` only before any grant exists;
+  - authentication and authorization failures always return a plain safe error, never with an `action_id`.
+- `abort_incident` result `data`: `{action_id, outcome: SUCCEEDED|FAILED_NO_COMMIT, receipt|tombstone}`.
+- The old `unknown` envelope status is removed.
 - The caller verifies that a `SUCCEEDED` receipt's hash equals the proposal hash. A mismatch becomes `CONFLICT`.
 
 ## AM-20 Authority boundaries (amends §6, §9, §13)
@@ -249,6 +316,8 @@ Tested by R109.
    - All are `SECURITY DEFINER`, owned by `app_definer` (NOLOGIN, **not** a table owner), with `SET search_path = app, pg_temp`.
    - Each migration creates the function, runs `REVOKE ALL ON FUNCTION … FROM PUBLIC` and `GRANT EXECUTE … TO mcp_exec` in the same transaction.
    - Application tables use `FORCE ROW LEVEL SECURITY`. Functions set `app.tenant_id` (transaction-local) from the resolved run before touching tenant rows.
+   - Each function declares `SET app.tenant_id = ''` as a function attribute, so the setting cannot leak to, or be preset by, the caller.
+   - **RLS bootstrap:** `invocation_context` and an RLS-free `run_directory(run_id, tenant_id)` are readable only by `app_definer` and the sweeper role. Handles and runs are resolved there before the tenant is set (details in T09's review notes).
    - Tests:
      - `mcp_exec` cannot `SELECT` any table (R084);
      - the definer path cannot read another tenant's rows (R106).
@@ -257,7 +326,11 @@ Tested by R109.
 4. **Independence covers every content author.** The proposal records `authored_by` (requester plus revision and manual-proposal authors), and the reviewer must not be in it (R093).
 5. **Revocation** (replaces the 1.1 wording):
    - (a) Back-channel logout: the API hosts a hand-written OIDC Back-Channel Logout endpoint (validates iss, aud, iat, jti, events; no nonce; jti replay cache) that destroys sessions.
-   - (b) **Every** decision, revision, cancel and manual-proposal mutation checks the user's enabled status through the Keycloak admin API. It uses a local-only service account limited to `view-users`, and its secret is generated by the bootstrap.
+   - (b) **Every** decision, revision, cancel and manual-proposal mutation checks the user's enabled status through the Keycloak admin API.
+     - It uses a local-only service account limited to `view-users`, whose secret is generated by the bootstrap.
+     - The call has a 2 s timeout and uses a cached service-account token.
+     - If Keycloak is down or slow, it **fails closed** with 503 `retryable`.
+     - The user ID it checks is the token's `sub`, which T05 asserts equals the Keycloak user ID.
    - (c) A membership sync job (every 60 s) deactivates memberships of disabled users, and `grant_execution` reads membership.
    - Bounds:
      - a disabled user's next decision-class mutation gets 401;
@@ -266,15 +339,16 @@ Tested by R109.
 
    Tested by R086.
 6. **MCP token verification.**
-   - Keycloak "Hardcoded audience" mappers set `aud` to the **resource URL** of mcp-server (for example `http://mcp-server:8080/mcp`) and to `incident-sim`.
+   - Keycloak "Hardcoded audience" mappers set `aud` to the **resource URL** of mcp-server and to `incident-sim`. The URL is a parameter (`MCP_RESOURCE_URL`), not a hard-coded container name.
+   - T05 fixes `KC_HOSTNAME`, so that `iss` is identical for host and container callers.
    - mcp-server uses a custom `TokenVerifier` that checks iss, aud ∋ resource URL, azp ∈ allowed workload clients, and exp.
    - Tests cover a missing `aud`, a wrong `aud`, and a browser token.
 7. **Checkpoint tables.**
    - `migrator` runs `PostgresSaver.setup()` with `autocommit=True`, `row_factory=dict_row` and `options=-c search_path=checkpoints` (the saver has no schema parameter).
    - `worker` gets DML only on schema `checkpoints`, with `search_path=checkpoints,pg_temp` on its checkpoint connection.
-   - `api` gets permission denied.
+   - `api` gets permission denied (R122).
 8. **Graph state is IDs only.** Interrupt payloads and graph state carry IDs and hashes only (R091).
-9. **Fault hooks are test-only.** They exist only in an app factory that refuses to start unless `PROFILE=test` (R098; built in T13).
+9. **Fault hooks are test-only.** They exist only in an app factory, shared as `core.testing.faults`, that refuses to start unless `PROFILE=test` (R098; first used in T10, completed in T13). The test-time offset in `app.current_time()` is also gated by profile.
 10. **Browser sessions are server-side.** A Postgres `sessions` table holds an opaque random ID (stored hashed) in an HttpOnly cookie. authlib's OIDC state lives in that store, not in Starlette's signed-cookie `SessionMiddleware`.
 11. **`X-Ops-Invocation` is a capability lookup key only.** It is never trusted as identity and never logged. The SDK warns that headers are client-supplied.
 
@@ -307,7 +381,12 @@ Tested by R109.
 
 - **Model:** `qwen3:8b`. Record its digest.
 - **Settings:** `ChatOllama(reasoning=False)` (maps to Ollama `think:false`), `num_ctx=16384`, `num_predict=1000`, `temperature=0`, 60 s timeout, `with_structured_output(method="json_schema")` **plus** application-side validation.
-- **T02 probe**, at least 30 calls on development inputs. It records:
+- **T02 probe** [R3-B11]:
+  - Uses **at least 30 distinct inputs**, authored for the probe under `evals/probe/`. These are separate from the 10 development seeds and from the holdout.
+  - Runs in an isolated environment (`uv run --isolated --with langchain-ollama==1.1.0 …`), with the dependency freeze saved next to the report.
+  - Measures the **identical-repeat rate** (the same input 3× at temperature 0), which tells T25 whether repeated trials carry information.
+  - The probe is a measurement, **not prompt tuning**. Its prompt is the sealed starter prompt.
+  - It records:
   - JSON-valid and schema-valid rates, both first-pass and after one repair, with Wilson 95% CIs;
   - p50/p95 latency;
   - peak VRAM;
@@ -324,10 +403,12 @@ The eight states are:
 4. awaiting independent review (stale/expired disabled with a reason)
 5. executing / outcome unknown
 6. succeeded
-7. failed / rejected / insufficient evidence / escalated, with its reason
+7. failed / rejected / insufficient evidence / escalated / abandoned-unverified / cancelled, with its reason
 8. session expired / disconnected-then-reconnected snapshot
 
-Each state has a Playwright assertion (R117).
+ANSWERED is shown as a completed conversation answer within state 6's view, labelled "answered (no action)".
+
+Each state has a Playwright assertion (R117). State 8's reconnect assertion lands with SSE in T27.
 
 ## AM-50 Evidence corpus and evaluation (amends §11, §20, §27)
 
@@ -348,18 +429,21 @@ Each state has a Playwright assertion (R117).
 | Element | Design |
 |---|---|
 | Development set | About 60 cases with gold labels and a groundedness rubric (T23) |
-| Holdout set | About 25 **owner-authored** cases, written **now** (T03) before any prompt tuning, without AI assistance |
-| Holdout custody | Stored **off this machine** (or encrypted with a key the agent never sees) until a release-candidate run. Only its `sha256` and case count are committed. Every holdout run is logged. |
-| Conditions | A: manual baseline (human-authored proposal via `/manual-proposals`). B: RAG-only single call. C: orchestrated. B and C use identical model, prompt-version family, retrieval settings and `num_ctx`. Schema metrics apply to B and C only. |
+| Holdout, part 1 (T03) | About 25 **owner-authored** case intents and requests, written now, without AI assistance, before any prompt tuning. Uses the case schema `evals/holdout-case.schema.json`. |
+| Holdout, part 2 (T41) | The owner gold-labels the sealed cases against the **frozen T17 corpus** (evidence IDs, expected outcome), then re-seals. |
+| Holdout custody | Stored **off this machine** (or encrypted with a key the agent never sees) until a release-candidate run. Only the `sha256` and case count are committed. Each seal hash is **also recorded outside the local repo** before the next dependent task starts: either pushed to the remote, or emailed to the owner with the hash and date, since a local git history can be forged. Every holdout run is logged. |
+| Conditions | A: manual baseline (human-authored proposal via `/manual-proposals`). B: RAG-only single call. C: orchestrated. B and C use identical model, prompt-version family, retrieval settings and `num_ctx`. Schema metrics apply to B and C only. **A is scored only with deterministic metrics** (citation validity, abstention correctness), because the owner wrote both A and the holdout. |
+| Labelling | Groundedness labels for B and C are **blind**: outputs are anonymized and shuffled across conditions. About 20% are re-labelled later to report intra-rater kappa (R073). |
 | Trials | 3 isolated trials per case for B and C |
 
 **Statistics:**
-- Report rates at **case level** (a case passes if at least 2 of 3 trials pass) with Wilson 95% CIs and denominators, plus trial-level rates with a case-cluster bootstrap CI.
-- Compare conditions with paired McNemar tests on case-level outcomes.
-- Make no ranking claim without p < 0.05. At n≈25, differences under about 15–20 points are expected to be undetectable, and the README says so.
-- Unauthorized writes must be 0 observed. Report the rule-of-three upper bound (≈3/n).
+- **Quality metrics:** report at **case level** (a case passes if at least 2 of 3 trials pass) with Wilson 95% CIs and denominators. Also report trial-level rates with a case-cluster bootstrap CI, because the 2-of-3 rule inflates rates (0.70 per trial → about 0.78 per case).
+- **Safety metrics are any-trial:** a single unauthorized write, fabricated success or cross-tenant leak in any trial fails the case.
+- **Comparisons:** paired exact McNemar tests on case-level outcomes. No ranking claim without p < 0.05.
+- **Power at n≈25** [R3, computed]: exact McNemar power is about 0.15 for a 15-point difference and about 0.5–0.8 for 30 points. **Only differences of roughly 30 points or more are reliably detectable**, and the README says so.
+- **Unauthorized writes** must be 0 observed. Report the rule-of-three upper bound (≈3/n, about 12% at n=25).
 
-**`evals/quality-gates.json`** lists entries of the form `{metric, condition, threshold, applies_to: "point"|"wilson_lower_95", blocking}`:
+**`evals/quality-gates.json`**, validated against `evals/quality-gates.schema.json` (T23), lists entries of the form `{metric, condition, threshold, applies_to: "point"|"wilson_lower_95", blocking}`:
 - The owner fills it in and commits it **before** the first holdout run.
 - Safety gates (unauthorized writes, fabricated success, cross-tenant leakage) are blocking at 0 observed.
 - Quality gates are owner-chosen.
@@ -370,7 +454,19 @@ Each state has a Playwright assertion (R117).
 
 ## AM-60 Task graph (amends §25, `handoff/tasks.json`)
 
-`handoff/tasks.json` 1.2 has 40 tasks, renumbered.
+`handoff/tasks.json` 1.3 has 41 tasks. IDs are stable since 1.2; new tasks are appended (T41).
+
+**1.3 changes** [R3]:
+- T03 is split: T03 seals the holdout intents, and the new **T41** gold-labels them against the frozen corpus. T02 and T19 depend on T03; T25 depends on T41.
+- T04 no longer depends on T02. T04 moves the reference to `reference/`, creates `data/seed-ids.json`, adds `jsonschema` to the dev group, and makes the checker skip venv and `node_modules` directories.
+- T05 reads `data/seed-ids.json` and fixes the Keycloak topology.
+- T07 ports the pure-core tests plus `reference/TRACEABILITY.md`, updates `verify_handoff.py`, and completes AM-80.
+- T08 names its processes, uses real T05 tokens, and makes its schema Alembic revision 1.
+- T17 moves to M05 ahead of T16. M05 becomes "MCP boundary and governed corpus".
+- Requirement placement: R002 → T34; R031 → T04 (imports) and T15 (network); R046 co-owned by T22; R071 co-owned by T25; R098 co-owned by T10.
+- Round-3 LATER items are attached as `review_notes`.
+
+**1.2 changes:**
 
 **New tasks:**
 - T03 owner holdout authoring;
@@ -404,10 +500,21 @@ Replace the weak reference tests (`test_duplicate_decision_and_execute`; no conc
 
 The delivered `schemas/`, `schemas/examples/` and `data/handoff-fixtures/` still describe 1.0. T07 updates them and proves the result with `scripts/verify_handoff.py --contracts` plus new negative probes (R104).
 
+**Checker changes** (T07) [R3-B9]:
+- Read `expected_payload_sha256` from the decision example.
+- Meta-validate `schemas/tools/*.json` and `evals/*.schema.json`.
+- Skip `.venv*`, `node_modules` and `reference/` build outputs in its `rglob` scans.
+
+`jsonschema` is a dev dependency (T04).
+
 | Artifact | Required change |
 |---|---|
-| `event.schema.json` | Add `ESCALATED` and the AM-14 event types; `action.confirmed` requires a receipt and SUCCEEDED; source rules |
-| `tool-result.schema.json` | `status=outcome`; envelope/data agreement; `action_id` required on outcomes; `next_cursor`; `abort_incident` |
+| `event.schema.json` | Add `ESCALATED` and `ABANDONED_UNVERIFIED` and the AM-14 event types; payload `reason`; `action.confirmed` requires a receipt and SUCCEEDED; source rules |
+| `tool-result.schema.json` | `status=outcome`; remove `unknown`; envelope/data agreement; `action_id` required on outcomes for authorized callers; `next_cursor`; `abort_incident` result shape |
+| `model-draft.schema.json` | Add optional `question` (required for clarification; AM-10) |
+| New: `feedback`, `manual-proposal`, `revision`, `cancel-response` schemas | Per §7 and AM-14. `cancel-response` reports whether a grant or dispatch already occurred. |
+| `error.schema.json` | Codes `ASSET_ACTION_UNRESOLVED`, `GRANT_EXISTS` (409 on revision after grant), `SLOT_OCCUPIED` |
+| New: `evals/holdout-case.schema.json`, `evals/quality-gates.schema.json` | Defined in T03 and T23 respectively; meta-validated by the checker |
 | `schemas/tools/*.json` | Create input schemas for all six tools |
 | `action-outcome.schema.json` | `FAILED_NO_COMMIT.reason`; mapping from `ABORTED` |
 | `decision.schema.json` + examples | `expected_payload_sha256` |
@@ -415,4 +522,4 @@ The delivered `schemas/`, `schemas/examples/` and `data/handoff-fixtures/` still
 | `examples/draft-valid.json` / `tool-get_recent_alerts-valid.json` | Make the alerts consistent (the draft says "two warnings", the alerts example returns `[]`) |
 | `examples/index.json` | Version 1.2; a stated reason for each negative example |
 | `data/handoff-fixtures/` | Tenant UUID mapping; alert UUIDs + revisions; per-section hashes (expanded in T17) |
-| `proposal.schema.json` | `start_at < end_at` and UTC-only offsets (enforced in code where JSON Schema cannot); `authored_by` |
+| `proposal.schema.json` | `start_at < end_at` and UTC-only offsets (enforced in code where JSON Schema cannot). `authored_by` sits **outside** the hashed payload, as a sibling of `payload`, stored and checked at decision time. |

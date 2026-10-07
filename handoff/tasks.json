@@ -1,11 +1,11 @@
 {
-  "specification": "OPS-BUILD-1.2 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "specification": "OPS-BUILD-1.3 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
   "current_milestone": "M00",
-  "note": "Dependency graph (renumbered in 1.2). Requirements sit with the first task able to test them; R097 accrues across T24/T27/T29/T32. M15 is optional. See SPEC_AMENDMENTS.md AM-60.",
+  "note": "Dependency graph. IDs stable since 1.2; T41 appended in 1.3. Requirements sit with the first task able to test them. review_notes carry round-3 LATER items for the owning task. M15 is optional. See SPEC_AMENDMENTS.md AM-60.",
   "milestones": [
     {
       "id": "M00",
-      "title": "Baseline, environment, model probe and sealed holdout",
+      "title": "Baseline, sealed holdout intents and model probe",
       "required_for_v1": true,
       "task_ids": [
         "T01",
@@ -59,21 +59,22 @@
     },
     {
       "id": "M05",
-      "title": "Authenticated MCP boundary",
+      "title": "Authenticated MCP boundary and governed corpus",
       "required_for_v1": true,
       "task_ids": [
         "T15",
+        "T17",
         "T16"
       ],
       "status": "PLANNED"
     },
     {
       "id": "M06",
-      "title": "Evidence corpus and retrieval",
+      "title": "Vector retrieval",
       "required_for_v1": true,
       "task_ids": [
-        "T17",
-        "T18"
+        "T18",
+        "T41"
       ],
       "status": "PLANNED"
     },
@@ -177,11 +178,10 @@
       "id": "T01",
       "milestone": "M00",
       "title": "Reproduce reference baseline on this machine",
-      "instructions": "Isolated uv venv with the reference web+test extras; run the 58 tests and the recovery CLI on Windows; save outputs under reports/baseline/. Do not modify reference code.",
+      "instructions": "Create the venv OUTSIDE the repo (e.g. %LOCALAPPDATA%\\ops-ref-venv) with the reference web+test extras; run the 58 tests and the recovery CLI on Windows; save outputs under reports/baseline/. Do not modify reference code.",
       "depends_on": [],
       "requirement_ids": [
-        "R001",
-        "R002"
+        "R001"
       ],
       "status": "PLANNED",
       "definition_of_done": [
@@ -194,9 +194,10 @@
       "id": "T02",
       "milestone": "M00",
       "title": "Environment inventory and qwen3:8b probe",
-      "instructions": "Per AM-31: >=30 structured calls (reasoning=False, num_ctx=16384); first-pass and post-repair validity with Wilson CIs; latency; VRAM; thinking leakage; mid-generation cancellation behaviour via `ollama ps`/GPU.",
+      "instructions": "Per AM-31: author >=30 distinct probe inputs under evals/probe/ (not dev seeds, not holdout); run in `uv run --isolated --with langchain-ollama==1.1.0` and save the freeze; reasoning=False, num_ctx=16384; first-pass and post-repair validity with Wilson CIs; identical-repeat rate at temperature 0; latency; VRAM; thinking leakage; mid-generation cancellation via `ollama ps`/GPU. Sealed starter prompt only; this is measurement, not tuning.",
       "depends_on": [
-        "T01"
+        "T01",
+        "T03"
       ],
       "requirement_ids": [
         "R081"
@@ -212,16 +213,17 @@
     {
       "id": "T03",
       "milestone": "M00",
-      "title": "Owner authors and seals the holdout set",
-      "instructions": "Owner writes ~25 holdout cases without AI assistance, stores them off-machine or encrypted, commits only sha256 and count, and drafts quality-gates.json structure (AM-50).",
+      "title": "Owner authors and seals holdout intents",
+      "instructions": "Define evals/holdout-case.schema.json. Owner writes ~25 case intents/requests without AI assistance, stores them off-machine or encrypted, commits only sha256 + count, and records the hash outside the local repo (push or dated email to self) before T02 starts. Gold labels come later in T41.",
       "depends_on": [],
       "requirement_ids": [
         "R071"
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "evals/holdout.sha256 and count committed before any prompt tuning (git history proves order).",
-        "No holdout content in the repo or agent-readable paths."
+        "evals/holdout-case.schema.json and evals/holdout.sha256 committed; hash also recorded externally with date.",
+        "No holdout content in the repo or agent-readable paths.",
+        "Recorded before T02 (probe) and T19 (prompts) begin."
       ],
       "external_approval_required": true
     },
@@ -229,17 +231,20 @@
       "id": "T04",
       "milestone": "M01",
       "title": "uv workspace with per-service directories and locks",
-      "instructions": "ADR-0001 layout (core/, api/, worker/, mcp-server/, asset-sim/, incident-sim/); resolve versions per AM-30; commit uv.lock; ruff, mypy, pytest via one command.",
+      "instructions": "ADR-0001 layout (core/, api/, worker/, mcp-server/, asset-sim/, incident-sim/). Move the whole reference unit unchanged into reference/ (src, tests, pyproject, Makefile, Dockerfile, compose, integrations) with provenance/reference-code-hashes.remap.json and checker support; root pyproject becomes the uv workspace root. Create data/seed-ids.json (tenant/persona UUIDs). Resolve versions per AM-30, commit uv.lock, add jsonschema to the dev group; checker skips .venv*/node_modules. ruff, mypy, pytest via one command.",
       "depends_on": [
-        "T02"
+        "T01"
       ],
       "requirement_ids": [
-        "R003"
+        "R003",
+        "R031",
+        "R121"
       ],
       "status": "PLANNED",
       "definition_of_done": [
         "`uv sync --locked` succeeds from a clean clone.",
-        "One command runs ruff + mypy + pytest green on the skeleton.",
+        "`verify_handoff.py --reference-code` passes via the remap and the reference still runs from reference/.",
+        "One command runs ruff + mypy + pytest green; data/seed-ids.json committed.",
         "Each service README states ownership and trust boundary."
       ],
       "external_approval_required": false
@@ -248,7 +253,7 @@
       "id": "T05",
       "milestone": "M01",
       "title": "Dev bootstrap: Compose dev profile, Keycloak realm, secrets, seed IDs",
-      "instructions": "Compose dev profile with PostgreSQL+pgvector and Keycloak 26.8.x (pinned digest); realm export with 5 personas, workload clients and hardcoded-audience mappers (mcp-server resource URL, incident-sim); view-users service account; Windows-friendly secret generation outside git; seeded tenant/persona UUIDs; host Ollama bridge.",
+      "instructions": "Compose dev profile with PostgreSQL+pgvector and Keycloak 26.8.x (pinned digest); fixed KC_HOSTNAME so iss matches for host and container callers; documented dev topology (which processes run in containers vs host); realm export with 5 personas (UUIDs from data/seed-ids.json), workload clients and hardcoded-audience mappers (MCP_RESOURCE_URL parameter, incident-sim); view-users service account; Windows-friendly secret generation outside git; host Ollama bridge.",
       "depends_on": [
         "T04"
       ],
@@ -259,7 +264,7 @@
       "status": "PLANNED",
       "definition_of_done": [
         "One command brings up the dev profile from a clean clone on Windows.",
-        "Tokens for each workload client carry the expected aud and azp (asserted).",
+        "Tokens for each workload client carry the expected aud and azp; user tokens' sub equals the Keycloak user ID (asserted).",
         "No secret committed; generated secrets live in an ignored file."
       ],
       "external_approval_required": false
@@ -280,13 +285,16 @@
         "CI runs on push and PR in jschnepel/MLOps and is green.",
         "No secrets or privileged contexts used."
       ],
-      "external_approval_required": true
+      "external_approval_required": true,
+      "review_notes": [
+        "Requires a public repo at M01 while publication approval sits at T34 - owner decides: approve early publication or start private and flip public at T34."
+      ]
     },
     {
       "id": "T07",
       "milestone": "M01",
       "title": "Contracts, state machine, schema alignment and reference migration",
-      "instructions": "Pydantic contracts; canonical JSON v1; transition table incl. ESCALATED; apply every AM-80 schema/example/fixture change; port the 58 reference behaviours as core tests; move src/operations_copilot to reference/ unchanged.",
+      "instructions": "Pydantic contracts; canonical JSON v1; transition table incl. ESCALATED, ABANDONED_UNVERIFIED and the slot rule; apply every AM-80 schema/example/fixture change incl. new schemas and error codes; update verify_handoff.py (renamed field, tools/ and evals/ schemas, skip dirs); port the pure-core reference tests and write reference/TRACEABILITY.md mapping all 58 to port/replace/drop.",
       "depends_on": [
         "T04"
       ],
@@ -295,21 +303,23 @@
         "R005",
         "R082",
         "R083",
-        "R104"
+        "R104",
+        "R120",
+        "R123"
       ],
       "status": "PLANNED",
       "definition_of_done": [
         "`verify_handoff.py --contracts` passes with the AM-80 negative probes.",
-        "Every allowed transition tested; disallowed ones rejected.",
-        "Reference behaviours pass as core tests; reference/ byte-identical to the original."
+        "Every allowed transition tested; disallowed ones rejected; revision from BLOCKED_REVIEW needs a free slot.",
+        "reference/TRACEABILITY.md covers all 58 tests with an owning task for each replacement."
       ],
       "external_approval_required": false
     },
     {
       "id": "T08",
       "milestone": "M01",
-      "title": "Walking skeleton across all services",
-      "instructions": "Fake model; real PostgreSQL and real HTTP: POST run -> job -> worker -> mcp-server (minimal auth) -> incident-sim -> receipt -> event. No hardening; proves wiring before depth.",
+      "title": "Walking skeleton: api, worker, mcp-server, incident-sim",
+      "instructions": "Fake model; PostgreSQL and Keycloak from T05; processes api, worker, mcp-server, incident-sim. Real client-credentials tokens from T05 (no shared secrets). POST run -> job -> worker -> mcp-server create_incident -> incident-sim -> receipt -> event. Schema is Alembic revision 1 (extended by T09); incident-sim code is the base T10 extends.",
       "depends_on": [
         "T05",
         "T07"
@@ -319,8 +329,8 @@
       ],
       "status": "PLANNED",
       "definition_of_done": [
-        "One e2e test drives a run to SUCCEEDED across five processes.",
-        "Skeleton shortcuts are listed in SESSION_STATE.md as debt with owning tasks."
+        "One e2e test drives a run to SUCCEEDED across the four processes with real tokens.",
+        "Skeleton shortcuts listed in SESSION_STATE.md as debt with owning tasks; no throwaway auth."
       ],
       "external_approval_required": false
     },
@@ -338,7 +348,8 @@
         "R008",
         "R009",
         "R084",
-        "R106"
+        "R106",
+        "R122"
       ],
       "status": "PLANNED",
       "definition_of_done": [
@@ -346,7 +357,12 @@
         "mcp_exec cannot SELECT any table; definer path cannot cross tenants.",
         "Pooled connections do not leak tenant context."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "RLS bootstrap: RLS-free run_directory(run_id, tenant_id) + invocation_context readable only by app_definer/sweeper; named cross-tenant sweeper policy for expire_proposals, membership sync, session lookup.",
+        "Definer functions declare SET app.tenant_id='' as an attribute; test that a preset tenant from mcp_exec is ignored.",
+        "app.current_time() test offset gated by PROFILE=test."
+      ]
     },
     {
       "id": "T10",
@@ -359,14 +375,19 @@
       "requirement_ids": [
         "R010",
         "R047",
-        "R096"
+        "R096",
+        "R098"
       ],
       "status": "PLANNED",
       "definition_of_done": [
         "Concurrent same-key POSTs and POST-vs-abort races yield exactly one terminal key state.",
         "Different hash under an existing key returns CONFLICT; worker/API tokens get 403."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Destination at READ COMMITTED; keep GET /internal/actions/{id}; abort stores grant hash; POST onto ABORTED returns tombstone regardless of hash (late-POST fault test).",
+        "Fault factory lives in shared core.testing.faults (R098 co-owned with T13)."
+      ]
     },
     {
       "id": "T11",
@@ -389,7 +410,10 @@
         "Disabled user: next decision-class mutation 401; grants blocked within 60 s.",
         "Back-channel logout token validation incl. jti replay."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Admin-API check: 2 s timeout, cached service-account token, fail closed 503 retryable when Keycloak is down/slow. The 'grants blocked <=60 s' half of R086 is verified in T21."
+      ]
     },
     {
       "id": "T12",
@@ -436,7 +460,13 @@
         "Stress test shows no deadlock under the lock order.",
         "Blocked event loop (25 s) does not lose the lease; forced renewal failure cancels work."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Transactions that write run_lease take FOR UPDATE from the start (no FOR SHARE upgrade).",
+        "Owner re-fence path hands the new fence to the heartbeat thread atomically.",
+        "Lock order includes the asset-guard advisory lock and memberships (AM-12); also place jobs, invocation_context, model_permit, sessions.",
+        "Gate heartbeat renewal on event-loop liveness and the 90 s compute budget."
+      ]
     },
     {
       "id": "T14",
@@ -480,6 +510,31 @@
         "Missing/wrong aud, browser token, replayed/expired/other-run/other-azp handle all rejected.",
         "Protocol-version header/_meta mismatch rejected."
       ],
+      "external_approval_required": false,
+      "review_notes": [
+        "status=error-only-before-grant applies to authorized callers; auth failures never reveal action_id.",
+        "Allowlist checks attempt state (create_incident only with no attempt or INTENT, not cancelled, before deadline)."
+      ]
+    },
+    {
+      "id": "T17",
+      "milestone": "M05",
+      "title": "Expanded corpus, governed ingestion and lexical baseline",
+      "instructions": "Author >=12 documents (300-900 words), >=6 assets, 2 tenants incl. superseded, conflicting and injected sources; per-section IDs/hashes; tenant UUID and alert UUID fixtures; idempotent ingestion; PostgreSQL full-text retrieval with access filtering.",
+      "depends_on": [
+        "T09"
+      ],
+      "requirement_ids": [
+        "R032",
+        "R033",
+        "R099"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "Catalog with per-section sha256; ingestion idempotent.",
+        "Superseded/expired/revoked sections never returned.",
+        "Lexical retrieval measured on labelled dev queries with denominators."
+      ],
       "external_approval_required": false
     },
     {
@@ -502,28 +557,10 @@
         "Cross-tenant reads denied; unexpected tools and malformed results fail closed.",
         "Recovery tools unavailable to read/execute jobs and to any model-facing adapter."
       ],
-      "external_approval_required": false
-    },
-    {
-      "id": "T17",
-      "milestone": "M06",
-      "title": "Expanded corpus, governed ingestion and lexical baseline",
-      "instructions": "Author >=12 documents (300-900 words), >=6 assets, 2 tenants incl. superseded, conflicting and injected sources; per-section IDs/hashes; tenant UUID and alert UUID fixtures; idempotent ingestion; PostgreSQL full-text retrieval with access filtering.",
-      "depends_on": [
-        "T09"
-      ],
-      "requirement_ids": [
-        "R032",
-        "R033",
-        "R099"
-      ],
-      "status": "PLANNED",
-      "definition_of_done": [
-        "Catalog with per-section sha256; ingestion idempotent.",
-        "Superseded/expired/revoked sections never returned.",
-        "Lexical retrieval measured on labelled dev queries with denominators."
-      ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "search_procedures reads the governed store built in T17."
+      ]
     },
     {
       "id": "T18",
@@ -544,6 +581,25 @@
       "external_approval_required": false
     },
     {
+      "id": "T41",
+      "milestone": "M06",
+      "title": "Owner gold-labels the sealed holdout against the frozen corpus",
+      "instructions": "Owner, without AI assistance, adds evidence IDs and expected outcomes to the sealed holdout cases against the frozen T17 corpus version; re-seals (sha256 committed and recorded externally). Corpus changes after this require re-labelling.",
+      "depends_on": [
+        "T03",
+        "T17"
+      ],
+      "requirement_ids": [
+        "R071"
+      ],
+      "status": "PLANNED",
+      "definition_of_done": [
+        "New holdout hash committed and externally recorded with the corpus version it labels.",
+        "Holdout content still absent from repo and agent-readable paths."
+      ],
+      "external_approval_required": true
+    },
+    {
       "id": "T19",
       "milestone": "M07",
       "title": "Async LangChain ChatOllama DraftGenerator",
@@ -551,7 +607,8 @@
       "depends_on": [
         "T07",
         "T17",
-        "T02"
+        "T02",
+        "T03"
       ],
       "requirement_ids": [
         "R036",
@@ -591,7 +648,10 @@
         "Pause/resume survives worker restart from the stored checkpoint_id; a newer stray head is ignored.",
         "Checkpoint blobs contain no evidence or proposal text."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "LangGraph 1.2.14: explicit checkpoint_id => is_replaying, pending writes NOT re-applied (_loop.py:330, 766-770); Command(resume) keeps RESUME writes; invoke(None, checkpoint_id) forks (886-912). Store IDs from stream_mode='checkpoints'/aget_state, update after forks, make every node idempotent, test kill-mid-superstep and kill-at-interrupt, join stale in-process tasks before re-acquiring."
+      ]
     },
     {
       "id": "T21",
@@ -614,7 +674,8 @@
         "R093",
         "R100",
         "R113",
-        "R116"
+        "R116",
+        "R120"
       ],
       "status": "PLANNED",
       "definition_of_done": [
@@ -622,7 +683,12 @@
         "Revocation or cancellation before grant blocks dispatch; a second grant for a run is impossible.",
         "Lost-wakeup crash between decision commit and processing recovered by the sweeper."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Asset guard via pg_advisory_xact_lock(tenant, asset) first in lock order; refusal 409 ASSET_ACTION_UNRESOLVED.",
+        "Revision from BLOCKED_REVIEW requires a free conversation slot (SLOT_OCCUPIED 409).",
+        "Verify R086's grant-blocking half (membership sync <=60 s)."
+      ]
     },
     {
       "id": "T22",
@@ -640,7 +706,10 @@
         "R094",
         "R095",
         "R109",
-        "R110"
+        "R110",
+        "R046",
+        "R118",
+        "R119"
       ],
       "status": "PLANNED",
       "definition_of_done": [
@@ -648,7 +717,12 @@
         "Timeout during create_incident resolves via the lease-lock read.",
         "Hash conflict escalates; never success; escalated action blocks a duplicate for the same asset/interval."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Redispatch skips the section 13 gate via lookup_action -> mark_sent; mark_sent re-checks cancel/deadline under runs lock.",
+        "Cancellation after SENT aborts immediately; otherwise abort at dispatch deadline (<=5 min FAILED latency stated).",
+        "Operator CLI `ops resolve-escalation` -> ABANDONED_UNVERIFIED with operator_resolutions audit row."
+      ]
     },
     {
       "id": "T23",
@@ -684,7 +758,14 @@
         "Core cards executable in fake mode in under 10 minutes.",
         "Remaining cards listed with their owning tasks (T27, T29, T32)."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Update card vocabulary: DEV-018 -> ESCALATED; DEV-015 -> SUCCEEDED with note; DEV-017 time-bounded; DEV-008 lazy BLOCKED_REVIEW commits even when the decision returns 409.",
+        "Add cards for escalation, tombstone/late POST, asset guard, operator resolution, cancel-vs-mark_sent.",
+        "DEV-029 needs a fault-injectable outbox sink.",
+        "Runs locally against Postgres until T31 adds Postgres to CI.",
+        "Update evals/README (80/40 and separate-reviewer text are stale)."
+      ]
     },
     {
       "id": "T25",
@@ -695,20 +776,24 @@
         "T22",
         "T18",
         "T23",
-        "T03"
+        "T41"
       ],
       "requirement_ids": [
         "R070",
         "R072",
         "R073",
-        "R074"
+        "R074",
+        "R071"
       ],
       "status": "PLANNED",
       "definition_of_done": [
         "reports/eval/ with per-condition rates, denominators, CIs and test statistics.",
         "Gates commit predates the holdout run; any unauthorized write blocks release."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Condition A deterministic metrics only; blind shuffled B/C groundedness labelling; ~20% re-label for intra-rater kappa; safety metrics any-trial; report ~30-point detectability floor."
+      ]
     },
     {
       "id": "T26",
@@ -732,7 +817,10 @@
         "Playwright covers requester flow, independent approval, stale card and each of the eight states.",
         "No credentials in browser storage or URLs; malicious content inert; keyboard-only approval works."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Include ANSWERED ('answered, no action'), CANCELLED and ABANDONED_UNVERIFIED in the state views; the reconnect assertion (state 8) lands in T27."
+      ]
     },
     {
       "id": "T27",
@@ -816,7 +904,10 @@
         "Denied paths tested from containers; images scanned with results saved.",
         "Worker kill around destination commit yields one incident (recorded)."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Enforce one worker replica: startup advisory lock; a second worker refuses to start (tested)."
+      ]
     },
     {
       "id": "T31",
@@ -888,7 +979,8 @@
         "T33"
       ],
       "requirement_ids": [
-        "R078"
+        "R078",
+        "R002"
       ],
       "status": "PLANNED",
       "definition_of_done": [

@@ -1,6 +1,6 @@
 {
-  "specification": "OPS-BUILD-1.2 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
-  "note": "Target acceptance requirements, not passing tests. Milestones follow the first owning task in tasks.json; R081-R117 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement.",
+  "specification": "OPS-BUILD-1.3 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
+  "note": "Target acceptance requirements, not passing tests. Milestone = earliest owning task; R097 accrues across T24/T27/T29/T32. R081-R123 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement.",
   "requirements": [
     {
       "id": "R001",
@@ -19,7 +19,7 @@
     },
     {
       "id": "R002",
-      "milestone": "M00",
+      "milestone": "M14",
       "category": "reference",
       "requirement": "Feature claims distinguish implemented, planned and unverified",
       "blocking_for_v1": true,
@@ -29,7 +29,7 @@
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "owning_tasks": [
-        "T01"
+        "T34"
       ]
     },
     {
@@ -454,7 +454,7 @@
     },
     {
       "id": "R031",
-      "milestone": "M05",
+      "milestone": "M01",
       "category": "mcp",
       "requirement": "Selected SDK versions pass actual imports and contracts",
       "blocking_for_v1": true,
@@ -464,12 +464,13 @@
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "owning_tasks": [
+        "T04",
         "T15"
       ]
     },
     {
       "id": "R032",
-      "milestone": "M06",
+      "milestone": "M05",
       "category": "retrieval",
       "requirement": "Source ingestion is versioned effective and idempotent",
       "blocking_for_v1": true,
@@ -484,7 +485,7 @@
     },
     {
       "id": "R033",
-      "milestone": "M06",
+      "milestone": "M05",
       "category": "retrieval",
       "requirement": "Lexical baseline has labeled evidence measurements",
       "blocking_for_v1": true,
@@ -689,7 +690,8 @@
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "owning_tasks": [
-        "T21"
+        "T21",
+        "T22"
       ]
     },
     {
@@ -1060,11 +1062,13 @@
       "blocking_for_v1": true,
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
       "suggested_test": "tests/acceptance/test_r071_final_holdout_is_kept_out_of_the_tuning_context.py",
-      "expected_evidence": "Record split grouping/reviewer custody/used status; leaked cases replaced before new holdout claim.",
+      "expected_evidence": "Holdout intents sealed (T03) and gold labels sealed (T41) with hashes recorded outside the local repo before dependent tasks; holdout usage logged in T25.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "owning_tasks": [
-        "T03"
+        "T03",
+        "T41",
+        "T25"
       ]
     },
     {
@@ -1207,7 +1211,7 @@
       "category": "model",
       "requirement": "Local model runtime profile is measured before use",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "Probe report: >=30 calls, thinking disabled, num_ctx set, first-pass and post-repair validity with Wilson CIs, latency, VRAM, cancellation behaviour, digest; owner decision recorded.",
+      "expected_evidence": "Probe report: >=30 distinct inputs, isolated env freeze, thinking disabled, num_ctx set, first-pass and post-repair validity with Wilson CIs, identical-repeat rate, latency, VRAM, cancellation behaviour, digest; owner decision recorded.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
@@ -1447,7 +1451,7 @@
       "category": "destination",
       "requirement": "Destination key table is atomic, permanent and executor-only",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "Concurrent POST/abort on one key yield one state; hash recomputed; keys never deleted; non-executor tokens 403.",
+      "expected_evidence": "Abort stores the grant hash; a POST onto an ABORTED key returns the tombstone regardless of hash; concurrent POST/abort yield one state; keys never deleted; non-executor tokens 403.",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
@@ -1486,9 +1490,10 @@
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
-      "milestone": "M04",
+      "milestone": "M02",
       "blocking_for_v1": true,
       "owning_tasks": [
+        "T10",
         "T13"
       ],
       "suggested_test": "tests/acceptance/test_r098_fault_injection_hooks_are_unreachable_outside_th.py"
@@ -1502,7 +1507,7 @@
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
-      "milestone": "M06",
+      "milestone": "M05",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T17"
@@ -1674,7 +1679,7 @@
       "category": "safety",
       "requirement": "Unresolved actions block duplicate incidents for the same asset and interval",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
-      "expected_evidence": "Second run for the same asset/overlapping interval cannot freeze or grant while one is unresolved.",
+      "expected_evidence": "Second run for the same asset/overlapping interval cannot freeze or grant while one is unresolved, including two concurrent conversations (advisory lock).",
       "evidence_status": "NOT_RUN",
       "evidence_paths": [],
       "source": "SPEC_AMENDMENTS.md",
@@ -1796,6 +1801,103 @@
         "T26"
       ],
       "suggested_test": "tests/acceptance/test_r117_the_eight_v1_ui_states_are_rendered_truthfully.py"
+    },
+    {
+      "id": "R118",
+      "category": "recovery",
+      "requirement": "Cancellation before send is never overtaken by dispatch",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Two-connection test: cancel commits vs mark_sent; nothing is POSTed and the abort yields a tombstone.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "suggested_test": "tests/acceptance/test_r118_cancellation_before_send_is_never_overtaken_by_d.py",
+      "milestone": "M08",
+      "owning_tasks": [
+        "T22"
+      ],
+      "blocking_for_v1": true
+    },
+    {
+      "id": "R119",
+      "category": "recovery",
+      "requirement": "Escalated actions have an audited operator resolution",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "ops resolve-escalation records operator, reason and time; run ends ABANDONED_UNVERIFIED; asset guard released; later destination evidence is appended, not hidden.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "suggested_test": "tests/acceptance/test_r119_escalated_actions_have_an_audited_operator_resol.py",
+      "milestone": "M08",
+      "owning_tasks": [
+        "T22"
+      ],
+      "blocking_for_v1": true
+    },
+    {
+      "id": "R120",
+      "category": "domain",
+      "requirement": "A conversation never holds two active runs",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "Revision from BLOCKED_REVIEW with another active run returns 409 SLOT_OCCUPIED.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "suggested_test": "tests/acceptance/test_r120_a_conversation_never_holds_two_active_runs.py",
+      "milestone": "M01",
+      "owning_tasks": [
+        "T07",
+        "T21"
+      ],
+      "blocking_for_v1": true
+    },
+    {
+      "id": "R121",
+      "category": "reference",
+      "requirement": "Relocated reference stays byte-identical and runnable",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "verify_handoff --reference-code passes via remap; reference suite runs from reference/.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "suggested_test": "tests/acceptance/test_r121_relocated_reference_stays_byte_identical_and_run.py",
+      "milestone": "M01",
+      "owning_tasks": [
+        "T04"
+      ],
+      "blocking_for_v1": true
+    },
+    {
+      "id": "R122",
+      "category": "security",
+      "requirement": "Checkpoint tables are reachable only by the worker",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "api role: permission denied on schema checkpoints; worker DML only; migrator ran setup().",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "suggested_test": "tests/acceptance/test_r122_checkpoint_tables_are_reachable_only_by_the_work.py",
+      "milestone": "M02",
+      "owning_tasks": [
+        "T09"
+      ],
+      "blocking_for_v1": true
+    },
+    {
+      "id": "R123",
+      "category": "reference",
+      "requirement": "Every reference test is traced to a port, replacement or justified drop",
+      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "expected_evidence": "reference/TRACEABILITY.md lists all 58 with owning tasks; ported tests pass.",
+      "evidence_status": "NOT_RUN",
+      "evidence_paths": [],
+      "source": "SPEC_AMENDMENTS.md",
+      "suggested_test": "tests/acceptance/test_r123_every_reference_test_is_traced_to_a_port_replace.py",
+      "milestone": "M01",
+      "owning_tasks": [
+        "T07"
+      ],
+      "blocking_for_v1": true
     }
   ]
 }
