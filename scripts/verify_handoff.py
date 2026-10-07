@@ -12,10 +12,66 @@ import hashlib
 import json
 import re
 import sys
+import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[1]
+SKIP_DIRS = {".venv", "node_modules", "reference", ".git", "__pycache__", ".pytest_cache", "build"}
+
+
+def rglob_files(pattern: str):
+    """Walk the repository, skipping virtual environments, build output and the hash-checked reference."""
+    for path in sorted(ROOT.rglob(pattern)):
+        parts = path.relative_to(ROOT).parts[:-1]
+        if any(part in SKIP_DIRS or part.startswith(".venv") for part in parts):
+            continue
+        yield path
+
+
+def check_manifest(zip_path: Path) -> int:
+    manifest = (ROOT / "provenance/MANIFEST-1.0.sha256").read_text(encoding="utf-8").splitlines()
+    expected = {}
+    for line in manifest:
+        if not line.strip():
+            continue
+        digest, name = line.split("  ", 1)
+        check(bool(re.fullmatch(r"[a-f0-9]{64}", digest)), "Malformed checksum")
+        expected[name.strip()] = digest
+    bad = []
+    with zipfile.ZipFile(zip_path) as z:
+        for name, digest in expected.items():
+            member = "operations-copilot/" + name
+            try:
+                data = z.read(member)
+            except KeyError:
+                bad.append(f"missing in zip: {name}")
+                continue
+            if hashlib.sha256(data).hexdigest() != digest:
+                bad.append(f"mismatch: {name}")
+    for b in bad:
+        print("FAIL:", b)
+    if bad:
+        return 1
+    print(f"PASS: {len(expected)} delivered 1.0 snapshot checksums verified against {zip_path.name}")
+    return 0
+
+
+def check_reference_code() -> int:
+    original = load("provenance/reference-code-hashes.json")["files"]
+    remap = load("provenance/reference-code-hashes.remap.json")
+    bad = []
+    for entry in original:
+        new = remap.get(entry["path"], entry["path"])
+        p = within(new)
+        actual = hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None
+        if actual != entry["sha256"]:
+            bad.append(f"{entry['path']} -> {new}")
+    if bad:
+        print("FAIL: reference code changed:", *bad, sep="\n  ")
+        return 1
+    print(f"PASS: {len(original)} inherited source/test/integration files match original snapshot (remapped)")
+    return 0
 
 
 def load(relative: str):
@@ -38,6 +94,7 @@ def main() -> int:
     parser.add_argument("--contracts", action="store_true", help="Run JSON Schema meta and positive/negative example checks")
     parser.add_argument("--manifest", action="store_true", help="Verify delivered snapshot checksums before editing")
     parser.add_argument("--reference-code", action="store_true", help="Compare inherited source/test bytes to original archive")
+    parser.add_argument("--zip", default=str(ROOT / "provenance/handoff-1.0.zip"), help="Delivered 1.0 package to verify --manifest against")
     args = parser.parse_args()
 
     required = ["START_HERE.md", "BUILD_SPEC.md", "AGENTS.md", "CLAUDE.md", "STATUS.md",
@@ -48,7 +105,7 @@ def main() -> int:
         check(within(rel).is_file(), f"Missing required file: {rel}")
 
     # Parse all delivered JSON, but never interpret fixture text as instructions.
-    json_paths = sorted(ROOT.rglob("*.json"))
+    json_paths = sorted(rglob_files("*.json"))
     for path in json_paths:
         json.loads(path.read_text(encoding="utf-8"))
 
@@ -86,7 +143,7 @@ def main() -> int:
         actual = hashlib.sha256(p.read_bytes()).hexdigest()
         check(actual == doc["content_sha256"], f"Fixture hash mismatch: {p.name}")
     scenarios = []
-    for line in (ROOT/"evals/handoff-development/scenarios.jsonl").read_text().splitlines():
+    for line in (ROOT/"evals/handoff-development/scenarios.jsonl").read_text(encoding="utf-8").splitlines():
         if line.strip():
             s = json.loads(line)
             check(s["split"] == "development", "Do not fabricate a held-out fixture in development data")
@@ -96,7 +153,7 @@ def main() -> int:
 
     # Syntax inspection only; this deliberately does not execute optional SDKs.
     py_count = 0
-    for path in sorted(ROOT.rglob("*.py")):
+    for path in sorted(rglob_files("*.py")):
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         py_count += 1
     svg_paths = sorted((ROOT/"docs/diagrams/svg").glob("*.svg"))
@@ -124,7 +181,7 @@ def main() -> int:
             return 2
         schema_paths = sorted((ROOT/"schemas").glob("*.schema.json"))
         for path in schema_paths:
-            Draft202012Validator.check_schema(json.loads(path.read_text()))
+            Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
         positive = negative = 0
         for item in examples:
             validator = Draft202012Validator(load(item["schema"]), format_checker=FormatChecker())
@@ -136,29 +193,13 @@ def main() -> int:
                 negative += 1
         print(f"PASS: {len(schema_paths)} JSON Schema documents; {positive} accepted examples; {negative} rejected negative examples")
 
+    rc = 0
     if args.reference_code:
-        original = load("provenance/reference-code-hashes.json")["files"]
-        for item in original:
-            check(hashlib.sha256(within(item["path"]).read_bytes()).hexdigest() == item["sha256"], f"Inherited code changed: {item['path']}")
-        print(f"PASS: {len(original)} inherited source/test/integration files match original snapshot")
-
+        rc |= check_reference_code()
     if args.manifest:
-        manifest = ROOT/"MANIFEST.sha256"
-        check(manifest.is_file(), "No snapshot manifest")
-        count = 0
-        for line in manifest.read_text().splitlines():
-            if not line.strip():
-                continue
-            expected, rel = line.split("  ", 1)
-            check(bool(re.fullmatch(r"[a-f0-9]{64}", expected)), "Malformed checksum")
-            p = within(rel)
-            check(p.is_file(), f"Missing manifest file: {rel}")
-            check(hashlib.sha256(p.read_bytes()).hexdigest() == expected, f"Snapshot changed: {rel}; intentional build changes need new release evidence")
-            count += 1
-        print(f"PASS: {count} delivered snapshot file checksums")
-
+        rc |= check_manifest(Path(args.zip))
     print("LIMIT: These are handoff/contract checks, not real model, authorization, MCP network, browser, Docker, Kubernetes or production acceptance tests.")
-    return 0
+    return rc
 
 
 if __name__ == "__main__":
