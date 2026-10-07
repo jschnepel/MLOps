@@ -31,3 +31,10 @@ def test_write_is_lf_without_bom(tmp_path: Path):
 def test_committed_file_matches_generator():
     committed = json.loads(Path("data/seed-ids.json").read_text(encoding="utf-8"))
     assert committed == generate()  # drift guard: regenerate after any generator change
+
+
+def test_golden_ids_catch_a_regenerated_namespace_or_name_change():
+    """External systems (Keycloak realm T05, fixtures T45) consume these IDs; a regenerated change must fail here."""
+    ids = generate()
+    assert ids["tenants"]["alpha"] == "3ea79c95-914c-52cb-9d10-c4e19dda8ff7"
+    assert ids["personas"]["alex"]["user_id"] == "2fc05986-c7ec-544c-b628-fdb112bbf18a"
