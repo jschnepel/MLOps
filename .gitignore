@@ -22,3 +22,6 @@ reports/local-*
 
 # in-tree build artifacts of non-editable installs of the reference
 build/
+
+# Local scratch for plan execution ledgers and reports (never committed)
+.superpowers/
