@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import unicodedata
-from datetime import UTC
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Final, Literal
 from uuid import UUID
@@ -74,7 +74,11 @@ def _nfc(value: object) -> object:
 
 def _iso_instant(value: object) -> object:
     # Pydantic's lax datetime parsing also takes epoch numbers and date-only forms, and RFC 3339 reserves `-00:00` for
-    # "offset unknown". A requester-supplied instant must be a full ISO-8601 string that says UTC explicitly.
+    # "offset unknown". A requester-supplied instant must be a full ISO-8601 string that says UTC explicitly. An aware
+    # `datetime` object passes through untouched: server code (T09's freeze path) builds payloads from database values,
+    # and `_utc` still rejects a non-zero offset afterwards.
+    if isinstance(value, datetime) and value.tzinfo is not None:
+        return value
     if not (isinstance(value, str) and "T" in value and value.endswith(("Z", "+00:00"))):
         raise ValueError("timestamps must be ISO-8601 with a date, 'T' and an explicit offset")
     return value
@@ -118,8 +122,12 @@ def load[M: BaseModel](model: type[M], text: str) -> M:
     """
     try:
         json.loads(text, object_pairs_hook=_reject_duplicate_pairs)
-    except json.JSONDecodeError:
-        pass  # malformed JSON is pydantic's error to report, so callers see one exception type for it
+    except DuplicateKey:
+        raise
+    except (ValueError, RecursionError):
+        # Malformed JSON, an oversized int or absurd nesting: pydantic reports these as ValidationError, so callers see
+        # exactly the two exception types the docstring names and never a bare RecursionError from the pre-scan.
+        pass
     return model.model_validate_json(text)
 
 

@@ -153,8 +153,27 @@ def test_duplicate_json_keys_are_rejected():
         c.load(c.RevisionRequest, '{"expected_version": 1, "expected_version": 2}')
     with pytest.raises(c.DuplicateKey, match="hours"):
         c.load(c.MessageRequest, '{"kind": "ask", "text": "t", "context": {"hours": 1, "hours": 2}}')
+    with pytest.raises(c.DuplicateKey, match="asset_id"):  # inside the hashed payload too
+        c.load(c.ProposalPayload, json.dumps(PAYLOAD)[:-1] + ', "asset_id": "B22"}')
     with pytest.raises(ValidationError):  # malformed JSON stays pydantic's error
         c.load(c.RevisionRequest, "{")
+    with pytest.raises(ValidationError):  # absurd nesting: never a bare RecursionError from the duplicate-key scan
+        c.load(c.RevisionRequest, "[" * 100000)
+
+
+def test_server_code_may_build_contracts_from_aware_datetimes():
+    """T09's freeze path builds payloads from database timestamps, so an aware datetime object is accepted in python
+    mode; a naive one and a non-UTC one still fail the explicit-offset rule."""
+    body = {
+        **PAYLOAD,
+        "start_at": datetime(2026, 10, 5, 12, tzinfo=UTC),
+        "end_at": datetime(2026, 10, 6, 12, tzinfo=UTC),
+        "expires_at": datetime(2026, 10, 6, 12, 15, tzinfo=UTC),
+    }
+    body = {**body, "tenant_id": ALPHA, "run_id": RUN, "proposal_id": PROP}
+    assert c.ProposalPayload.model_validate(body).start_at == datetime(2026, 10, 5, 12, tzinfo=UTC)
+    with pytest.raises(ValidationError):
+        c.ProposalPayload.model_validate({**body, "start_at": datetime(2026, 10, 5, 12)})  # noqa: DTZ001 - the naive case is the point
 
 
 def test_run_request_fields():
