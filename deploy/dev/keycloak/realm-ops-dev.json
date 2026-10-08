@@ -103,6 +103,18 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "ops-view-users",
+      "name": "Admin-API reader (enabled-status checks and membership sync)",
+      "description": "Service account limited to realm-management/view-users; used by the API's fail-closed enabled check and the sweeper's membership sync (AM-20.7)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${OPS_KC_CLIENT_SECRET_OPS_VIEW_USERS}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
     }
   ],
   "users": [
@@ -127,6 +139,45 @@
       "emailVerified": true,
       "realmRoles": ["reviewer"],
       "credentials": [{"type": "password", "value": "${OPS_KC_PERSONA_SAM_PASSWORD}", "temporary": false}]
+    },
+    {
+      "id": "abcc1200-6791-57ab-87b5-9392d356b512",
+      "username": "lee",
+      "email": "lee@alpha.example",
+      "firstName": "Lee",
+      "lastName": "Alpha",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["reader"],
+      "credentials": [{"type": "password", "value": "${OPS_KC_PERSONA_LEE_PASSWORD}", "temporary": false}]
+    },
+    {
+      "id": "2f73af91-4906-5b79-9144-22c0df4e2316",
+      "username": "riley",
+      "email": "riley@beta.example",
+      "firstName": "Riley",
+      "lastName": "Beta",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["requester"],
+      "credentials": [{"type": "password", "value": "${OPS_KC_PERSONA_RILEY_PASSWORD}", "temporary": false}]
+    },
+    {
+      "id": "cb551e64-83ec-582b-9047-8dadf20e151a",
+      "username": "jordan",
+      "email": "jordan@beta.example",
+      "firstName": "Jordan",
+      "lastName": "Beta",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["reviewer"],
+      "credentials": [{"type": "password", "value": "${OPS_KC_PERSONA_JORDAN_PASSWORD}", "temporary": false}]
+    },
+    {
+      "username": "service-account-ops-view-users",
+      "enabled": true,
+      "serviceAccountClientId": "ops-view-users",
+      "clientRoles": {"realm-management": ["view-users"]}
     }
   ]
 }

@@ -55,7 +55,7 @@ def test_mcp_workload_tokens_carry_exactly_their_single_audience(env, secret: Ca
 
 
 def test_persona_token_sub_equals_seed_id(env, secret: Callable[[str], str]) -> None:
-    for name in ("alex", "sam"):
+    for name in SEEDS["personas"]:
         tok = kc.token_password(host_base(env), "ops-dev-direct", name, secret(f"kc_persona_{name}_password"))
         c = kc.claims(tok["access_token"])
         assert c["sub"] == SEEDS["personas"][name]["user_id"], name  # the join key to the seeded PostgreSQL rows

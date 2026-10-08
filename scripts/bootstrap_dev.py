@@ -11,10 +11,14 @@ Secrets live under %LOCALAPPDATA%\\ops-copilot\\secrets (override with OPS_SECRE
 
 from __future__ import annotations
 
+import json
 import os
 import secrets as _secrets
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -28,6 +32,10 @@ SECRET_NAMES: tuple[str, ...] = (
     "kc_client_secret_ops_mcp_write",
     "kc_persona_alex_password",
     "kc_persona_sam_password",
+    "kc_client_secret_ops_view_users",
+    "kc_persona_lee_password",
+    "kc_persona_riley_password",
+    "kc_persona_jordan_password",
 )
 ENV_PATH = Path(".env")
 # Non-default high ports keep clear of a local PostgreSQL (5432) or another Keycloak/web server (8080) on the host.
@@ -98,6 +106,37 @@ def write_env(path: Path, secrets_directory: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
+def delete_bootstrap_admin(base_url: str, username: str, password: str) -> str:
+    """Delete the temporary master-realm admin using its own token (T43). Returns 'deleted' or 'absent'.
+
+    Keycloak creates `tmpadmin` only to get the first login; leaving a master-realm admin with a file-based password
+    in place would be a standing superuser. Keycloak 26.8 answers the password grant for a deleted user with
+    HTTP 400 `invalid_grant` (measured 2026-10-08); 401 is accepted too in case a later version changes it. Absent
+    therefore means "already deleted", which keeps a repeat `up` idempotent.
+    """
+    form = urllib.parse.urlencode(
+        {"grant_type": "password", "client_id": "admin-cli", "username": username, "password": password}
+    ).encode("ascii")
+    try:
+        with urllib.request.urlopen(f"{base_url}/realms/master/protocol/openid-connect/token", form, timeout=20) as r:
+            token = json.loads(r.read())["access_token"]
+    except urllib.error.HTTPError as exc:
+        if exc.code in (400, 401):
+            return "absent"
+        raise
+    auth = {"Authorization": f"Bearer {token}"}
+    q = urllib.parse.urlencode({"username": username, "exact": "true"})
+    with urllib.request.urlopen(
+        urllib.request.Request(f"{base_url}/admin/realms/master/users?{q}", headers=auth), timeout=20
+    ) as r:
+        users = json.loads(r.read())
+    for u in users:
+        req = urllib.request.Request(f"{base_url}/admin/realms/master/users/{u['id']}", headers=auth, method="DELETE")
+        with urllib.request.urlopen(req, timeout=20):
+            pass
+    return "deleted" if users else "absent"
+
+
 def compose(*args: str) -> int:
     """Run `docker compose --profile dev <args>` and return its exit code (the command line is echoed, no secrets)."""
     cmd = ["docker", "compose", "--profile", "dev", *args]
@@ -121,7 +160,12 @@ def main(argv: list[str]) -> int:
     print(f"secrets: {len(created)} created, {len(SECRET_NAMES) - len(created)} kept, in {directory}")
     print(f".env written: {ENV_PATH.resolve()}")
     if command == "up":
-        return compose("up", "-d", "--wait", "--wait-timeout", "240")
+        rc = compose("up", "-d", "--wait", "--wait-timeout", "240")
+        if rc == 0:
+            # The temporary master-realm admin is only needed to bootstrap; remove it with its own token (T43).
+            secret = (directory / "kc_bootstrap_admin_password").read_text(encoding="utf-8")
+            print("bootstrap admin:", delete_bootstrap_admin(f"http://localhost:{KC_HTTP_PORT}", "tmpadmin", secret))
+        return rc
     if command == "down":
         return compose("down")  # deliberately no -v: removing the pg-data volume is an owner-run decision
     if command == "status":

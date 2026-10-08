@@ -55,6 +55,10 @@ services:
       - kc_client_secret_ops_mcp_write
       - kc_persona_alex_password
       - kc_persona_sam_password
+      - kc_client_secret_ops_view_users
+      - kc_persona_lee_password
+      - kc_persona_riley_password
+      - kc_persona_jordan_password
     volumes:
       - ./deploy/dev/keycloak/entrypoint.sh:/opt/ops/entrypoint.sh:ro
       - ./deploy/dev/keycloak/realm-ops-dev.json:/opt/keycloak/data/import/realm-ops-dev.json:ro
@@ -85,6 +89,14 @@ secrets:
     file: ${OPS_SECRETS_DIR}/kc_persona_alex_password
   kc_persona_sam_password:
     file: ${OPS_SECRETS_DIR}/kc_persona_sam_password
+  kc_client_secret_ops_view_users:
+    file: ${OPS_SECRETS_DIR}/kc_client_secret_ops_view_users
+  kc_persona_lee_password:
+    file: ${OPS_SECRETS_DIR}/kc_persona_lee_password
+  kc_persona_riley_password:
+    file: ${OPS_SECRETS_DIR}/kc_persona_riley_password
+  kc_persona_jordan_password:
+    file: ${OPS_SECRETS_DIR}/kc_persona_jordan_password
 
 volumes:
   pg-data:

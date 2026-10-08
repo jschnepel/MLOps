@@ -88,12 +88,24 @@ def test_direct_grant_client_is_public_and_dev_only():
 
 def test_realm_users_carry_seed_ids():
     u = users()
-    for name in ("alex", "sam"):
-        persona = SEEDS["personas"][name]
+    for name, persona in SEEDS["personas"].items():
         assert u[name]["id"] == persona["user_id"], name
         assert u[name]["realmRoles"] == persona["roles"], name
         assert u[name]["enabled"] is True
         assert "attributes" not in u[name]  # tenant membership lives in PostgreSQL (BUILD_SPEC §9), not in Keycloak
+    # Every non-service-account user is a seeded persona: no stray login can exist in the realm.
+    assert {n for n in u if not n.startswith("service-account-")} == set(SEEDS["personas"])
+
+
+def test_view_users_service_account_has_exactly_one_client_role():
+    # Least privilege for the Admin-API reader (AM-20.7): only view-users, no realm roles, no interactive grant.
+    c = clients()["ops-view-users"]
+    assert c["serviceAccountsEnabled"] is True and c["publicClient"] is False
+    assert c["standardFlowEnabled"] is False and c["directAccessGrantsEnabled"] is False
+    sa = users()["service-account-ops-view-users"]
+    assert sa["serviceAccountClientId"] == "ops-view-users"
+    assert sa["clientRoles"] == {"realm-management": ["view-users"]}
+    assert "realmRoles" not in sa or sa["realmRoles"] == []
 
 
 def test_file_is_lf_utf8_without_bom():

@@ -63,3 +63,9 @@ def test_default_secrets_dir_is_outside_repo(monkeypatch):
     d = b.secrets_dir()
     assert "ops-copilot" in d.parts and "secrets" == d.name
     assert Path.cwd() not in d.parents and d != Path.cwd()
+
+
+def test_secret_names_include_all_personas_and_view_users():
+    for name in ("lee", "riley", "jordan"):
+        assert f"kc_persona_{name}_password" in b.SECRET_NAMES
+    assert "kc_client_secret_ops_view_users" in b.SECRET_NAMES
