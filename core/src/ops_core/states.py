@@ -8,8 +8,8 @@ SQL; the Python table is the one tests enumerate.
 Each row's note names the spec section that licenses it (`AM-10 table`, `AM-20.3 performers`, ...) rather than a
 line number, so the citation survives edits to the spec file.
 
-TODO(T09): R082 also asks that a disallowed transition be *logged*; `require_transition` raises, and the SQL
-`transition_run` mirror records the refusal where the audit trail lives.
+R082's logged half: the SQL mirror `app.transition_run` (migrations/app/versions/0003) raises `OC004` with the refused
+row in DETAIL, and `ops_core.persistence.transition_run` logs it at WARNING.
 """
 
 from __future__ import annotations

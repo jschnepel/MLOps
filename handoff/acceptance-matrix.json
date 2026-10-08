@@ -88,14 +88,18 @@
       "category": "postgres",
       "requirement": "Migrations run on real PostgreSQL",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r006_migrations_run_on_real_postgresql.py",
       "expected_evidence": "Create empty DB, migrate, rerun safely and test supported old-schema compatibility.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_roles_live.py",
+        "tests/e2e/test_migrations_and_persistence.py"
+      ],
       "owning_tasks": [
         "T09"
-      ]
+      ],
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R007",
@@ -103,14 +107,17 @@
       "category": "security",
       "requirement": "Runtime-role row security isolates tenants",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r007_runtime_role_row_security_isolates_tenants.py",
       "expected_evidence": "Run as non-owner/non-BYPASSRLS; exact beta IDs cannot expose data to alpha.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_roles_live.py"
+      ],
       "owning_tasks": [
         "T09"
-      ]
+      ],
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R008",
@@ -118,14 +125,17 @@
       "category": "security",
       "requirement": "Connection pooling does not leak tenant context",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r008_connection_pooling_does_not_leak_tenant_context.py",
       "expected_evidence": "Reuse the same pooled connection for different tenants and assert no residual access.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_roles_live.py"
+      ],
       "owning_tasks": [
         "T09"
-      ]
+      ],
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R009",
@@ -133,14 +143,17 @@
       "category": "postgres",
       "requirement": "Tenant-scoped child references cannot cross tenants",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r009_tenant_scoped_child_references_cannot_cross_tena.py",
       "expected_evidence": "Try attaching alpha proposal/message/approval records to beta parents; DB refuses.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_roles_live.py"
+      ],
       "owning_tasks": [
         "T09"
-      ]
+      ],
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R010",
@@ -148,14 +161,18 @@
       "category": "recovery",
       "requirement": "Destination records have an independent data boundary",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r010_destination_records_have_an_independent_data_bou.py",
       "expected_evidence": "Restore or reset only the application store; retained destination receipt still proves its existing incident.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_incident_sim_live.py",
+        "tests/plan_e/test_incident_sim_t10.py"
+      ],
       "owning_tasks": [
         "T10"
-      ]
+      ],
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R011",
@@ -705,14 +722,18 @@
       "category": "idempotency",
       "requirement": "Concurrent same-key writes commit one incident",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r047_concurrent_same_key_writes_commit_one_incident.py",
       "expected_evidence": "Send concurrent duplicates; atomic destination record and one returned receipt identity.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_incident_sim_live.py",
+        "tests/plan_e/test_incident_sim_t10.py"
+      ],
       "owning_tasks": [
         "T10"
-      ]
+      ],
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R048",
@@ -1244,7 +1265,7 @@
         "T07"
       ],
       "suggested_test": "tests/acceptance/test_r082_run_transitions_are_enforced_from_one_table_incl.py",
-      "note": "\"logged\" half is TODO(T09); the local evidence covers the rest"
+      "note": "logged half done in Plan E: transition_run raises OC004 (server log) and the wrapper logs at WARNING"
     },
     {
       "id": "R083",
@@ -1270,17 +1291,20 @@
       "id": "R084",
       "category": "security",
       "requirement": "MCP executor role has no direct table privileges",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "As mcp_exec, SELECT on any application table is permission denied.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_roles_live.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M02",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T09"
       ],
-      "suggested_test": "tests/acceptance/test_r084_mcp_executor_role_has_no_direct_table_privileges.py"
+      "suggested_test": "tests/acceptance/test_r084_mcp_executor_role_has_no_direct_table_privileges.py",
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R085",
@@ -1462,17 +1486,21 @@
       "id": "R096",
       "category": "destination",
       "requirement": "Destination key table is atomic, permanent and executor-only",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Concurrent POST/abort on one key yield one state; POST and abort onto ABORTED or REJECTED keys return that tombstone; hash recomputed; keys never deleted; non-executor tokens or wrong azp 403.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_incident_sim_live.py",
+        "tests/plan_e/test_incident_sim_t10.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M02",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T10"
       ],
-      "suggested_test": "tests/acceptance/test_r096_destination_key_table_is_atomic_permanent_and_ex.py"
+      "suggested_test": "tests/acceptance/test_r096_destination_key_table_is_atomic_permanent_and_ex.py",
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R097",
@@ -1497,10 +1525,13 @@
       "id": "R098",
       "category": "security",
       "requirement": "Fault-injection hooks are unreachable outside the test profile",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Hook routes 404 in default and demo profiles; factories refuse to start without PROFILE=test.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/plan_e/test_incident_sim_t10.py",
+        "tests/plan_e/test_faults.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M02",
       "blocking_for_v1": true,
@@ -1508,7 +1539,8 @@
         "T10",
         "T13"
       ],
-      "suggested_test": "tests/acceptance/test_r098_fault_injection_hooks_are_unreachable_outside_th.py"
+      "suggested_test": "tests/acceptance/test_r098_fault_injection_hooks_are_unreachable_outside_th.py",
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R099",
@@ -1637,17 +1669,22 @@
       "id": "R106",
       "category": "security",
       "requirement": "Definer functions are hardened and tenant-isolated by explicit policies",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "search_path fixed, PUBLIC execute revoked, GRANT EXECUTE only to named callers, owner app_definer is not a table owner, FORCE RLS and the AM-20.5 policy text present per table; cross-tenant access through functions fails.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_roles_live.py",
+        "tests/e2e/test_definers_run_path_live.py",
+        "tests/e2e/test_definers_write_path_live.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M02",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T09"
       ],
-      "suggested_test": "tests/acceptance/test_r106_definer_functions_are_hardened_and_tenant_isolat.py"
+      "suggested_test": "tests/acceptance/test_r106_definer_functions_are_hardened_and_tenant_isolat.py",
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R107",
@@ -1904,7 +1941,8 @@
       "owning_tasks": [
         "T09"
       ],
-      "blocking_for_v1": true
+      "blocking_for_v1": true,
+      "note": "deferred to T20: langgraph-checkpoint-postgres is not locked (Plan E ruling 2)"
     },
     {
       "id": "R123",
@@ -1928,17 +1966,20 @@
       "id": "R124",
       "category": "security",
       "requirement": "Runtime roles hold exactly their AM-20.2 grants",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Per-role tests enumerate pg_class grants against AM-20.2; any extra or missing grant fails; audit tables reject UPDATE/DELETE for every runtime role.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_roles_live.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r124_runtime_roles_hold_only_their_matrix_privileges.py",
       "milestone": "M02",
       "owning_tasks": [
         "T09"
       ],
-      "blocking_for_v1": true
+      "blocking_for_v1": true,
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R125",
@@ -1961,17 +2002,20 @@
       "id": "R126",
       "category": "security",
       "requirement": "Test time cannot be shifted outside the test profile",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "In dev/demo, app.test_clock does not exist and SET of any GUC does not change app.current_time(); in test only the harness role can write the offset.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_clock_live.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r126_test_time_cannot_be_shifted_outside_the_test_pro.py",
       "milestone": "M02",
       "owning_tasks": [
         "T09"
       ],
-      "blocking_for_v1": true
+      "blocking_for_v1": true,
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R127",
@@ -1993,17 +2037,21 @@
       "id": "R128",
       "category": "security",
       "requirement": "Every run transition and event goes through a definer function",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Direct INSERT into events/decisions/proposals/execution_grant/action_attempt_state and UPDATE of runs.state are denied for api, worker and sweeper; transition_run rejects callers outside its list and transitions outside the table.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_definers_run_path_live.py",
+        "tests/e2e/test_roles_live.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r128_every_run_transition_and_event_goes_through_a_de.py",
       "milestone": "M02",
       "owning_tasks": [
         "T09"
       ],
-      "blocking_for_v1": true
+      "blocking_for_v1": true,
+      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R129",

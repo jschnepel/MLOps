@@ -22,6 +22,8 @@ files), so nothing is throwaway.
    processes and writes `reports/skeleton/r105-walking-skeleton.txt`. The in-process live tests of Tasks 5 and 6
    bind 18081 and 18090, so their ports never collide with a running skeleton; they purge their rows in `finally`,
    so a running skeleton worker finds no claimable job of theirs.
+   The one-command form of the proof is `PYTHONUTF8=1 uv run python scripts/check.py --profile test`: the same four
+   steps as the default profile, with `OPS_LIVE=1` and `PROFILE=test` exported so the live suite runs too (dev stack up).
 5. The realm must carry Task 1's `ops-api` audience: after any `bootstrap_dev.py down`/`up` from a checkout without
    it, run `down` and `up` again from this branch, or persona tokens have no audience and every API call is 401.
 6. Every live run rewrites tracked evidence (`reports/skeleton/r105-walking-skeleton.txt`, and the Plan B suite's
