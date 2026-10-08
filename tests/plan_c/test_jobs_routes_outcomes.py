@@ -318,7 +318,9 @@ def test_strict_models_reject_loose_values():
     common = {"run_id": ACTION, "prompt_version": "v1", "corpus_version": "c"}
     ok = RunManifest(model_route=ModelRoute.FAKE, model_digest=None, retrieval_mode="vector_exact", **common)
     assert ok.retrieval_mode == "vector_exact"
+    # mypy does not check tests/ (scripts/check.py runs it on member src only), so no `type: ignore` is needed for the
+    # deliberately wrong literal below; pydantic's runtime validation is what the test exercises.
     with pytest.raises(ValidationError):
-        RunManifest(model_route=ModelRoute.FAKE, model_digest=None, retrieval_mode="vector", **common)  # type: ignore[arg-type]
+        RunManifest(model_route=ModelRoute.FAKE, model_digest=None, retrieval_mode="vector", **common)
     with pytest.raises(ValidationError):
-        RunManifest(model_route=ModelRoute.QWEN3_8B, model_digest=SHA.upper(), retrieval_mode="lexical", **common)  # type: ignore[arg-type]
+        RunManifest(model_route=ModelRoute.QWEN3_8B, model_digest=SHA.upper(), retrieval_mode="lexical", **common)
