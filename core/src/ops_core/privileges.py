@@ -6,9 +6,9 @@ tables each revision creates or changes (never for "every table": an applied rev
 added here), and the R124/R106 tests enumerate the catalogs against it, so an extra or missing grant fails a test
 instead of hiding. Rows exist only for tables that exist; the owners of later tables (outbox → T14, feedback and
 idempotency_request → T12, operator_resolutions → T22, documents/chunks/embeddings → T17, model_permit → T13) add
-their rows. Four departures from the printed table, each a proposed erratum (Plan E rulings 6, 10, 17, 23): the worker (not the
-sweeper) may UPDATE jobs.available_at (re-queue after a transport failure), app_definer may UPDATE runs.updated_at,
-the `transitions` table (the T07 table mirrored in SQL) is readable by app_definer only, and no definer function
+their rows. Four departures from the printed table, each a proposed erratum (Plan E rulings 6, 10, 17, 23): the
+worker (not the sweeper) may UPDATE jobs.available_at (re-queue after a transport failure), app_definer may UPDATE
+runs.updated_at, the `transitions` table (the T07 table mirrored in SQL) is readable by app_definer only, and no definer function
 takes a row lock on proposals, decisions, memberships or execution_grant (a lock needs UPDATE, which the matrix
 withholds). `test_harness` exists only in the test profile: the main-line revisions grant it nothing; the testclock
 branch grants it schema USAGE, EXECUTE on current_time() and its test_clock cells.
