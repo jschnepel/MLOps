@@ -9,7 +9,10 @@ carry comments, so the reasons for its shape are recorded here and in `docs/runb
 
 import json
 import re
+import sys
 from pathlib import Path
+
+import pytest
 
 REALM = Path("deploy/dev/keycloak/realm-ops-dev.json")
 SEEDS = json.loads(Path("data/seed-ids.json").read_text(encoding="utf-8"))
@@ -47,14 +50,38 @@ def test_realm_name_and_roles():
 
 
 def test_every_secret_and_password_is_a_placeholder():
-    # Failure messages name the client or user and the field only: echoing the offending value would print the very
-    # literal secret this test exists to catch into the terminal or CI log.
-    for cid, c in clients().items():
-        if not c.get("publicClient", False):
-            assert PLACEHOLDER.match(c["secret"]), (cid, "secret")
-    for name, u in users().items():
-        for cred in u.get("credentials", []):
-            assert cred["type"] == "password" and PLACEHOLDER.match(cred["value"]), (name, "credentials[].value")
+    # Pytest's assertion rewriting appends the evaluated operands to a failure even when a custom message is given,
+    # so `assert PLACEHOLDER.match(secret), name` would print the very literal this test exists to catch into the
+    # terminal or CI log. Each check therefore collects identifiers only and asserts on that list; the values never
+    # appear in an asserted expression. `test_placeholder_failure_message_never_prints_the_literal` proves it.
+    bad_clients = [
+        cid for cid, c in clients().items() if not c.get("publicClient", False) and not PLACEHOLDER.match(c["secret"])
+    ]
+    assert not bad_clients, f"client secrets that are not placeholders: {bad_clients}"
+    bad_users = [
+        name
+        for name, u in users().items()
+        for cred in u.get("credentials", [])
+        if cred["type"] != "password" or not PLACEHOLDER.match(cred["value"])
+    ]
+    assert not bad_users, f"users whose credentials[].value is not a placeholder: {bad_users}"
+
+
+def test_placeholder_failure_message_never_prints_the_literal(tmp_path, monkeypatch):
+    # Proof for the redaction claim: tamper a copy of the realm with a literal secret and show that the failure text
+    # names the client but does not contain the literal. Under the old `assert PLACEHOLDER.match(v), (cid, ...)`
+    # form pytest's rewriting appended the operand and this test failed.
+    literal = "LITERAL-SECRET-DO-NOT-PRINT-7f3a"
+    doc = load()
+    target = next(c for c in doc["clients"] if not c.get("publicClient", False))
+    target["secret"] = literal
+    tampered = tmp_path / "realm.json"
+    tampered.write_text(json.dumps(doc), encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "REALM", tampered)
+    with pytest.raises(AssertionError) as excinfo:
+        test_every_secret_and_password_is_a_placeholder()
+    assert literal not in str(excinfo.value)
+    assert target["clientId"] in str(excinfo.value)
 
 
 def test_workload_clients_are_service_accounts_with_audiences():
