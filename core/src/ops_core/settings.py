@@ -1,8 +1,8 @@
 """Process configuration shared by every skeleton service: plain environment variables plus secret files.
 
 Secrets never travel in environment variables (BUILD_SPEC §22; Plan B's compose test refuses a PASSWORD or SECRET key
-that is not a `_FILE` path), so a service reads each secret once from `OPS_SECRETS_DIR/<name>` at start and keeps it in
-memory. Everything else — hosts, ports, URLs, the model mode — is an `OPS_*` variable with a dev default that matches
+that is not a `_FILE` path), so a service reads each secret once from `OPS_SECRETS_DIR/<name>` at start and keeps it
+in memory. Everything else — hosts, ports, URLs, the model mode — is an `OPS_*` variable with a dev default that matches
 the `.env` written by scripts/bootstrap_dev.py, so a process started by hand against the dev stack needs only
 `OPS_SECRETS_DIR`. The MCP resource URLs are audience identifiers (what the realm's mappers put in `aud`), distinct
 from the loopback listen URLs the host processes answer on; T30 makes them coincide when the servers are containerised.

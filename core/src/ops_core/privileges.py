@@ -4,9 +4,9 @@ function's callers (SPEC_AMENDMENTS AM-20.1, AM-20.2, AM-20.3, AM-20.5).
 One source of truth for two consumers: the migrations render GRANT, REVOKE and POLICY statements from it for the
 tables each revision creates or changes (never for "every table": an applied revision must not change when a row is
 added here), and the R124/R106 tests enumerate the catalogs against it, so an extra or missing grant fails a test
-instead of hiding. Rows exist only for tables that exist; the owners of later tables (outbox → T14, feedback and idempotency_request
-→ T12, operator_resolutions → T22, documents/chunks/embeddings → T17, model_permit → T13) add their rows. Four
-departures from the printed table, each a proposed erratum (Plan E rulings 6, 10, 17, 23): the worker (not the
+instead of hiding. Rows exist only for tables that exist; the owners of later tables (outbox → T14, feedback and
+idempotency_request → T12, operator_resolutions → T22, documents/chunks/embeddings → T17, model_permit → T13) add
+their rows. Four departures from the printed table, each a proposed erratum (Plan E rulings 6, 10, 17, 23): the worker (not the
 sweeper) may UPDATE jobs.available_at (re-queue after a transport failure), app_definer may UPDATE runs.updated_at,
 the `transitions` table (the T07 table mirrored in SQL) is readable by app_definer only, and no definer function
 takes a row lock on proposals, decisions, memberships or execution_grant (a lock needs UPDATE, which the matrix
@@ -239,6 +239,8 @@ def function_grant_statements(
     """
     if callers is None and name in HELPER_FUNCTIONS:
         return [f"REVOKE ALL ON FUNCTION {SCHEMA}.{name}({HELPER_FUNCTIONS[name]}) FROM PUBLIC"]
+    if name not in DEFINER_FUNCTIONS and name not in HELPER_FUNCTIONS:
+        raise KeyError(f"{name} is not a known definer function or helper")  # a typo must not render a REVOKE
     matrix_args, matrix_callers = DEFINER_FUNCTIONS.get(name, (HELPER_FUNCTIONS.get(name, ""), ()))
     signature = f"{SCHEMA}.{name}({matrix_args if args is None else args})"
     wanted = tuple(matrix_callers if callers is None else callers)
