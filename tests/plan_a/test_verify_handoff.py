@@ -216,3 +216,11 @@ def test_contracts_block_when_the_date_time_validator_is_missing():
         timeout=60,
     )
     assert r.returncode == 2 and "BLOCKED" in r.stderr and "rfc3339-validator" in r.stderr, r.stdout + r.stderr
+
+
+def test_reference_tree_accepts_traceability(tmp_path: Path):
+    """T46: the repo-owned reference/TRACEABILITY.md is allowed (and required) like README.md."""
+    root = _tracked_copy(tmp_path)
+    assert (root / "reference/TRACEABILITY.md").is_file()
+    out = _run_tree(root)
+    assert out.returncode == 0, out.stdout + out.stderr

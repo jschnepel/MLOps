@@ -8,8 +8,8 @@ repository). --contracts requires the jsonschema package, plus rfc3339-validator
 --reference-tree (implied by --reference-code) enforces the whole reference/ tree against
 provenance/reference-tree.json: every listed file must be byte-identical to its zip member in
 the delivered 1.0 package (--zip), no listed file may be missing, no other file may exist under
-reference/ except the repository-owned reference/README.md (caches and build output skipped),
-and every reference-code-hashes.remap.json target must lie under reference/.
+reference/ except the repository-owned reference/README.md and reference/TRACEABILITY.md (caches
+and build output skipped), and every reference-code-hashes.remap.json target must lie under reference/.
 """
 
 from __future__ import annotations
@@ -107,8 +107,9 @@ def check_reference_code() -> int:
 # Generated directories that appear under reference/ when its tests run or it is installed; they are not
 # delivered files, so their presence must not fail the "no extra files" rule.
 TREE_SKIP_DIRS = {"__pycache__", "build", ".pytest_cache"}
-# The only file under reference/ this repository wrote, so it has no counterpart in the delivered zip.
-TREE_REPO_OWNED = {"README.md"}
+# The files under reference/ this repository wrote, so they have no counterpart in the delivered zip: README.md and,
+# from T46, TRACEABILITY.md (R123). Each must exist; check_reference_tree reports a missing one.
+TREE_REPO_OWNED = {"README.md", "TRACEABILITY.md"}
 
 
 def reference_tree_files() -> set[str]:
