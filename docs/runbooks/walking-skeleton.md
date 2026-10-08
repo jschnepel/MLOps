@@ -5,7 +5,8 @@ processes arrive with T30; everything here reads its configuration the way a con
 files), so nothing is throwaway.
 
 1. `uv run python scripts/bootstrap_dev.py up` (Keycloak, Postgres; secrets under `OPS_SECRETS_DIR`).
-2. `uv run python scripts/skeleton.py migrate` (Alembic revision 1 for `ops` and `incident`; creates role `incident`).
+2. `uv run python scripts/skeleton.py migrate` (creates or re-keys the roles from their secret files, then runs the Alembic revisions up to the profile's
+   target for `ops` and `incident`, including the `incident` login role).
    `migrate` reads `PROFILE` (dev by default; `test` also applies the `testclock` branch) and
    `OPS_PG_DB`/`OPS_INCIDENT_PG_DB`; it creates or re-keys the login roles from `postgres_<role>_password` (run
    `scripts/bootstrap_dev.py secrets` once after pulling this branch to generate the seven new files); `up` refuses

@@ -87,14 +87,17 @@ def ensure_login_role(conn: psycopg.Connection[object], name: str, password: str
             BEGIN
                 BEGIN
                     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_setting('ops.role_name')) THEN
-                        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L',
+                        EXECUTE format('CREATE ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS '
+                                       'PASSWORD %L',
                                        current_setting('ops.role_name'), current_setting('ops.role_password'));
                     ELSE
-                        EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L',
+                        EXECUTE format('ALTER ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS '
+                                       'PASSWORD %L',
                                        current_setting('ops.role_name'), current_setting('ops.role_password'));
                     END IF;
                 EXCEPTION WHEN OTHERS THEN
-                    RAISE EXCEPTION 'role bootstrap failed for %', current_setting('ops.role_name') USING ERRCODE = SQLSTATE;
+                    RAISE EXCEPTION 'role bootstrap failed for %', current_setting('ops.role_name')
+                        USING ERRCODE = SQLSTATE;
                 END;
             END
             $$
@@ -119,13 +122,26 @@ def ensure_nologin_role(conn: psycopg.Connection[object], name: str, bypassrls: 
         """
     )
     attribute = sql.SQL("BYPASSRLS") if bypassrls else sql.SQL("NOBYPASSRLS")
-    conn.execute(sql.SQL("ALTER ROLE {} {}").format(sql.Identifier(name), attribute))
+    conn.execute(
+        sql.SQL("ALTER ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE {}").format(sql.Identifier(name), attribute)
+    )
     conn.execute("SELECT set_config('ops.role_name', '', false)")
 
 
 def narrow_connect(conn: psycopg.Connection[object], database: str, roles: tuple[str, ...]) -> None:
-    """Only the named roles may connect to `database` (BS:246; spike §3 measured the revoke on `incident`)."""
+    """Exactly the named roles may connect to `database` (BS:246; spike §3 measured the revoke on `incident`).
+
+    Roles are cluster-wide, so a test-profile migrate must not leave `test_harness` (or any role of another profile)
+    able to reach a dev database: CONNECT is also revoked from every other existing login role of ours.
+    """
     conn.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM PUBLIC").format(sql.Identifier(database)))
+    ours = [*(r.value for r in Role), "incident"]
+    # A REVOKE that names a missing role errors, so only roles that exist are named.
+    present = {row[0] for row in conn.execute("SELECT rolname FROM pg_roles WHERE rolname = ANY(%s)", (ours,))}
+    for other in sorted(present - set(roles)):
+        conn.execute(
+            sql.SQL("REVOKE CONNECT ON DATABASE {} FROM {}").format(sql.Identifier(database), sql.Identifier(other))
+        )
     grantees = sql.SQL(", ").join(sql.Identifier(r) for r in roles)
     conn.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(database), grantees))
 
@@ -179,7 +195,7 @@ def migrate_target(profile: Profile) -> str:
 
 
 def migrate(profile: Profile | None = None) -> int:
-    """Roles first, then both trees; the profile (default: `PROFILE`, else dev) decides whether the test clock exists."""
+    """Roles first, then both trees; the profile (default `PROFILE`, else dev) decides if the test clock exists."""
     export_environment(load_dotenv(ROOT / ".env"))
     profile = profile or settings.profile()
     superuser = settings.superuser_postgres()
@@ -339,6 +355,9 @@ def up() -> int:
         clock_guard(settings.superuser_postgres(), settings.profile())
     except (RuntimeError, settings.SettingsError) as error:
         print(f"UP: refused — {error}")
+        return 2
+    except psycopg.OperationalError:
+        print("UP: refused — database not reachable")  # no connection details in the message
         return 2
     if (LOGS / "pids.json").exists() or any(healthy(p.health_url) for p in PROCESSES):
         print("UP: refused — processes already running (see status); run down first")

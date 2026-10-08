@@ -48,7 +48,8 @@ async def seed_run(app_conn: persistence.Conn, tenant: UUID) -> UUID:
     )
     await app_conn.execute("INSERT INTO app.run_directory (run_id, tenant_id) VALUES (%s, %s)", (run, tenant))
     await app_conn.execute(
-        "INSERT INTO app.run_state_history (tenant_id, run_id, seq, to_state, performer) VALUES (%s, %s, 1, 'QUEUED', 'seed')",
+        "INSERT INTO app.run_state_history (tenant_id, run_id, seq, to_state, performer)"
+        " VALUES (%s, %s, 1, 'QUEUED', 'seed')",
         (tenant, run),
     )
     return run
@@ -66,13 +67,15 @@ async def actual_privileges(conn: persistence.Conn) -> dict[tuple[str, str], set
         out.setdefault((row["grantee"], row["table_name"]), set()).add((row["privilege_type"], None))
     cur = await conn.execute(
         "SELECT grantee, table_name, column_name, privilege_type FROM information_schema.column_privileges"
-        " WHERE table_schema = 'app' AND grantee <> %s AND privilege_type = 'UPDATE'",
+        " WHERE table_schema = 'app' AND grantee <> %s",
         (p.OWNER_ROLE,),
     )
     for row in await cur.fetchall():
         key = (row["grantee"], row["table_name"])
-        if ("UPDATE", None) not in out.get(key, set()):  # a table-level UPDATE already covers every column
-            out.setdefault(key, set()).add(("UPDATE", row["column_name"]))
+        # A table-level grant of the same type already covers every column; anything else is a column-level grant,
+        # whatever its type, so a stray column SELECT or REFERENCES fails the comparison.
+        if (row["privilege_type"], None) not in out.get(key, set()):
+            out.setdefault(key, set()).add((row["privilege_type"], row["column_name"]))
     return out
 
 
@@ -85,7 +88,8 @@ async def test_r124_every_grantee_holds_exactly_its_matrix_privileges(app_conn: 
     for privs in actual.values():
         assert {priv for priv, _ in privs} <= {"SELECT", "INSERT", "UPDATE", "DELETE"}
     cur = await app_conn.execute(
-        "SELECT grantee, table_name FROM information_schema.role_table_grants WHERE table_schema = 'app' AND grantee = 'PUBLIC'"
+        "SELECT grantee, table_name FROM information_schema.role_table_grants"
+        " WHERE table_schema = 'app' AND grantee = 'PUBLIC'"
     )
     assert await cur.fetchall() == []
 
@@ -135,16 +139,16 @@ async def test_r128_runtime_roles_cannot_write_state_or_audit_rows_directly(role
         " VALUES (gen_random_uuid(), %s, %s, %s, 'h')",
         "action_attempt_state": "INSERT INTO app.action_attempt_state (tenant_id, action_id, attempt_no, seq, state)"
         " VALUES (%s, %s, 1, 1, 'INTENT')",
-        "run_state_history": "INSERT INTO app.run_state_history (tenant_id, run_id, seq, from_state, to_state, performer)"
+        "run_state_history": "INSERT INTO app.run_state_history"
+        " (tenant_id, run_id, seq, from_state, to_state, performer)"
         " VALUES (%s, %s, 9, 'a', 'b', 'x')",
     }
     for role in (Role.API, Role.WORKER, Role.SWEEPER):
         conn = await role_conn(role)
-        for table, statement in denied.items():
+        for statement in denied.values():
             params = (ALPHA, uuid4(), uuid4()) if statement.count("%s") == 3 else (ALPHA, uuid4())
             with pytest.raises(psycopg.errors.InsufficientPrivilege, match="permission denied"):
                 await conn.execute(statement, params)
-            assert table  # each statement is a distinct denied table
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             await conn.execute("UPDATE app.runs SET state = 'SUCCEEDED' WHERE false")
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
@@ -203,7 +207,8 @@ async def test_r009_composite_keys_refuse_cross_tenant_children(app_conn: persis
         # The superuser bypasses RLS and grants, so what refuses these rows is the key itself.
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
             await app_conn.execute(
-                "INSERT INTO app.run_state_history (tenant_id, run_id, seq, to_state, performer) VALUES (%s, %s, 9, 'X', 'x')",
+                "INSERT INTO app.run_state_history (tenant_id, run_id, seq, to_state, performer)"
+                " VALUES (%s, %s, 9, 'X', 'x')",
                 (BETA, alpha_run),
             )
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
@@ -214,18 +219,23 @@ async def test_r009_composite_keys_refuse_cross_tenant_children(app_conn: persis
             )
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
             await app_conn.execute(
-                "INSERT INTO app.jobs (id, type, tenant_id, run_id, dedup_key) VALUES (gen_random_uuid(), 'x', %s, %s, %s)",
+                "INSERT INTO app.jobs (id, type, tenant_id, run_id, dedup_key)"
+                " VALUES (gen_random_uuid(), 'x', %s, %s, %s)",
                 (BETA, alpha_run, f"r009-{uuid4()}"),
             )
+        # seed_run already wrote the (alpha_run, ALPHA) directory row, so moving it is the cross-tenant attempt.
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            await app_conn.execute("UPDATE app.run_directory SET tenant_id = %s WHERE run_id = %s", (BETA, alpha_run))
         draft, proposal = uuid4(), uuid4()
         await app_conn.execute(
-            "INSERT INTO app.drafts (id, tenant_id, run_id, draft_sha256, validated, kind) VALUES (%s, %s, %s, 'h', true, 'proposal')",
+            "INSERT INTO app.drafts (id, tenant_id, run_id, draft_sha256, validated, kind)"
+            " VALUES (%s, %s, %s, 'h', true, 'proposal')",
             (draft, ALPHA, alpha_run),
         )
         with pytest.raises(psycopg.errors.ForeignKeyViolation):  # an alpha proposal pointing at the draft as beta's
             await app_conn.execute(
-                "INSERT INTO app.proposals (proposal_id, tenant_id, run_id, revision, draft_id, payload, payload_canonical,"
-                " payload_sha256, canonicalization_version, authored_by, expires_at)"
+                "INSERT INTO app.proposals (proposal_id, tenant_id, run_id, revision, draft_id, payload,"
+                " payload_canonical, payload_sha256, canonicalization_version, authored_by, expires_at)"
                 " VALUES (%s, %s, %s, 1, %s, '{}', '', 'h', 1, '{}', now())",
                 (proposal, BETA, alpha_run, draft),
             )
@@ -256,7 +266,8 @@ async def test_r106_policy_text_force_and_no_rls_tables(app_conn: persistence.Co
     for table in p.NO_RLS:
         assert flags[table] == (False, False), table
     cur = await app_conn.execute(
-        "SELECT tablename, policyname, permissive, roles, cmd, qual, with_check FROM pg_policies WHERE schemaname = 'app'"
+        "SELECT tablename, policyname, permissive, roles, cmd, qual, with_check FROM pg_policies"
+        " WHERE schemaname = 'app'"
     )
     policies = {(r["tablename"], r["policyname"]): r for r in await cur.fetchall()}
     expected = {(t, "tenant_isolation") for t in p.RLS_TABLES} | {(t, "sweeper_all") for t in p.SWEEPER_ALL}

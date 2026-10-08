@@ -178,13 +178,16 @@ SCHEMA_CHANGES = (
     (
         "ALTER TABLE app.drafts ALTER COLUMN tenant_id SET NOT NULL,"
         " DROP CONSTRAINT drafts_run_id_fkey,"
-        " ADD CONSTRAINT drafts_tenant_run_fkey FOREIGN KEY (tenant_id, run_id) REFERENCES app.runs (tenant_id, run_id),"
+        " ADD CONSTRAINT drafts_tenant_run_fkey FOREIGN KEY (tenant_id, run_id)"
+        " REFERENCES app.runs (tenant_id, run_id),"
         " ADD CONSTRAINT drafts_tenant_id_key UNIQUE (tenant_id, id)"
     ),
     (
         "ALTER TABLE app.proposals DROP CONSTRAINT proposals_run_id_fkey, DROP CONSTRAINT proposals_draft_id_fkey,"
-        " ADD CONSTRAINT proposals_tenant_run_fkey FOREIGN KEY (tenant_id, run_id) REFERENCES app.runs (tenant_id, run_id),"
-        " ADD CONSTRAINT proposals_tenant_draft_fkey FOREIGN KEY (tenant_id, draft_id) REFERENCES app.drafts (tenant_id, id),"
+        " ADD CONSTRAINT proposals_tenant_run_fkey FOREIGN KEY (tenant_id, run_id)"
+        " REFERENCES app.runs (tenant_id, run_id),"
+        " ADD CONSTRAINT proposals_tenant_draft_fkey FOREIGN KEY (tenant_id, draft_id)"
+        " REFERENCES app.drafts (tenant_id, id),"
         " ADD CONSTRAINT proposals_tenant_proposal_key UNIQUE (tenant_id, proposal_id)"
     ),
     "ALTER TABLE app.decisions ADD COLUMN tenant_id uuid, ADD COLUMN idempotency_key text",
@@ -207,7 +210,10 @@ SCHEMA_CHANGES = (
         " ADD CONSTRAINT execution_grant_tenant_action_key UNIQUE (tenant_id, action_id)"
     ),
     "ALTER TABLE app.action_attempt ADD COLUMN tenant_id uuid",
-    "UPDATE app.action_attempt a SET tenant_id = g.tenant_id FROM app.execution_grant g WHERE g.action_id = a.action_id",
+    (
+        "UPDATE app.action_attempt a SET tenant_id = g.tenant_id FROM app.execution_grant g"
+        " WHERE g.action_id = a.action_id"
+    ),
     (
         "ALTER TABLE app.action_attempt ALTER COLUMN tenant_id SET NOT NULL,"
         " DROP CONSTRAINT action_attempt_action_id_fkey,"
@@ -224,7 +230,8 @@ SCHEMA_CHANGES = (
         "ALTER TABLE app.action_attempt_state ALTER COLUMN tenant_id SET NOT NULL,"
         " DROP CONSTRAINT action_attempt_state_action_id_attempt_no_fkey,"
         " ADD CONSTRAINT action_attempt_state_tenant_attempt_fkey"
-        " FOREIGN KEY (tenant_id, action_id, attempt_no) REFERENCES app.action_attempt (tenant_id, action_id, attempt_no)"
+        " FOREIGN KEY (tenant_id, action_id, attempt_no)"
+        " REFERENCES app.action_attempt (tenant_id, action_id, attempt_no)"
     ),
     (
         "ALTER TABLE app.events DROP CONSTRAINT events_run_id_fkey,"
@@ -240,7 +247,8 @@ SCHEMA_CHANGES = (
     (
         "CREATE TABLE app.run_directory ("
         " run_id uuid PRIMARY KEY REFERENCES app.runs (run_id),"
-        " tenant_id uuid NOT NULL REFERENCES app.tenants (tenant_id))"
+        " tenant_id uuid NOT NULL REFERENCES app.tenants (tenant_id),"
+        " FOREIGN KEY (tenant_id, run_id) REFERENCES app.runs (tenant_id, run_id))"
     ),
     "INSERT INTO app.run_directory (run_id, tenant_id) SELECT run_id, tenant_id FROM app.runs",
     (
@@ -274,14 +282,16 @@ SCHEMA_CHANGES = (
 
 OWNERSHIP = (
     "ALTER SCHEMA app OWNER TO migrator",
-    # Tables, sequences and views alike: ALTER TABLE ... OWNER TO accepts all three relkinds.
+    # Every relation kind, tables before sequences: a column-owned sequence refuses its own ALTER (its owner
+    # follows the column), so it must not come first.
     """
     DO $own$
     DECLARE
         r record;
     BEGIN
         FOR r IN SELECT c.oid::regclass AS rel FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                 WHERE n.nspname = 'app' AND c.relkind IN ('r', 'S', 'v')
+                 WHERE n.nspname = 'app' AND c.relkind IN ('r', 'p', 'm', 'v', 'f', 'S')
+                 ORDER BY CASE WHEN c.relkind = 'S' THEN 1 ELSE 0 END, c.oid
         LOOP
             EXECUTE format('ALTER TABLE %s OWNER TO migrator', r.rel);
         END LOOP;
@@ -292,10 +302,11 @@ OWNERSHIP = (
 
 CURRENT_TIME = """
 CREATE OR REPLACE FUNCTION app.current_time() RETURNS timestamptz
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = app, pg_temp SET app.tenant_id = '' AS $fn$
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = app, pg_temp SET app.tenant_id = '' AS $fn$
 DECLARE
     v_offset interval;
 BEGIN
+    -- VOLATILE, not STABLE: clock_timestamp() changes within a statement.
     -- The table exists only where the testclock branch is applied, so the reference is dynamic (SA:528), and no
     -- GUC is consulted anywhere: a SET cannot move the clock (R126). Owned by app_definer so the read of
     -- test_clock uses its grant and no caller needs one (Plan E ruling 17).
@@ -321,7 +332,8 @@ def transition_rows() -> list[str]:
         reasons = ", ".join(f"'{r}'" for r in parts[3:])
         array = f"ARRAY[{reasons}]::text[]" if reasons else "ARRAY[]::text[]"
         out.append(
-            f"INSERT INTO app.transitions (src, dst, performer, reasons) VALUES ('{src}', '{parts[1]}', '{parts[2]}', {array})"
+            "INSERT INTO app.transitions (src, dst, performer, reasons)"
+            f" VALUES ('{src}', '{parts[1]}', '{parts[2]}', {array})"
         )
     return out
 
@@ -373,14 +385,16 @@ DOWNGRADE = (
     (
         "ALTER TABLE app.action_attempt DROP CONSTRAINT action_attempt_tenant_attempt_key,"
         " DROP CONSTRAINT action_attempt_tenant_action_fkey,"
-        " ADD CONSTRAINT action_attempt_action_id_fkey FOREIGN KEY (action_id) REFERENCES app.execution_grant (action_id),"
+        " ADD CONSTRAINT action_attempt_action_id_fkey FOREIGN KEY (action_id)"
+        " REFERENCES app.execution_grant (action_id),"
         " DROP COLUMN tenant_id"
     ),
     (
         "ALTER TABLE app.execution_grant DROP CONSTRAINT execution_grant_tenant_action_key,"
         " DROP CONSTRAINT execution_grant_tenant_run_fkey, DROP CONSTRAINT execution_grant_tenant_proposal_fkey,"
         " ADD CONSTRAINT execution_grant_run_id_fkey FOREIGN KEY (run_id) REFERENCES app.runs (run_id),"
-        " ADD CONSTRAINT execution_grant_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES app.proposals (proposal_id),"
+        " ADD CONSTRAINT execution_grant_proposal_id_fkey FOREIGN KEY (proposal_id)"
+        " REFERENCES app.proposals (proposal_id),"
         " DROP COLUMN tenant_id"
     ),
     (
@@ -427,7 +441,8 @@ DOWNGRADE = (
         r record;
     BEGIN
         FOR r IN SELECT c.oid::regclass AS rel FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                 WHERE n.nspname = 'app' AND c.relkind IN ('r', 'S', 'v')
+                 WHERE n.nspname = 'app' AND c.relkind IN ('r', 'p', 'm', 'v', 'f', 'S')
+                 ORDER BY CASE WHEN c.relkind = 'S' THEN 1 ELSE 0 END, c.oid
         LOOP
             EXECUTE format('ALTER TABLE %s OWNER TO CURRENT_USER', r.rel);
         END LOOP;
