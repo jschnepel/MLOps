@@ -40,6 +40,8 @@ from ops_mcp_read import procedures
 
 
 class ToolResult(TypedDict):
+    """The AM-80 tool-result envelope every tool returns."""
+
     tool_name: str
     request_id: str
     status: str
@@ -50,14 +52,17 @@ class ToolResult(TypedDict):
 
 
 def stamp(value: datetime) -> str:
+    """UTC timestamp in the `...Z` seconds-only spelling the contract uses."""
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def tool_error(code: str, message: str) -> dict[str, Any]:
+    """The `error` object of an envelope; never retryable in T08."""
     return {"code": code, "message": message, "retryable": False}
 
 
 def envelope(tool_name: str, *, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None) -> ToolResult:
+    """Wrap data or an error in the AM-80 envelope with a fresh request_id."""
     return {
         "tool_name": tool_name,
         "request_id": str(uuid4()),
@@ -96,6 +101,8 @@ def search_response(
 
 
 class Verifier(Protocol):  # the subset of ops_core.tokens.TokenVerifier the server needs; unit tests stub it
+    """Token-verifier subset the server needs, so unit tests can stub it."""
+
     @property
     def ready(self) -> bool: ...
 
@@ -108,6 +115,7 @@ class McpVerifier:
     """The SDK's TokenVerifier protocol: None means 401. The SDK re-checks `expires_at`, consistently with PyJWT."""
 
     def __init__(self, verifier: Verifier, resource_url: str) -> None:
+        """Adapt a token verifier to the SDK's bearer-auth hook; `resource_url` is stamped on the access token."""
         self._verifier = verifier
         self._resource = resource_url
 
@@ -131,12 +139,13 @@ def strict_tool(fn: Any) -> Tool:
     """A Tool whose argument model forbids extra keys and whose advertised schema says so.
 
     The SDK derives the model from the signature and ignores unknown keys (measured in the Plan D spike); SA:350
-    requires the opposite, so the model is subclassed with `extra="forbid"` and the schema regenerated.
+    requires the opposite, so the model is subclassed with `extra="forbid"` and the schema regenerated. `strict`
+    stops lax coercion, so `limit="1"` or `limit=True` is refused rather than read as 1.
     """
     tool = Tool.from_function(fn)
     base = tool.fn_metadata.arg_model
     strict: Any = type(
-        base.__name__, (base,), {"model_config": ConfigDict(arbitrary_types_allowed=True, extra="forbid")}
+        base.__name__, (base,), {"model_config": ConfigDict(arbitrary_types_allowed=True, extra="forbid", strict=True)}
     )
     tool.fn_metadata.arg_model = strict
     tool.parameters = strict.model_json_schema(by_alias=True)
@@ -145,12 +154,16 @@ def strict_tool(fn: Any) -> Tool:
 
 @dataclass
 class State:
+    """Process-wide dependencies the tool and the app share; `session` is filled at startup."""
+
     session: persistence.Session | None
     corpora: dict[UUID, procedures.Corpus]
     verifier: Verifier
 
 
 def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
+    """Assemble the MCP server with bearer auth and the one strict tool, bound to `state`."""
+
     async def search_procedures(
         query: Annotated[str, Field(min_length=1, max_length=500)],
         limit: Annotated[int, Field(ge=1, le=8)],
@@ -186,23 +199,29 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
 
 
 def build_app(server: MCPServer, state: State) -> Starlette:
+    """Mount the MCP transport beside health routes and own the database session and key loading."""
     mcp_app = server.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: Starlette) -> AsyncIterator[None]:
+        """Open the session and keys, run the mounted app's lifespan, then close the connection."""
         if state.session is None:
             state.session = persistence.Session(await persistence.connect(settings.app_postgres()))
         if not state.verifier.ready:
             await state.verifier.load_keys()
         # A mounted sub-app's lifespan never runs on its own; the session manager lives in it (measured).
-        async with mcp_app.router.lifespan_context(mcp_app):
-            yield
-        await state.session.conn.close()
+        try:
+            async with mcp_app.router.lifespan_context(mcp_app):
+                yield
+        finally:
+            await state.session.conn.close()
 
     async def live(_: Request) -> JSONResponse:
+        """Liveness: the process is up."""
         return JSONResponse({"status": "live"})
 
     async def ready(_: Request) -> JSONResponse:
+        """Readiness: keys loaded and the database answers."""
         if state.session is None or not state.verifier.ready:
             return JSONResponse({"status": "not ready"}, status_code=503)
         try:
@@ -217,6 +236,7 @@ def build_app(server: MCPServer, state: State) -> Starlette:
 
 
 def production_app() -> Starlette:
+    """The app wired from the environment and secret files, as `python -m ops_mcp_read` runs it."""
     kc = settings.keycloak()
     urls = settings.urls()
     verifier = TokenVerifier(
@@ -237,4 +257,5 @@ def serve_app(app: ASGIApp, port: int) -> None:
 
 
 def serve() -> None:
+    """Entry point: serve the production app on OPS_MCP_READ_PORT (default 8081)."""
     serve_app(production_app(), settings.env_int("OPS_MCP_READ_PORT", 8081))

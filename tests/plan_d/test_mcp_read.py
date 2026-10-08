@@ -129,6 +129,10 @@ async def test_tool_schema_conforms_to_the_contract_and_rejects_extra_arguments(
         assert extra.is_error  # SA:350: an argument that supplies a tenant is rejected, not ignored
         bad = await client.call_tool("search_procedures", {"query": "x", "limit": 9, "mode": "lexical"})
         assert bad.is_error
+        for lax in ("1", True):  # lax coercion would accept both as 1
+            assert (
+                await client.call_tool("search_procedures", {"query": "x", "limit": lax, "mode": "lexical"})
+            ).is_error
         # Without the bearer middleware there is no access token, so the tool body refuses before any lookup.
         res = await client.call_tool("search_procedures", {"query": "x", "limit": 1, "mode": "lexical"})
         assert not res.is_error and res.structured_content["status"] == "error"

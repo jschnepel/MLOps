@@ -22,6 +22,7 @@ EXCERPT_CHARS = 500
 
 
 def tokens(text: str) -> set[str]:
+    """Lower-cased alphanumeric terms of a text; the unit the lexical ranking counts."""
     return set(WORD.findall(text.lower()))
 
 
@@ -44,6 +45,8 @@ def section_bodies(markdown: str) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class Section:
+    """One approved document section with the hash a cited evidence_ref must match."""
+
     evidence_id: str
     document_id: str
     version: str
@@ -55,17 +58,22 @@ class Section:
 
 @dataclass(frozen=True)
 class Hit:
+    """A section and its term-overlap score for one query."""
+
     section: Section
     score: int
 
 
 @dataclass(frozen=True)
 class Corpus:
+    """One tenant's approved sections plus the fixture version they came from."""
+
     sections: tuple[Section, ...]
     corpus_version: str
 
     @classmethod
     def load(cls, fixtures_dir: Path, tenant_slug: str) -> Corpus:
+        """Build the corpus for one tenant slug from the catalog, keeping approved versions only."""
         catalog = json.loads((fixtures_dir / "catalog.json").read_text(encoding="utf-8"))
         meta = json.loads((fixtures_dir / "meta.json").read_text(encoding="utf-8"))
         hashes = {(s["document_id"], s["version"], s["section"]): s["sha256"] for s in meta["sections"]}
@@ -89,6 +97,7 @@ class Corpus:
         return cls(tuple(sections), corpus_version=catalog["fixture_version"])
 
     def search(self, query: str, limit: int) -> list[Hit]:
+        """Top `limit` sections by term overlap, ties broken by evidence_id so retries cite the same evidence."""
         wanted = tokens(query)
         hits = [Hit(s, len(wanted & tokens(s.text))) for s in self.sections]
         hits = [h for h in hits if h.score > 0]
