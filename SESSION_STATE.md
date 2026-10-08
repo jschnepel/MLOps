@@ -193,6 +193,22 @@ Allowed shortcuts in T08, each with its owning task:
 
 Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss checks in mcp-read, mcp-write and incident-sim; `action_key` ON CONFLICT; a decision step by a second persona; every transition routed through T07's table.
 
+## Plan E debt list (T09, T10; committed before coding) [R6-B7]
+
+Allowed shortcuts in T09/T10, each with its owning task:
+- the definer functions without a caller today arrive with their owners: `create_revision`, `create_manual_proposal`, `expire_proposal`, `request_cancel` → T21; `asset_scope`, `search_procedures_scoped` → T15/T16/T17; `request_abort`, `escalate_run`, `resolve_escalation` → T22; `sync_memberships` → T11; `reclaim_leases` → T13;
+- `run_lease` exists with no lease taken; `resolve_invocation`, `grant_execution`, `mark_sent` and `record_outcome` check no fence; `mark_unknown` and `revoke_handles` accept `fence` and ignore it; no asset-guard advisory lock → T13/T21;
+- the worker polls per tenant (one claim attempt per tenant per poll) → T13 wake-ups;
+- `migrator` holds no login: Alembic runs as the Compose superuser and transfers ownership explicitly → T30;
+- schema `checkpoints` and R122 are deferred: `langgraph-checkpoint-postgres` is not locked → T20;
+- `record_decision` and `grant_execution` do not enforce proposal expiry or asset freshness → T21;
+- the `recover` job `mark_unknown` enqueues is claimed and finished unhandled by the worker → T22;
+- `sessions` has the BUILD_SPEC §6 shape and no reader or writer → T11;
+- `check.py --profile test` runs the live suite against per-session databases rather than a Compose test profile → T30;
+- the fault factory implements `reject_next`, `drop_before_commit` and `lose_after_commit`; the other six BS:405 faults → T13;
+- `outbox`, `feedback`, `idempotency_request`, `operator_resolutions`, `documents`/`chunks`/`embeddings`, `model_permit` are absent, so their AM-20.2 rows are not yet in the grant matrix → T14/T12/T22/T17/T13;
+- the definer functions take no row lock on `proposals`, `decisions`, `memberships` or `execution_grant` (AM-20.3's lock column asks for `FOR SHARE`; a lock needs UPDATE, which AM-20.2 withholds); `runs FOR UPDATE` serialises the writers, and the `memberships` race against the sync → T11.
+
 ## Environment (observed)
 
 | Item | Observed |
