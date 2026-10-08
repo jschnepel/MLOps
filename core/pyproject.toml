@@ -3,7 +3,7 @@ name = "ops-core"
 version = "0.0.1"
 description = "Shared domain, application and contract code (ADR-0001). A library, not a service."
 requires-python = ">=3.13"
-dependencies = ["pydantic>=2.13,<3"]
+dependencies = ["pydantic>=2.13,<3", "psycopg[binary]>=3.3,<4", "sqlalchemy>=2.1,<3", "alembic>=1.20,<2", "pyjwt[crypto]>=2.10,<3", "httpx2>=2.13,<3"]
 
 [build-system]
 requires = ["hatchling>=1.27"]

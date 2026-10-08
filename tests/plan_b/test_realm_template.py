@@ -111,6 +111,9 @@ def test_direct_grant_client_is_public_and_dev_only():
     assert d["standardFlowEnabled"] is False and d["serviceAccountsEnabled"] is False
     # The description is the only in-file warning that the password grant is a test aid.
     assert "dev-only" in d["description"]
+    # The API is a resource server like the MCP servers: a persona token must name it (ruling 3 of Plan D), so a
+    # browser or workload token minted for another audience cannot be replayed at the API.
+    assert audiences(d) == {"ops-api"}
 
 
 def test_realm_users_carry_seed_ids():
