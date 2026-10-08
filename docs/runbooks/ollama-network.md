@@ -50,7 +50,7 @@ The last measurement is the decisive one: on this machine (Docker Desktop 29.6.2
 ### How to re-measure the source address
 
 ```bash
-MSYS_NO_PATHCONV=1 docker run --rm -d --name ops-srcaddr python:3.13-slim@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c python -c "import socket,time; s=socket.create_connection(('host.docker.internal',11434)); time.sleep(20)" >/dev/null && sleep 3 && powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 11434 -State Established | Select-Object LocalAddress,RemoteAddress | Format-Table -AutoSize" | tr -d ''; docker rm -f ops-srcaddr >/dev/null
+MSYS_NO_PATHCONV=1 docker run --rm -d --name ops-srcaddr python:3.13-slim@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c python -c "import socket,time; s=socket.create_connection(('host.docker.internal',11434)); time.sleep(20)" >/dev/null && sleep 3 && powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 11434 -State Established | Select-Object LocalAddress,RemoteAddress | Format-Table -AutoSize" | tr -d '\r'; docker rm -f ops-srcaddr >/dev/null
 ```
 
 ## Step A (recommended) — bind Ollama to loopback
