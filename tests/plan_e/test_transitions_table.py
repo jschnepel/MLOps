@@ -103,3 +103,10 @@ def test_no_op_execute_string_carries_a_sqlalchemy_bind(name: str, monkeypatch: 
 
     for statement in executed_statements(name, monkeypatch):
         assert text(statement)._bindparams == {}, statement[:120]
+
+
+def test_event_type_allowlist_lists_every_event_type_once() -> None:
+    from ops_core.outcomes import EventType
+
+    listed = load_module("0003_run_path_functions").EVENT_TYPES.split(", ")
+    assert sorted(listed) == sorted(f"'{t.value}'" for t in EventType)

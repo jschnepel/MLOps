@@ -12,8 +12,11 @@ Helpers carry no tenant attribute: they run inside the tenant the outer function
 OC006 event rule. Each CREATE … GRANT block is one op.execute string (spike §4).
 """
 
+import re
+
 from alembic import op
 from ops_core import privileges
+from ops_core.outcomes import EventType
 
 revision = "0003_run_path_functions"
 down_revision = "0002_roles_grants_rls"
@@ -22,6 +25,17 @@ depends_on = None
 
 HEADER = "LANGUAGE plpgsql SECURITY DEFINER SET search_path = app, pg_temp SET app.tenant_id = ''"
 HELPER_HEADER = "LANGUAGE plpgsql SET search_path = app, pg_temp"
+
+
+def event_type_list() -> str:
+    """The EventType values as a SQL literal list, generated like 0002's transition rows so the twin cannot drift."""
+    values = [t.value for t in EventType]
+    if not all(re.fullmatch(r"[a-z_.]+", v) for v in values):
+        raise RuntimeError("an EventType value is not safe to inline into SQL")
+    return ", ".join(f"'{v}'" for v in values)
+
+
+EVENT_TYPES = event_type_list()
 
 AUTHORITY = f"""
 CREATE OR REPLACE FUNCTION app._authority(p_function text, p_allowed text[]) RETURNS void
@@ -71,6 +85,10 @@ BEGIN
     IF p_payload IS NULL OR jsonb_typeof(p_payload) <> 'object' THEN
         RAISE EXCEPTION 'event_rule_violation' USING ERRCODE = 'OC006', DETAIL = 'payload must be an object';
     END IF;
+    -- The allowlist decides what exists; append_event's reserved-type refusal decides who may emit it.
+    IF NOT (p_type = ANY (ARRAY[{EVENT_TYPES}]::text[])) THEN
+        RAISE EXCEPTION 'event_rule_violation' USING ERRCODE = 'OC006', DETAIL = 'unknown type';
+    END IF;
     IF p_source = 'model_summary' THEN
         IF p_type <> 'explanation.ready' OR NOT (p_payload ? 'message')
            OR jsonb_typeof(p_payload->'message') <> 'string'
@@ -104,7 +122,7 @@ BEGIN
                                                    WHERE jsonb_typeof(value) <> 'string')) THEN
         RAISE EXCEPTION 'event_rule_violation' USING ERRCODE = 'OC006', DETAIL = 'action.confirmed';
     END IF;
-    -- Shape only (keys present, scalar strings): the producer (mcp-write) validates the full Receipt and Tombstone
+    -- Shape only (keys present): the producer (mcp-write) validates the full Receipt and Tombstone
     -- models before a document reaches record_outcome; this is defence in depth, not the contract.
     IF (p_payload ? 'tombstone') AND (jsonb_typeof(p_payload->'tombstone') <> 'object'
         OR NOT (p_payload->'tombstone' ?& ARRAY['action_id', 'state', 'payload_sha256', 'reason', 'decided_at'])) THEN
@@ -189,14 +207,32 @@ CREATE OR REPLACE FUNCTION app.create_run(p_tenant_id uuid, p_conversation_id uu
 RETURNS TABLE (run_id uuid, state_version integer)
 {HEADER} AS $fn$
 DECLARE
-    v_message_id uuid := (p_request->>'message_id')::uuid;
-    v_requester uuid := (p_request->>'requester')::uuid;
+    v_message_id uuid;
+    v_requester uuid;
+    v_asset_id text;
+    v_start timestamptz;
+    v_end timestamptz;
     v_run_id uuid := gen_random_uuid();
 BEGIN
     PERFORM app._authority('create_run', ARRAY['api']);
     -- The API is the identity trust anchor (SA:450): the tenant is an argument, set here, never read from the caller.
     PERFORM set_config('app.tenant_id', p_tenant_id::text, true);
     IF p_intent NOT IN ('investigate', 'answer_only') THEN
+        RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'INVALID_ARGUMENT';
+    END IF;
+    -- Parsed after _authority so an unauthorised caller learns nothing about the document; a malformed value is
+    -- the caller's mistake (OC005), not an internal error.
+    BEGIN
+        v_message_id := (p_request->>'message_id')::uuid;
+        v_requester := (p_request->>'requester')::uuid;
+        v_asset_id := p_request->>'asset_id';
+        v_start := (p_request->>'start_at')::timestamptz;
+        v_end := (p_request->>'end_at')::timestamptz;
+    EXCEPTION WHEN invalid_text_representation OR invalid_datetime_format OR datetime_field_overflow THEN
+        RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'INVALID_ARGUMENT';
+    END;
+    IF v_message_id IS NULL OR v_requester IS NULL OR v_asset_id IS NULL OR v_asset_id = ''
+       OR v_start IS NULL OR v_end IS NULL OR v_start >= v_end THEN
         RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'INVALID_ARGUMENT';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM conversations c
@@ -220,11 +256,18 @@ BEGIN
         INSERT INTO runs (run_id, tenant_id, conversation_id, message_id, requester, intent, supersedes_run_id,
                           asset_id, start_at, end_at, state, state_version, slot_held, next_event_seq)
         VALUES (v_run_id, p_tenant_id, p_conversation_id, v_message_id, v_requester, p_intent, p_supersedes_run_id,
-                p_request->>'asset_id', (p_request->>'start_at')::timestamptz, (p_request->>'end_at')::timestamptz,
-                'QUEUED', 1, true, 0);
+                v_asset_id, v_start, v_end, 'QUEUED', 1, true, 0);
     EXCEPTION WHEN unique_violation THEN
-        -- The partial unique index on (conversation_id) WHERE slot_held is the slot rule (BUILD_SPEC §7).
-        RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'SLOT_OCCUPIED';
+        -- Only the slot index is the slot rule (BUILD_SPEC §7); any other unique violation is a real fault.
+        DECLARE
+            v_constraint text;
+        BEGIN
+            GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;
+            IF v_constraint = 'runs_one_active_per_conversation' THEN
+                RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'SLOT_OCCUPIED';
+            END IF;
+            RAISE;
+        END;
     END;
     INSERT INTO run_directory (run_id, tenant_id) VALUES (v_run_id, p_tenant_id);
     INSERT INTO run_state_history (tenant_id, run_id, seq, from_state, to_state, performer, at)

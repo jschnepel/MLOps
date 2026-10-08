@@ -82,6 +82,12 @@ def request(msg: UUID) -> Jsonb:
     )
 
 
+async def run_count(app_conn: persistence.Conn, conv: UUID) -> int:
+    """How many runs a conversation has, read as the superuser."""
+    cur = await app_conn.execute("SELECT count(*) AS n FROM app.runs WHERE conversation_id = %s", (conv,))
+    return (await cur.fetchone())["n"]
+
+
 async def create(api: persistence.Conn, tenant: UUID, conv: UUID, msg: UUID) -> UUID:
     """Create a run through the API door and return its id."""
     cur = await api.execute(CREATE_INVESTIGATE, (tenant, conv, request(msg)))
@@ -122,6 +128,14 @@ async def test_create_run_is_the_only_door_and_sets_everything_up(
         # The superuser passes the ACL and _authority refuses.
         assert await refused(app_conn, CREATE_INVESTIGATE, (ALPHA, conv, request(msg))) == "OC001"
         assert await refused(api, CREATE_INVESTIGATE, (ALPHA, conv_b, request(msg_b))) == "OC002"
+        before = await run_count(app_conn, conv)
+        bad_doc = Jsonb({"message_id": "x"})
+        assert await refused(api, CREATE_INVESTIGATE, (ALPHA, conv, bad_doc)) == "OC005"
+        same_instant = Jsonb(
+            {**request(msg).obj, "start_at": "2026-01-01T00:00:00+00:00", "end_at": "2026-01-01T00:00:00+00:00"}
+        )
+        assert await refused(api, CREATE_INVESTIGATE, (ALPHA, conv, same_instant)) == "OC005"
+        assert await run_count(app_conn, conv) == before
         guess = "SELECT * FROM app.create_run(%s, %s, %s, 'guess', NULL)"
         assert await refused(api, guess, (BETA, conv_b, request(msg_b))) == "OC005"
         supersede = "SELECT * FROM app.create_run(%s, %s, %s, 'investigate', %s)"
@@ -205,6 +219,9 @@ async def test_append_event_rules_and_sequence(app_conn: persistence.Conn, role_
             cur = await worker.execute(append, (run, "explanation.ready", summary, "model_summary"))
             assert (await cur.fetchone())["sequence"] == 3
         for conn, event_type, source, payload in (
+            (worker, "Run.failed", "application", {}),  # the allowlist is exact: no case games
+            (worker, "made.up", "application", {}),
+            (worker, "", "application", {}),
             (worker, "run.failed", "application", {}),  # run.* only from the transition functions (SA:452)
             (worker, "action.granted", "application", {}),
             (worker, "review.blocked", "application", {}),
