@@ -17,7 +17,6 @@ import re
 
 from alembic import op
 from ops_core import privileges
-from ops_core.states import TRANSITIONS
 
 revision = "0002_roles_grants_rls"
 down_revision = "0001_walking_skeleton"
@@ -132,6 +131,69 @@ RLS = (
     "events",
 )
 _WORD = re.compile(r"^[A-Za-z_]+$")
+# The T07 table as this revision writes it, frozen (final review I2): reading ops_core.states.TRANSITIONS here would let
+# a later edit change what this revision inserts, so upgraded and fresh databases would differ silently. A change to
+# the table ships as a new revision with its own TRANSITION_ROWS_<rev>; the unit test checks that the newest one equals
+# the live table. Rows are (src, dst, performer, reasons), sorted by (src, dst, performer); None is the creation edge.
+TRANSITION_ROWS_0002 = (
+    (None, "QUEUED", "create_run", ()),
+    ("APPROVED", "BLOCKED_REVIEW", "expire_proposal", ("expired",)),
+    (
+        "APPROVED",
+        "BLOCKED_REVIEW",
+        "grant_execution",
+        ("asset_action_unresolved", "asset_incident_exists", "authority_revoked", "expired", "stale_evidence"),
+    ),
+    ("APPROVED", "CANCELLED", "request_cancel", ()),
+    ("APPROVED", "EXECUTING", "grant_execution", ()),
+    ("APPROVED", "QUEUED", "create_revision", ()),
+    ("AWAITING_APPROVAL", "APPROVED", "record_decision", ()),
+    ("AWAITING_APPROVAL", "BLOCKED_REVIEW", "expire_proposal", ("expired",)),
+    ("AWAITING_APPROVAL", "BLOCKED_REVIEW", "record_decision", ("expired",)),
+    ("AWAITING_APPROVAL", "CANCELLED", "request_cancel", ()),
+    ("AWAITING_APPROVAL", "QUEUED", "create_revision", ()),
+    ("AWAITING_APPROVAL", "REJECTED", "record_decision", ("rejected",)),
+    ("AWAITING_INPUT", "CANCELLED", "request_cancel", ()),
+    ("AWAITING_INPUT", "QUEUED", "transition_run", ()),
+    ("BLOCKED_REVIEW", "CANCELLED", "request_cancel", ()),
+    ("BLOCKED_REVIEW", "QUEUED", "create_revision", ()),
+    ("DRAFTING", "ANSWERED", "transition_run", ()),
+    ("DRAFTING", "AWAITING_APPROVAL", "create_manual_proposal", ()),
+    ("DRAFTING", "AWAITING_APPROVAL", "freeze_proposal", ()),
+    ("DRAFTING", "AWAITING_INPUT", "transition_run", ()),
+    ("DRAFTING", "BLOCKED_REVIEW", "create_manual_proposal", ("asset_action_unresolved", "asset_incident_exists")),
+    ("DRAFTING", "BLOCKED_REVIEW", "freeze_proposal", ("asset_action_unresolved", "asset_incident_exists")),
+    ("DRAFTING", "CANCELLED", "request_cancel", ()),
+    ("DRAFTING", "FAILED", "transition_run", ()),
+    ("DRAFTING", "INSUFFICIENT_EVIDENCE", "transition_run", ()),
+    ("ESCALATED", "ABANDONED_UNVERIFIED", "resolve_escalation", ()),
+    ("ESCALATED", "FAILED", "record_outcome", ("aborted_no_commit", "cancelled_before_send", "expired", "rejected")),
+    ("ESCALATED", "SUCCEEDED", "record_outcome", ()),
+    ("EXECUTING", "ESCALATED", "escalate_run", ("conflict", "escalation_deadline")),
+    ("EXECUTING", "ESCALATED", "record_outcome", ("conflict",)),
+    ("EXECUTING", "FAILED", "record_outcome", ("aborted_no_commit", "cancelled_before_send", "expired", "rejected")),
+    ("EXECUTING", "OUTCOME_UNKNOWN", "mark_unknown", ()),
+    ("EXECUTING", "SUCCEEDED", "record_outcome", ()),
+    ("OUTCOME_UNKNOWN", "ESCALATED", "escalate_run", ("conflict", "escalation_deadline")),
+    ("OUTCOME_UNKNOWN", "ESCALATED", "record_outcome", ("conflict",)),
+    (
+        "OUTCOME_UNKNOWN",
+        "FAILED",
+        "record_outcome",
+        ("aborted_no_commit", "cancelled_before_send", "expired", "rejected"),
+    ),
+    ("OUTCOME_UNKNOWN", "SUCCEEDED", "record_outcome", ()),
+    ("QUEUED", "CANCELLED", "request_cancel", ()),
+    ("QUEUED", "RETRIEVING", "transition_run", ()),
+    ("RETRIEVING", "AWAITING_INPUT", "transition_run", ()),
+    ("RETRIEVING", "CANCELLED", "request_cancel", ()),
+    ("RETRIEVING", "DRAFTING", "transition_run", ()),
+    ("RETRIEVING", "FAILED", "transition_run", ()),
+    ("RETRIEVING", "INSUFFICIENT_EVIDENCE", "transition_run", ()),
+)
+# The roles this revision grants to and revokes from, frozen for the same reason (final review M2): a role added to
+# ops_core.privileges later must not change what an applied revision runs. test_harness is the testclock branch's.
+MAIN_GRANTEES_0002 = ("api", "worker", "sweeper", "mcp_read", "mcp_exec", "operator", "app_definer")
 
 SCHEMA_CHANGES = (
     # runs: the slot flag (SA:451), the event counter (SA:439) and the columns the AM-20.2 grants name.
@@ -322,32 +384,32 @@ ALTER FUNCTION app.current_time() OWNER TO app_definer;
 
 
 def transition_rows() -> list[str]:
-    """One INSERT per T07 row; the values are enum members, checked against a word pattern before they are quoted."""
+    """One INSERT per frozen T07 row; the values are checked against a word pattern before they are quoted."""
     out: list[str] = []
-    for row in TRANSITIONS:
-        src = row.src.value if row.src is not None else ""
-        parts = [src, row.dst.value, row.performer.value, *sorted(r.value for r in row.reasons)]
+    for src, dst, performer, reasons in TRANSITION_ROWS_0002:
+        parts = [src or "", dst, performer, *reasons]
         if any(part and not _WORD.match(part) for part in parts):
             raise RuntimeError("transition table values must be plain words")
-        reasons = ", ".join(f"'{r}'" for r in parts[3:])
-        array = f"ARRAY[{reasons}]::text[]" if reasons else "ARRAY[]::text[]"
+        quoted = ", ".join(f"'{r}'" for r in reasons)
+        array = f"ARRAY[{quoted}]::text[]" if quoted else "ARRAY[]::text[]"
         out.append(
             "INSERT INTO app.transitions (src, dst, performer, reasons)"
-            f" VALUES ('{src}', '{parts[1]}', '{parts[2]}', {array})"
+            f" VALUES ('{src or ''}', '{dst}', '{performer}', {array})"
         )
     return out
 
 
 def upgrade() -> None:
+    """Add the AM-20 columns and tables, backfill them, hand ownership to migrator, grant, and force RLS."""
     for statement in SCHEMA_CHANGES:
         op.execute(statement)
     for statement in transition_rows():
         op.execute(statement)
     for statement in OWNERSHIP:
         op.execute(statement)
-    for statement in privileges.schema_usage_statements():  # the main-line grantees; test_harness is the branch's
+    for statement in privileges.schema_usage_statements(MAIN_GRANTEES_0002):
         op.execute(statement)
-    for statement in privileges.grant_statements(TABLES, GRANTS_0002):
+    for statement in privileges.grant_statements(TABLES, GRANTS_0002, revokees=MAIN_GRANTEES_0002):
         op.execute(statement)
     for statement in privileges.rls_statements(RLS, POLICY_ROLES_0002):
         op.execute(statement)
@@ -363,8 +425,8 @@ DOWNGRADE = (
     *[f"DROP POLICY IF EXISTS sweeper_all ON app.{t}" for t in ("memberships", "jobs")],
     *[f"DROP POLICY IF EXISTS tenant_isolation ON app.{t}" for t in RLS],
     *[f"ALTER TABLE app.{t} NO FORCE ROW LEVEL SECURITY, DISABLE ROW LEVEL SECURITY" for t in RLS],
-    f"REVOKE ALL ON ALL TABLES IN SCHEMA app FROM {', '.join(privileges.MAIN_GRANTEES)}",
-    f"REVOKE USAGE ON SCHEMA app FROM {', '.join(privileges.MAIN_GRANTEES)}",
+    f"REVOKE ALL ON ALL TABLES IN SCHEMA app FROM {', '.join(MAIN_GRANTEES_0002)}",
+    f"REVOKE USAGE ON SCHEMA app FROM {', '.join(MAIN_GRANTEES_0002)}",
     "DROP TABLE app.transitions",
     "DROP TABLE app.sessions",
     "DROP TABLE app.run_lease",
@@ -453,5 +515,6 @@ DOWNGRADE = (
 
 
 def downgrade() -> None:
+    """Back to revision 1: drop the policies, grants and new tables, and restore the revision-1 columns and keys."""
     for statement in DOWNGRADE:
         op.execute(statement)

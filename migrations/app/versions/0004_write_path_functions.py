@@ -218,8 +218,8 @@ BEGIN
     END;
     run_id := v_run.run_id;
     IF p_decision = 'approve' THEN
-        INSERT INTO jobs (id, type, tenant_id, run_id, dedup_key)
-        VALUES (gen_random_uuid(), 'execute', p_tenant_id, v_run.run_id, p_proposal_id::text)
+        INSERT INTO jobs (id, type, tenant_id, run_id, dedup_key, available_at)
+        VALUES (gen_random_uuid(), 'execute', p_tenant_id, v_run.run_id, p_proposal_id::text, app.current_time())
         ON CONFLICT (dedup_key) DO NOTHING;
         state := 'APPROVED';
         state_version := app._transition(v_run.run_id, 'APPROVED', 'record_decision', NULL, NULL, 'approval.recorded',
@@ -422,6 +422,11 @@ BEGIN
     IF (p_document->>'status') IS DISTINCT FROM p_outcome THEN
         RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'INVALID_ARGUMENT';
     END IF;
+    -- "No effect" needs the destination's proof (AM-13): the Python model requires the tombstone, and this is the SQL
+    -- backstop so nothing after SENT is ever recorded as no effect without one (final review M1).
+    IF p_outcome = 'FAILED_NO_COMMIT' AND jsonb_typeof(p_document->'tombstone') IS DISTINCT FROM 'object' THEN
+        RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'INVALID_ARGUMENT';
+    END IF;
     -- The document's hash must be the grant's (SA:464); a CONFLICT is precisely the case where it is not.
     IF p_outcome <> 'CONFLICT' AND (p_document->>'payload_sha256') IS DISTINCT FROM v_grant.payload_sha256 THEN
         RAISE EXCEPTION 'hash_mismatch' USING ERRCODE = 'OC007', DETAIL = 'outcome';
@@ -495,8 +500,9 @@ BEGIN
     END IF;
     PERFORM app._transition(p_run_id, 'OUTCOME_UNKNOWN', 'mark_unknown', NULL, NULL, 'action.uncertain',
                             jsonb_build_object('action_id', v_grant.action_id));
-    INSERT INTO jobs (id, type, tenant_id, run_id, dedup_key)
-    VALUES (gen_random_uuid(), 'recover', v_tenant, p_run_id, format('%s:timeout', v_grant.action_id))
+    INSERT INTO jobs (id, type, tenant_id, run_id, dedup_key, available_at)
+    VALUES (gen_random_uuid(), 'recover', v_tenant, p_run_id, format('%s:timeout', v_grant.action_id),
+            app.current_time())
     ON CONFLICT (dedup_key) DO NOTHING;
     RETURN 'OUTCOME_UNKNOWN';
 END
@@ -522,6 +528,7 @@ FUNCTIONS = (
 
 # (name, argument types, callers, body): frozen here so a later caller-list change ships as a new revision (N1).
 def upgrade() -> None:
+    """Create each write-path function (body first, then its grants, so REVOKE FROM PUBLIC lands on it)."""
     for name, args, callers, body in FUNCTIONS:
         op.execute(body)
         for statement in privileges.function_grant_statements(name, args=args, callers=callers):
@@ -529,5 +536,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Drop the write-path functions in reverse dependency order."""
     for name, args, _, _ in reversed(FUNCTIONS):
         op.execute(f"DROP FUNCTION app.{name}({args})")

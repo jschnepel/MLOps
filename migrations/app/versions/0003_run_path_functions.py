@@ -16,7 +16,6 @@ import re
 
 from alembic import op
 from ops_core import privileges
-from ops_core.outcomes import EventType
 
 revision = "0003_run_path_functions"
 down_revision = "0002_roles_grants_rls"
@@ -27,12 +26,45 @@ HEADER = "LANGUAGE plpgsql SECURITY DEFINER SET search_path = app, pg_temp SET a
 HELPER_HEADER = "LANGUAGE plpgsql SET search_path = app, pg_temp"
 
 
+# The AM-14 event types as this revision allows them, frozen (final review I2): reading ops_core.outcomes.EventType here
+# would let a later enum edit change what this revision installs. A new type ships as a new revision with its own
+# EVENT_TYPES_<rev>; the unit test checks that the newest one equals the live enum.
+EVENT_TYPES_0003 = (
+    "run.accepted",
+    "clarification.requested",
+    "tool.started",
+    "tool.completed",
+    "proposal.ready",
+    "approval.recorded",
+    "action.dispatched",
+    "action.uncertain",
+    "action.confirmed",
+    "run.failed",
+    "run.cancelled",
+    "notification.failed",
+    "feedback.recorded",
+    "clarification.received",
+    "proposal.revised",
+    "review.blocked",
+    "run.answered",
+    "run.insufficient_evidence",
+    "run.rejected",
+    "action.granted",
+    "action.redispatched",
+    "action.failed",
+    "action.conflict",
+    "run.escalated",
+    "run.abandoned_unverified",
+    "action.late_evidence",
+    "explanation.ready",
+)
+
+
 def event_type_list() -> str:
-    """The EventType values as a SQL literal list, generated like 0002's transition rows so the twin cannot drift."""
-    values = [t.value for t in EventType]
-    if not all(re.fullmatch(r"[a-z_.]+", v) for v in values):
-        raise RuntimeError("an EventType value is not safe to inline into SQL")
-    return ", ".join(f"'{v}'" for v in values)
+    """The frozen event types as a SQL literal list, each checked against a safe pattern before it is inlined."""
+    if not all(re.fullmatch(r"[a-z_.]+", v) for v in EVENT_TYPES_0003):
+        raise RuntimeError("an event type is not safe to inline into SQL")
+    return ", ".join(f"'{v}'" for v in EVENT_TYPES_0003)
 
 
 EVENT_TYPES = event_type_list()
@@ -275,8 +307,9 @@ BEGIN
     VALUES (p_tenant_id, v_run_id, 1, NULL, 'QUEUED', 'create_run', app.current_time());
     -- format('%s:1', ...), never a quote-colon-digit literal: SQLAlchemy reads a colon after a quote as a bind
     -- (round-1 B2); the plan's unit test scans every revision string, comments included.
-    INSERT INTO jobs (id, type, tenant_id, run_id, dedup_key)
-    VALUES (gen_random_uuid(), 'investigate', p_tenant_id, v_run_id, format('%s:1', v_run_id));
+    -- available_at on the application clock, which claims compare against (ruling 24; final review M3).
+    INSERT INTO jobs (id, type, tenant_id, run_id, dedup_key, available_at)
+    VALUES (gen_random_uuid(), 'investigate', p_tenant_id, v_run_id, format('%s:1', v_run_id), app.current_time());
     PERFORM app._append_event(p_tenant_id, v_run_id, 'run.accepted', 'application', '{{}}'::jsonb);
     run_id := v_run_id;
     state_version := 1;

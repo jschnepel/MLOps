@@ -336,9 +336,9 @@ async def test_function_catalog_shape(app_conn: persistence.Conn) -> None:
         " FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app'"
     )
     rows = {r["proname"]: r for r in await cur.fetchall()}
+    # Equality, not a subset: a function a later revision drops, or one nobody listed, fails here (final review M4).
+    assert set(rows) == set(p.DEFINER_FUNCTIONS) | set(p.HELPER_FUNCTIONS), sorted(rows)
     for name in list(p.DEFINER_FUNCTIONS) + list(p.HELPER_FUNCTIONS):
-        if name not in rows:
-            continue  # Task 4's functions arrive with revision 0004; this test is re-run there with every name present
         row = rows[name]
         assert row["owner"] == "app_definer", name
         assert "search_path=app, pg_temp" in row["proconfig"], name
@@ -350,4 +350,21 @@ async def test_function_catalog_shape(app_conn: persistence.Conn) -> None:
         else:
             assert row["prosecdef"] and "app.tenant_id=" in row["proconfig"], name
             assert grantees == set(p.DEFINER_FUNCTIONS[name][1]), (name, grantees)
-    assert set(rows) <= set(p.DEFINER_FUNCTIONS) | set(p.HELPER_FUNCTIONS), sorted(rows)  # no stray function in app
+
+
+async def test_the_transitions_table_equals_the_python_table(app_conn: persistence.Conn) -> None:
+    """R082 one table: the rows the migrations wrote equal ops_core.states.TRANSITIONS (final review I2)."""
+    from ops_core.states import TRANSITIONS
+
+    cur = await app_conn.execute("SELECT src, dst, performer, reasons FROM app.transitions")
+    stored = sorted((r["src"], r["dst"], r["performer"], tuple(sorted(r["reasons"]))) for r in await cur.fetchall())
+    live = sorted(
+        (
+            row.src.value if row.src is not None else "",
+            row.dst.value,
+            row.performer.value,
+            tuple(sorted(x.value for x in row.reasons)),
+        )
+        for row in TRANSITIONS
+    )
+    assert stored == live

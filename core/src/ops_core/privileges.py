@@ -183,17 +183,26 @@ def schema_usage_statements(roles: Iterable[str] = MAIN_GRANTEES) -> list[str]:
     return [f"GRANT USAGE ON SCHEMA {SCHEMA} TO {_roles(roles)}"]
 
 
-def grant_statements(tables: Iterable[str], grants: Mapping[str, Mapping[str, Grant]] = GRANTS) -> list[str]:
+def grant_statements(
+    tables: Iterable[str],
+    grants: Mapping[str, Mapping[str, Grant]] = GRANTS,
+    *,
+    revokees: Iterable[str] | None = None,
+) -> list[str]:
     """REVOKE ALL then exactly the given cells for each table.
 
-    A revision passes its own frozen copy of the cells it applies (an applied revision must never change when this
-    module's matrix moves on; round-3 finding N1); the tests pass the live matrix.
+    A revision passes its own frozen copy of the cells it applies and of the roles it revokes from (an applied
+    revision must never change when this module's matrix moves on; round-3 finding N1, final review M2); the tests
+    pass the live matrix. Without `revokees` the REVOKE names the live grantees.
     """
+    frozen = tuple(revokees) if revokees is not None else None
     out: list[str] = []
     for table in tables:
         # Only roles that exist in every profile are named in a REVOKE: the test-only role's grants live on the branch.
-        revokees = [r for r in GRANTEES if r not in TEST_ONLY_ROLES or table == "test_clock"]
-        out.append(f"REVOKE ALL ON {SCHEMA}.{table} FROM {_roles(revokees)}")
+        names = (
+            frozen if frozen is not None else [r for r in GRANTEES if r not in TEST_ONLY_ROLES or table == "test_clock"]
+        )
+        out.append(f"REVOKE ALL ON {SCHEMA}.{table} FROM {_roles(names)}")
         for role, grant in grants[table].items():
             whole = [
                 name for name, flag in (("INSERT", grant.ins), ("SELECT", grant.sel), ("DELETE", grant.dele)) if flag

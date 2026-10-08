@@ -184,7 +184,8 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         except persistence.NotFound:
             return envelope("create_incident", error=tool_error("NOT_FOUND", "run not found"))
         except persistence.VersionConflict:
-            # Nothing was sent: the worker closes the job without a retry cycle.
+            # Only grant_execution and mark_sent can raise this here, both before SENT, so nothing was sent and the
+            # worker closes the job without a retry cycle. After SENT execution.py answers UNKNOWN instead (AM-13).
             return envelope("create_incident", error=tool_error("STALE_RUN", "run is no longer executing"))
         except persistence.HashMismatch:
             return envelope("create_incident", error=tool_error("HASH_MISMATCH", "stored bytes do not match"))
@@ -228,9 +229,9 @@ def build_app(server: MCPServer, state: State) -> Starlette:
                     client_secret=settings.read_secret("kc_client_secret_ops_mcp_write"),
                 ),
             )
-        if not state.verifier.ready:
-            await state.verifier.load_keys()
         try:
+            if not state.verifier.ready:  # inside the try: a failed JWKS load must close both resources too
+                await state.verifier.load_keys()
             async with mcp_app.router.lifespan_context(mcp_app):
                 yield
         finally:

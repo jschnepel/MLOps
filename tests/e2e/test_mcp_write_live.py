@@ -19,6 +19,7 @@ from ops_core.states import RunState
 from ops_core.tokens import WorkloadTokenSource
 from ops_incident_sim.app import production_app as incident_sim_app
 from ops_mcp_write import destination, execution
+from ops_mcp_write.server import outcome_envelope
 
 from tests.e2e.conftest import purge_run
 from tests.e2e.test_migrations_and_persistence import new_run
@@ -261,6 +262,45 @@ async def test_exception_after_sent_returns_unknown_and_records_nothing(
             "action.granted",
             "action.dispatched",
         ]
+    finally:
+        if run is not None:
+            await purge_run(app_conn, run)
+
+
+async def test_refusal_after_a_real_post_is_unknown_not_an_error(
+    app_conn: persistence.Conn, role_conn, secret, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mapped refusal from record_outcome after SENT answers outcome/UNKNOWN, never an error envelope (I1, AM-13).
+
+    The POST is real, so the destination has committed; an error envelope would make the worker close the job and
+    strand the run in EXECUTING with a SENT attempt. A future lease fence raises VersionConflict on exactly this call.
+    """
+
+    async def fenced_record_outcome(*args, **kwargs):
+        raise persistence.VersionConflict("x")
+
+    monkeypatch.setattr(persistence, "record_outcome", fenced_record_outcome)
+    run = None
+    try:
+        async with running_sim():
+            _, run, proposal, handle = await approved_run(
+                app_conn, api=await role_conn(Role.API), worker=await role_conn(Role.WORKER)
+            )
+            session = persistence.Session(await role_conn(Role.MCP_EXEC))
+            async with httpx2.AsyncClient() as http:
+                outcome = await execution.create_incident(
+                    make_deps(session, http, secret), handle=handle, proposal_id=proposal
+                )
+        doc = outcome_envelope(outcome)
+        assert doc["status"] == "outcome" and doc["error"] is None
+        assert doc["data"]["status"] == ToolOutcome.UNKNOWN.value
+        assert (await persistence.run_row(app_conn, run))["state"] == "EXECUTING"
+        cur = await app_conn.execute(
+            "SELECT s.state FROM app.action_attempt_state s JOIN app.execution_grant g USING (action_id)"
+            " WHERE g.run_id = %s ORDER BY s.seq DESC LIMIT 1",
+            (run,),
+        )
+        assert (await cur.fetchone())["state"] == "SENT"
     finally:
         if run is not None:
             await purge_run(app_conn, run)

@@ -11,10 +11,12 @@ from uuid import UUID, uuid4
 
 import pytest
 from ops_core import persistence, settings
+from ops_core.canonical import canonical_json, canonical_sha256
 from ops_core.jobs import JobType, Server, Tool
 from ops_core.outcomes import EventRuleViolation, EventSource, EventType
 from ops_core.settings import Profile, Role
 from ops_core.states import IllegalTransition, Intent, RunState
+from psycopg.types.json import Jsonb
 
 from tests.e2e.conftest import purge_run, purge_tenant
 
@@ -22,6 +24,7 @@ pytestmark = pytest.mark.asyncio
 
 ALPHA = "3ea79c95-914c-52cb-9d10-c4e19dda8ff7"
 ALEX = "2fc05986-c7ec-544c-b628-fdb112bbf18a"
+SAM = "03f7eb09-e18d-5f33-bf75-12c57d5aaa54"  # ALPHA's reviewer
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 
 
@@ -205,3 +208,186 @@ async def test_r006_fresh_database_upgrades_downgrades_and_upgrades_again(migrat
     assert migrate(Profile.TEST) == 0
     cur = await app_conn.execute("SELECT version_num FROM public.alembic_version ORDER BY 1")
     assert {r["version_num"] for r in await cur.fetchall()} == versions
+
+
+async def seed_revision_1_run(conn: persistence.Conn, state: str, history: tuple[str, ...], *, events: tuple[str, ...]):
+    """A Plan-D-shaped run on ALPHA written with revision-1 columns only: no tenant_id on the child tables, no
+    slot_held or next_event_seq; the history replays `history` with Plan D's `state_version` numbering."""
+    conv, msg, run = uuid4(), uuid4(), uuid4()
+    await conn.execute(
+        "INSERT INTO app.conversations (conversation_id, tenant_id, created_by) VALUES (%s, %s, %s)",
+        (conv, ALPHA, ALEX),
+    )
+    await conn.execute(
+        "INSERT INTO app.messages (message_id, tenant_id, conversation_id, kind, text, author)"
+        " VALUES (%s, %s, %s, 'investigate', 'x', %s)",
+        (msg, ALPHA, conv, ALEX),
+    )
+    end = datetime.now(UTC).replace(microsecond=0)
+    await conn.execute(
+        "INSERT INTO app.runs (run_id, tenant_id, conversation_id, message_id, requester, intent, asset_id, start_at,"
+        " end_at, state, state_version) VALUES (%s, %s, %s, %s, %s, 'investigate', 'A17', %s, %s, %s, %s)",
+        (run, ALPHA, conv, msg, ALEX, end - timedelta(hours=24), end, state, len(history)),
+    )
+    for seq, (src, dst) in enumerate(zip((None, *history), history, strict=False), start=1):
+        await conn.execute(
+            "INSERT INTO app.run_state_history (run_id, seq, from_state, to_state, performer)"
+            " VALUES (%s, %s, %s, %s, 'plan_d')",
+            (run, seq, src, dst),
+        )
+    for sequence, kind in enumerate(events, start=1):
+        source = "destination" if kind == "action.confirmed" else "application"
+        await conn.execute(
+            "INSERT INTO app.events (event_id, tenant_id, conversation_id, run_id, sequence, type, occurred_at, source,"
+            " payload) VALUES (%s, %s, %s, %s, %s, %s, now(), %s, '{}')",
+            (uuid4(), ALPHA, conv, run, sequence, kind, source),
+        )
+    return run
+
+
+async def seed_revision_1_proposal(conn: persistence.Conn, run: UUID) -> tuple[UUID, str]:
+    """A validated draft and a frozen proposal for `run`, set as the run's active proposal (revision-1 columns)."""
+    draft, proposal = uuid4(), uuid4()
+    payload = {"run_id": str(run), "proposal_id": str(proposal), "action": "create_incident", "asset_id": "A17"}
+    canonical, sha = canonical_json(payload), canonical_sha256(payload)
+    await conn.execute(
+        "INSERT INTO app.drafts (id, run_id, draft_sha256, validated, kind) VALUES (%s, %s, %s, true, 'proposal')",
+        (draft, run, sha),
+    )
+    await conn.execute(
+        "INSERT INTO app.proposals (proposal_id, tenant_id, run_id, revision, draft_id, payload, payload_canonical,"
+        " payload_sha256, canonicalization_version, authored_by, expires_at)"
+        " VALUES (%s, %s, %s, 1, %s, %s, %s, %s, 1, ARRAY[%s]::uuid[], now() + interval '15 minutes')",
+        (proposal, ALPHA, run, draft, Jsonb(payload), canonical, sha, ALEX),
+    )
+    await conn.execute("UPDATE app.runs SET active_proposal_id = %s WHERE run_id = %s", (proposal, run))
+    return proposal, sha
+
+
+# Each child table's rows for the seeded runs, reached the way 0002's backfill must reach them.
+CHILD_ROWS = {
+    "run_state_history": "run_id = ANY(%s)",
+    "jobs": "run_id = ANY(%s)",
+    "drafts": "run_id = ANY(%s)",
+    "decisions": "proposal_id IN (SELECT proposal_id FROM app.proposals WHERE run_id = ANY(%s))",
+    "execution_grant": "run_id = ANY(%s)",
+    "action_attempt": "action_id IN (SELECT action_id FROM app.execution_grant WHERE run_id = ANY(%s))",
+    "action_attempt_state": "action_id IN (SELECT action_id FROM app.execution_grant WHERE run_id = ANY(%s))",
+}
+
+
+async def test_r006_populated_revision_1_database_upgrades_in_place(
+    migrated: None, app_conn: persistence.Conn, role_conn: RoleConn
+):
+    """R006 old-schema compatibility (final review I3): Plan-D runs at three stages, written at revision 1, come
+    through 0002-0004 with every backfill right, and the definer functions accept them afterwards.
+
+    Catches a backfill that reads through the wrong parent, a composite key added before its target, a history
+    sequence that collides with `_transition`, a raw handle surviving into the hashed column, and a migrated run the
+    functions refuse. The owner's dev database is the first real populated upgrade; this is its rehearsal.
+    """
+    from scripts.skeleton import downgrade, migrate
+
+    superuser = settings.superuser_postgres()
+    downgrade("app", superuser, "testclock@base")
+    downgrade("app", superuser, "0001_walking_skeleton")
+    runs: list[UUID] = []
+    try:
+        queued = await seed_revision_1_run(app_conn, "QUEUED", ("QUEUED",), events=("run.accepted",))
+        runs.append(queued)
+        investigate = uuid4()
+        await app_conn.execute(
+            "INSERT INTO app.jobs (id, type, run_id, dedup_key) VALUES (%s, 'investigate', %s, %s)",
+            (investigate, queued, f"{queued}:1"),
+        )
+        await app_conn.execute(  # Plan D stored the raw handle; 0002 truncates the table before hashing the column
+            "INSERT INTO app.invocation_context (handle, run_id, job_id, server, azp, expires_at)"
+            " VALUES ('plan-d-raw-handle', %s, %s, 'read', 'ops-worker', now() + interval '60 seconds')",
+            (queued, investigate),
+        )
+        awaiting = await seed_revision_1_run(
+            app_conn,
+            "AWAITING_APPROVAL",
+            ("QUEUED", "RETRIEVING", "DRAFTING", "AWAITING_APPROVAL"),
+            events=("run.accepted", "proposal.ready"),
+        )
+        runs.append(awaiting)
+        await seed_revision_1_proposal(app_conn, awaiting)
+        succeeded = await seed_revision_1_run(
+            app_conn,
+            "SUCCEEDED",
+            ("QUEUED", "RETRIEVING", "DRAFTING", "AWAITING_APPROVAL", "APPROVED", "EXECUTING", "SUCCEEDED"),
+            events=(
+                "run.accepted",
+                "proposal.ready",
+                "approval.recorded",
+                "action.granted",
+                "action.dispatched",
+                "action.confirmed",
+            ),
+        )
+        runs.append(succeeded)
+        proposal, sha = await seed_revision_1_proposal(app_conn, succeeded)
+        await app_conn.execute(
+            "INSERT INTO app.decisions (decision_id, proposal_id, reviewer, decision, expected_payload_sha256)"
+            " VALUES (%s, %s, %s, 'approve', %s)",
+            (uuid4(), proposal, SAM, sha),
+        )
+        execute_job, action = uuid4(), uuid4()
+        await app_conn.execute(
+            "INSERT INTO app.jobs (id, type, run_id, dedup_key, done_at) VALUES (%s, 'execute', %s, %s, now())",
+            (execute_job, succeeded, str(proposal)),
+        )
+        await app_conn.execute(
+            "INSERT INTO app.execution_grant (action_id, run_id, proposal_id, payload_sha256) VALUES (%s, %s, %s, %s)",
+            (action, succeeded, proposal, sha),
+        )
+        await app_conn.execute("INSERT INTO app.action_attempt (action_id, attempt_no) VALUES (%s, 1)", (action,))
+        outcome = Jsonb({"status": "SUCCEEDED", "action_id": str(action), "payload_sha256": sha})
+        for seq, attempt_state in enumerate(("INTENT", "SENT", "RESOLVED"), start=1):
+            resolved = attempt_state == "RESOLVED"
+            await app_conn.execute(
+                "INSERT INTO app.action_attempt_state (action_id, attempt_no, seq, state, outcome, detail)"
+                " VALUES (%s, 1, %s, %s, %s, %s)",
+                (action, seq, attempt_state, "SUCCEEDED" if resolved else None, outcome if resolved else None),
+            )
+
+        assert migrate(Profile.TEST) == 0
+
+        for table, where in CHILD_ROWS.items():
+            cur = await app_conn.execute(
+                f"SELECT count(*) AS n, count(*) FILTER (WHERE tenant_id = %s) AS alpha FROM app.{table} WHERE {where}",
+                (ALPHA, runs),
+            )
+            row = await cur.fetchone()
+            assert row["n"] > 0 and row["alpha"] == row["n"], (table, row)
+        cur = await app_conn.execute(
+            "SELECT r.run_id, r.slot_held, r.next_event_seq, d.tenant_id AS directory,"
+            " (SELECT max(e.sequence) FROM app.events e WHERE e.run_id = r.run_id) AS last"
+            " FROM app.runs r LEFT JOIN app.run_directory d USING (run_id) WHERE r.run_id = ANY(%s)",
+            (runs,),
+        )
+        rows = {r["run_id"]: r for r in await cur.fetchall()}
+        assert {run: rows[run]["slot_held"] for run in runs} == {queued: True, awaiting: True, succeeded: False}
+        assert [rows[run]["next_event_seq"] for run in runs] == [rows[run]["last"] for run in runs] == [1, 2, 6]
+        assert [str(rows[run]["directory"]) for run in runs] == [ALPHA] * 3
+        cur = await app_conn.execute("SELECT count(*) AS n FROM app.invocation_context")
+        assert (await cur.fetchone())["n"] == 0  # truncated: no raw handle survives into the hashed column
+
+        api, worker, mcp_exec = [await role_conn(r) for r in (Role.API, Role.WORKER, Role.MCP_EXEC)]
+        version = await persistence.transition_run(worker, run_id=queued, src=RunState.QUEUED, dst=RunState.RETRIEVING)
+        assert version == 2  # Plan D's history ended at seq 1, so _transition's seq 2 does not collide
+        appended = await persistence.append_event(
+            api, run_id=awaiting, type=EventType.TOOL_STARTED, payload={"message": "after the upgrade"}
+        )
+        assert appended.sequence == 3  # next_event_seq was backfilled from the two Plan-D events
+        async with worker.transaction():
+            await persistence.set_tenant(worker, UUID(ALPHA))
+            handle = await persistence.mint_handle(
+                worker, run_id=succeeded, job_id=execute_job, server=Server.WRITE, azp="ops-worker"
+            )
+        grant = await persistence.lookup_action(mcp_exec, handle=handle)
+        assert grant.action_id == action and grant.attempt_state == "RESOLVED"
+    finally:
+        for run in runs:
+            await purge_run(app_conn, run)

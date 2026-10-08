@@ -47,10 +47,12 @@ DOWNGRADE = (
 
 
 def upgrade() -> None:
+    """Hand the schema to incident_owner, narrow `incident` to INSERT and SELECT, and add the two CHECKs."""
     for statement in UPGRADE:
         op.execute(statement)
 
 
 def downgrade() -> None:
+    """Drop the two CHECKs and give the objects back to `incident`, whose ownership restores its revision-1 rights."""
     for statement in DOWNGRADE:
         op.execute(statement)

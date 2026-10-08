@@ -658,6 +658,9 @@ async def test_stale_mark_sent_and_early_outcome_are_refused(app_conn: persisten
         }
         wrong_status = {**failed, "status": "SUCCEEDED"}  # a document that disagrees with the outcome recorded
         assert await refused(mcp_exec, record, (cancelled, "FAILED_NO_COMMIT", Jsonb(wrong_status))) == "OC005"
+        # "No effect" without the destination's tombstone is refused in SQL too (final review M1).
+        for bare in ({**failed, "tombstone": None}, {k: v for k, v in failed.items() if k != "tombstone"}):
+            assert await refused(mcp_exec, record, (cancelled, "FAILED_NO_COMMIT", Jsonb(bare))) == "OC005"
         async with as_role(mcp_exec):
             cur = await mcp_exec.execute(record + " AS r", (cancelled, "FAILED_NO_COMMIT", Jsonb(failed)))
             assert (await cur.fetchone())["r"] == "FAILED_NO_COMMIT"

@@ -37,9 +37,13 @@ class Store(Protocol):
 
     async def lookup(self, action_id: UUID) -> keys.KeyRow | None: ...
 
-    async def abort(self, *, action_id: UUID, payload_sha256: str, reason: str) -> keys.KeyRow: ...
+    async def abort(self, *, action_id: UUID, payload_sha256: str, reason: str) -> keys.KeyRow:
+        """Write a permanent ABORTED key for an action never committed; an existing key answers instead."""
+        ...
 
-    async def reject(self, *, action_id: UUID, payload_sha256: str, reason: str) -> keys.KeyRow: ...
+    async def reject(self, *, action_id: UUID, payload_sha256: str, reason: str) -> keys.KeyRow:
+        """Write a permanent REJECTED key for a refused request; an existing key answers instead."""
+        ...
 
 
 class DbStore:
@@ -55,10 +59,12 @@ class DbStore:
             return await keys.lookup(conn, action_id)
 
     async def abort(self, *, action_id: UUID, payload_sha256: str, reason: str) -> keys.KeyRow:
+        """Record the abort tombstone in its own unit of work (keys.abort decides what stands)."""
         async with self.session.unit() as conn:
             return await keys.abort(conn, action_id=action_id, payload_sha256=payload_sha256, reason=reason)
 
     async def reject(self, *, action_id: UUID, payload_sha256: str, reason: str) -> keys.KeyRow:
+        """Record the rejection tombstone in its own unit of work (keys.reject decides what stands)."""
         async with self.session.unit() as conn:
             return await keys.reject(conn, action_id=action_id, payload_sha256=payload_sha256, reason=reason)
 
@@ -211,6 +217,7 @@ def create_app(
 
     @app.post("/internal/actions/{action_id}/abort")
     async def abort_action(action_id: UUID, request: Request, _: Annotated[Principal, Depends(caller)]) -> Response:
+        """Abort an uncommitted action permanently, or answer with the key that already stands (AM-13)."""
         raw = await request.body()
         try:
             body = AbortRequest.model_validate_json(raw.decode("utf-8"))
@@ -229,6 +236,7 @@ def create_app(
 
         @app.post("/internal/faults/{kind}")
         async def arm_fault(kind: FaultKind, request: Request, _: Annotated[Principal, Depends(caller)]) -> Response:
+            """Arm a test-profile fault for the next `count` requests (the route exists only under PROFILE=test)."""
             try:
                 body = FaultRequest.model_validate_json((await request.body()).decode("utf-8"))
             except (UnicodeDecodeError, ValidationError, ValueError):

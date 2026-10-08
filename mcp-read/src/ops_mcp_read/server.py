@@ -213,10 +213,10 @@ def build_app(server: MCPServer, state: State) -> Starlette:
                 await conn.close()
                 raise
             state.session = persistence.Session(conn)
-        if not state.verifier.ready:
-            await state.verifier.load_keys()
         # A mounted sub-app's lifespan never runs on its own; the session manager lives in it (measured).
         try:
+            if not state.verifier.ready:  # inside the try: a failed JWKS load must close the connection too
+                await state.verifier.load_keys()
             async with mcp_app.router.lifespan_context(mcp_app):
                 yield
         finally:

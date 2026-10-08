@@ -150,6 +150,12 @@ def ensure_roles(superuser: settings.Postgres, app_db: str, incident_db: str, pr
     """Every AM-20.1 role of the profile with its password and CONNECT, before any migration runs (ruling 3)."""
     roles = login_roles(profile)
     with psycopg.connect(superuser.conninfo(), autocommit=True) as conn:
+        # Bind parameters must never reach the server log: the passwords below travel as set_config parameters, and
+        # log_statement = 'all' or a logged error would otherwise record them (final review M12). Both settings are
+        # superuser-only and last for this connection alone; the _on_error twin covers a failed statement.
+        conn.execute("SET log_parameter_max_length = 0")
+        conn.execute("SET log_parameter_max_length_on_error = 0")
+        conn.execute("SET log_statement = 'none'")
         for name, bypassrls in NOLOGIN_ROLES:
             ensure_nologin_role(conn, name, bypassrls)
         for role in roles:

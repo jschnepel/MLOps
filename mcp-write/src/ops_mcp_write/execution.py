@@ -18,12 +18,18 @@ from uuid import UUID
 
 import httpx2
 from ops_core import persistence
-from ops_core.outcomes import ActionOutcome, ToolOutcome
+from ops_core.outcomes import ActionOutcome, EventRuleViolation, ToolOutcome
+from ops_core.states import IllegalTransition
 from ops_core.tokens import WorkloadTokenSource
 
 from ops_mcp_write import destination
 
 log = logging.getLogger(__name__)
+
+# The refusals the database maps to Python. Before SENT they are honest error envelopes (server.py); after SENT they
+# must not be, because the destination may have committed: the only answers then are a recorded outcome or UNKNOWN
+# (AM-13). A lease fence (T13/T22) will raise VersionConflict on exactly this path (final review I1).
+_POST_SENT_REFUSALS = (persistence.PersistenceError, IllegalTransition, EventRuleViolation)
 
 
 def next_step(attempt_state: str | None) -> Literal["stored", "send", "resend"]:
@@ -65,6 +71,9 @@ async def _read_back(deps: Deps, handle: str, grant: persistence.Grant) -> Actio
             return _stored(await persistence.lookup_action(conn, handle=handle))
     except persistence.HandleRejected:
         return destination.unknown(grant.action_id, grant.payload_sha256)
+    except _POST_SENT_REFUSALS:  # SENT is committed: a mapped refusal here must not become an error envelope
+        log.exception("reading back action %s failed after SENT", grant.action_id)
+        return destination.unknown(grant.action_id, grant.payload_sha256)
 
 
 async def create_incident(deps: Deps, *, handle: str, proposal_id: UUID) -> ActionOutcome:
@@ -101,9 +110,14 @@ async def create_incident(deps: Deps, *, handle: str, proposal_id: UUID) -> Acti
         # A lost reply, a 503 or a malformed document: nothing is recorded here; the worker holds mark_unknown
         # (SA:467, Plan E ruling 6), and record_outcome refuses UNKNOWN by design.
         return outcome
-    # Outside the try on purpose: a database failure here is a 500 and the replay recovers (the attempt is still SENT).
-    async with deps.session.unit() as conn:
-        standing = await persistence.record_outcome(conn, action_id=grant.action_id, outcome=outcome)
+    # An unmapped database failure (psycopg.Error) still escapes as a 500 and the worker's replay resends under the same
+    # action id (the attempt is still SENT). A mapped refusal is answered UNKNOWN so the worker reconciles it.
+    try:
+        async with deps.session.unit() as conn:
+            standing = await persistence.record_outcome(conn, action_id=grant.action_id, outcome=outcome)
+    except _POST_SENT_REFUSALS:
+        log.exception("recording the outcome of action %s failed after SENT", grant.action_id)
+        return destination.unknown(grant.action_id, grant.payload_sha256)
     if standing is outcome.status:
         return outcome
     # A concurrent caller's record stands: read it back in its own unit.

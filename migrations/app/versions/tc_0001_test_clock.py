@@ -36,6 +36,7 @@ DDL = (
 
 
 def upgrade() -> None:
+    """Create the one-row test clock and grant test_harness its cells and EXECUTE on current_time()."""
     for statement in DDL:
         op.execute(statement)
     # The test-only role gets its schema access and its clock EXECUTE here, never on the main line (SA:403).
@@ -48,6 +49,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Drop the test clock and take back what the branch granted test_harness."""
     op.execute("DROP TABLE app.test_clock")
     op.execute(f"REVOKE ALL ON FUNCTION app.current_time() FROM {', '.join(privileges.TEST_ONLY_ROLES)}")
     op.execute(f"REVOKE USAGE ON SCHEMA app FROM {', '.join(privileges.TEST_ONLY_ROLES)}")

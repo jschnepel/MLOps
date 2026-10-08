@@ -472,8 +472,8 @@ async def claim_job(conn: Conn, *, worker_name: str, tenant_ids: Sequence[UUID])
     jobs is under tenant_isolation for the worker (only the sweeper has sweeper_all), so the claim runs once per
     tenant with the tenant set (Plan E ruling 18); the caller rotates the order. Runs inside a transaction so the
     settings last exactly as long as the claim; `set_tenant` refuses outside a transaction. On return the
-    transaction's tenant stays set to the claimed job's tenant (or the last one tried), which the worker's handler
-    relies on. TODO(T13): lease + fence + wake-ups instead of polling.
+    transaction's tenant stays set to the claimed job's tenant (or the last one tried). TODO(T13): lease + fence +
+    wake-ups instead of polling.
     """
     for tenant_id in tenant_ids:
         await set_tenant(conn, tenant_id)
