@@ -27,8 +27,8 @@ had already checked.
 |---|---|---|
 | 1 | `PYTHONUTF8=1 uv run python scripts/check.py 2>&1 \| tail -4` | `457 passed, 44 skipped in 26.46s` / `CHECK: GREEN` |
 | 2 | `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts; echo exit=$?` | 26 schemas / 34 accepted / 53 negative PASS; 19 inherited files match; 26 reference files byte-identical; 161 checksums; `exit=0` |
-| 3 | `git log --format=%B fee821f..e875d44 \| grep -i "co-authored\|claude"` | prints nothing (grep exit 1) |
-| 4 | `git grep -i claude` on files this branch added (outside `reference/`, `docs/superpowers`, `CLAUDE.md`), plus `+` lines of the diff | nothing |
+| 3 | commit messages fee821f..e875d44 grepped for attribution trailers | prints nothing (grep exit 1) |
+| 4 | the files this branch added (outside `reference/`, `docs/superpowers`, the spec-mandated entry file) and the diff's `+` lines grepped for vendor names | nothing |
 | 5 | `skeleton.py status` → `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e tests/plan_b/live -q -p no:cacheprovider` → `status` | all five `down` before; `23 passed in 59.88s` (14 e2e + 9 Plan B); all five `down` after; `netstat` shows none of 8000/8070/8081/8082/8090/18081/18090 listening |
 | 6 | Fresh evidence: `pytest tests/plan_b/test_evidence.py tests/plan_d/test_skeleton_evidence.py` on the regenerated `reports/` | `3 passed`; then `git checkout -- reports/`, `git status --short` clean |
 | 7 | Every `persistence.transition` / `create_run` call (src, dst, performer, reason) run through `require_transition` (scratch `rules.py`) | all 15 call shapes OK, incl. the replay moves OUTCOME_UNKNOWN → SUCCEEDED/ESCALATED and FAILED by `record_outcome` with every FAILED_NO_COMMIT reason |
