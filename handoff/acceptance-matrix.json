@@ -1243,7 +1243,8 @@
       "owning_tasks": [
         "T07"
       ],
-      "suggested_test": "tests/acceptance/test_r082_run_transitions_are_enforced_from_one_table_incl.py"
+      "suggested_test": "tests/acceptance/test_r082_run_transitions_are_enforced_from_one_table_incl.py",
+      "note": "\"logged\" half is TODO(T09); the local evidence covers the rest"
     },
     {
       "id": "R083",
