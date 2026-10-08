@@ -27,3 +27,19 @@ Profile `dev` of `compose.yaml` (project `ops-copilot`, network `ops-dev-net`). 
 - Reset PostgreSQL data: `docker compose --profile dev down -v` — destructive; run it yourself, deliberately. No script or plan step runs it. (Keycloak keeps no volume: its dev data is ephemeral and re-imported on every `up`.)
 
 (Realm, personas and the service account: see Tasks 2–3 additions below. Ollama: see `ollama-network.md`.)
+
+## Realm `ops-dev` (imported from `deploy/dev/keycloak/realm-ops-dev.json`)
+
+| Client | Kind | Token audience(s) | Used by |
+|---|---|---|---|
+| `ops-web` | confidential, authorization code + PKCE S256, exact redirect `http://localhost:8000/auth/callback` | — | the API's browser login (T10 registers no wildcard) |
+| `ops-worker` | service account | `${MCP_READ_RESOURCE_URL}`, `${MCP_WRITE_RESOURCE_URL}` | worker → mcp-read / mcp-write |
+| `ops-mcp-read` | service account | `asset-sim` | mcp-read → asset-sim |
+| `ops-mcp-write` | service account | `incident-sim` | mcp-write → incident-sim |
+| `ops-dev-direct` | public, direct grant, **dev-only** | — | persona login in tests |
+
+Secrets and persona passwords are `${OPS_KC_*}` placeholders in the file, resolved at import from the environment the entrypoint exports. Persona user IDs are fixed to `data/seed-ids.json`, so a token's `sub` equals the seeded ID (asserted by `tests/plan_b/live/test_keycloak_tokens.py`). Realm roles are informational and Keycloak users carry no tenant attribute: memberships are seeded in PostgreSQL by a `migrator` migration (T08/T09), and Keycloak is not the application role database.
+
+Why the file is shaped this way (JSON cannot carry comments, so the reasons live here and in `tests/plan_b/test_realm_template.py`): each workload client has its own audience mapper so a token minted for one downstream is useless against the other (`ops-mcp-read` never gets `incident-sim`, and vice versa); only `ops-dev-direct` allows the password grant, and its description says `dev-only` because a password grant must not exist outside this profile; Keycloak itself adds the default `account` audience, which the live tests strip before comparing audiences exactly. Measured 2026-10-08 on Keycloak 26.8.0: the `${...}` placeholders are substituted at import, and `iss` is `http://localhost:18080/realms/ops-dev` from both the host and a container on `ops-dev-net` (`KC_HOSTNAME` in `compose.yaml` pins the public issuer, so a request to `http://keycloak:8080` still yields it).
+
+The bootstrap admin `tmpadmin` exists only for the master realm; Task 3 removes it after import.

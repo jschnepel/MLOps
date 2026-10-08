@@ -1,0 +1,6 @@
+ops-worker (host): {"aud": ["http://mcp-read:8081/mcp", "http://mcp-write:8082/mcp", "account"], "azp": "ops-worker", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "service-account-ops-worker", "sub": "6b95e96b-10c7-46ac-a949-a2737d01fbd3", "typ": "Bearer"}
+ops-mcp-read (host): {"aud": ["asset-sim", "account"], "azp": "ops-mcp-read", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "service-account-ops-mcp-read", "sub": "ad595e39-099e-4172-8d9d-ba48851e4a69", "typ": "Bearer"}
+ops-mcp-write (host): {"aud": ["incident-sim", "account"], "azp": "ops-mcp-write", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "service-account-ops-mcp-write", "sub": "84eebad3-b681-4c99-9ff8-f19a31a307f4", "typ": "Bearer"}
+persona alex (host): {"azp": "ops-dev-direct", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "alex", "sub": "2fc05986-c7ec-544c-b628-fdb112bbf18a", "typ": "Bearer"}
+persona sam (host): {"azp": "ops-dev-direct", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "sam", "sub": "03f7eb09-e18d-5f33-bf75-12c57d5aaa54", "typ": "Bearer"}
+iss host vs container: {"container": "http://localhost:18080/realms/ops-dev", "host": "http://localhost:18080/realms/ops-dev"}
