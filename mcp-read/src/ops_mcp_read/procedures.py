@@ -26,7 +26,7 @@ def tokens(text: str) -> set[str]:
 
 
 def section_bodies(markdown: str) -> dict[str, str]:
-    """Body of every `## <name>` section: lines up to the next `## ` or EOF, outer newlines stripped (meta.json rule)."""
+    """Body of every `## <name>` section: lines up to the next `## ` or EOF, outer newlines stripped (meta.json)."""
     bodies: dict[str, str] = {}
     name: str | None = None
     buffer: list[str] = []
