@@ -7,6 +7,11 @@ signed by another key, a rotation that strands the server on stale keys, and an 
 instead of the server's allowlist.
 """
 
+import asyncio
+import base64
+import hashlib
+import hmac
+import json
 import time
 from typing import Any
 
@@ -80,6 +85,9 @@ def test_single_string_audience_is_accepted(verifier: TokenVerifier):
         mint(PEM2, "k1"),  # signed by a key that is not the published k1
         mint(PEM2, "k2"),  # unknown kid and no refresh possible in the sync path
         mint(sub=None),
+        mint(sub=""),  # an empty subject identifies nobody
+        mint(nbf=int(time.time()) + 3600),  # not valid yet
+        mint(azp="ops-web"),  # the browser client must not open a worker-only MCP server
     ],
 )
 def test_rejections(verifier: TokenVerifier, token: str):
@@ -91,15 +99,24 @@ def test_rejections(verifier: TokenVerifier, token: str):
 def test_garbage_and_wrong_algorithm_are_rejected(verifier: TokenVerifier):
     with pytest.raises(TokenRejected):
         verifier.verify("not-a-jwt")
-    with pytest.raises(TokenRejected):  # HS256 with the public key as the secret: the classic confusion attack
-        verifier.verify(
-            jwt.encode(
-                {"iss": ISSUER, "aud": AUDIENCE, "azp": "ops-worker", "sub": "x", "exp": int(time.time()) + 60},
-                "secret",
-                algorithm="HS256",
-                headers={"kid": "k1"},
-            )
-        )
+    with pytest.raises(TokenRejected):  # HS256 keyed with the published public key: the classic confusion attack
+        verifier.verify(hs256_with_public_key())
+
+
+def hs256_with_public_key() -> str:
+    # Built by hand: PyJWT itself refuses to HMAC-sign with a PEM key, which is exactly what the attacker does.
+    private = serialization.load_pem_private_key(PEM1, password=None)
+    public_pem = private.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+    def b64(raw: bytes) -> bytes:
+        return base64.urlsafe_b64encode(raw).rstrip(b"=")
+
+    header = b64(json.dumps({"alg": "HS256", "typ": "JWT", "kid": "k1"}).encode())
+    claims = {"iss": ISSUER, "aud": AUDIENCE, "azp": "ops-worker", "sub": "x", "exp": int(time.time()) + 60}
+    signing_input = header + b"." + b64(json.dumps(claims).encode())
+    return (signing_input + b"." + b64(hmac.new(public_pem, signing_input, hashlib.sha256).digest())).decode()
 
 
 @pytest.mark.asyncio
@@ -155,6 +172,89 @@ async def test_workload_token_source_caches_until_near_expiry():
 
 def test_bearer_header_parsing():
     assert bearer_token("Bearer abc.def.ghi") == "abc.def.ghi"
-    for bad in (None, "", "Basic abc", "Bearer", "Bearer  ", "bearer abc"):
+    bad_headers = (
+        None,
+        "",
+        "Basic abc",
+        "Bearer",
+        "Bearer  ",
+        "bearer abc",
+        "Bearer  abc",
+        "Bearer \tabc",
+        "Bearer abc\n",
+        "Bearer a\tb",
+        "Bearer a b",
+    )
+    for bad in bad_headers:
         with pytest.raises(TokenRejected):
             bearer_token(bad)
+
+
+@pytest.mark.asyncio
+async def test_failing_fetch_is_a_rejection_and_starts_the_cooldown(verifier: TokenVerifier):
+    attempts: list[str] = []
+
+    async def fetch(url: str) -> dict[str, Any]:
+        attempts.append(url)
+        raise OSError("keycloak is down")
+
+    verifier.fetch = fetch
+    with pytest.raises(TokenRejected, match="signing keys unavailable"):
+        await verifier.verify_async(mint(PEM2, "k2"))
+    for _ in range(2):  # a flood of unknown kids while the IdP is down: rejected inside the cooldown, no new fetch
+        with pytest.raises(TokenRejected):
+            await verifier.verify_async(mint(PEM2, "k2"))
+    assert len(attempts) == 1
+    assert verifier.verify(mint()).azp == "ops-worker"  # the old keys still serve known kids
+
+
+@pytest.mark.asyncio
+async def test_concurrent_unknown_kid_requests_share_one_fetch(verifier: TokenVerifier):
+    calls: list[str] = []
+
+    async def fetch(url: str) -> dict[str, Any]:
+        calls.append(url)
+        await asyncio.sleep(0.05)
+        return {"keys": [JWK1, JWK2]}
+
+    verifier.fetch = fetch
+    results = await asyncio.gather(*(verifier.verify_async(mint(PEM2, "k2")) for _ in range(10)))
+    assert len(calls) == 1 and all(p.azp == "ops-worker" for p in results)
+
+
+def test_encryption_keys_never_verify(verifier: TokenVerifier):
+    verifier.install_keys({"keys": [{**JWK1, "use": "enc"}, JWK2]})
+    with pytest.raises(TokenRejected):
+        verifier.verify(mint())
+
+
+def test_principal_claims_are_read_only_and_not_in_repr(verifier: TokenVerifier):
+    p = verifier.verify(mint())
+    claims: Any = p.claims
+    with pytest.raises(TypeError):
+        claims["sub"] = "someone-else"
+    assert "claims" not in repr(p)
+
+
+@pytest.mark.asyncio
+async def test_workload_token_source_single_flight_and_unusable_reply():
+    from ops_core.tokens import WorkloadTokenSource
+
+    calls: list[dict[str, str]] = []
+
+    async def post(url: str, form: dict[str, str]) -> dict[str, Any]:
+        calls.append(form)
+        await asyncio.sleep(0.05)
+        return {"access_token": "t", "expires_in": 300}
+
+    src = WorkloadTokenSource(token_url="u", client_id="ops-worker", client_secret="s", post=post)
+    assert await asyncio.gather(*(src.token() for _ in range(8))) == ["t"] * 8
+    assert len(calls) == 1
+
+    async def bad(url: str, form: dict[str, str]) -> dict[str, Any]:
+        return {"error": "invalid_client"}
+
+    broken = WorkloadTokenSource(token_url="u", client_id="ops-worker", client_secret="hunter2", post=bad)
+    with pytest.raises(TokenRejected) as caught:
+        await broken.token()
+    assert "hunter2" not in str(caught.value)
