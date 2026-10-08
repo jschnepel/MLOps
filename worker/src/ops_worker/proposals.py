@@ -67,6 +67,7 @@ def build_proposal(
     evidence: list[EvidenceItem],
     corpus_version: str,
     now: datetime,
+    supersedes_run_id: UUID | None,
 ) -> Frozen:
     """Build the payload, its canonical bytes, their hash and the run manifest from a validated draft."""
     by_id = {e.evidence_id: e for e in evidence}
@@ -93,6 +94,7 @@ def build_proposal(
         workflow_version=WORKFLOW_VERSION,
         prompt_version=PROMPT_VERSION,
         expires_at=now + EXPIRY,
+        supersedes_run_id=supersedes_run_id,
     )
     doc = payload.canonical_dict()
     manifest = RunManifest(

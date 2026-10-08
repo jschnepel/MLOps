@@ -9,10 +9,12 @@ import os
 import socket
 import sys
 from collections.abc import Callable
+from uuid import UUID
 
 import psycopg
 import uvicorn
 from ops_core import persistence, settings
+from ops_core.settings import Role
 from ops_core.tokens import WorkloadTokenSource
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -27,13 +29,24 @@ POLL_SECONDS = 0.5
 log = logging.getLogger("ops_worker")
 
 
+def rotate(tenants: list[UUID], start: int) -> list[UUID]:
+    """The tenants in claim order for one poll: a different first tenant each time, so none starves (ruling 18)."""
+    if not tenants:
+        return []
+    k = start % len(tenants)
+    return tenants[k:] + tenants[:k]
+
+
 async def run_forever(deps: handlers.Deps, stop: asyncio.Event) -> None:
     """Claim, handle, repeat. A failed handler is logged and its job stays claimed (T13 reclaims); a broken
     connection ends the loop, and readiness follows it (see health_app)."""
+    polls = 0
     while not stop.is_set():
         try:
             async with deps.conn.transaction():
-                job = await persistence.claim_job(deps.conn, worker_name=deps.worker_name)
+                order = rotate(await persistence.tenants(deps.conn), polls)
+                job = await persistence.claim_job(deps.conn, worker_name=deps.worker_name, tenant_ids=order)
+            polls += 1
             if job is not None:
                 await handlers.handle(deps, dict(job))
                 continue
@@ -78,10 +91,10 @@ async def _main() -> None:
         client_id="ops-worker",
         client_secret=settings.read_secret("kc_client_secret_ops_worker"),
     )
-    # TODO(T09): connect as this service's own role (Task 6/7)
-    conn = await persistence.connect(settings.superuser_postgres())
+    conn = await persistence.connect(settings.app_postgres(Role.WORKER))
     # The health server's own connection (see health_app).
-    probe = await persistence.connect(settings.superuser_postgres())
+    probe = await persistence.connect(settings.app_postgres(Role.WORKER))
+    await persistence.assert_clock_profile(probe, settings.profile())
     deps = handlers.Deps(
         conn=conn,
         mcp=HttpMcpCaller(tokens),
