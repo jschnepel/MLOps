@@ -34,10 +34,12 @@ MODELS: dict[str, type[BaseModel]] = {
     "schemas/run-manifest.schema.json": RunManifest,
 }
 NO_MODEL = {
-    "schemas/tool-result.schema.json": "envelopes are built by the MCP servers (T15/T47); the data shapes are ActionOutcome",
+    "schemas/tool-result.schema.json": (
+        "envelopes are built by the MCP servers (T15/T47); the data shapes are ActionOutcome"
+    ),
     "schemas/evidence.schema.json": "retrieval rows are produced by mcp-read (T17)",
-    "schemas/route.schema.json": "enums only; tested in test_jobs_routes_outcomes",
-    "schemas/job.schema.json": "table document; tested in test_jobs_routes_outcomes",
+    "schemas/route.schema.json": "enums only; the table is pinned in test_jobs_routes_outcomes",
+    "schemas/job.schema.json": "JOB_RULES is pinned in test_jobs_routes_outcomes, the example by --contracts",
 }
 EVENT = "schemas/event.schema.json"
 TIMESTAMP = TypeAdapter(AwareDatetime)
