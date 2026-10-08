@@ -40,7 +40,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/plan_a"]
+testpaths = ["tests/plan_a", "tests/plan_b"]
 norecursedirs = ["reference", ".venv", "node_modules", "build"]
 addopts = "-ra"
 
