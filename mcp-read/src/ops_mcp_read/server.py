@@ -206,8 +206,13 @@ def build_app(server: MCPServer, state: State) -> Starlette:
     async def lifespan(_: Starlette) -> AsyncIterator[None]:
         """Open the session and keys, run the mounted app's lifespan, then close the connection."""
         if state.session is None:
-            state.session = persistence.Session(await persistence.connect(settings.app_postgres(Role.MCP_READ)))
-            await persistence.assert_clock_profile(state.session.conn, settings.profile())
+            conn = await persistence.connect(settings.app_postgres(Role.MCP_READ))
+            try:
+                await persistence.assert_clock_profile(conn, settings.profile())
+            except BaseException:  # a failed start must leak no connection, and a re-entered lifespan re-asserts
+                await conn.close()
+                raise
+            state.session = persistence.Session(conn)
         if not state.verifier.ready:
             await state.verifier.load_keys()
         # A mounted sub-app's lifespan never runs on its own; the session manager lives in it (measured).

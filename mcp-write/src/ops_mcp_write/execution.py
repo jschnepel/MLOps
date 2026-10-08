@@ -48,9 +48,23 @@ class Deps:
 
 
 def _stored(grant: persistence.Grant) -> ActionOutcome:
+    """The outcome a RESOLVED attempt recorded, parsed back from the grant's stored detail."""
     if grant.detail is None:
         raise RuntimeError("a resolved attempt has no stored outcome")
     return ActionOutcome.model_validate_json(json.dumps(grant.detail))
+
+
+async def _read_back(deps: Deps, handle: str, grant: persistence.Grant) -> ActionOutcome:
+    """The recorded outcome, read in its own unit; a handle that expired meanwhile reports UNKNOWN, not a handle error.
+
+    The outcome is already recorded, and lookup_action re-checks the handle's expiry: a handle that expired during a
+    slow destination must not relabel it as INVALID_HANDLE. The worker's next job rereads it (T22).
+    """
+    try:
+        async with deps.session.unit() as conn:
+            return _stored(await persistence.lookup_action(conn, handle=handle))
+    except persistence.HandleRejected:
+        return destination.unknown(grant.action_id, grant.payload_sha256)
 
 
 async def create_incident(deps: Deps, *, handle: str, proposal_id: UUID) -> ActionOutcome:
@@ -64,10 +78,11 @@ async def create_incident(deps: Deps, *, handle: str, proposal_id: UUID) -> Acti
         async with deps.session.unit() as conn:
             sent = await persistence.mark_sent(conn, grant.action_id)  # committed here, before any I/O
         if sent == "resolved":  # a concurrent caller finished first
-            async with deps.session.unit() as conn:
-                return _stored(await persistence.lookup_action(conn, handle=handle))
+            return await _read_back(deps, handle, grant)
         if sent == "cancelled":
-            # TODO(T22): request_abort + the abort POST; until then the caller sees the grant's INTENT standing.
+            # The UNKNOWN envelope makes the worker call mark_unknown, which moves the run to OUTCOME_UNKNOWN and
+            # queues a recover job although nothing was sent: conservative. TODO(T22): request_abort and the abort
+            # POST replace this.
             return destination.unknown(grant.action_id, grant.payload_sha256)
     try:
         reply = await destination.post_incident(
@@ -91,7 +106,5 @@ async def create_incident(deps: Deps, *, handle: str, proposal_id: UUID) -> Acti
         standing = await persistence.record_outcome(conn, action_id=grant.action_id, outcome=outcome)
     if standing is outcome.status:
         return outcome
-    # A concurrent caller's record stands: read it back in its own unit (lookup_action re-checks the handle's expiry,
-    # and a slow destination must not roll the recorded outcome back with a HandleRejected).
-    async with deps.session.unit() as conn:
-        return _stored(await persistence.lookup_action(conn, handle=handle))
+    # A concurrent caller's record stands: read it back in its own unit.
+    return await _read_back(deps, handle, grant)

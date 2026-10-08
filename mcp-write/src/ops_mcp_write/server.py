@@ -183,6 +183,13 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
             return envelope("create_incident", error=tool_error("GRANT_REFUSED", f"grant refused: {exc.code}"))
         except persistence.NotFound:
             return envelope("create_incident", error=tool_error("NOT_FOUND", "run not found"))
+        except persistence.VersionConflict:
+            # Nothing was sent: the worker closes the job without a retry cycle.
+            return envelope("create_incident", error=tool_error("STALE_RUN", "run is no longer executing"))
+        except persistence.HashMismatch:
+            return envelope("create_incident", error=tool_error("HASH_MISMATCH", "stored bytes do not match"))
+        # AuthorityViolation stays unmapped on purpose: it is a deployment error (the role lacks a grant), so the raw
+        # tool error and the worker's re-queue are the right outcome.
         return outcome_envelope(outcome)
 
     return MCPServer(
@@ -204,8 +211,13 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         """Build the write dependencies and load keys, run the mounted app's lifespan, then close both resources."""
         if state.deps is None:
             kc = settings.keycloak()
-            session = persistence.Session(await persistence.connect(settings.app_postgres(Role.MCP_EXEC)))
-            await persistence.assert_clock_profile(session.conn, settings.profile())
+            conn = await persistence.connect(settings.app_postgres(Role.MCP_EXEC))
+            try:
+                await persistence.assert_clock_profile(conn, settings.profile())
+            except BaseException:  # a failed start must leak no connection
+                await conn.close()
+                raise
+            session = persistence.Session(conn)
             state.deps = execution.Deps(
                 session=session,
                 http=httpx2.AsyncClient(),
