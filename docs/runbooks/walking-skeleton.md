@@ -28,6 +28,17 @@ files), so nothing is throwaway.
    `reports/bootstrap/*.txt`), so the tree is dirty after a live run; commit the files when their content changed for
    a reason worth keeping, otherwise `git checkout -- reports/`.
 
+The destination (incident-sim, T10): the schema belongs to `incident_owner` and the runtime role `incident` can only
+SELECT and INSERT, so a key is never deleted or rewritten. `POST /internal/actions/{action_id}/abort` takes
+`{"payload_sha256": "<64 hex>", "reason": "cancelled_before_send" | "expired" | "deadline"}` and answers the existing
+key's document when one exists (a receipt if committed, otherwise the first tombstone), else writes an `ABORTED`
+tombstone. A well-formed POST whose hash does not match the bytes, or whose payload is not a non-empty object, writes a
+permanent `REJECTED` key and answers 200 with the tombstone; a token for another audience or azp is 403. Under
+`PROFILE=test` only, `POST /internal/faults/{kind}` with `{"count": n}` arms `reject_next` (next POST is rejected with
+reason `policy`), `drop_before_commit` (next POST answers 503, nothing written) or `lose_after_commit` (next POST
+commits, then answers 503; recover with `GET /internal/actions/{action_id}`); the routes return 404 in dev and demo.
+`uv run python scripts/skeleton.py keys` lists destination keys that no execution grant carries (exit 1 if any).
+
 If mcp-write is down, approved runs wait in APPROVED and their execute jobs retry every 30 s until it returns. The
 R105 run, its conversation and its incident stay in the dev database on purpose: they are the evidence the proof
 file describes, and nothing purges them.

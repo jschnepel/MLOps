@@ -159,8 +159,8 @@ async def test_r105_walking_skeleton(
         persona_at_destination = d.get(f"/internal/actions/{action_id}", headers=a)
         worker_at_destination = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {worker}"})
         refusals = (persona_at_destination.status_code, worker_at_destination.status_code)
-        # TODO(T09): the destination answers 403 to an authenticated but unauthorised caller; until then 401.
-        assert refusals == (401, 401)
+        # Genuine tokens for another audience or azp are 403 at the destination (ruling 12), never 401.
+        assert refusals == (403, 403)
         assert action_id not in persona_at_destination.text and action_id not in worker_at_destination.text
         key = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {mcp_write}"}).json()
         assert key["state"] == "COMMITTED" and key["payload_sha256"] == sha
@@ -185,7 +185,7 @@ async def test_r105_walking_skeleton(
         again = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {mcp_write}"}).json()
         assert again["receipt"] == key["receipt"]  # the same receipt, so no second incident
     lines.append("replay=same_action_id refusals=api:worker,destination:persona+worker,mcp-write:persona+mcp-read")
-    lines.append(f"destination_refusals=persona:{refusals[0]},worker:{refusals[1]}")  # 401 until Task 8, 403 after
+    lines.append(f"destination_refusals=persona:{refusals[0]},worker:{refusals[1]}")
     # The detective check, inline: this run's destination key must carry a grant's exact (action_id, hash). The exit
     # code of `skeleton.py keys` is not used because another live test plants an orphan on purpose.
     cur = await app_conn.execute("SELECT action_id, payload_sha256 FROM app.execution_grant")

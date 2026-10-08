@@ -1,8 +1,8 @@
-R105 walking skeleton — 2026-10-08T20:57:29Z
-run_id=ad2cf6ed-225c-4b4b-ac22-3fa5d4481104 accepted status=QUEUED
-proposal_id=f0afa84d-33de-49e8-a38d-99c208de8833 revision=1 payload_sha256=02c5f020411580966da6d44ad18bc0439ac63de3fadaa74b120f3fa9512d7582 evidence=['ALPHA-TRIAGE:v1:scope']
-state=SUCCEEDED state_version=7 action_id=99e6325a-0446-49ac-89bb-c2635686d828 incident_id=INC-000007
+R105 walking skeleton — 2026-10-08T21:08:42Z
+run_id=5f84866e-7c55-491c-b4ab-e4e75c460630 accepted status=QUEUED
+proposal_id=ce55f843-eaf7-4279-afac-e0abe1665089 revision=1 payload_sha256=64ad687c5ade80a9dbcd7202aad8cc7feaae817f91e07c9209803162d18ceba6 evidence=['ALPHA-TRIAGE:v1:scope']
+state=SUCCEEDED state_version=7 action_id=74f8da91-2cc0-4f11-ae9e-5a7da89a64a2 incident_id=INC-000068
 events=run.accepted,tool.started,tool.completed,explanation.ready,proposal.ready,approval.recorded,action.granted,action.dispatched,action.confirmed
 replay=same_action_id refusals=api:worker,destination:persona+worker,mcp-write:persona+mcp-read
-destination_refusals=persona:401,worker:401
+destination_refusals=persona:403,worker:403
 keys=consistent
