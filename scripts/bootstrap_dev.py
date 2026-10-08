@@ -111,8 +111,11 @@ def delete_bootstrap_admin(base_url: str, username: str, password: str) -> str:
 
     Keycloak creates `tmpadmin` only to get the first login; leaving a master-realm admin with a file-based password
     in place would be a standing superuser. Keycloak 26.8 answers the password grant for a deleted user with
-    HTTP 400 `invalid_grant` (measured 2026-10-08); 401 is accepted too in case a later version changes it. Absent
-    therefore means "already deleted", which keeps a repeat `up` idempotent.
+    HTTP 400 `invalid_grant` (measured 2026-10-08); 401 is accepted too in case a later version changes it. A 400
+    also follows a wrong password (for example a rotated secret file while the admin still exists), so 'absent' means
+    "already deleted" only because the documented rotation (`down`/`up`, ephemeral Keycloak data) makes the two cases
+    coincide; that is what keeps a repeat `up` idempotent. A 5xx, a connection error or a 404 on the DELETE
+    deliberately raise: a failed security cleanup must be loud, even though `compose up` already succeeded.
     """
     form = urllib.parse.urlencode(
         {"grant_type": "password", "client_id": "admin-cli", "username": username, "password": password}
@@ -125,6 +128,7 @@ def delete_bootstrap_admin(base_url: str, username: str, password: str) -> str:
             return "absent"
         raise
     auth = {"Authorization": f"Bearer {token}"}
+    # exact=true: without it Keycloak substring-matches usernames, so a `tmpadmin2` would be deleted too.
     q = urllib.parse.urlencode({"username": username, "exact": "true"})
     with urllib.request.urlopen(
         urllib.request.Request(f"{base_url}/admin/realms/master/users?{q}", headers=auth), timeout=20

@@ -1,4 +1,4 @@
-"""T43 DoD: the view-users service account can read a user's `enabled` flag and nothing more; the bootstrap admin is gone.
+"""T43 DoD: the view-users service account can read a user's `enabled` flag and nothing more; the admin is gone.
 
 The account exists so the API can fail closed on a disabled user (AM-20.7) without holding any write power over the
 realm: the first test pins both halves, the allowed read and the three refused calls. The second proves the temporary
