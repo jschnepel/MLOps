@@ -7,6 +7,7 @@ silently collapsed by the parser.
 
 import json
 import unicodedata
+from datetime import UTC, datetime
 
 import pytest
 from hypothesis import given, settings
@@ -81,8 +82,8 @@ def test_non_string_keys_are_rejected():
 
 @pytest.mark.parametrize(
     "text",
-    ['{"a": 1, "a": 2}', "NaN", "[Infinity]", '{"a": 1.5}', '{"a": -0.0}'],
-    ids=["duplicate-key", "nan", "infinity", "float", "neg-zero"],
+    ['{"a": 1, "a": 2}', "NaN", "[Infinity]", '{"a": 1.5}', '{"a": -0.0}', "1e3", "1E2"],
+    ids=["duplicate-key", "nan", "infinity", "float", "neg-zero", "exp-lower", "exp-upper"],
 )
 def test_strict_parser_rejects(text):
     with pytest.raises(CanonicalizationError):
@@ -91,3 +92,25 @@ def test_strict_parser_rejects(text):
 
 def test_strict_parser_accepts_ints_and_unicode():
     assert parse_json_strict('{"n": 12345678901234567890, "s": "\\u00e9"}') == {"n": 12345678901234567890, "s": "é"}
+
+
+def test_tuples_become_arrays():
+    assert canonical_json((1, 2)) == b"[1,2]"
+
+
+def test_bool_is_never_an_int():
+    assert canonical_json({"a": True, "b": 1}) == b'{"a":true,"b":1}'
+
+
+@pytest.mark.parametrize("bad", [{1}, b"x", datetime(2026, 1, 1, tzinfo=UTC)], ids=["set", "bytes", "datetime"])
+def test_unsupported_types_are_rejected(bad):
+    with pytest.raises(CanonicalizationError, match="unsupported type"):
+        canonical_json(bad)
+
+
+def test_oversized_int_is_a_canonicalization_error():
+    # CPython refuses ints over 4300 digits with a bare ValueError; callers must only ever see CanonicalizationError.
+    with pytest.raises(CanonicalizationError):
+        parse_json_strict("1" * 5000)
+    with pytest.raises(CanonicalizationError):
+        canonical_json(10**5000)

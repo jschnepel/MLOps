@@ -9,8 +9,11 @@ not a merge: a silent merge would hash a different payload from the one supplied
 
 Arrays keep the producer's order; this module never sorts them, because some arrays are ordered by meaning. The
 producer is therefore responsible for a stable order ("documented stable array order", BUILD_SPEC §6), and
-`ops_core.contracts.ProposalPayload` enforces it for the hashed payload: `evidence_refs` sorted ascending by code
+`ProposalPayload` (Task 4 of Plan C) enforces it for the hashed payload: `evidence_refs` sorted ascending by code
 point, `source_snapshots` sorted by `evidence_id`.
+
+Tuples are accepted and emitted as arrays, so callers may pass them for immutable sequences. Sets, bytes and datetimes
+are rejected: callers pre-serialise timestamps as strings (plan ruling 6).
 
 Timestamps (plan ruling 6): inputs may spell UTC as `Z` or `+00:00`; the hashed form is the one pydantic's JSON mode
 emits (`2026-10-05T12:00:00Z`), so only hashed documents (the proposal) require `Z`; `manual-proposal`, `model-pins`
@@ -63,9 +66,15 @@ def canonical_json(value: object) -> bytes:
     Raises:
         CanonicalizationError: a float, a non-string key, two keys equal after NFC, or an unsupported type.
     """
-    return json.dumps(
-        _normalize(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
-    ).encode("utf-8")
+    normalized = _normalize(value)
+    # Untrusted input must never surface a bare ValueError (e.g. CPython's 4300-digit int limit) or RecursionError to
+    # callers that catch CanonicalizationError.
+    try:
+        return json.dumps(
+            normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode("utf-8")
+    except (ValueError, RecursionError) as exc:
+        raise CanonicalizationError(f"cannot canonicalise: {exc}") from exc
 
 
 def sha256_hex(data: bytes) -> str:
@@ -101,5 +110,9 @@ def parse_json_strict(text: str) -> object:
         return json.loads(
             text, object_pairs_hook=_reject_duplicates, parse_constant=_reject_constant, parse_float=_reject_float
         )
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+        # CanonicalizationError is a ValueError, so re-raise it unchanged; everything else (oversized ints, deep
+        # nesting) is untrusted-input failure that must not escape as a bare ValueError/RecursionError.
+        if isinstance(exc, CanonicalizationError):
+            raise
         raise CanonicalizationError(f"invalid JSON: {exc}") from exc

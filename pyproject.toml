@@ -41,7 +41,8 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests/plan_a", "tests/plan_b", "tests/plan_c"]
-norecursedirs = ["reference", ".venv", "node_modules", "build"]
+# Setting this replaces pytest's defaults (which include ".*"), so ".*" is restated: otherwise pytest walks .hypothesis/.
+norecursedirs = ["reference", ".venv", "node_modules", "build", ".*"]
 addopts = "-ra"
 
 [tool.ruff]
