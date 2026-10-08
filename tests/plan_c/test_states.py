@@ -1,4 +1,6 @@
-"""The run state machine is one table in core (AM-10, AM-20.3 performers, R082, R120, R114; R125 only as the asset-guard reasons, the supersede exception is T22's).
+"""The run state machine is one table in core (AM-10, AM-20.3 performers, R082, R120, R114).
+
+R125 appears only as the asset-guard reasons; the supersede exception is T22's.
 
 Catches: a transition added or removed by accident, the wrong function performing a transition (the worker reaching a
 post-grant state), a reason enum drifting, a revision taken while another run holds the conversation slot, and a
@@ -10,6 +12,7 @@ import itertools
 import pytest
 from ops_core.states import (
     ACTIVE_STATES,
+    GRANTLESS_STATES,
     POST_GRANT_STATES,
     PRE_GRANT_STATES,
     TERMINAL_STATES,
@@ -251,3 +254,21 @@ def test_post_grant_states_are_reached_only_through_a_grant():
     for row in TRANSITIONS:
         if row.dst in POST_GRANT_STATES:
             assert row.src in POST_GRANT_STATES or (row.src is S.APPROVED and row.performer is P.GRANT_EXECUTION)
+
+
+def test_grantless_states_are_exactly_those_no_grant_can_reach():
+    """CancelResponse refuses grant_exists=true in these states, so the set must follow the table, not a hand list.
+
+    A grant is the APPROVED -> EXECUTING row; everything a run can reach from EXECUTING may carry one. CANCELLED is
+    not in the derived set's complement by accident of the table (no post-grant row ends there), and CancelResponse
+    already forbids a grant with CANCELLED by its own rule, so it is excluded here rather than listed.
+    """
+    reachable = {S.EXECUTING}
+    frontier = [S.EXECUTING]
+    while frontier:
+        src = frontier.pop()
+        for row in TRANSITIONS:
+            if row.src is src and row.dst not in reachable:
+                reachable.add(row.dst)
+                frontier.append(row.dst)
+    assert GRANTLESS_STATES == set(RunState) - reachable - {S.CANCELLED}
