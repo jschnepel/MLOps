@@ -212,6 +212,7 @@ def upgrade() -> None:
         if statement.strip():
             op.execute(statement)
     seeds = json.loads((Path(__file__).resolve().parents[3] / "data" / "seed-ids.json").read_text(encoding="utf-8"))
+    # Declared shortcut (SESSION_STATE debt, last line): frozen at migration time; T09's membership sync owns it.
     # The issuer is part of the membership identity; the dev default matches scripts/bootstrap_dev.py.
     issuer = os.environ.get("OPS_KC_ISSUER") or "http://localhost:18080/realms/ops-dev"
     tenants = sa.table("tenants", sa.column("tenant_id"), sa.column("name"), schema="app")

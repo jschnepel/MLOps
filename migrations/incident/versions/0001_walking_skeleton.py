@@ -1,4 +1,5 @@
-"""Destination (incident-sim) database: the single `action_key` table and the incidents it commits (AM-13 §4; T10 extends).
+"""Destination (incident-sim) database: the single `action_key` table and the incidents it commits
+(AM-13 §4; T10 extends).
 
 Revision ID: 0001_walking_skeleton
 Revises: None
@@ -29,7 +30,8 @@ CREATE TABLE incident.action_key (
     decided_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE SEQUENCE incident.incident_seq;  -- incident numbers may have gaps: a conflicting insert consumes nextval too
+-- Incident numbers may have gaps: a conflicting insert consumes nextval too.
+CREATE SEQUENCE incident.incident_seq;
 
 CREATE TABLE incident.incidents (
     incident_id text PRIMARY KEY,

@@ -28,8 +28,6 @@ def live() -> None:
 
 @pytest.fixture(scope="session")
 def env(live: None) -> dict[str, str]:
-    import sys
-
     sys.path.insert(0, str(ROOT))
     from scripts.skeleton import export_environment, load_dotenv
 
@@ -65,7 +63,10 @@ async def app_conn(migrated: None) -> AsyncIterator[persistence.Conn]:
 PURGE_ORDER = (
     "DELETE FROM app.invocation_context WHERE run_id = %s",
     "DELETE FROM app.events WHERE run_id = %s",
-    "DELETE FROM app.action_attempt_state WHERE action_id IN (SELECT action_id FROM app.execution_grant WHERE run_id = %s)",
+    (
+        "DELETE FROM app.action_attempt_state WHERE action_id IN "
+        "(SELECT action_id FROM app.execution_grant WHERE run_id = %s)"
+    ),
     "DELETE FROM app.action_attempt WHERE action_id IN (SELECT action_id FROM app.execution_grant WHERE run_id = %s)",
     "DELETE FROM app.execution_grant WHERE run_id = %s",
     "DELETE FROM app.decisions WHERE proposal_id IN (SELECT proposal_id FROM app.proposals WHERE run_id = %s)",

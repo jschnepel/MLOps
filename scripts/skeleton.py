@@ -3,8 +3,8 @@
 Reads `.env` (written by scripts/bootstrap_dev.py) for ports and the secrets directory, exports the `OPS_*` variables
 every service reads (ops_core.settings), and runs the two Alembic trees programmatically with a shared connection
 (Alembic cookbook: "Sharing a Connection across one or more programmatic migration commands"); the engine is built
-from a `URL` object, so the password is never rendered into a string. The `incident` role is created or re-keyed from its secret file on every run; role credentials
-are a bootstrap concern, schema is the migration's.
+from a `URL` object, so the password is never rendered into a string. The `incident` role is created or re-keyed
+from its secret file on every run; role credentials are a bootstrap concern, schema is the migration's.
 """
 
 from __future__ import annotations
@@ -67,6 +67,8 @@ def ensure_incident_role(superuser: settings.Postgres, password: str) -> None:
             """
         )
         conn.execute("GRANT CONNECT ON DATABASE incident TO incident")
+        # The secret must not linger in the session setting.
+        conn.execute("SELECT set_config('ops.incident_password', '', false)")
 
 
 def upgrade(tree: str, pg: settings.Postgres) -> None:

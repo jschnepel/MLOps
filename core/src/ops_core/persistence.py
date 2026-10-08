@@ -97,6 +97,7 @@ async def transition(
 ) -> int:
     """Move a run one row along the transition table under the runs lock; returns the new state_version.
 
+    The caller holds the unit of work (`Session.unit()`): the runs-row lock lasts only inside that transaction.
     TODO(T09): becomes the SQL `transition_run` / per-performer definer functions; callers keep this signature.
     """
     row = await run_row(conn, run_id, lock=True)
@@ -171,6 +172,7 @@ async def append_event(
 ) -> Event:
     """Validate through `Event` (AM-14 rules) and insert with the next per-run sequence under the runs lock.
 
+    The caller holds the unit of work (`Session.unit()`); the runs-row lock lives in that transaction.
     The runs row lock makes `sequence` gap-free and commit-ordered without T14's `next_event_seq` column.
     TODO(T14): `append_event` definer function with `next_event_seq`.
     """
@@ -241,7 +243,8 @@ async def finish_job(conn: Conn, job_id: UUID) -> None:
 async def mint_handle(
     conn: Conn, *, run_id: UUID, job_id: UUID, server: Server, azp: str, ttl_seconds: int = 60
 ) -> str:
-    """A 256-bit capability lookup key bound to one job and one server (BUILD_SPEC §9). Stored raw: debt → T09/T15."""
+    """A 256-bit capability lookup key bound to one job and one server (BUILD_SPEC §9).
+    Stored raw: debt → T09/T15."""
     handle = secrets.token_urlsafe(32)
     await conn.execute(
         "INSERT INTO app.invocation_context (handle, run_id, job_id, server, azp, expires_at)"

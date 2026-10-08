@@ -11,7 +11,7 @@ connection = context.config.attributes.get("connection")
 if connection is None:
     raise RuntimeError("migrations/incident runs only through scripts/skeleton.py migrate (no URL mode)")
 
-# The version table stays in `public`: Alembic writes it before revision 0001 runs `CREATE SCHEMA app`.
+# The version table stays in `public`: Alembic writes it before revision 0001 runs `CREATE SCHEMA incident`.
 context.configure(connection=connection, target_metadata=None, version_table="alembic_version")
 with context.begin_transaction():
     context.run_migrations()
