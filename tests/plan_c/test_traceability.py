@@ -20,7 +20,7 @@ ROW = re.compile(
 
 
 def reference_node_ids() -> set[str]:
-    """Rebuild pytest's node ids from the source: function names plus parametrize expansions (ids as pytest renders them)."""
+    """Rebuild pytest's node ids from the source: function names plus parametrize expansions, as pytest renders them."""
     nodes: set[str] = set()
     for file in sorted(REF.glob("test_*.py")):
         tree = ast.parse(file.read_text(encoding="utf-8"))
@@ -43,6 +43,8 @@ def test_reference_inventory_has_58_cases():
 def test_traceability_covers_all_58():
     matches = [ROW.match(line) for line in DOC.read_text(encoding="utf-8").splitlines()]
     rows = [{key: value.strip() for key, value in m.groupdict().items()} for m in matches if m]
+    # One row per case: the set comparison below would forgive a duplicated row that hides a missing one.
+    assert len(rows) == 58
     assert {r["node"] for r in rows} == reference_node_ids()
     tasks = {t["id"] for t in json.loads(Path("handoff/tasks.json").read_text(encoding="utf-8"))["tasks"]}
     local = {
