@@ -8,7 +8,9 @@
 
 **Round-2 builder verdict:** EXECUTABLE WITH FIXES — every revised step passed (placeholders, status-line probe, exact audiences, 400 handling, totals, lint), but one premise was wrong: a container's connection to `host.docker.internal:11434` reaches the host **from 127.0.0.1** (Docker Desktop proxies it), so the planned WSL-subnet firewall rule would admit nothing and a loopback bind is the right control. The runbook was rewritten around that measurement (loopback bind primary, firewall fallback, proposed AM-31 errata).
 
-**Round-2 static verdict:** 20 of 25 round-1 findings addressed, 3 partially, 2 not; 0 Blocking, 2 Important (stale digest contract text; an over-claimed image pull), 11 Minor — all applied before execution.
+**Round-2 static verdict:** 20 of 25 round-1 findings addressed, 3 partially, 2 not; 0 Blocking, 2 Important (stale digest contract text; an over-claimed image pull), 11 Minor — all applied before execution except M13 (program-scoped firewall rule, declined) and the N10 label, which was renamed in the final pass.
+
+**Round-3 static verdict (closing check):** 15 of 19 round-2 items addressed, 2 partially, 2 not at the time of the check; 0 Blocking, 2 Important — `OLLAMA_HOST` is set at User scope, not Machine, so the runbook's bind command targeted the wrong scope; and the `postgres_password` rotation still put the value on a command line. Both were fixed, with the wording residues, before execution. Lint, model-pins tests, totals, placeholders and fences all passed.
 
 ---
 
@@ -733,3 +735,176 @@ None to the plan as written in plan3. While executing plan2, I applied the edits
 2. **Optional (R-a):** truncate `keycloak-claims.txt` and `bootstrap-admin.txt` at session start, or document that re-runs append.
 
 Everything else in Tasks 1–4 executed exactly as written in the current file (plan3).
+
+---
+
+## Round 3 — static closing check
+
+# Plan B static re-review, round 3 (closing check)
+
+**Plan reviewed:** `docs/superpowers/plans/2026-10-08-first-slice-b-dev-bootstrap.md` as committed in `f015665` on branch `plan-b` (1764 lines, working tree clean). `Lnnn` means a line of that file.
+
+**Stance:** every claim starts UNPROVEN. I ran no Docker and modified no repository file. Everything I executed was read-only or ran in `scratchpad/planb-review/sim3/`:
+- ruff 0.16.10, pytest, mypy and pydantic from the repo `.venv`, run on code extracted from the plan;
+- read-only registry `HEAD` requests for the three image digests;
+- read-only PowerShell reads of `OLLAMA_HOST` (Machine and User scope) and of the 11434 listener.
+
+## 1. Verdicts on round-2 items
+
+| # | Round-2 item | Verdict | Evidence (plan line) |
+|---|---|---|---|
+| N1 | Digest contract text contradicts the bare-hex fix | **ADDRESSED** | L42 now says "a `sha256:`-prefixed or non-hex digest". L1404 gives `^[0-9a-f]{64}$`, the bare hex, says prefixed values are rejected, and states that T45's schema must use the same pattern. |
+| N2 | Stale prose (`${KC_*}`, tenant attribute, wildcard redirect) | **ADDRESSED** | `${OPS_KC_*}` at L7 and L1072. L28 says "carry no tenant attribute". L592 has the exact redirect and the post-logout URI. L1033 says `${OPS_KC_*}`. L1758 says "Keycloak carries no tenant data". |
+| N3 / I9 | Image digests over-claimed as "pulled" | **PARTIALLY** | **Substance proven.** I sent registry `HEAD` requests on 2026-10-08:<br>- quay.io `keycloak/keycloak@sha256:b0f60d48…` → 200; tag `26.8.0` → `Docker-Content-Digest: sha256:b0f60d48…`.<br>- Docker Hub `pgvector/pgvector@sha256:ac08538c…` → 200; tag `pg17` → `sha256:ac08538c…`.<br>- Docker Hub `library/python@sha256:bf44cdfc…` → 200; tag `3.13-slim` → `sha256:bf44cdfc…`.<br><br>All three are registry manifest digests, so a clean clone can pull them.<br><br>**Wording not fixed.**<br>- L15 still says "all three image digests pulled from their registries", and does not say `docker buildx imagetools inspect`.<br>- The record L15 cites (`docs/reviews/plan-review-b-2026-10-08.md`) contains no imagetools or RepoDigests output; I grepped for it.<br>- L13 still says the Keycloak image is "cached locally with digest". |
+| N4 | 401 versus the measured 400 | **ADDRESSED** | L1033 says "HTTP 400 `invalid_grant` (Keycloak 26.8's answer to a wrong password) or … a 401". The 401 is worded as a possibility, not as a measurement. |
+| N5 | Task 3 step 3 is paste-unsafe; L53 still says `dir` | **PARTIALLY** | **Fixed:**<br>- L1198 asks for a leading `,` with matching indentation.<br>- L1200 asks for a sorted merge into the top import block and names I001.<br>- L1241-1250 shows the full `up` branch.<br>- My merge built from these instructions is ruff-clean (check 1).<br><br>**Residue:** L55 still has `generate_secrets(dir: Path, …)` and `write_env(path: Path, secrets_dir: Path)`. The code uses `directory` (L386) and `secrets_directory` (L399). |
+| N6 | `NotConfigured` is not the effective policy | **ADDRESSED** | L1609-1610 and L1698 use `Get-NetFirewallProfile -PolicyStore ActiveStore`. Round-2 builder: ActiveStore = `Block`; the persistent store = `NotConfigured`. |
+| N7 | The `ALTER ROLE` secret goes on the command line | **NOT ADDRESSED** | L558 still has `docker exec -i ops-copilot-postgres-1 psql -U ops -d ops -c "ALTER ROLE ops PASSWORD '<new value>'"`. The new value ends up in shell history and in `psql`'s argv. This text ships in the committed `dev-topology.md`. The controller ruling missed it. |
+| N8 | Evidence files accumulate on re-runs | **ADDRESSED** | L1335 removes both files before the final live run. L1337 requires `wc -l` to print 9 and 2. Recomputed: 9 = worker 1 + mcp 2 + personas 5 + iss 1; 2 = test line + restart line. One residue is listed as NF6 below. |
+| N9 | Status-line healthcheck unmeasured | **ADDRESSED** | L17 cites the round-2 measurement: healthy about 25 s, `up --wait` returns 1.2 s after the import. The dry-run times 07:20:39.029 and 07:20:40.22 give 1.19 s. The builder reports `head` and `grep` present and a 404 → rc 1. L15's "26 s" is now clearly the old probe. |
+| N10 | "absent" cannot be told from "wrong password" | **NOT ADDRESSED (accepted residual)** | L1328 still writes `(absent)` and L1325 still accepts any 400/401. Nothing was renamed and no `user_not_found` log check was added.<br><br>I judge the risk low. The `secret` fixture and `bootstrap_dev.py` resolve the same directory through `.env`. A mismatched directory would also fail the persona and client-credential tests in the same suite, so a false "absent" cannot pass alone.<br><br>The label still asserts more than the test proves. Rename it to "password grant rejected" (two words), or accept this residual explicitly. |
+| N11 | `OPS_SECRETS_DIR` override turns check.py RED; step-7 script ignores `.env` | **ADDRESSED** | L323-324 use `monkeypatch.delenv`. L1351-1352 read `.env`. The round-2 builder re-verified both with the override set: GREEN, and `after restart: HTTP 400`. |
+| N12 | Runbook re-run filter; fixture microseconds; step 1.15 wording | **ADDRESSED** | L1695 adds `Where-Object DisplayName -notlike 'Ollama 11434*'`. L1445 uses `.123456`. L573 now says "the last line is `Network ops-dev-net Removed`". The numeric-string `probed_at` case was optional and was not added, which is acceptable. |
+| N13 | The cited record does not exist | **ADDRESSED** (see NF2) | `docs/reviews/plan-review-b-2026-10-08.md` is tracked and was committed in `f015665`. It holds all four reports; I confirmed each body is contained verbatim. Its header verdict counts match the reports: round-2 static 20/3/2, 0 Blocking, 2 Important and 11 Minor (= N2 and N4–N13). Its claim "all applied before execution" is false (NF2). |
+| B1 (round-1 static, partial) | Contract text | **ADDRESSED** | Same as N1. |
+| I6 (partial) | Firewall runbook rests on an unmeasured source address | **ADDRESSED (superseded)** | The round-2 builder measured the source (`127.0.0.1 ↔ 127.0.0.1`). The runbook is rebuilt on that measurement (L1650). The Hyper-V readout gap no longer matters. The "all loopback" branch is now the expected result (L1616), and (c) is N6. |
+| M7 (partial) | Merge instructions | **ADDRESSED** | L1200 and L1241-1250. The merge is ruff-clean (check 1). |
+| Builder B1 | Container traffic arrives from loopback | **ADDRESSED, with a new defect (NF1)** | **Done:**<br>- L17 states the measurement.<br>- L29 gives loopback as the primary control.<br>- L1616's Expected is the measured `127.0.0.1` rows, dated.<br>- L1650 explains why.<br>- Step A binds to loopback (owner).<br>- Step B is the fallback.<br>- The errata is at L1708-1710, the topology text at L1733 and the coverage note at L1755.<br><br>**New defect:** Step A targets the wrong environment scope (NF1). |
+| R-a | Evidence order breaks on a re-run | **ADDRESSED** | Same as N8. |
+| R-b | Owner told to scope by the subnet "and the measured address" | **ADDRESSED** | L13 no longer instructs any scoping. L1690 applies only in fallback B. L13 still lists "Docker's VM eth0 is 172.28.36.254/20", which is now irrelevant (cosmetic). |
+| M13 | `-Program` scope / subnet drift | NOT ADDRESSED (deliberate, accepted in round 2) | Step B now covers drift: L1698 gives `Set-NetFirewallRule`. |
+
+**Totals over the 19 distinct items** (I9 and N3 merged): **15 ADDRESSED, 2 PARTIALLY (N3/I9, N5), 2 NOT (N7, N10)**. M13 stays deliberately declined and is not counted.
+
+## 2. New findings
+
+### Blocking
+
+None. Every agent-executed step of Tasks 1–4 is unchanged from what the round-2 builder ran green, or is a text-only change.
+
+### Important
+
+**NF1. Runbook Step A sets the wrong scope of `OLLAMA_HOST`** (L1631, L1654-1661, L1715; also L13).
+- **Measured now (read-only, 2026-10-08):**
+  - `[Environment]::GetEnvironmentVariable("OLLAMA_HOST","Machine")` is **empty**.
+  - `[Environment]::GetEnvironmentVariable("OLLAMA_HOST","User")` is **`0.0.0.0:11434`**.
+  - The 11434 listener is `::`. Go opens a dual-stack wildcard socket for `0.0.0.0`.
+- **What is wrong in the plan:**
+  - L1631 says the variable is in the "system environment".
+  - L1654 says Step A needs an elevated shell "because it is a system-level variable".
+  - Step A sets **Machine** scope and only *reads* User scope ("align it or remove it", with no command to do so).
+- **Effect:** a process's User-scope variable overrides Machine scope. An owner who runs the shown commands literally leaves Ollama on every interface. Verification 1 (L1669) then fails. That is a loud failure, not a silent one, but the primary control is wrong as written.
+  - The rollback (L1715) does not restore the measured state. It *creates* a Machine variable that never existed and leaves the User variable alone.
+  - Task 4 step 6 never records which scope holds the variable, so the runbook's "What was measured" section cannot catch this.
+- **Fix:**
+  - Step A becomes `[Environment]::SetEnvironmentVariable("OLLAMA_HOST", "127.0.0.1:11434", "User")`, which needs no elevation. Alternatively delete the User variable, since Ollama's default is `127.0.0.1:11434`. Keep the Machine read as a check that it is empty or loopback.
+  - L1631: "(user environment)".
+  - Task 4 step 6: add a read-only `GetEnvironmentVariable` for both scopes and paste it into "What was measured".
+  - Rollback: `[Environment]::SetEnvironmentVariable("OLLAMA_HOST","0.0.0.0:11434","User")`.
+  - L13: name the scope.
+
+**NF2. The committed review record claims every round-2 finding was applied, but N7 (and residues of N3, N5 and N10) were not** (`docs/reviews/plan-review-b-2026-10-08.md` L11; plan L558, L15, L55, L1328).
+- **Problem:**
+  - The header says "11 Minor — all applied before execution".
+  - L34 freezes `docs/reviews/` during execution, so the inaccuracy would be locked in.
+- **Fix (preferred):** apply N7 to L558 before execution. Then the claim becomes true:
+
+  ```
+  docker exec -i ops-copilot-postgres-1 psql -U ops -d ops -v pw="$(cat "$OPS_SECRETS_DIR/postgres_password")" <<<"ALTER ROLE ops PASSWORD :'pw';"
+  ```
+
+  Alternatively use `\password ops` interactively. Also fix the L15 wording (NF3) and the L55 names, and rename the N10 label or record it as an accepted residual.
+- **Fix (alternative):** amend the record header to list what was declined, before execution.
+
+### Minor
+
+- **NF3 (L15, L13): "pulled from their registries" is not what was done or recorded.**
+  - Reword to "all three digests resolve as registry manifest digests (`docker buildx imagetools inspect`, 2026-10-08)".
+  - Put the readout in the record or in the plan. My registry `HEAD` results (section 1, N3) can serve as that evidence.
+- **NF4 (L1687): Step B's symptom test cannot fire as written.**
+  - With Ollama bound to loopback, a connection from a non-loopback source is refused, so no `Established` row exists to show the "non-loopback `RemoteAddress`".
+  - Fix: run B.1 (revert to `0.0.0.0`) first, then the Task 4 step 6 source-address command, then scope the rule to the address that command prints.
+  - In the same step, L1690 says "the measured source address's subnet", then shows how to read the WSL adapter instead. Tie the scope to the printed address.
+- **NF5 (L1700, L1631): the wildcard listener shows as `::` on this machine, not `0.0.0.0`** (measured).
+  - L1700's "listener now `0.0.0.0`" should read "`::` or `0.0.0.0`".
+  - L1631's "listens on every interface" is correct.
+- **NF6 (L1359 against L1337): the restart branch breaks the line-count check.**
+  - If step 7 ever prints 200, the recovery re-runs `test_service_account.py`. That appends another line, so `bootstrap-admin.txt` holds more than 2 lines and contradicts the "9 and 2" check.
+  - State the count for that branch, or say to delete the file and re-run step 6's live suite.
+- **NF7 (L558): N7 itself, the secret on the command line.** Counted under NF2.
+- **NF8 (measured): pytest prints secrets when run with `--tb=long`.**
+  - Under `--tb=long`, pytest prints function arguments for every frame. A planted 400 against `token_password(base, cid, user, password)` printed the password **3 times**.
+  - Under the default `--tb=auto` that the plan and `check.py` use (`-m pytest -q`), it appeared only in the test's own source line. The plan's tests pass `secret(...)` calls, not literals, so nothing leaks there.
+  - Fix: add one sentence to Global Constraints: "never run the live tests with `-l` or `--tb=long`".
+- **NF9 (Coverage L1755 / After Plan B L1764): the AM-31 deviation is recorded only in the runbook.**
+  - `SESSION_STATE.md` is told to record the pending attestation but not the proposed errata.
+  - T44's `instructions` in `handoff/tasks.json` also say "firewall commands restricting port 11434 to loopback plus the Docker/WSL subnet".
+  - Add "and the proposed AM-31 errata (owner decision pending)" to the SESSION_STATE update.
+
+### Spec judgement (AM-31)
+
+The plan stays inside AM-31's intent.
+- **Requirement:** AM-31 requires "Ollama is reachable only from loopback and the Docker/WSL subnet".
+- **Effect of the plan:** the loopback bind gives effective reachability of loopback plus whatever Docker Desktop's backend proxies. That is the project's containers, and any other container on this machine; a subnet rule would have admitted those same containers. LAN exposure is removed.
+- **Firewall commands:** the runbook still contains them, as Step B. T44's DoD clause "Runbook committed with exact commands and a verification step" is met.
+- **Owner boundary:** the owner applies the runbook, and the agent changes nothing (L29, L1627, L1749).
+- **Honesty:** the deviation is recorded honestly as a *proposed* errata (L1708-1710), which quotes AM-31 correctly, and as a coverage note (L1755).
+- **"Met more strictly":** this is fair for the listener. It is slightly generous for reachability, since "loopback" here includes every container on the host.
+
+## 3. Checks 1–7
+
+1. **Lint: PASS.**
+   - I extracted all 13 `Create <path>.py` blocks to `sim3/base`: `ruff check` → `All checks passed!`; `ruff format --check` → `13 files already formatted`.
+   - I then built the Task 3 merge to `sim3/t3`, following the plan's own instructions:
+     - SECRET_NAMES extended;
+     - `json` merged before `os`, and the three `urllib.*` lines after `sys`;
+     - the function inserted after `write_env`;
+     - the `up` branch replaced with the L1243-1249 block;
+     - the realm test replaced and the new test added;
+     - the bootstrap test appended;
+     - the persona loop changed.
+   - Result: `All checks passed!` and `13 files already formatted`.
+2. **Model pins: PASS.** The plan's `test_model_pins.py` ran against the plan's `model_pins.py` in a scratch package (`PYTHONPATH=sim3/mp/core/src`). The repo has no `model_pins.py`, so the scratch copy is the one tested. Results: `13 passed`; `mypy --strict` → `Success: no issues found in 1 source file`.
+3. **Totals: PASS.** Baseline 54/1.
+
+   | Task | Passed | Skipped |
+   |---|---|---|
+   | Task 1 | 54 + 8 compose + 4 bootstrap = **66** | 1 + 2 live = **3** |
+   | Task 2 | + 7 realm + 1 evidence = **74** | + 4 token = **7** |
+   | Task 3 | + 1 realm (8 total) + 1 bootstrap = **76** | + 2 service-account = **9** |
+   | Task 4 | + 13 pins = **89** | + 1 bridge = **10** |
+
+   Intermediate counts:
+   - Task 3 step 1: 3 failed / 10 passed (8 realm + 5 bootstrap).
+   - Task 3 step 4: 21 = 8 + 5 + 8.
+   - Live runs: Task 2 = 6 (2 + 4); Task 3 = 8 (2 + 4 + 2).
+4. **Placeholders: PASS.**
+   - The 10 `${OPS_KC_*}` realm placeholders equal `OPS_` + upper-cased name for every `kc_*` entry in `SECRET_NAMES` except `kc_bootstrap_admin_password`.
+   - `SECRET_NAMES` (12 after Task 3) equals the Compose top-level `secrets:`.
+   - The keycloak service `secrets:` equals every `kc_*` name.
+   - The symmetric difference is empty in all three comparisons.
+5. **Nested fences: PASS.** The only four-backtick outer fence is L1624 (the runbook). No three-backtick block contains another fence, and every fence is closed.
+6. **Secrets: FAIL on N7 (Minor, NF2/NF7).**
+   - L558 puts the new `postgres_password` on the command line.
+   - Everything else is clean:
+     - evidence files hold claims, statuses, ports and versions only;
+     - assertion messages hold names, paths and `aud`;
+     - `compose()` prints only argv without secrets;
+     - the step-7 probe reads the password from a file and prints only the status;
+     - no Expected line carries a secret.
+   - Only `--tb=long` exposes secrets (NF8).
+7. **Expected lines: PASS, with notes.**
+   - Every agent-step Expected line is either command output measured in the round-1/round-2 dry runs (dated where it is a fact: L1607, L1616, L1619, L1359) or a deterministic count.
+   - Owner-runbook verifications are acceptance criteria, not measurements, and are worded that way:
+     - L1669 `127.0.0.1 11434`;
+     - L1675 `1 passed`, which a real Ollama loopback bind never measured; only a Python loopback listener was measured.
+   - L1027's "30–90 s" is a generous bound on the measured 25–27 s.
+
+## 4. Declined to judge
+
+- Whether Ollama 0.33.3's Windows app setting "Expose Ollama to the network" overrides or is overridden by `OLLAMA_HOST`. The owner should check that the toggle is off when applying Step A.
+- Whether a real Ollama listener bound to `127.0.0.1` (rather than the builder's Python test listener) is reachable through `com.docker.backend`. It is very likely, by the same mechanism, but unmeasured. Step A's verification 2 settles it.
+- Whether the tray-restarted Ollama inherits a freshly set User-scope variable without a sign-out. `SetEnvironmentVariable` broadcasts `WM_SETTINGCHANGE`; the runbook already offers sign-out as the fallback.
+- Live Docker behaviour in general. I re-ran none of it; I rely on the round-2 builder.
+
+READY TO EXECUTE: no — two cheap text edits come first. Fix runbook Step A, the rollback and L1631 to use the User-scope `OLLAMA_HOST` (NF1, measured). Apply N7 at L558, plus the L15 and L55 wording, so that the committed record's "all applied" is true (NF2). Tasks 1–4's executable steps are otherwise ready.

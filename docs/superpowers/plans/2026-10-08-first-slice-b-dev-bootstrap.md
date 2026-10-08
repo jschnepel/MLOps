@@ -10,9 +10,9 @@
 
 **Spec:** `SPEC_AMENDMENTS.md` (OPS-BUILD-1.3.6) over `BUILD_SPEC.md` — AM-20.1 (roles), AM-20.7 items 5–6 (`view-users` service account, hardcoded-audience mappers, `KC_HOSTNAME`), AM-30 (Keycloak 26.8.x pinned digest), AM-31 (Ollama network exposure, `data/model-pins.json`), AM-70 (no `internal: true` with a published port); BUILD_SPEC §4 (personas), §9, §21, §27; tasks T05, T43, T44 in `handoff/tasks.json` (read their `review_notes`); `docs/reviews/plan-review-r4-2026-10-06.md` (Keycloak `iss` and `host.docker.internal` dry-run facts).
 
-**Facts measured on 2026-10-08 that this plan relies on** (re-verify if the machine changed): the Keycloak 26.8.0 image is cached locally with digest `sha256:b0f60d489d51c5d113390bdf5461d4c06e6051be026c05549f2e1e10ec352bcc`, runs as uid 1000, has `/bin/bash` with `/dev/tcp` support and **no `curl`**; `pgvector/pgvector:pg17` resolves to `sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d` (0.8.7, 2026-10-01); `python:3.13-slim` to `sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c`; host port **8080 is already in use** by another project, so Keycloak publishes on **18080** and PostgreSQL on **15432**; Ollama 0.33.3 answers on `127.0.0.1:11434` and `OLLAMA_HOST` is `0.0.0.0:11434`; the WSL adapter is `vEthernet (WSL (Hyper-V firewall))` at `172.28.32.1/20` and Docker's VM eth0 is `172.28.36.254/20` (this subnet can change after a reboot).
+**Facts measured on 2026-10-08 that this plan relies on** (re-verify if the machine changed): the Keycloak 26.8.0 image is cached locally with digest `sha256:b0f60d489d51c5d113390bdf5461d4c06e6051be026c05549f2e1e10ec352bcc`, runs as uid 1000, has `/bin/bash` with `/dev/tcp` support and **no `curl`**; `pgvector/pgvector:pg17` resolves to `sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d` (0.8.7, 2026-10-01); `python:3.13-slim` to `sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c`; host port **8080 is already in use** by another project, so Keycloak publishes on **18080** and PostgreSQL on **15432**; Ollama 0.33.3 answers on `127.0.0.1:11434` and `OLLAMA_HOST=0.0.0.0:11434` is set as a **User-scope** environment variable (Machine scope is empty; the listener shows as `::`/all interfaces); the WSL adapter is `vEthernet (WSL (Hyper-V firewall))` at `172.28.32.1/20` and Docker's VM eth0 is `172.28.36.254/20` (this subnet can change after a reboot).
 
-**Verified by a builder dry-run of this plan on a scratch worktree (2026-10-08, `docs/reviews/plan-review-b-2026-10-08.md`):** Keycloak 26.8.0 `start-dev --import-realm` substitutes `${VAR}` placeholders in the realm JSON from the container environment (persona password grants and all audience claims came out right; log line `Realm 'ops-dev' imported`); the bash `/dev/tcp` readiness probe on port 9000 reported healthy about 26 s after start; the bind-mounted entrypoint runs as uid 1000 and reads `/run/secrets`; imported users keep their `id` (token `sub` equals the seed ID for all five personas); `iss` is `http://localhost:18080/realms/ops-dev` from the host and from a container; the `view-users` service account gets 200 on `GET users/{id}` and 403 on `PUT users/{id}`, `POST users` and `GET clients`; the bootstrap admin can delete itself through the admin REST API with its own token, after which the password grant returns **HTTP 400 `invalid_grant`** (not 401), and a `docker compose restart keycloak` does **not** re-create it; all three image digests pulled from their registries; `docker compose ps --format json` (Compose v5.3.1) prints one object per line with `Service`, `State`, `Health` and `Publishers[].URL/PublishedPort`.
+**Verified by a builder dry-run of this plan on a scratch worktree (2026-10-08, `docs/reviews/plan-review-b-2026-10-08.md`):** Keycloak 26.8.0 `start-dev --import-realm` substitutes `${VAR}` placeholders in the realm JSON from the container environment (persona password grants and all audience claims came out right; log line `Realm 'ops-dev' imported`); the bash `/dev/tcp` readiness probe on port 9000 reported healthy about 26 s after start; the bind-mounted entrypoint runs as uid 1000 and reads `/run/secrets`; imported users keep their `id` (token `sub` equals the seed ID for all five personas); `iss` is `http://localhost:18080/realms/ops-dev` from the host and from a container; the `view-users` service account gets 200 on `GET users/{id}` and 403 on `PUT users/{id}`, `POST users` and `GET clients`; the bootstrap admin can delete itself through the admin REST API with its own token, after which the password grant returns **HTTP 400 `invalid_grant`** (not 401), and a `docker compose restart keycloak` does **not** re-create it; all three image digests resolve at their registries as OCI image-index digests (`docker buildx imagetools inspect <ref@digest>` on 2026-10-08; pgvector and python were additionally pulled cold by the dry run, Keycloak was already cached with the same RepoDigest); `docker compose ps --format json` (Compose v5.3.1) prints one object per line with `Service`, `State`, `Health` and `Publishers[].URL/PublishedPort`.
 
 **Round-2 dry-run of the revised plan (2026-10-08, same record):** the `OPS_KC_*` placeholders substitute and Keycloak logs no unknown-option warning; the status-line readiness probe reports healthy about 25 s after start and `up --wait` returns 1.2 s after `Realm 'ops-dev' imported`; the `${PG_PORT:?…}` guard prints `required variable PG_PORT is missing a value: run scripts/bootstrap_dev.py secrets first`; Keycloak adds only `account` to the audiences; every `CHECK: GREEN` total matched; and — the finding that changed Task 4 — **a container's connection to `host.docker.internal:11434` reaches the host from `127.0.0.1`** (Docker Desktop 29.6.2's `com.docker.backend` proxies it; `Get-NetTCPConnection` shows `127.0.0.1 ↔ 127.0.0.1`), and a loopback-only host listener was reachable from a container. The `vEthernet (WSL)` subnet never appears as a source address on this machine.
 
@@ -52,7 +52,7 @@
 
 **Interfaces:**
 - Consumes: `data/seed-ids.json` (not yet; Task 2), `.gitignore` (already ignores `.env`).
-- Produces: `compose.yaml` services `postgres` (host `127.0.0.1:15432`) and `keycloak` (host `127.0.0.1:18080`, management `9000` unpublished) on network `ops-dev-net`; secret files `postgres_password`, `kc_bootstrap_admin_password`, `kc_client_secret_ops_web`, `kc_client_secret_ops_worker`, `kc_client_secret_ops_mcp_read`, `kc_client_secret_ops_mcp_write`, `kc_persona_alex_password`, `kc_persona_sam_password`; `.env` keys `OPS_SECRETS_DIR`, `KC_HTTP_PORT=18080`, `PG_PORT=15432`, `MCP_READ_RESOURCE_URL`, `MCP_WRITE_RESOURCE_URL`, `OLLAMA_BASE_URL_HOST`, `OLLAMA_BASE_URL_CONTAINER`; `scripts/bootstrap_dev.py` functions `SECRET_NAMES: tuple[str, ...]`, `secrets_dir() -> Path`, `generate_secrets(dir: Path, names: Iterable[str]) -> list[str]` (returns names created), `write_env(path: Path, secrets_dir: Path) -> None`, `compose(*args: str) -> int`, `main(argv: list[str]) -> int`; `tests/plan_b/live/conftest.py` fixtures `live` (skips unless `OPS_LIVE=1`), `env` (parsed `.env` dict), `secret(name)` reader.
+- Produces: `compose.yaml` services `postgres` (host `127.0.0.1:15432`) and `keycloak` (host `127.0.0.1:18080`, management `9000` unpublished) on network `ops-dev-net`; secret files `postgres_password`, `kc_bootstrap_admin_password`, `kc_client_secret_ops_web`, `kc_client_secret_ops_worker`, `kc_client_secret_ops_mcp_read`, `kc_client_secret_ops_mcp_write`, `kc_persona_alex_password`, `kc_persona_sam_password`; `.env` keys `OPS_SECRETS_DIR`, `KC_HTTP_PORT=18080`, `PG_PORT=15432`, `MCP_READ_RESOURCE_URL`, `MCP_WRITE_RESOURCE_URL`, `OLLAMA_BASE_URL_HOST`, `OLLAMA_BASE_URL_CONTAINER`; `scripts/bootstrap_dev.py` functions `SECRET_NAMES: tuple[str, ...]`, `secrets_dir() -> Path`, `generate_secrets(directory: Path, names: Iterable[str]) -> list[str]` (returns names created), `write_env(path: Path, secrets_directory: Path) -> None`, `compose(*args: str) -> int`, `main(argv: list[str]) -> int`; `tests/plan_b/live/conftest.py` fixtures `live` (skips unless `OPS_LIVE=1`), `env` (parsed `.env` dict), `secret(name)` reader.
 
 - [ ] **Step 1: Add the plan_b test package and point pytest at it**
 
@@ -555,7 +555,7 @@ Profile `dev` of `compose.yaml` (project `ops-copilot`, network `ops-dev-net`). 
 
 ## Secrets
 
-`scripts/bootstrap_dev.py secrets` generates one file per secret under `%LOCALAPPDATA%\ops-copilot\secrets` (43 URL-safe characters, no newline) and writes the git-ignored `.env` (paths, ports, URLs only). Existing secret files are never overwritten. To rotate a Keycloak secret, delete its file, then `down` and `up` (Keycloak's dev data is ephemeral, so the realm is re-imported with the new value). `postgres_password` is different: the image applies it only when the data volume is initialised, so after replacing the file either run `docker exec -i ops-copilot-postgres-1 psql -U ops -d ops -c "ALTER ROLE ops PASSWORD '<new value>'"` **before** restarting (the old container still accepts the old password), or reset the data with a deliberate, owner-run `docker compose --profile dev down -v`. Compose delivers them as `/run/secrets/<name>`; no secret value appears in `environment:` or in `docker inspect`.
+`scripts/bootstrap_dev.py secrets` generates one file per secret under `%LOCALAPPDATA%\ops-copilot\secrets` (43 URL-safe characters, no newline) and writes the git-ignored `.env` (paths, ports, URLs only). Existing secret files are never overwritten. To rotate a Keycloak secret, delete its file, then `down` and `up` (Keycloak's dev data is ephemeral, so the realm is re-imported with the new value). `postgres_password` is different: the image applies it only when the data volume is initialised, so after replacing the file either apply it to the running container **before** restarting, feeding the value from the file so it never appears on a command line or in shell history — Git Bash, repo root: `docker exec -i ops-copilot-postgres-1 psql -U ops -d ops -v pw="$(cat "$(grep ^OPS_SECRETS_DIR= .env | cut -d= -f2-)/postgres_password")" -c "ALTER ROLE ops PASSWORD :'pw'"` (the container's local socket trusts `ops`, so no old password is needed) — or reset the data with a deliberate, owner-run `docker compose --profile dev down -v`. Compose delivers them as `/run/secrets/<name>`; no secret value appears in `environment:` or in `docker inspect`.
 
 ## Commands
 
@@ -1325,7 +1325,7 @@ def test_bootstrap_admin_is_absent(env, secret: Callable[[str], str]) -> None:
     assert status in (400, 401), status  # 400 invalid_grant on Keycloak 26.8 (measured); 401 tolerated
     EVIDENCE.parent.mkdir(parents=True, exist_ok=True)
     with EVIDENCE.open("a", encoding="utf-8", newline="\n") as fh:
-        fh.write(f"tmpadmin password grant after bootstrap: HTTP {status} (absent)\n")
+        fh.write(f"tmpadmin password grant after bootstrap: HTTP {status} (rejected)\n")
 ```
 
 - [ ] **Step 6: Re-create the Keycloak data and run the live tests**
@@ -1606,6 +1606,9 @@ Expected: `1 passed` (this test needs no running Compose stack, only Docker and 
 Run: `powershell -NoProfile -Command "Get-NetFirewallApplicationFilter | Where-Object Program -like '*ollama*' | Get-NetFirewallRule | Select-Object DisplayName,Enabled,Direction,Action,Profile | Format-Table -AutoSize; Get-NetFirewallRule -DisplayName '*ollama*' | Select-Object DisplayName,Enabled,Direction,Action,Profile | Format-Table -AutoSize" | tr -d '\r'`
 Expected: one or two tables of the existing rules for Ollama (on 2026-10-07 there were allow-inbound rules on Public and Private, created when Windows asked at Ollama's first run). Copy them verbatim into the runbook's "What was measured" section. Do not change any rule.
 
+Run: `powershell -NoProfile -Command "'User: ' + [Environment]::GetEnvironmentVariable('OLLAMA_HOST','User'); 'Machine: ' + [Environment]::GetEnvironmentVariable('OLLAMA_HOST','Machine'); Get-NetTCPConnection -LocalPort 11434 -State Listen | Select-Object LocalAddress,LocalPort | Format-Table -AutoSize" | tr -d '\r'`
+Expected: `User: 0.0.0.0:11434`, `Machine: ` (empty) and a listener row for port 11434 (on 2026-10-08 the `LocalAddress` was `::`, i.e. every interface). Record all three lines; the runbook's step A edits the scope that is actually set.
+
 Run: `powershell -NoProfile -Command "Get-NetFirewallProfile -PolicyStore ActiveStore | Select-Object Name,Enabled,DefaultInboundAction | Format-Table -AutoSize" | tr -d '\r'`
 Expected: three rows (Domain, Private, Public); record `Enabled` and `DefaultInboundAction` for each. `ActiveStore` is the effective merged policy (a `NotConfigured` in the persistent store could hide a Group Policy `Allow`); the runbook's reasoning holds only if the effective `DefaultInboundAction` is `Block` on the profiles the WSL adapter and the LAN adapter use.
 
@@ -1628,7 +1631,11 @@ Create `docs/runbooks/ollama-network.md` (the outer fence is four backticks beca
 
 ## What was measured (2026-10-08, read-only, Task 4 step 6)
 
-- `OLLAMA_HOST` (system environment) is `0.0.0.0:11434`, so Ollama currently listens on every interface.
+- `OLLAMA_HOST=0.0.0.0:11434` is set at **User** scope (Machine scope is empty), so Ollama currently listens on every interface (`Get-NetTCPConnection` shows the listener on `::`):
+
+```
+<paste the User/Machine/listener lines printed in Task 4 step 6>
+```
 - Firewall rules for Ollama (created when Windows asked at Ollama's first run, or by its installer):
 
 ```
@@ -1651,12 +1658,12 @@ The last measurement is the decisive one: on this machine (Docker Desktop 29.6.2
 
 ## Step A (recommended) — bind Ollama to loopback
 
-Ollama's own default is `127.0.0.1:11434`; the `0.0.0.0` value is an explicit override. Replace it (elevated PowerShell, because it is a system-level variable):
+Ollama's own default is `127.0.0.1:11434`; the `0.0.0.0` value is an explicit override set in your **User** environment (measured; Machine scope is empty). Replace it at the scope where it is set — no elevation needed:
 
 ```powershell
-[Environment]::SetEnvironmentVariable("OLLAMA_HOST", "127.0.0.1:11434", "Machine")
-# If OLLAMA_HOST is also set at user level, align it or remove it:
-[Environment]::GetEnvironmentVariable("OLLAMA_HOST", "User")
+[Environment]::SetEnvironmentVariable("OLLAMA_HOST", "127.0.0.1:11434", "User")
+# Confirm nothing at Machine scope overrides it (expected: empty):
+[Environment]::GetEnvironmentVariable("OLLAMA_HOST", "Machine")
 # Restart Ollama so it re-reads the variable: quit it from the tray icon, then start it again (or sign out and in).
 ```
 
@@ -1712,7 +1719,7 @@ AM-31 says Ollama "is reachable only from loopback and the Docker/WSL subnet" an
 ## Rollback
 
 ```powershell
-[Environment]::SetEnvironmentVariable("OLLAMA_HOST", "0.0.0.0:11434", "Machine")   # then restart Ollama
+[Environment]::SetEnvironmentVariable("OLLAMA_HOST", "0.0.0.0:11434", "User")   # the scope it was set in; then restart Ollama
 Remove-NetFirewallRule -DisplayName "Ollama 11434 - loopback and Docker/WSL only" -ErrorAction SilentlyContinue
 Get-NetFirewallApplicationFilter | Where-Object Program -like '*ollama*' | Get-NetFirewallRule | Enable-NetFirewallRule
 ```
