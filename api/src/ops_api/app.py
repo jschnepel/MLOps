@@ -88,9 +88,13 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         made = store_factory()
         app.state.store = await made if isinstance(made, Awaitable) else made
-        if not verifier.ready:
-            await verifier.load_keys()
-        yield
+        try:
+            if not verifier.ready:
+                await verifier.load_keys()
+            yield
+        finally:
+            if isinstance(app.state.store, st.DbStore):
+                await app.state.store.session.conn.close()
 
     app = FastAPI(title="ops-api", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     issuer = settings.keycloak().issuer
@@ -104,7 +108,11 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
             principal = await verifier.verify_async(creds.credentials)
         except TokenRejected as exc:
             raise ApiError(401, ErrorCode.UNAUTHENTICATED, "token rejected") from exc
-        membership = await request.app.state.store.membership(issuer, UUID(principal.subject))
+        try:
+            subject = UUID(principal.subject)
+        except ValueError as exc:
+            raise ApiError(401, ErrorCode.UNAUTHENTICATED, "token subject is not an identity") from exc
+        membership = await request.app.state.store.membership(issuer, subject)
         if membership is None:
             raise ApiError(403, ErrorCode.FORBIDDEN, "no active membership")
         return Identity(principal, membership)

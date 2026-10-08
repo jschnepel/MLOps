@@ -169,7 +169,8 @@ class DbStore:
         end_at: datetime,
     ) -> Accepted:
         """Commit message, run, job and `run.accepted` together."""
-        assert request.context is not None and request.context.asset_id is not None  # app.py checked the route
+        if request.context is None or request.context.asset_id is None:  # app.py checked the route
+            raise ValueError("admit requires an investigate request with asset_id")
         message_id, run_id = uuid4(), uuid4()
         try:
             async with self.session.unit() as conn:

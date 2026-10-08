@@ -49,6 +49,10 @@ class StubVerifier:
         return None
 
     async def verify_async(self, token: str) -> Principal:
+        if token == "badsub":
+            return Principal(
+                subject="not-a-uuid", azp="ops-dev-direct", audiences=("ops-api",), expires_at=2**31, claims={}
+            )
         if token not in PERSONAS:
             raise TokenRejected("unit test")
         return Principal(
@@ -153,6 +157,12 @@ def test_identity_and_membership(api):
     assert c.get("/api/v1/me", headers=auth("nobody")).status_code == 401
     me = c.get("/api/v1/me", headers=auth("alex")).json()
     assert me == {"subject": str(ALEX), "tenant_id": str(ALPHA), "roles": ["requester"], "username": "alex"}
+
+
+def test_a_subject_that_is_not_a_uuid_is_a_safe_401(api):
+    c, _ = api
+    r = c.get("/api/v1/me", headers=auth("badsub"))
+    assert r.status_code == 401 and r.json()["code"] == "UNAUTHENTICATED"
 
 
 def test_multi_tenant_subject_cannot_act_and_roles_do_not_merge(api):
