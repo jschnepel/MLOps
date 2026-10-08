@@ -1,9 +1,9 @@
 {
   "run_id": "00000000-0000-4000-8000-000000000003",
-  "status": "FAILED",
+  "status": "CANCELLED",
   "state_version": 4,
   "cancel_requested": true,
-  "grant_exists": false,
+  "grant_exists": true,
   "attempt_state": "SENT",
-  "note": null
+  "note": "cancellation arrived after dispatch"
 }

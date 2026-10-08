@@ -4,6 +4,6 @@
   "state_version": 4,
   "cancel_requested": true,
   "grant_exists": false,
-  "attempt_state": "SENT",
+  "attempt_state": null,
   "note": null
 }

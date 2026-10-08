@@ -12,7 +12,8 @@
     },
     "expected_payload_sha256": {
       "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
     },
     "decision": {
       "enum": [

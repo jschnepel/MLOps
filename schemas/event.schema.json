@@ -59,7 +59,8 @@
     },
     "occurred_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
     },
     "source": {
       "enum": [
@@ -159,7 +160,8 @@
             },
             "committed_at": {
               "type": "string",
-              "format": "date-time"
+              "format": "date-time",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
             }
           },
           "required": [
@@ -185,7 +187,8 @@
             },
             "payload_sha256": {
               "type": "string",
-              "pattern": "^[a-f0-9]{64}$"
+              "maxLength": 64,
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
             },
             "reason": {
               "type": "string",
@@ -194,7 +197,8 @@
             },
             "decided_at": {
               "type": "string",
-              "format": "date-time"
+              "format": "date-time",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
             }
           },
           "required": [
@@ -409,7 +413,17 @@
           "payload": {
             "required": [
               "reason"
-            ]
+            ],
+            "properties": {
+              "reason": {
+                "enum": [
+                  "cancelled_before_send",
+                  "aborted_no_commit",
+                  "rejected",
+                  "expired"
+                ]
+              }
+            }
           }
         }
       }
@@ -425,6 +439,50 @@
             ]
           }
         }
+      },
+      "then": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "action.confirmed"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "payload": {
+                  "not": {
+                    "required": [
+                      "tombstone"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "action.failed"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "payload": {
+                  "not": {
+                    "required": [
+                      "receipt"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
       },
       "else": {
         "properties": {

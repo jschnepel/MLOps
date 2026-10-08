@@ -20,7 +20,8 @@
     },
     "payload_sha256": {
       "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
     },
     "receipt": {
       "anyOf": [
@@ -39,7 +40,8 @@
             },
             "committed_at": {
               "type": "string",
-              "format": "date-time"
+              "format": "date-time",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
             }
           },
           "required": [
@@ -54,6 +56,7 @@
       ]
     },
     "tombstone": {
+      "$comment": "The tombstone must name this outcome's action_id and payload_sha256. JSON Schema cannot compare two values in one document, so ActionOutcome enforces that identity.",
       "anyOf": [
         {
           "type": "object",
@@ -72,7 +75,8 @@
             },
             "payload_sha256": {
               "type": "string",
-              "pattern": "^[a-f0-9]{64}$"
+              "maxLength": 64,
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
             },
             "reason": {
               "type": "string",
@@ -81,7 +85,8 @@
             },
             "decided_at": {
               "type": "string",
-              "format": "date-time"
+              "format": "date-time",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
             }
           },
           "required": [
@@ -148,7 +153,8 @@
               },
               "committed_at": {
                 "type": "string",
-                "format": "date-time"
+                "format": "date-time",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
               }
             },
             "required": [
@@ -193,7 +199,8 @@
               },
               "payload_sha256": {
                 "type": "string",
-                "pattern": "^[a-f0-9]{64}$"
+                "maxLength": 64,
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
               },
               "reason": {
                 "type": "string",
@@ -202,7 +209,8 @@
               },
               "decided_at": {
                 "type": "string",
-                "format": "date-time"
+                "format": "date-time",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
               }
             },
             "required": [
@@ -249,6 +257,54 @@
           },
           "reason": {
             "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tombstone": {
+            "type": "object",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "const": "REJECTED"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "const": "rejected"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "reason": {
+            "const": "rejected"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "tombstone": {
+            "type": "object",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "const": "REJECTED"
+              }
+            }
           }
         }
       }

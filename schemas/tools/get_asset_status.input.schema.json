@@ -8,7 +8,8 @@
   "properties": {
     "asset_id": {
       "type": "string",
-      "pattern": "^[A-Z][A-Z0-9_-]{0,31}$"
+      "maxLength": 32,
+      "pattern": "^[A-Z][A-Z0-9_-]{0,31}(?![\\s\\S])"
     }
   },
   "required": [
