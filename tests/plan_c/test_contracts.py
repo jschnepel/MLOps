@@ -15,6 +15,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from ops_core import contracts as c
 from ops_core.canonical import canonical_sha256
+from ops_core.states import RunState
 from pydantic import ValidationError
 
 ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")
@@ -62,6 +63,7 @@ REQUEST_MODELS = [
     ),
     (c.RevisionRequest, {"expected_version": 3, "supersedes_run_id": str(RUN)}),
     (c.CancelRequest, {"expected_version": 3}),
+    (c.RunRequestFields, {"intent": "investigate", "supersedes_run_id": str(RUN)}),
     (
         c.FeedbackRequest,
         {
@@ -118,13 +120,41 @@ def test_authority_fields_are_rejected_at_every_depth(model, body, field):
                 c.load(model, json.dumps({**body, key: {**value, field: "x"}}))
 
 
-@given(st.sampled_from(sorted(c.AUTHORITY_FIELDS)), st.one_of(st.text(), st.integers(), st.booleans()))
-def test_any_authority_field_with_any_value_is_rejected(field, value):
-    """R004 as a property: the field name alone is enough to reject, whatever value the client chose."""
-    with pytest.raises(ValidationError):
-        c.load(c.MessageRequest, json.dumps({**MESSAGE, field: value}))
-    with pytest.raises(ValidationError):
-        c.load(c.MessageRequest, json.dumps({**MESSAGE, "context": {**MESSAGE["context"], field: value}}))
+def test_authority_fields_are_rejected_inside_source_snapshots():
+    snap = PAYLOAD["source_snapshots"][0]
+    assert c.load(c.ProposalPayload, json.dumps(PAYLOAD))
+    for field in sorted(c.AUTHORITY_FIELDS):
+        body = {**PAYLOAD, "source_snapshots": [{**snap, field: "x"}]}
+        with pytest.raises(ValidationError):
+            c.load(c.ProposalPayload, json.dumps(body))
+
+
+JSON_VALUES = st.recursive(
+    st.none() | st.booleans() | st.integers() | st.text(),
+    lambda inner: st.lists(inner, max_size=3) | st.dictionaries(st.text(), inner, max_size=3),
+    max_leaves=5,
+)
+FIELD_SPELLINGS = st.sampled_from(sorted(c.AUTHORITY_FIELDS)).flatmap(
+    lambda n: st.sampled_from([n, n.upper(), n.capitalize()])
+)
+
+
+@given(st.sampled_from(REQUEST_MODELS), FIELD_SPELLINGS, JSON_VALUES)
+def test_any_authority_field_with_any_value_is_rejected(model_and_body, field, value):
+    """R004 as a property: the field name alone is enough to reject, whatever its case or the value chosen."""
+    model, body = model_and_body
+    with pytest.raises(ValidationError):  # unknown keys are rejected regardless of case
+        c.load(model, json.dumps({**body, field: value}))
+
+
+def test_duplicate_json_keys_are_rejected():
+    """BUILD_SPEC §6: pydantic would keep the last value, so a gateway and a handler could disagree."""
+    with pytest.raises(c.DuplicateKey, match="expected_version"):
+        c.load(c.RevisionRequest, '{"expected_version": 1, "expected_version": 2}')
+    with pytest.raises(c.DuplicateKey, match="hours"):
+        c.load(c.MessageRequest, '{"kind": "ask", "text": "t", "context": {"hours": 1, "hours": 2}}')
+    with pytest.raises(ValidationError):  # malformed JSON stays pydantic's error
+        c.load(c.RevisionRequest, "{")
 
 
 def test_run_request_fields():
@@ -235,6 +265,75 @@ def test_proposal_arrays_must_be_in_canonical_order():
         c.load(c.ProposalPayload, json.dumps({**two, "source_snapshots": two["source_snapshots"][::-1]}))
 
 
+def test_proposal_nfc_normalisation():
+    """R005: strings are normalised before ordering, uniqueness and hashing, so NFC-equivalent payloads agree."""
+    nfd_e = "e\u0301"
+    snaps = [{"evidence_id": r, "content_sha256": "8b" * 32, "version": "1"} for r in ("\u00e9", "\u00e9x")]
+    unsorted = {**PAYLOAD, "evidence_refs": [nfd_e + "x", "\u00e9"], "source_snapshots": snaps[::-1]}
+    with pytest.raises(ValidationError, match="evidence_refs must be sorted"):
+        c.load(c.ProposalPayload, json.dumps(unsorted))  # raw NFD sorts before NFC "é", normalised it sorts after
+    dup = {**PAYLOAD, "evidence_refs": ["caf\u00e9", "cafe\u0301"]}
+    with pytest.raises(ValidationError, match="duplicate"):
+        c.load(c.ProposalPayload, json.dumps(dup))
+    nfc = {**PAYLOAD, "title": "caf\u00e9", "evidence_refs": ["\u00e9"], "source_snapshots": snaps[:1]}
+    nfd_snaps = [{**snaps[0], "evidence_id": nfd_e}]
+    nfd = {**nfc, "title": "cafe\u0301", "evidence_refs": [nfd_e], "source_snapshots": nfd_snaps}
+    a, b = (c.load(c.ProposalPayload, json.dumps(x)) for x in (nfc, nfd))
+    assert a.title == "caf\u00e9" and canonical_sha256(a.canonical_dict()) == canonical_sha256(b.canonical_dict())
+
+
+def test_snapshots_must_match_evidence_refs():
+    snap = PAYLOAD["source_snapshots"][0]
+    for snapshots in (
+        [snap, {**snap, "evidence_id": "ZZZ"}],  # stray snapshot
+        [snap, snap],  # duplicate snapshot
+        [{**snap, "evidence_id": "OTHER"}],  # wrong id
+    ):
+        with pytest.raises(ValidationError):
+            c.load(c.ProposalPayload, json.dumps({**PAYLOAD, "source_snapshots": snapshots}))
+
+
+@pytest.mark.parametrize("stamp", ["1759665600", "0", "2026-10-05T12:00:00-00:00", "2026-10-05", 1759665600])
+def test_timestamps_must_be_explicit_iso_instants(stamp):
+    manual = dict(REQUEST_MODELS)[c.ManualProposalRequest]
+    for key in ("start_at", "expires_at"):
+        with pytest.raises(ValidationError):
+            c.load(c.ProposalPayload, json.dumps({**PAYLOAD, key: stamp}))
+    with pytest.raises(ValidationError):
+        c.load(c.ManualProposalRequest, json.dumps({**manual, "start_at": stamp}))
+
+
+def test_zero_offset_spellings_still_accepted():
+    for stamp in ("2026-10-05T12:00:00.000Z", "2026-10-05T12:00:00+00:00", "2026-10-05T12:00:00Z"):
+        p = c.load(c.ProposalPayload, json.dumps({**PAYLOAD, "start_at": stamp}))
+        assert p.canonical_dict()["start_at"] == "2026-10-05T12:00:00Z"
+
+
+def test_proposal_envelope_rules():
+    payload = c.load(c.ProposalPayload, json.dumps(PAYLOAD))
+    sha = canonical_sha256(payload.canonical_dict())
+    good = {"canonicalization_version": 1, "payload": payload, "payload_sha256": sha, "authored_by": [ALPHA]}
+    assert c.Proposal(**good)
+    for bad in (
+        {"canonicalization_version": True},  # strict int: `true` is not version 1
+        {"canonicalization_version": 2},
+        {"authored_by": [ALPHA, ALPHA]},
+    ):
+        with pytest.raises(ValidationError):
+            c.Proposal(**(good | bad))
+    explicit_null = c.load(c.ProposalPayload, json.dumps({**PAYLOAD, "supersedes_run_id": None}))
+    assert canonical_sha256(explicit_null.canonical_dict()) == sha  # an explicit null and an absent key hash alike
+
+
+@pytest.mark.parametrize("model", [c.DecisionRequest, c.CancelRequest])
+def test_empty_reason_is_rejected(model):
+    body = dict(REQUEST_MODELS)[model]
+    assert c.load(model, json.dumps({**body, "reason": "ok"}))
+    for reason in ("", "  "):
+        with pytest.raises(ValidationError):
+            c.load(model, json.dumps({**body, "reason": reason}))
+
+
 def test_cancel_response_reports_grant_and_never_undo():
     body = {
         "run_id": str(RUN),
@@ -251,6 +350,16 @@ def test_cancel_response_reports_grant_and_never_undo():
         c.load(
             c.CancelResponse, json.dumps({**body, "status": "CANCELLED", "grant_exists": False})
         )  # no grant, no attempt
+    cancelled = {**body, "status": "CANCELLED", "grant_exists": False, "attempt_state": None, "note": None}
+    assert c.load(c.CancelResponse, json.dumps(cancelled)).status is RunState.CANCELLED
+    for bad in (
+        {**body, "cancel_requested": False},  # it is a cancel response
+        {**body, "status": "CANCELLED"},  # CANCELLED after a grant would be an undo claim
+        {**cancelled, "status": "EXECUTING"},  # a post-grant state needs a grant
+        {**cancelled, "status": "SUCCEEDED"},
+    ):
+        with pytest.raises(ValidationError):
+            c.load(c.CancelResponse, json.dumps(bad))
 
 
 def test_safe_error_codes():
