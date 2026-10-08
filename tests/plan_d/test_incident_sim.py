@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from ops_core.canonical import canonical_json, canonical_sha256, sha256_hex
@@ -171,6 +172,7 @@ def test_unauthenticated_calls_get_a_plain_safe_error(client):
     c, store = client
     r = post(c, body_for(PAYLOAD), token="bad")
     assert r.status_code == 401 and r.json()["code"] == "UNAUTHENTICATED"
+    assert r.headers["www-authenticate"] == "Bearer"
     assert str(ACTION) not in r.text and store.commits == []
     assert c.get(f"/internal/actions/{ACTION}").status_code == 401
 
@@ -187,3 +189,24 @@ def test_health(client):
     c, _ = client
     assert c.get("/health/live").json() == {"status": "live"}
     assert c.get("/health/ready").status_code == 200
+
+
+def test_invalid_path_parameter_is_a_generic_422(client):
+    c, _ = client
+    r = c.get("/internal/actions/not-a-uuid", headers={"Authorization": "Bearer good"})
+    assert r.status_code == 422 and r.json()["code"] == "INVALID_INPUT" and "not-a-uuid" not in r.text
+
+
+class DownStore(FakeStore):
+    async def commit(self, action_id: UUID, payload_sha256: str, payload: dict[str, Any]) -> keys.KeyRow:
+        raise psycopg.OperationalError("down")
+
+    async def lookup(self, action_id: UUID) -> keys.KeyRow | None:
+        raise psycopg.OperationalError("down")
+
+
+def test_database_failure_is_a_retryable_503():
+    with TestClient(create_app(StubVerifier(), store=DownStore())) as c:
+        r = post(c, body_for(PAYLOAD))
+        assert r.status_code == 503 and r.json()["code"] == "UNAVAILABLE" and r.json()["retryable"] is True
+        assert c.get(f"/internal/actions/{ACTION}", headers={"Authorization": "Bearer good"}).status_code == 503

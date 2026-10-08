@@ -60,7 +60,8 @@ async def commit(conn: Conn, *, action_id: UUID, payload_sha256: str, payload: d
         )
         return _row(inserted)
     existing = await lookup(conn, action_id)
-    assert existing is not None  # the conflict proved the row exists and rows are never deleted (SA:265)
+    if existing is None:  # not an assert: asserts are stripped under -O
+        raise RuntimeError("action_key row vanished after a conflict; rows are never deleted (SA:265)")
     return existing
 
 

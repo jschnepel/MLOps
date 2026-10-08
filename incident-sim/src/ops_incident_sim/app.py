@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import psycopg
 from fastapi import Depends, FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from ops_core import persistence, settings
 from ops_core.canonical import CanonicalizationError, parse_json_strict, sha256_hex
@@ -55,9 +56,9 @@ class IncidentRequest(BaseModel):
     payload_canonical: str = Field(min_length=2)
 
 
-def safe_error(status: int, code: ErrorCode, message: str) -> JSONResponse:
+def safe_error(status: int, code: ErrorCode, message: str, headers: dict[str, str] | None = None) -> JSONResponse:
     body = SafeError(code=code, message=message, retryable=status == 503, request_id=uuid4())
-    return JSONResponse(status_code=status, content=body.model_dump(mode="json"))
+    return JSONResponse(status_code=status, content=body.model_dump(mode="json"), headers=headers)
 
 
 class Unauthenticated(Exception):
@@ -90,7 +91,14 @@ def create_app(
 
     @app.exception_handler(Unauthenticated)
     async def _unauthenticated(_: Request, __: Unauthenticated) -> Response:
-        return safe_error(401, ErrorCode.UNAUTHENTICATED, "a valid workload token is required")
+        return safe_error(
+            401, ErrorCode.UNAUTHENTICATED, "a valid workload token is required", {"WWW-Authenticate": "Bearer"}
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def _invalid(_: Request, __: RequestValidationError) -> Response:
+        # Ruling 20: a generic 422, never FastAPI's default body that echoes the offending input.
+        return safe_error(422, ErrorCode.INVALID_INPUT, "request is not valid")
 
     @app.get("/health/live")
     async def live() -> dict[str, str]:
@@ -122,14 +130,20 @@ def create_app(
         if sha256_hex(body.payload_canonical.encode("utf-8")) != body.payload_sha256:
             return safe_error(422, ErrorCode.INVALID_INPUT, "payload hash does not match the received payload")
         st: Store = request.app.state.store
-        row = await st.commit(body.action_id, body.payload_sha256, payload)
+        try:
+            row = await st.commit(body.action_id, body.payload_sha256, payload)
+        except psycopg.Error:
+            return safe_error(503, ErrorCode.UNAVAILABLE, "destination database unavailable")
         status, doc = keys.document(row, presented_sha256=body.payload_sha256)
         return JSONResponse(status_code=status, content=doc)
 
     @app.get("/internal/actions/{action_id}")
     async def get_action(action_id: UUID, request: Request, _: Annotated[Principal, Depends(caller)]) -> Response:
         st: Store = request.app.state.store
-        row = await st.lookup(action_id)
+        try:
+            row = await st.lookup(action_id)
+        except psycopg.Error:
+            return safe_error(503, ErrorCode.UNAVAILABLE, "destination database unavailable")
         if row is None:
             return safe_error(404, ErrorCode.NOT_FOUND, "no such action")
         status, doc = keys.document(row, presented_sha256=row.payload_sha256)
