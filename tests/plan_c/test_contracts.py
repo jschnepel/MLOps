@@ -384,8 +384,11 @@ def test_cancel_response_reports_grant_and_never_undo():
         with pytest.raises(ValidationError):
             c.load(c.CancelResponse, json.dumps(bad))
     # The grant commits together with APPROVED → EXECUTING, so a pre-grant status with a grant contradicts itself.
-    with pytest.raises(ValidationError, match="pre-grant, so no grant can exist"):
-        c.load(c.CancelResponse, json.dumps({**body, "status": "QUEUED"}))
+    # REJECTED, ANSWERED and INSUFFICIENT_EVIDENCE are terminals no grant can precede; FAILED can follow a grant.
+    for status in ("QUEUED", "REJECTED", "ANSWERED", "INSUFFICIENT_EVIDENCE"):
+        with pytest.raises(ValidationError, match="never preceded by a grant"):
+            c.load(c.CancelResponse, json.dumps({**body, "status": status}))
+    assert c.load(c.CancelResponse, json.dumps({**body, "status": "FAILED"})).grant_exists
 
 
 def test_safe_error_codes():

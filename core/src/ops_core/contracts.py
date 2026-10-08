@@ -35,7 +35,7 @@ from pydantic import (
 )
 
 from ops_core.canonical import canonical_sha256
-from ops_core.states import POST_GRANT_STATES, PRE_GRANT_STATES, AttemptState, Intent, RunState
+from ops_core.states import GRANTLESS_STATES, POST_GRANT_STATES, AttemptState, Intent, RunState
 
 AUTHORITY_FIELDS: Final = frozenset(
     {
@@ -245,10 +245,11 @@ class CancelResponse(BaseModel):
         # a grant is false. FAILED is excluded: a run can fail in RETRIEVING/DRAFTING before any grant (ruling 8).
         if not self.grant_exists and self.status in POST_GRANT_STATES:
             raise ValueError(f"status {self.status.value} requires a grant")
-        # The grant and APPROVED → EXECUTING commit in one transaction (AM-20.3 grant_execution), so a run still in a
-        # pre-grant state cannot have one.
-        if self.grant_exists and self.status in PRE_GRANT_STATES:
-            raise ValueError(f"status {self.status.value} is pre-grant, so no grant can exist")
+        # The grant and APPROVED → EXECUTING commit in one transaction (AM-20.3 grant_execution), so a run in a
+        # pre-grant state, or in a terminal state only reachable before a grant, cannot have one. FAILED is in neither
+        # set: the table reaches it both before (transition_run) and after (record_outcome) a grant.
+        if self.grant_exists and self.status in GRANTLESS_STATES:
+            raise ValueError(f"status {self.status.value} is never preceded by a grant, so no grant can exist")
         return self
 
 

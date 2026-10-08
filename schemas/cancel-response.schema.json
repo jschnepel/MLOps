@@ -146,6 +146,9 @@
               "DRAFTING",
               "AWAITING_APPROVAL",
               "APPROVED",
+              "ANSWERED",
+              "REJECTED",
+              "INSUFFICIENT_EVIDENCE",
               "BLOCKED_REVIEW"
             ]
           }

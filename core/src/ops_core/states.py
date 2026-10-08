@@ -227,6 +227,9 @@ TERMINAL_STATES: Final = frozenset(
 PRE_GRANT_STATES: Final = frozenset(
     {_S.QUEUED, _S.AWAITING_INPUT, _S.RETRIEVING, _S.DRAFTING, _S.AWAITING_APPROVAL, _S.APPROVED, _S.BLOCKED_REVIEW}
 )
+# No grant can precede these: the pre-grant states plus the terminals reached only before a grant (REJECTED by
+# record_decision, ANSWERED and INSUFFICIENT_EVIDENCE by transition_run). PRE_GRANT_STATES stays the cancel-eligible set.
+GRANTLESS_STATES: Final = PRE_GRANT_STATES | frozenset({_S.REJECTED, _S.ANSWERED, _S.INSUFFICIENT_EVIDENCE})
 # States a run reaches only through grant_execution (APPROVED → EXECUTING) or after it (AM-10 table, AM-20.3
 # performers). FAILED is not here: RETRIEVING/DRAFTING → FAILED by transition_run (ruling 8) needs no grant.
 POST_GRANT_STATES: Final = frozenset(

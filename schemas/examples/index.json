@@ -543,6 +543,14 @@
       "reason_match": "^\\$\\.grant_exists: False was expected$"
     },
     {
+      "path": "schemas/examples/cancel-response-invalid-rejected-with-grant.json",
+      "schema": "schemas/cancel-response.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A rejected proposal was never granted, so a REJECTED run has no grant.",
+      "reason_match": "^\\$\\.grant_exists: False was expected$"
+    },
+    {
       "path": "schemas/examples/event-invalid-failed-conflict-reason.json",
       "schema": "schemas/event.schema.json",
       "valid": false,
