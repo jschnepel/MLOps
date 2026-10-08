@@ -18,9 +18,10 @@ from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
 from ops_core import persistence, settings
 from ops_core.jobs import Server
+from ops_core.settings import Role
 from ops_worker.mcp import failure_leaf
 
-from scripts.skeleton import Skeleton
+from scripts.skeleton import Skeleton, orphan_keys
 from tests.plan_b.live import kc
 
 API = "http://127.0.0.1:8000"
@@ -82,7 +83,9 @@ def wait_for(client: httpx2.Client, url: str, headers: dict[str, str], states: s
 
 
 @pytest.mark.asyncio
-async def test_r105_walking_skeleton(skeleton: Skeleton, secret, app_conn: persistence.Conn) -> None:
+async def test_r105_walking_skeleton(
+    skeleton: Skeleton, secret, app_conn: persistence.Conn, role_conn, incident_conn: persistence.Conn
+) -> None:
     kcs = settings.keycloak()
     urls = settings.urls()
     alex = kc.token_password(kcs.base_url, "ops-dev-direct", "alex", secret("kc_persona_alex_password"))["access_token"]
@@ -155,7 +158,9 @@ async def test_r105_walking_skeleton(skeleton: Skeleton, secret, app_conn: persi
     with httpx2.Client(base_url=urls.incident_sim, timeout=10.0) as d:
         persona_at_destination = d.get(f"/internal/actions/{action_id}", headers=a)
         worker_at_destination = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {worker}"})
-        assert (persona_at_destination.status_code, worker_at_destination.status_code) == (401, 401)
+        refusals = (persona_at_destination.status_code, worker_at_destination.status_code)
+        # TODO(T09): the destination answers 403 to an authenticated but unauthorised caller; until then 401.
+        assert refusals == (401, 401)
         assert action_id not in persona_at_destination.text and action_id not in worker_at_destination.text
         key = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {mcp_write}"}).json()
         assert key["state"] == "COMMITTED" and key["payload_sha256"] == sha
@@ -163,9 +168,14 @@ async def test_r105_walking_skeleton(skeleton: Skeleton, secret, app_conn: persi
     # the recorded outcome (same action id, no second incident), and the wrong tokens are refused at mcp-write.
     cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s AND type = 'execute'", (UUID(run_id),))
     execute_job = (await cur.fetchone())["id"]
-    handle = await persistence.mint_handle(
-        app_conn, run_id=UUID(run_id), job_id=execute_job, server=Server.WRITE, azp="ops-worker"
-    )
+    cur = await app_conn.execute("SELECT tenant_id FROM app.run_directory WHERE run_id = %s", (UUID(run_id),))
+    tenant = (await cur.fetchone())["tenant_id"]
+    worker_conn = await role_conn(Role.WORKER)
+    async with worker_conn.transaction():  # the worker role under the run's tenant; set_tenant is transaction-local
+        await persistence.set_tenant(worker_conn, tenant)
+        handle = await persistence.mint_handle(
+            worker_conn, run_id=UUID(run_id), job_id=execute_job, server=Server.WRITE, azp="ops-worker"
+        )
     replay = await mcp_call(urls.mcp_write, worker, handle, "create_incident", {"proposal_id": pid})
     assert replay is not None and replay["status"] == "ok" and replay["data"]["action_id"] == action_id
     for wrong in (alex, mcp_read):
@@ -175,5 +185,15 @@ async def test_r105_walking_skeleton(skeleton: Skeleton, secret, app_conn: persi
         again = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {mcp_write}"}).json()
         assert again["receipt"] == key["receipt"]  # the same receipt, so no second incident
     lines.append("replay=same_action_id refusals=api:worker,destination:persona+worker,mcp-write:persona+mcp-read")
+    lines.append(f"destination_refusals=persona:{refusals[0]},worker:{refusals[1]}")  # 401 until Task 8, 403 after
+    # The detective check, inline: this run's destination key must carry a grant's exact (action_id, hash). The exit
+    # code of `skeleton.py keys` is not used because another live test plants an orphan on purpose.
+    cur = await app_conn.execute("SELECT action_id, payload_sha256 FROM app.execution_grant")
+    grants = {(row["action_id"], row["payload_sha256"]) for row in await cur.fetchall()}
+    cur = await incident_conn.execute("SELECT action_id, payload_sha256 FROM incident.action_key")
+    destination_keys = [(row["action_id"], row["payload_sha256"]) for row in await cur.fetchall()]
+    assert UUID(action_id) in {k[0] for k in destination_keys}
+    assert UUID(action_id) not in {k[0] for k in orphan_keys(destination_keys, grants)}
+    lines.append("keys=consistent")
     EVIDENCE.parent.mkdir(parents=True, exist_ok=True)
     EVIDENCE.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")

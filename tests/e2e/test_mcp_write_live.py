@@ -5,43 +5,36 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx2
 import pytest
 import uvicorn
 from ops_core import persistence, settings
 from ops_core.canonical import canonical_json, canonical_sha256
-from ops_core.jobs import JobType, Server, Tool
-from ops_core.outcomes import EventSource, EventType, ToolOutcome
-from ops_core.states import Performer, RunState
+from ops_core.jobs import Server
+from ops_core.outcomes import ToolOutcome
+from ops_core.settings import Role
+from ops_core.states import RunState
 from ops_core.tokens import WorkloadTokenSource
 from ops_incident_sim.app import production_app as incident_sim_app
 from ops_mcp_write import destination, execution
-from psycopg.types.json import Jsonb
 
-from tests.e2e.conftest import purge_run, purge_tenant
+from tests.e2e.conftest import purge_run
 from tests.e2e.test_migrations_and_persistence import new_run
 
 pytestmark = pytest.mark.asyncio
 
-ALEX = "2fc05986-c7ec-544c-b628-fdb112bbf18a"
-SAM = "03f7eb09-e18d-5f33-bf75-12c57d5aaa54"
+ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")  # seeded: SAM is its reviewer, ALEX its requester
+SAM = UUID("03f7eb09-e18d-5f33-bf75-12c57d5aaa54")
 
 
-async def approved_run(conn: persistence.Conn) -> tuple:
-    tenant, conv, run = await new_run(conn)
-    await persistence.append_event(
-        conn,
-        tenant_id=tenant,
-        conversation_id=conv,
-        run_id=run,
-        type=EventType.RUN_ACCEPTED,
-        source=EventSource.APPLICATION,
-        payload={},
-    )
-    for dst in (RunState.RETRIEVING, RunState.DRAFTING):
-        await persistence.transition(conn, run_id=run, dst=dst, performer=Performer.TRANSITION_RUN)
+async def approved_run(app_conn: persistence.Conn, *, api: persistence.Conn, worker: persistence.Conn) -> tuple:
+    """An APPROVED run on the seeded tenant built through the definer functions, with a write handle for its job."""
+    tenant = ALPHA
+    _, _, run = await new_run(app_conn, tenant, api=api)
+    for src, dst in ((RunState.QUEUED, RunState.RETRIEVING), (RunState.RETRIEVING, RunState.DRAFTING)):
+        await persistence.transition_run(worker, run_id=run, src=src, dst=dst)
     draft, proposal = uuid4(), uuid4()
     now = datetime.now(UTC).replace(microsecond=0)
     payload = {
@@ -72,31 +65,30 @@ async def approved_run(conn: persistence.Conn) -> tuple:
     }
     canonical = canonical_json(payload)
     sha = canonical_sha256(payload)
-    await conn.execute(
-        "INSERT INTO app.drafts (id, run_id, draft_sha256, validated, kind) VALUES (%s, %s, %s, true, 'proposal')",
-        (draft, run, sha),
-    )
-    await conn.execute(
-        "INSERT INTO app.proposals (proposal_id, tenant_id, run_id, revision, draft_id, payload, payload_canonical,"
-        " payload_sha256, canonicalization_version, authored_by, expires_at)"
-        " VALUES (%s, %s, %s, 1, %s, %s, %s, %s, 1, %s, %s)",
-        (proposal, tenant, run, draft, Jsonb(payload), canonical, sha, [ALEX], now + timedelta(minutes=15)),
-    )
-    await conn.execute("UPDATE app.runs SET active_proposal_id = %s WHERE run_id = %s", (proposal, run))
-    await persistence.transition(conn, run_id=run, dst=RunState.AWAITING_APPROVAL, performer=Performer.FREEZE_PROPOSAL)
-    await conn.execute(
-        "INSERT INTO app.decisions (decision_id, proposal_id, reviewer, decision, expected_payload_sha256)"
-        " VALUES (%s, %s, %s, 'approve', %s)",
-        (uuid4(), proposal, SAM, sha),
-    )
-    await persistence.transition(conn, run_id=run, dst=RunState.APPROVED, performer=Performer.RECORD_DECISION)
-    job = await persistence.insert_job(conn, job_type=JobType.EXECUTE, run_id=run, proposal_id=proposal)
-    assert job is not None
-    handle = await persistence.mint_handle(conn, run_id=run, job_id=job, server=Server.WRITE, azp="ops-worker")
-    return tenant, conv, run, proposal, handle
+    # One worker transaction: set_tenant is transaction-local, and on autocommit the INSERT would meet RLS.
+    async with worker.transaction():
+        await persistence.set_tenant(worker, tenant)
+        await worker.execute(
+            "INSERT INTO app.drafts (id, tenant_id, run_id, draft_sha256, validated, kind)"
+            " VALUES (%s, %s, %s, %s, true, 'proposal')",
+            (draft, tenant, run, sha),
+        )
+        await persistence.freeze_proposal(
+            worker, run_id=run, draft_id=draft, payload_canonical=canonical, expires_at=now + timedelta(minutes=15)
+        )
+    async with api.transaction():  # the function queues the execute job
+        await persistence.record_decision(
+            api, tenant_id=tenant, proposal_id=proposal, reviewer=SAM, expected_payload_sha256=sha, decision="approve"
+        )
+    cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s AND type = 'execute'", (run,))
+    job = (await cur.fetchone())["id"]
+    async with worker.transaction():
+        await persistence.set_tenant(worker, tenant)
+        handle = await persistence.mint_handle(worker, run_id=run, job_id=job, server=Server.WRITE, azp="ops-worker")
+    return tenant, run, proposal, handle
 
 
-async def test_write_path_twice(app_conn: persistence.Conn, secret, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_write_path_twice(app_conn: persistence.Conn, role_conn, secret, monkeypatch: pytest.MonkeyPatch) -> None:
     # Port 18090: the skeleton's own incident-sim may hold 8090 in the same session (Task 9's fixture).
     server = uvicorn.Server(uvicorn.Config(incident_sim_app(), host="127.0.0.1", port=18090, log_level="warning"))
     task = asyncio.create_task(server.serve())
@@ -118,31 +110,18 @@ async def test_write_path_twice(app_conn: persistence.Conn, secret, monkeypatch:
         return await original_post(*args, **kwargs)
 
     monkeypatch.setattr(destination, "post_incident", post_with_probe)
-    tenant = run = None
+    run = None
     try:
         while not server.started:
             await asyncio.sleep(0.05)
-        async with app_conn.transaction():  # committed: the witness connection must see the rows
-            tenant, _, run, proposal, handle = await approved_run(app_conn)
-        session = persistence.Session(app_conn)
-        async with session.unit() as conn:
-            invocation = await persistence.resolve_handle(
-                conn, handle=handle, server=Server.WRITE, azp="ops-worker", tool=Tool.CREATE_INCIDENT
-            )
-        kc = settings.keycloak()
+        _, run, proposal, handle = await approved_run(
+            app_conn, api=await role_conn(Role.API), worker=await role_conn(Role.WORKER)
+        )
+        session = persistence.Session(await role_conn(Role.MCP_EXEC))
         async with httpx2.AsyncClient() as http:
-            deps = execution.Deps(
-                session=session,
-                http=http,
-                destination_url="http://127.0.0.1:18090",
-                destination_token=WorkloadTokenSource(
-                    token_url=kc.token_url,
-                    client_id="ops-mcp-write",
-                    client_secret=secret("kc_client_secret_ops_mcp_write"),
-                ),
-            )
-            first = await execution.create_incident(deps, invocation=invocation, proposal_id=proposal)
-            second = await execution.create_incident(deps, invocation=invocation, proposal_id=proposal)
+            deps = make_deps(session, http, secret)
+            first = await execution.create_incident(deps, handle=handle, proposal_id=proposal)
+            second = await execution.create_incident(deps, handle=handle, proposal_id=proposal)
         assert first.status is ToolOutcome.SUCCEEDED and second == first
         assert observed == ["SENT"]  # exactly one POST, and SENT was committed before it
         row = await persistence.run_row(app_conn, run)
@@ -150,6 +129,8 @@ async def test_write_path_twice(app_conn: persistence.Conn, secret, monkeypatch:
         cur = await app_conn.execute("SELECT type, source FROM app.events WHERE run_id = %s ORDER BY sequence", (run,))
         assert [tuple(r.values()) for r in await cur.fetchall()] == [
             ("run.accepted", "application"),
+            ("proposal.ready", "application"),
+            ("approval.recorded", "application"),
             ("action.granted", "application"),
             ("action.dispatched", "application"),
             ("action.confirmed", "destination"),
@@ -163,7 +144,6 @@ async def test_write_path_twice(app_conn: persistence.Conn, secret, monkeypatch:
         await task
         if run is not None:
             await purge_run(app_conn, run)
-            await purge_tenant(app_conn, tenant)
 
 
 @contextlib.asynccontextmanager
@@ -181,7 +161,7 @@ async def running_sim() -> AsyncIterator[None]:
 
 
 def make_deps(session: persistence.Session, http: httpx2.AsyncClient, secret) -> execution.Deps:
-    """Write-path dependencies pointing at the in-process incident-sim."""
+    """Write-path dependencies pointing at the in-process incident-sim; the session sits on a mcp_exec connection."""
     kc = settings.keycloak()
     return execution.Deps(
         session=session,
@@ -194,7 +174,7 @@ def make_deps(session: persistence.Session, http: httpx2.AsyncClient, secret) ->
 
 
 async def test_concurrent_calls_share_one_attempt(
-    app_conn: persistence.Conn, secret, monkeypatch: pytest.MonkeyPatch
+    app_conn: persistence.Conn, role_conn, secret, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     posts: list[int] = []
     original_post = destination.post_incident
@@ -204,21 +184,18 @@ async def test_concurrent_calls_share_one_attempt(
         return await original_post(*args, **kwargs)
 
     monkeypatch.setattr(destination, "post_incident", counting_post)
-    tenant = run = None
+    run = None
     try:
         async with running_sim():
-            async with app_conn.transaction():
-                tenant, _, run, proposal, handle = await approved_run(app_conn)
-            session = persistence.Session(app_conn)
-            async with session.unit() as conn:
-                invocation = await persistence.resolve_handle(
-                    conn, handle=handle, server=Server.WRITE, azp="ops-worker", tool=Tool.CREATE_INCIDENT
-                )
+            _, run, proposal, handle = await approved_run(
+                app_conn, api=await role_conn(Role.API), worker=await role_conn(Role.WORKER)
+            )
+            session = persistence.Session(await role_conn(Role.MCP_EXEC))
             async with httpx2.AsyncClient() as http:
                 deps = make_deps(session, http, secret)
                 first, second = await asyncio.gather(
-                    execution.create_incident(deps, invocation=invocation, proposal_id=proposal),
-                    execution.create_incident(deps, invocation=invocation, proposal_id=proposal),
+                    execution.create_incident(deps, handle=handle, proposal_id=proposal),
+                    execution.create_incident(deps, handle=handle, proposal_id=proposal),
                 )
         assert first.status is ToolOutcome.SUCCEEDED and first == second
         assert len(posts) <= 2
@@ -232,39 +209,58 @@ async def test_concurrent_calls_share_one_attempt(
     finally:
         if run is not None:
             await purge_run(app_conn, run)
-            await purge_tenant(app_conn, tenant)
 
 
-async def test_exception_after_sent_becomes_outcome_unknown(
-    app_conn: persistence.Conn, secret, monkeypatch: pytest.MonkeyPatch
+async def exploding_post(*args, **kwargs):
+    """A destination call that raises after SENT."""
+    raise RuntimeError("boom")
+
+
+async def swallowed_post(*args, **kwargs):
+    """A transport failure the client already swallowed: no reply at all."""
+    return
+
+
+async def unavailable_post(*args, **kwargs):
+    """A 503 with an empty document, which `classify` reads as UNKNOWN (round-2 finding NI1)."""
+    return destination.Reply(503, {})
+
+
+@pytest.mark.parametrize("post", [exploding_post, swallowed_post, unavailable_post])
+async def test_exception_after_sent_returns_unknown_and_records_nothing(
+    app_conn: persistence.Conn, role_conn, secret, monkeypatch: pytest.MonkeyPatch, post
 ) -> None:
-    async def exploding_post(*args, **kwargs):
-        raise RuntimeError("boom")
+    """mcp-write returns the UNKNOWN envelope and records nothing; the worker records UNKNOWN (Task 6's live test).
 
-    monkeypatch.setattr(destination, "post_incident", exploding_post)
-    tenant = run = None
+    Before the fix a classified UNKNOWN reached record_outcome, which refuses it by design, and raised.
+    """
+    monkeypatch.setattr(destination, "post_incident", post)
+    run = None
     try:
-        async with app_conn.transaction():
-            tenant, _, run, proposal, handle = await approved_run(app_conn)
-        session = persistence.Session(app_conn)
-        async with session.unit() as conn:
-            invocation = await persistence.resolve_handle(
-                conn, handle=handle, server=Server.WRITE, azp="ops-worker", tool=Tool.CREATE_INCIDENT
-            )
+        _, run, proposal, handle = await approved_run(
+            app_conn, api=await role_conn(Role.API), worker=await role_conn(Role.WORKER)
+        )
+        session = persistence.Session(await role_conn(Role.MCP_EXEC))
         async with httpx2.AsyncClient() as http:
             outcome = await execution.create_incident(
-                make_deps(session, http, secret), invocation=invocation, proposal_id=proposal
+                make_deps(session, http, secret), handle=handle, proposal_id=proposal
             )
         assert outcome.status is ToolOutcome.UNKNOWN
-        assert (await persistence.run_row(app_conn, run))["state"] == "OUTCOME_UNKNOWN"
+        assert (await persistence.run_row(app_conn, run))["state"] == "EXECUTING"
+        cur = await app_conn.execute(
+            "SELECT s.state FROM app.action_attempt_state s JOIN app.execution_grant g USING (action_id)"
+            " WHERE g.run_id = %s ORDER BY s.seq DESC LIMIT 1",
+            (run,),
+        )
+        assert (await cur.fetchone())["state"] == "SENT"
         cur = await app_conn.execute("SELECT type FROM app.events WHERE run_id = %s ORDER BY sequence", (run,))
         assert [r["type"] for r in await cur.fetchall()] == [
             "run.accepted",
+            "proposal.ready",
+            "approval.recorded",
             "action.granted",
             "action.dispatched",
-            "action.uncertain",
         ]
     finally:
         if run is not None:
             await purge_run(app_conn, run)
-            await purge_tenant(app_conn, tenant)
