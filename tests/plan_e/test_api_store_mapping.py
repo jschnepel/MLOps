@@ -13,6 +13,7 @@ from ops_core import persistence
         ("SELF_REVIEW", store.Forbidden, None),
         ("MEMBERSHIP_INACTIVE", store.Forbidden, None),
         ("SLOT_OCCUPIED", store.Conflict, "SLOT_OCCUPIED"),
+        ("INVALID_ARGUMENT", store.Internal, None),
         ("ANYTHING_ELSE", store.Conflict, "VERSION_CONFLICT"),
     ],
 )

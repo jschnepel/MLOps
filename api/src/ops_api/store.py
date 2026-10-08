@@ -35,6 +35,11 @@ class Conflict(Exception):
         self.code = code
 
 
+class Internal(Exception):
+    """A definer function refused input the API already validated, or returned nothing: a server defect, never the
+    client's (maps to 503)."""
+
+
 @dataclass(frozen=True)
 class Membership:
     """A subject's tenant and roles, resolved from the seeded memberships."""
@@ -94,6 +99,8 @@ def map_refusal(exc: persistence.Refused) -> Exception:
         return Forbidden()
     if exc.code == "SLOT_OCCUPIED":
         return Conflict("SLOT_OCCUPIED")
+    if exc.code == "INVALID_ARGUMENT":
+        return Internal()  # the API's own validation makes this unreachable; a 409 would be a false message
     return Conflict("VERSION_CONFLICT")
 
 

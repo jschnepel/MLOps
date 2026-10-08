@@ -3,8 +3,9 @@
 (BUILD_SPEC §11).
 
 `investigate`: QUEUED → RETRIEVING → (read tool) → DRAFTING → fake draft → freeze → AWAITING_APPROVAL. `execute`: mint
-a write handle and call `create_incident`; mcp-write performs the grant, the dispatch and the outcome, so the worker
-only closes the job. No lease, fence or heartbeat (debt → T13), no LangGraph (→ T20).
+a write handle and call `create_incident`; mcp-write performs the grant, the dispatch and the outcome, while the
+worker records an UNKNOWN envelope through `mark_unknown`, revokes the run's handles when the job ends and then closes
+the job. No lease, fence or heartbeat (debt → T13), no LangGraph (→ T20).
 """
 
 from __future__ import annotations
@@ -177,17 +178,21 @@ async def execute(deps: Deps, job: dict[str, Any]) -> bool:
             deps.urls.mcp_write, handle=handle, tool="create_incident", arguments={"proposal_id": str(proposal_id)}
         )
     except McpCallFailed as exc:
-        # mcp-write owns the grant and the outcome; the run stays APPROVED and the job retries, which is safe because
-        # create_incident is idempotent per run. The worker records nothing it did not observe (BUILD_SPEC §1).
+        # mcp-write owns the grant and the outcome. Before a grant the run is still APPROVED; after one it is EXECUTING
+        # and the retry resends under the same action id, which is safe because the grant is one per run. The worker
+        # records nothing it did not observe (BUILD_SPEC §1).
         # TODO(T13): bounded retries; TODO(T22): reconciliation.
         log.warning("execute job %s: %s; re-queued in %s s", job["id"], exc, EXECUTE_RETRY_SECONDS)
         async with deps.conn.transaction():
             await persistence.set_tenant(deps.conn, job["tenant_id"])  # RLS: without it the UPDATE touches no row
+            # The handle may already have reached mcp-write; without this it stays usable for its 60 s TTL while the
+            # retry mints a new one.
+            await persistence.revoke_handles(deps.conn, run["run_id"])
             await persistence.requeue_job(deps.conn, job["id"], EXECUTE_RETRY_SECONDS)
         return False
     data = doc.get("data") or {}
     log.info("execute job %s: %s %s", job["id"], doc.get("status"), data.get("status"))
-    if data.get("status") == "UNKNOWN":
+    if doc.get("status") == "outcome" and data.get("status") == "UNKNOWN":  # an `error` envelope is never UNKNOWN
         # mcp-write reports uncertainty after SENT but may not record it (SA:467: mark_unknown is the worker's).
         async with deps.conn.transaction():
             await persistence.mark_unknown(deps.conn, run["run_id"])

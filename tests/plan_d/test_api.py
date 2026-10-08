@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from ops_api import store
 from ops_api.app import create_app
+from ops_core import persistence
 from ops_core.contracts import DecisionRequest, MessageRequest
 from ops_core.tokens import Principal, TokenRejected
 
@@ -314,3 +315,18 @@ def test_database_failure_is_a_safe_503() -> None:
     assert response.status_code == 503
     assert response.json()["code"] == "UNAVAILABLE" and response.json()["retryable"] is True
     assert "connection lost" not in response.text
+
+
+def test_a_persistence_defect_is_a_safe_503_without_detail(api, monkeypatch: pytest.MonkeyPatch) -> None:
+    c, fake = api
+
+    async def broken_admit(**_: Any) -> store.Accepted:
+        """Stand in for a function that rejected bytes the API had just built."""
+        raise persistence.HashMismatch("payload hash differs")
+
+    monkeypatch.setattr(fake, "admit", broken_admit)
+    cid = c.post("/api/v1/conversations", headers=auth("alex")).json()["conversation_id"]
+    body = {"kind": "investigate", "text": "x", "context": {"asset_id": "A17", "hours": 2}}
+    response = c.post(f"/api/v1/conversations/{cid}/messages", headers=auth("alex"), json=body)
+    assert response.status_code == 503 and response.json()["code"] == "UNAVAILABLE"
+    assert "payload hash" not in response.text

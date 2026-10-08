@@ -22,7 +22,9 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from ops_core import persistence, settings
 from ops_core.contracts import DecisionRequest, DuplicateKey, ErrorCode, MessageKind, MessageRequest, SafeError, load
+from ops_core.outcomes import EventRuleViolation
 from ops_core.settings import Role
+from ops_core.states import IllegalTransition
 from ops_core.tokens import Principal, TokenRejected, TokenVerifier
 from pydantic import ValidationError
 
@@ -130,6 +132,16 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
     async def _authority(_: Request, exc: persistence.AuthorityViolation) -> Response:
         log.error("deployment error: %s", exc)  # the API is connected as a role a function does not accept
         return safe(503, ErrorCode.UNAVAILABLE, "service misconfigured")
+
+    @app.exception_handler(st.Internal)
+    @app.exception_handler(persistence.PersistenceError)
+    @app.exception_handler(IllegalTransition)
+    @app.exception_handler(EventRuleViolation)
+    async def _server_defect(_: Request, exc: Exception) -> Response:
+        # Messages carry no handle or secret. FastAPI picks the most specific class, so AuthorityViolation keeps
+        # its own handler.
+        log.error("service error: %r", exc)
+        return safe(503, ErrorCode.UNAVAILABLE, "service error")
 
     @app.exception_handler(psycopg.Error)
     async def _database(_: Request, __: psycopg.Error) -> Response:
