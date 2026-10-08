@@ -442,7 +442,7 @@ branch grants it schema USAGE, EXECUTE on current_time() and its test_clock cell
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -608,14 +608,18 @@ def schema_usage_statements(roles: Iterable[str] = MAIN_GRANTEES) -> list[str]:
     return [f"GRANT USAGE ON SCHEMA {SCHEMA} TO {_roles(roles)}"]
 
 
-def grant_statements(tables: Iterable[str]) -> list[str]:
-    """REVOKE ALL then exactly the matrix's grants for each table; re-runnable by any later revision."""
+def grant_statements(tables: Iterable[str], grants: Mapping[str, Mapping[str, Grant]] = GRANTS) -> list[str]:
+    """REVOKE ALL then exactly the given cells for each table.
+
+    A revision passes its own frozen copy of the cells it applies (an applied revision must never change when this
+    module's matrix moves on; round-3 finding N1); the tests pass the live matrix.
+    """
     out: list[str] = []
     for table in tables:
         # Only roles that exist in every profile are named in a REVOKE: the test-only role's grants live on the branch.
         revokees = [r for r in GRANTEES if r not in TEST_ONLY_ROLES or table == "test_clock"]
         out.append(f"REVOKE ALL ON {SCHEMA}.{table} FROM {_roles(revokees)}")
-        for role, grant in GRANTS[table].items():
+        for role, grant in grants[table].items():
             whole = [name for name, flag in (("INSERT", grant.ins), ("SELECT", grant.sel), ("DELETE", grant.dele)) if flag]
             if grant.upd is True:
                 whole.append("UPDATE")
@@ -626,8 +630,9 @@ def grant_statements(tables: Iterable[str]) -> list[str]:
     return out
 
 
-def rls_statements(tables: Iterable[str]) -> list[str]:
+def rls_statements(tables: Iterable[str], policy_roles: Iterable[str] = POLICY_ROLES) -> list[str]:
     """ENABLE + FORCE and the AM-20.5 policies; DROP IF EXISTS first so a revision can re-apply them."""
+    roles = tuple(policy_roles)
     out: list[str] = []
     for table in tables:
         rel = f"{SCHEMA}.{table}"
@@ -635,7 +640,7 @@ def rls_statements(tables: Iterable[str]) -> list[str]:
         out.append(f"ALTER TABLE {rel} FORCE ROW LEVEL SECURITY")
         out.append(f"DROP POLICY IF EXISTS tenant_isolation ON {rel}")
         out.append(
-            f"CREATE POLICY tenant_isolation ON {rel} FOR ALL TO {_roles(POLICY_ROLES)}"
+            f"CREATE POLICY tenant_isolation ON {rel} FOR ALL TO {_roles(roles)}"
             f" USING (tenant_id = {TENANT_EXPR}) WITH CHECK (tenant_id = {TENANT_EXPR})"
         )
         if table in SWEEPER_ALL:
@@ -644,16 +649,24 @@ def rls_statements(tables: Iterable[str]) -> list[str]:
     return out
 
 
-def function_grant_statements(name: str, roles: Iterable[str] | None = None) -> list[str]:
+def function_grant_statements(
+    name: str,
+    roles: Iterable[str] | None = None,
+    *,
+    args: str | None = None,
+    callers: Iterable[str] | None = None,
+) -> list[str]:
     """REVOKE from PUBLIC, then GRANT EXECUTE to the named callers (none for a helper), in that order (SA:446).
 
-    `roles` narrows the callers for a main-line revision (the test-only role gets its EXECUTE on the branch).
+    A revision passes the `args` and `callers` it froze (round-3 finding N1); the tests use the live matrix. `roles`
+    narrows the callers for a main-line revision (the test-only role gets its EXECUTE on the branch).
     """
-    if name in HELPER_FUNCTIONS:
+    if callers is None and name in HELPER_FUNCTIONS:
         return [f"REVOKE ALL ON FUNCTION {SCHEMA}.{name}({HELPER_FUNCTIONS[name]}) FROM PUBLIC"]
-    args, callers = DEFINER_FUNCTIONS[name]
-    signature = f"{SCHEMA}.{name}({args})"
-    grantees = [r for r in callers if roles is None or r in roles]
+    matrix_args, matrix_callers = DEFINER_FUNCTIONS.get(name, (HELPER_FUNCTIONS.get(name, ""), ()))
+    signature = f"{SCHEMA}.{name}({matrix_args if args is None else args})"
+    wanted = tuple(matrix_callers if callers is None else callers)
+    grantees = [r for r in wanted if roles is None or r in roles]
     out = [f"REVOKE ALL ON FUNCTION {signature} FROM PUBLIC"]
     if grantees:
         out.append(f"GRANT EXECUTE ON FUNCTION {signature} TO {_roles(grantees)}")
@@ -995,6 +1008,69 @@ TABLES = (
     "events",
     "transitions",
 )
+# The cells this revision applies, frozen (a later matrix change ships in a later revision; the unit test in
+# tests/plan_e/test_transitions_table.py checks that the newest revision's cells equal the live matrix).
+_S = privileges.Grant(sel=True)
+_SI = privileges.Grant(sel=True, ins=True)
+_INS = privileges.Grant(ins=True)
+_DEF = privileges.DEFINER_ROLE
+GRANTS_0002: dict[str, dict[str, privileges.Grant]] = {
+    "tenants": {"api": _S, "worker": _S, "sweeper": _S, _DEF: _S},
+    "memberships": {
+        "api": _S,
+        "worker": _S,
+        "sweeper": privileges.Grant(sel=True, upd=("active", "permission_version", "synced_at")),
+        _DEF: _S,
+    },
+    "sessions": {
+        "api": privileges.Grant(sel=True, ins=True, upd=("last_seen_at", "revoked_at"), dele=True),
+        "sweeper": privileges.Grant(dele=True),
+    },
+    "conversations": {"api": _SI, "worker": _S, _DEF: _S},
+    "messages": {"api": _SI, "worker": _S, _DEF: _S},
+    "runs": {
+        "api": privileges.Grant(sel=True, upd=("cancel_requested", "cancel_requested_at")),
+        "worker": privileges.Grant(sel=True, upd=("checkpoint_id", "budget_used")),
+        "sweeper": _S,
+        _DEF: privileges.Grant(
+            ins=True,
+            sel=True,
+            upd=(
+                "state",
+                "state_version",
+                "reason",
+                "active_proposal_id",
+                "next_event_seq",
+                "slot_held",
+                "supersedes_run_id",
+                "updated_at",
+            ),
+        ),
+    },
+    "run_directory": {"api": _S, "worker": _S, "sweeper": _S, _DEF: _SI},
+    "run_state_history": {_DEF: _INS},
+    "run_lease": {
+        "worker": privileges.Grant(sel=True, ins=True, upd=True),
+        "sweeper": privileges.Grant(sel=True, upd=("lease_until",)),
+        _DEF: _S,
+    },
+    "jobs": {
+        "api": _INS,
+        "worker": privileges.Grant(sel=True, ins=True, upd=("claimed_by", "claimed_at", "done_at", "attempts", "available_at")),
+        "sweeper": privileges.Grant(sel=True, ins=True, upd=("claimed_by", "claimed_at", "done_at", "attempts")),
+        _DEF: _SI,
+    },
+    "invocation_context": {"worker": _INS, "sweeper": _S, _DEF: privileges.Grant(sel=True, upd=("revoked_at",))},
+    "drafts": {"worker": _SI, _DEF: _S},
+    "proposals": {"api": _S, "worker": _S, "sweeper": _S, _DEF: _SI},
+    "decisions": {"api": _S, "worker": _S, _DEF: _SI},
+    "execution_grant": {"api": _S, "worker": _S, "sweeper": _S, _DEF: _SI},
+    "action_attempt": {"api": _S, "worker": _S, "sweeper": _S, _DEF: _SI},
+    "action_attempt_state": {"api": _S, "worker": _S, "sweeper": _S, _DEF: _SI},
+    "events": {"api": _S, "worker": _S, "sweeper": _S, _DEF: _SI},
+    "transitions": {_DEF: _S},
+}
+POLICY_ROLES_0002 = ("api", "worker", "sweeper", "app_definer")
 RLS = (
     "memberships",
     "conversations",
@@ -1180,12 +1256,14 @@ def upgrade() -> None:
         op.execute(statement)
     for statement in privileges.schema_usage_statements():  # the main-line grantees; test_harness is the branch's
         op.execute(statement)
-    for statement in privileges.grant_statements(TABLES):
+    for statement in privileges.grant_statements(TABLES, GRANTS_0002):
         op.execute(statement)
-    for statement in privileges.rls_statements(RLS):
+    for statement in privileges.rls_statements(RLS, POLICY_ROLES_0002):
         op.execute(statement)
     op.execute(CURRENT_TIME)
-    for statement in privileges.function_grant_statements("current_time", roles=privileges.MAIN_ROLES):
+    for statement in privileges.function_grant_statements(
+        "current_time", args="", callers=("api", "worker", "sweeper", "mcp_read", "mcp_exec", "operator")
+    ):
         op.execute(statement)
 
 
@@ -1289,6 +1367,13 @@ down_revision = None
 branch_labels = ("testclock",)
 depends_on = "0002_roles_grants_rls"
 
+GRANTS_TC = {
+    "test_clock": {
+        privileges.DEFINER_ROLE: privileges.Grant(sel=True),
+        "test_harness": privileges.Grant(ins=True, upd=True, dele=True),
+    }
+}
+
 DDL = (
     "CREATE TABLE app.test_clock ("
     " one boolean NOT NULL DEFAULT true PRIMARY KEY CHECK (one),"
@@ -1304,9 +1389,9 @@ def upgrade() -> None:
     # The test-only role gets its schema access and its clock EXECUTE here, never on the main line (SA:403).
     for statement in privileges.schema_usage_statements(privileges.TEST_ONLY_ROLES):
         op.execute(statement)
-    for statement in privileges.function_grant_statements("current_time", roles=privileges.TEST_ONLY_ROLES):
+    for statement in privileges.function_grant_statements("current_time", args="", callers=("test_harness",)):
         op.execute(statement)
-    for statement in privileges.grant_statements(["test_clock"]):
+    for statement in privileges.grant_statements(["test_clock"], GRANTS_TC):
         op.execute(statement)
 
 
@@ -1883,6 +1968,37 @@ def test_revision_0002_lists_are_frozen_literals_within_the_matrix() -> None:
     assert "test_clock" not in rev.TABLES
 
 
+def load_module(name: str):
+    path = VERSIONS / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"mod_{name}", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_newest_revision_of_every_cell_equals_the_live_matrix() -> None:
+    """Round-3 finding N1: each revision freezes what it grants; the matrix is the truth for the *current* schema,
+    so the last revision that touched a table or function must agree with it. A matrix edit without a new revision
+    fails here; a new revision without a matrix edit fails here too."""
+    cells: dict[str, dict[str, privileges.Grant]] = {}
+    callers: dict[str, set[str]] = {}
+    for name in REVISIONS:  # on-disk order is the Alembic order for this plan's revisions
+        module = load_module(name)
+        for attr in dir(module):
+            if attr.startswith("GRANTS_"):
+                cells.update(getattr(module, attr))
+        for fn, _, fn_callers, _ in getattr(module, "FUNCTIONS", ()):
+            callers.setdefault(fn, set()).update(fn_callers)
+    for table, grants in cells.items():
+        assert grants == privileges.GRANTS[table], table
+    for fn, roles in callers.items():
+        if fn in privileges.DEFINER_FUNCTIONS:
+            assert roles == set(privileges.DEFINER_FUNCTIONS[fn][1]), fn
+        else:
+            assert roles == set() and fn in privileges.HELPER_FUNCTIONS, fn
+
+
 VERSIONS = ROOT / "migrations" / "app" / "versions"
 # The revisions that exist at this point of the plan; Tasks 3 and 4 add theirs and the cases appear (no skip, BS:597).
 REVISIONS = tuple(
@@ -2311,8 +2427,15 @@ BEGIN
     END IF;
     IF p_type = 'action.confirmed' AND (p_payload->>'status' IS DISTINCT FROM 'SUCCEEDED' OR p_payload ? 'tombstone'
                                         OR jsonb_typeof(p_payload->'receipt') IS DISTINCT FROM 'object'
-                                        OR NOT (p_payload->'receipt' ?& ARRAY['receipt_id', 'incident_id', 'committed_at'])) THEN
+                                        OR NOT (p_payload->'receipt' ?& ARRAY['receipt_id', 'incident_id', 'committed_at'])
+                                        OR EXISTS (SELECT 1 FROM jsonb_each(p_payload->'receipt') WHERE jsonb_typeof(value) <> 'string')) THEN
         RAISE EXCEPTION 'event_rule_violation' USING ERRCODE = 'OC006', DETAIL = 'action.confirmed';
+    END IF;
+    -- Shape only (keys present, scalar strings): the producer (mcp-write) validates the full Receipt and Tombstone
+    -- models before a document reaches record_outcome; this is defence in depth, not the contract.
+    IF (p_payload ? 'tombstone') AND (jsonb_typeof(p_payload->'tombstone') <> 'object'
+        OR NOT (p_payload->'tombstone' ?& ARRAY['action_id', 'state', 'payload_sha256', 'reason', 'decided_at'])) THEN
+        RAISE EXCEPTION 'event_rule_violation' USING ERRCODE = 'OC006', DETAIL = 'tombstone';
     END IF;
     IF p_type = 'action.late_evidence' AND NOT (
         (p_payload->>'outcome' = 'SUCCEEDED' AND jsonb_typeof(p_payload->'receipt') = 'object' AND NOT (p_payload ? 'tombstone'))
@@ -2539,28 +2662,28 @@ ALTER FUNCTION app.revoke_handles(uuid, bigint) OWNER TO app_definer;
 """
 
 FUNCTIONS = (
-    ("_authority", AUTHORITY),
-    ("_tenant_of_run", TENANT_OF_RUN),
-    ("_append_event", APPEND_EVENT_HELPER),
-    ("_transition", TRANSITION_HELPER),
-    ("create_run", CREATE_RUN),
-    ("transition_run", TRANSITION_RUN),
-    ("append_event", APPEND_EVENT),
-    ("resolve_identity", RESOLVE_IDENTITY),
-    ("revoke_handles", REVOKE_HANDLES),
+    ("_authority", "text, text[]", (), AUTHORITY),
+    ("_tenant_of_run", "uuid", (), TENANT_OF_RUN),
+    ("_append_event", "uuid, uuid, text, text, jsonb", (), APPEND_EVENT_HELPER),
+    ("_transition", "uuid, text, text, text, integer, text, jsonb", (), TRANSITION_HELPER),
+    ("create_run", "uuid, uuid, jsonb, text, uuid", ('api',), CREATE_RUN),
+    ("transition_run", "uuid, text, text, text, integer, jsonb", ('worker',), TRANSITION_RUN),
+    ("append_event", "uuid, text, jsonb, text", ('api', 'worker', 'sweeper'), APPEND_EVENT),
+    ("resolve_identity", "text, uuid", ('api',), RESOLVE_IDENTITY),
+    ("revoke_handles", "uuid, bigint", ('worker',), REVOKE_HANDLES),
 )
 
 
+# (name, argument types, callers, body): frozen here so a later caller-list change ships as a new revision (N1).
 def upgrade() -> None:
-    for name, body in FUNCTIONS:
+    for name, args, callers, body in FUNCTIONS:
         op.execute(body)
-        for statement in privileges.function_grant_statements(name):
+        for statement in privileges.function_grant_statements(name, args=args, callers=callers):
             op.execute(statement)
 
 
 def downgrade() -> None:
-    for name, _ in reversed(FUNCTIONS):
-        args = privileges.HELPER_FUNCTIONS.get(name) or privileges.DEFINER_FUNCTIONS[name][0]
+    for name, args, _, _ in reversed(FUNCTIONS):
         op.execute(f"DROP FUNCTION app.{name}({args})")
 ```
 
@@ -3429,31 +3552,31 @@ ALTER FUNCTION app.mark_unknown(uuid, bigint) OWNER TO app_definer;
 """
 
 FUNCTIONS = (
-    ("_tenant_of_action", TENANT_OF_ACTION),
-    ("_latest_attempt", LATEST_ATTEMPT),
-    ("_resolve_handle", RESOLVE_HANDLE),
-    ("_grant_row", GRANT_ROW),
-    ("freeze_proposal", FREEZE_PROPOSAL),
-    ("record_decision", RECORD_DECISION),
-    ("resolve_invocation", RESOLVE_INVOCATION),
-    ("grant_execution", GRANT_EXECUTION),
-    ("lookup_action", LOOKUP_ACTION),
-    ("mark_sent", MARK_SENT),
-    ("record_outcome", RECORD_OUTCOME),
-    ("mark_unknown", MARK_UNKNOWN),
+    ("_tenant_of_action", "uuid", (), TENANT_OF_ACTION),
+    ("_latest_attempt", "uuid", (), LATEST_ATTEMPT),
+    ("_resolve_handle", "text, text, text", (), RESOLVE_HANDLE),
+    ("_grant_row", "uuid", (), GRANT_ROW),
+    ("freeze_proposal", "uuid, uuid, bytea, timestamptz", ('worker',), FREEZE_PROPOSAL),
+    ("record_decision", "uuid, uuid, uuid, text, text, text, text", ('api',), RECORD_DECISION),
+    ("resolve_invocation", "text, text", ('mcp_read', 'mcp_exec'), RESOLVE_INVOCATION),
+    ("grant_execution", "text, uuid", ('mcp_exec',), GRANT_EXECUTION),
+    ("lookup_action", "text", ('mcp_exec',), LOOKUP_ACTION),
+    ("mark_sent", "uuid", ('mcp_exec',), MARK_SENT),
+    ("record_outcome", "uuid, text, jsonb", ('mcp_exec',), RECORD_OUTCOME),
+    ("mark_unknown", "uuid, bigint", ('worker',), MARK_UNKNOWN),
 )
 
 
+# (name, argument types, callers, body): frozen here so a later caller-list change ships as a new revision (N1).
 def upgrade() -> None:
-    for name, body in FUNCTIONS:
+    for name, args, callers, body in FUNCTIONS:
         op.execute(body)
-        for statement in privileges.function_grant_statements(name):
+        for statement in privileges.function_grant_statements(name, args=args, callers=callers):
             op.execute(statement)
 
 
 def downgrade() -> None:
-    for name, _ in reversed(FUNCTIONS):
-        args = privileges.HELPER_FUNCTIONS.get(name) or privileges.DEFINER_FUNCTIONS[name][0]
+    for name, args, _, _ in reversed(FUNCTIONS):
         op.execute(f"DROP FUNCTION app.{name}({args})")
 ```
 
@@ -4752,7 +4875,7 @@ In `mcp-read/src/ops_mcp_read/server.py`, the tool body's resolution becomes `in
 - `test_exception_after_sent_becomes_outcome_unknown` now asserts the run is still `EXECUTING` with the attempt `SENT` and the events `run.accepted, proposal.ready, approval.recorded, action.granted, action.dispatched` (the worker, not mcp-write, records UNKNOWN: Task 6's live test covers that); its name becomes `test_exception_after_sent_returns_unknown_and_records_nothing`, and it gains a second case in which `destination.post_incident` is monkeypatched to return `None` (a transport failure the client already swallowed) and a third in which it returns a reply with status 503 and an empty document: all three must yield the `UNKNOWN` envelope with the attempt `SENT` and the run `EXECUTING` (round-2 finding NI1: a classified UNKNOWN once reached `record_outcome` and raised).
 - The event-list assertions gain `proposal.ready` and `approval.recorded` after `run.accepted` (the functions emit them now).
 
-`tests/e2e/test_r105_walking_skeleton.py`: the destination's answers to the persona and worker tokens become `(403, 403)` once Task 8 lands; in this task keep `(401, 401)` and note it; `EXPECTED_EVENTS` is unchanged (the API's path produced the same nine events; check the list matches what the functions emit: `run.accepted`, `tool.started`, `tool.completed`, `explanation.ready`, `proposal.ready`, `approval.recorded`, `action.granted`, `action.dispatched`, `action.confirmed`); the replay handle is minted by a worker role connection under the alpha tenant; the final step reads `(action_id, payload_sha256)` from `app.execution_grant` (superuser on `ops_test`) and from `incident.action_key` (role `incident` on `incident_test`), asserts `scripts.skeleton.orphan_keys(keys, grants)` does not contain this run's action id, and adds `keys=consistent` to the evidence lines (the exit code of `skeleton.py keys` is not used: another live test plants an orphan on purpose). The skeleton processes inherit `PROFILE=test` and the test database names from the fixture (Task 2).
+`tests/e2e/test_r105_walking_skeleton.py`: the destination's answers to the persona and worker tokens become `(403, 403)` once Task 8 lands; in this task keep `(401, 401)` and note it; `EXPECTED_EVENTS` is unchanged (the API's path produced the same nine events; check the list matches what the functions emit: `run.accepted`, `tool.started`, `tool.completed`, `explanation.ready`, `proposal.ready`, `approval.recorded`, `action.granted`, `action.dispatched`, `action.confirmed`); the replay handle is minted by a worker role connection under the alpha tenant; the test also appends a line `destination_refusals=persona:<status>,worker:<status>` to the evidence so the record shows which refusal era it was written in (401 until Task 8, 403 after); the final step reads `(action_id, payload_sha256)` from `app.execution_grant` (superuser on `ops_test`) and from `incident.action_key` (role `incident` on `incident_test`), asserts `scripts.skeleton.orphan_keys(keys, grants)` does not contain this run's action id, and adds `keys=consistent` to the evidence lines (the exit code of `skeleton.py keys` is not used: another live test plants an orphan on purpose). The skeleton processes inherit `PROFILE=test` and the test database names from the fixture (Task 2).
 
 - [ ] **Step 4: Run the whole live suite and the gate**
 
@@ -5169,13 +5292,16 @@ In `incident-sim/src/ops_incident_sim/app.py`:
             payload = None
         if not isinstance(payload, dict) or not payload:
             row = await st.reject(action_id=body.action_id, payload_sha256=body.payload_sha256, reason="invalid_payload")
-            return JSONResponse(status_code=200, content=keys.document(row, presented_sha256=body.payload_sha256)[1])
+            status, doc = keys.document(row, presented_sha256=body.payload_sha256)  # 409 if the key committed under another hash
+            return JSONResponse(status_code=status, content=doc)
         if sha256_hex(body.payload_canonical.encode("utf-8")) != body.payload_sha256:
             row = await st.reject(action_id=body.action_id, payload_sha256=body.payload_sha256, reason="hash_mismatch")
-            return JSONResponse(status_code=200, content=keys.document(row, presented_sha256=body.payload_sha256)[1])
+            status, doc = keys.document(row, presented_sha256=body.payload_sha256)  # 409 if the key committed under another hash
+            return JSONResponse(status_code=status, content=doc)
         if faults is not None and faults.take(FaultKind.REJECT_NEXT):
             row = await st.reject(action_id=body.action_id, payload_sha256=body.payload_sha256, reason="policy")
-            return JSONResponse(status_code=200, content=keys.document(row, presented_sha256=body.payload_sha256)[1])
+            status, doc = keys.document(row, presented_sha256=body.payload_sha256)  # 409 if the key committed under another hash
+            return JSONResponse(status_code=status, content=doc)
         if faults is not None and faults.take(FaultKind.DROP_BEFORE_COMMIT):
             return safe_error(503, ErrorCode.UNAVAILABLE, "destination unavailable (fault)")
         row = await st.commit(body.action_id, body.payload_sha256, payload)  # inside the existing psycopg.Error guard
