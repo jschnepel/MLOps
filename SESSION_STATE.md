@@ -2,9 +2,9 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan B (T05, T43, T44) is executed on branch `plan-b` (`b98140f..HEAD` of `plan-b` as of 2026-10-08, including the whole-branch review's fix wave). Owner inputs pending: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) push `plan-b` and open/merge the PR, record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata. Then write Plan C (T07, T45, T46, T08) from the real `compose.yaml`, realm and secrets layout, and dry-run it on scratch copies before executing.
+**Next task:** Plan C (T07, T45, T46) is executed on branch `plan-c` (`36c1007..843f365` as of 2026-10-08, plus plan commits 36eb767 and 28fe2a6). Owner inputs still pending: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) push `plan-b` and `plan-c` and open/merge the PRs, record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata below. Then write Plan D = T08, the walking skeleton, from the real contracts in `core/`, `compose.yaml` and the realm, with the debt list below as its constraint, and dry-run it on scratch copies before executing.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-b` (Plan B work on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` is local only and awaits the owner's push and PR.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-c` (Plan C work on top of `plan-b`, which is on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` and `plan-c` are local only and await the owner's push and PRs.
 
 ## Done in the planning session (2026-10-06)
 
@@ -124,6 +124,23 @@
 - Evidence: `reports/bootstrap/keycloak-claims.txt` (9 redacted claim lines), `bootstrap-admin.txt`, `compose-ps.txt`, `ollama-bridge.txt`; `tests/plan_b/test_evidence.py` rejects any token or secret value there.
 - Plan A code re-commented per `docs/CODE_COMMENTS.md` (c25ee89, 32bf85d); commit history carries no tool attribution.
 
+## Plan C executed (2026-10-08, branch `plan-c`)
+
+- Plan written from the real Plan A and B artifacts and a line-by-line inventory of the spec; two adversarial rounds before execution (`docs/reviews/`). Execution: T07 = `36c1007..09341d2` (canonical JSON, states, jobs/routes/outcomes, contracts), T45 = `165489b..6c7e1cd` (fixture meta, generator and `--contracts` checker, conformance test), T46 = `c9d0131..843f365` (reference traceability). Plan commits 36eb767 and 28fe2a6.
+- `PYTHONUTF8=1 uv run python scripts/check.py` ends `333 passed, 29 skipped`, `CHECK: GREEN`. `--contracts` passes: 26 JSON Schema documents, 30 accepted and 38 negative examples. The tree is 25 schemas, 68 examples (30 valid, 38 invalid), `index.json` 1.3.3. Conformance test: 69 cases, 51 passed, 18 skipped with stated reasons. Transition table: 44 rows, 38 pairs, 13 performers.
+- Evidenced locally, not a running capability: R004, R005, R082 (without the "logged" half, `TODO(T09)`), R083, R104, R123 (acceptance matrix `RECORDED_LOCALLY`); R120 stays `NOT_RUN` because its 409 `SLOT_OCCUPIED` is T21's. Still no target capability.
+- **The nine rulings, proposed as spec errata.** The owner decides; the spec text stays authoritative until then.
+1. AM-20.3 "Who performs which transition": the `create_revision` row should read "AWAITING_APPROVAL / APPROVED / BLOCKED_REVIEW → QUEUED", matching the function table and BUILD_SPEC §8.
+2. AM-13 "Outcome vocabulary": `FAILED_NO_COMMIT` carries `reason ∈ {aborted_no_commit, cancelled_before_send, rejected, expired}`; `expired` is produced by the recovery table (INTENT after the deadline) and by `create_incident` past the deadline.
+3. AM-20.3 `search_procedures_scoped`: `mode=vector` is the SQL argument value; the externally visible `retrieval_mode` is `vector_exact`, and mcp-read translates between them.
+4. BUILD_SPEC §8 `QUEUED → AWAITING_INPUT` is superseded: missing context is detected in RETRIEVING (AM-10), and `transition_run` allows only `QUEUED → RETRIEVING`.
+5. AM-20.3 "any pre-grant active state → CANCELLED" should read "any pre-grant non-terminal state, including BLOCKED_REVIEW", as the AM-10 BLOCKED_REVIEW row already allows.
+6. BUILD_SPEC §6 "UTC instants with explicit offsets": only hashed documents (the proposal) spell UTC as `Z`; `manual-proposal`, `model-pins` and the `get_recent_alerts` input accept `Z` or `+00:00`, as do request bodies, and the contract normalises to `Z` before hashing.
+7. AM-80 "Negative probes": "before writing contract code" should read "before any service consumes a schema"; T45 depends on T07 in `handoff/tasks.json`, and the conformance test needs both.
+8. AM-10 "Reasons": a FAILED run reached by `transition_run` on exhausted infrastructure policy carries no reason; the `run.failed` event's message says why.
+9. AM-20.3 "Who performs which transition": add `create_manual_proposal` with the `freeze_proposal` rows (DRAFTING → AWAITING_APPROVAL; DRAFTING → BLOCKED_REVIEW on `asset_action_unresolved` / `asset_incident_exists`); the function table already says it is otherwise identical to `freeze_proposal`.
+- Findings worth remembering: the canonicaliser hashes NFC-normalised bytes, so uniqueness and ordering are checked on normalised strings (a Critical caught in Task 4); duplicate JSON keys are rejected; the conformance test caught the schema and the code disagreeing on `action.conflict` carrying an outcome (the schema was right, AM-14). Pytest totals drifted +39 from the plan's expectations because each fix round added tests; the ledger tracked the offset.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -165,7 +182,8 @@ Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss 
 
 ## Open owner inputs
 
-- Approval to push `plan-b` and open the PR (the remote exists; `main` and `plan-a` are already pushed).
+- Approval to push `plan-b` and `plan-c` and open the PRs (the remote exists; `main` and `plan-a` are already pushed).
+- Decide on the nine proposed contract errata (see "Plan C executed").
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
 - T06: decide whether to publish early (public repo at M01) or start private and make it public at T34. (The repo `jschnepel/MLOps` exists and `main`/`plan-a` were pushed on 2026-10-07; `plan-b` is local.)
 - T44 step 10: run `docs/runbooks/ollama-network.md` step A (`OLLAMA_HOST=127.0.0.1:11434` at User scope, restart Ollama), verify with the three checks, fill the attestation table, and decide whether to adopt the proposed AM-31 errata (loopback bind primary, firewall fallback).
@@ -177,7 +195,7 @@ On a fresh clone or after any `uv sync`:
 ```bash
 uv sync --locked
 uv run python scripts/check.py
-python -I scripts/verify_handoff.py --reference-code --manifest
+uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts
 ```
 
 Reference test suite (T01 procedure, as re-run from `reference/` in T42; Git Bash; venv outside the repo, installed without `-e`; delete the in-tree `build/` and `*.egg-info` afterwards):
@@ -188,6 +206,6 @@ uv pip install --python "$LOCALAPPDATA/ops-ref-venv" "./reference[web,test]"
 (cd reference && "$LOCALAPPDATA/ops-ref-venv/Scripts/python" -m pytest -q)
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push and PR; the Ollama runbook step A) and write Plan C as described in the Next task line.
+Then wait for the owner inputs above (holdout seal, then live probe; push and PR; the Ollama runbook step A) and write Plan D (T08) as described in the Next task line.
 
 Do not store secrets or private reasoning in this file.

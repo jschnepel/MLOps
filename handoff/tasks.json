@@ -395,7 +395,7 @@
         "R082",
         "R120"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "Property tests (Hypothesis) show canonical bytes stable and authority fields rejected.",
         "Every allowed transition tested; every disallowed transition rejected; revision from BLOCKED_REVIEW needs a free slot.",
@@ -403,7 +403,8 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "freeze_proposal takes the validated payload; drafts holds its hash only (AM-20.4, 1.3.6)."
+        "freeze_proposal takes the validated payload; drafts holds its hash only (AM-20.4, 1.3.6).",
+        "Plan C (branch plan-c): done in 36c1007..09341d2 (canonical JSON v1, run states and transition table, jobs/routes/outcomes, strict contracts), after fix rounds on every task; plan rulings in 36eb767 and 28fe2a6. Evidence: tests/plan_c/test_canonical.py, test_states.py, test_jobs_routes_outcomes.py, test_contracts.py. The 'logged' half of R082 (disallowed transitions logged) stays TODO(T09) in states.py; the 409 SLOT_OCCUPIED of R120 is T21's. Nine rulings made while modelling the spec, each proposed as a spec erratum: (1) AM-20.3 \"Who performs which transition\": the `create_revision` row should read \"AWAITING_APPROVAL / APPROVED / BLOCKED_REVIEW → QUEUED\", matching the function table and BUILD_SPEC §8. (2) AM-13 \"Outcome vocabulary\": `FAILED_NO_COMMIT` carries `reason ∈ {aborted_no_commit, cancelled_before_send, rejected, expired}`; `expired` is produced by the recovery table (INTENT after the deadline) and by `create_incident` past the deadline. (3) AM-20.3 `search_procedures_scoped`: `mode=vector` is the SQL argument value; the externally visible `retrieval_mode` is `vector_exact`, and mcp-read translates between them. (4) BUILD_SPEC §8 `QUEUED → AWAITING_INPUT` is superseded: missing context is detected in RETRIEVING (AM-10), and `transition_run` allows only `QUEUED → RETRIEVING`. (5) AM-20.3 \"any pre-grant active state → CANCELLED\" should read \"any pre-grant non-terminal state, including BLOCKED_REVIEW\", as the AM-10 BLOCKED_REVIEW row already allows. (6) BUILD_SPEC §6 \"UTC instants with explicit offsets\": only hashed documents (the proposal) spell UTC as `Z`; `manual-proposal`, `model-pins` and the `get_recent_alerts` input accept `Z` or `+00:00`, as do request bodies, and the contract normalises to `Z` before hashing. (7) AM-80 \"Negative probes\": \"before writing contract code\" should read \"before any service consumes a schema\"; T45 depends on T07 in `handoff/tasks.json`, and the conformance test needs both. (8) AM-10 \"Reasons\": a FAILED run reached by `transition_run` on exhausted infrastructure policy carries no reason; the `run.failed` event's message says why. (9) AM-20.3 \"Who performs which transition\": add `create_manual_proposal` with the `freeze_proposal` rows (DRAFTING → AWAITING_APPROVAL; DRAFTING → BLOCKED_REVIEW on `asset_action_unresolved` / `asset_incident_exists`); the function table already says it is otherwise identical to `freeze_proposal`. These are proposed errata; the owner decides, and the spec text stays authoritative until then."
       ]
     },
     {
@@ -419,12 +420,15 @@
         "R083",
         "R104"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "`verify_handoff.py --contracts` passes; every AM-80 negative example fails for its stated reason.",
         "No CR in governed text files; index.json version 1.3.3."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Plan C (branch plan-c): done in 165489b..6c7e1cd (fixture meta, the committed schema/example generator with a drift test, `verify_handoff.py --contracts`, and the conformance test of the generated tree against the pydantic contracts). The tree is 25 schemas, 68 examples (30 valid, 38 invalid, each negative failing for its stated reason) and index.json 1.3.3; `--contracts` runs in CI. The conformance test skips 18 of 69 cases with stated reasons (tool-result, evidence, route, job and tool inputs belong to later tasks). Errata proposed from this task (the owner decides; the spec stays authoritative until then): (6) BUILD_SPEC §6 \"UTC instants with explicit offsets\": only hashed documents (the proposal) spell UTC as `Z`; `manual-proposal`, `model-pins` and the `get_recent_alerts` input accept `Z` or `+00:00`, as do request bodies, and the contract normalises to `Z` before hashing. (7) AM-80 \"Negative probes\": \"before writing contract code\" should read \"before any service consumes a schema\"; T45 depends on T07 in `handoff/tasks.json`, and the conformance test needs both. The remaining seven are listed in T07's review note."
+      ]
     },
     {
       "id": "T46",
@@ -438,11 +442,14 @@
       "requirement_ids": [
         "R123"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "TRACEABILITY.md covers all 58 with an owning task per replacement; ported tests pass."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Plan C (branch plan-c): done in c9d0131..843f365; reference/TRACEABILITY.md maps all 58 reference tests to ports, replacements with an owning task, or AM-70 drops, and tests/plan_c/test_traceability.py pins the row count and the mapping."
+      ]
     },
     {
       "id": "T08",
