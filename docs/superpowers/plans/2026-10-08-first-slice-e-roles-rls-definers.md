@@ -24,13 +24,13 @@
 - **Tests:** unit tests in `tests/plan_e/` (DB-free), live tests in `tests/e2e/` gated by `OPS_LIVE=1` (Plan D ruling 26); existing `tests/plan_d/` tests are updated where an interface they fake changes, never deleted. Acceptance rows name the live test that evidences them. No xfail or skip except the live gate (BS:597).
 - **Comments** per `docs/CODE_COMMENTS.md` (why, not what; one-line PEP 257 docstring on every public def; shortcuts carry `TODO(Txx)`; SQL bodies get `--` comments for the non-obvious lock or guard, not for every statement). ≤120 columns, no `type: ignore`, ruff + mypy strict clean, UTF-8 without BOM, LF.
 - **Gates:** `uv run ruff format <every file the task created or modified> && uv run ruff check --fix <same>` (ruff's ISC004 flags an unparenthesised multi-line string element inside a tuple or list and `--fix` does not repair it: write each such element inside its own parentheses), then `PYTHONUTF8=1 uv run python scripts/check.py` GREEN after every task; `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exit 0; the live suite `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e tests/plan_b/live -q` against the running dev stack after every task that changes a migration, `persistence`, a service or a live test. mypy's incremental cache can report spurious `Module "ops_core" has no attribute …` after many edits; rerun with `--no-incremental` before treating it as real.
-- **Interim red (declared).** Revision 0002 (Task 2) changes the schema under Plan D's persistence code, which is rewritten only in Task 5, and the services follow in Tasks 6–7. From Task 2 to Task 7 the following stay red and are not a gate failure: `tests/e2e/test_worker_live.py`, `test_mcp_read_live.py`, `test_mcp_write_live.py`, `test_r105_walking_skeleton.py`, and the Plan D tests inside `test_migrations_and_persistence.py` until Task 5 rewrites them; `check.py`'s mypy step may fail only at the service call sites of removed `persistence` names named in Tasks 5 and 6. Each task's gate step lists exactly what may be red; anything else must be green. Task 7 restores every gate.
+- **Interim red (declared).** Revision 0002 (Task 2) changes the schema under Plan D's persistence code, which is rewritten only in Task 5, and the services follow in Tasks 6–7. From Task 2 to Task 7 the following stay red and are not a gate failure: `tests/e2e/test_worker_live.py`, `test_mcp_read_live.py`, `test_mcp_write_live.py`, `test_r105_walking_skeleton.py`, and the Plan D tests inside `test_migrations_and_persistence.py` until Task 5 rewrites them; `check.py`'s mypy step may fail only in `api/`, `worker/`, `mcp-read/` and `mcp-write/` at call sites of `persistence` names Task 5 removed or re-signed (`transition`, `check_invocation`, `resolve_handle`, `Session.read`, `create_run`, `append_event`, `claim_job`). Each task's gate step lists exactly what may be red; anything else must be green. Task 7 restores every gate.
 - **Commits:** one logical group per step; messages free of any attribution trailer; never push.
 - **Bash tool (Git Bash)**; never PowerShell redirection; tests via `python -m pytest` from the repo root; never `docker compose down -v`; never change system settings; never drop a role or database other than `ops_test` / `incident_test`.
 
 ## Review Focus
 
-1. **A definer function called with a preset `app.tenant_id` (session-level, by a compromised `mcp_exec`) must ignore it and must not leak its own tenant into the caller's session.** Spike §1 D measured that only "attribute + transaction-local `set_config`" does this. Pinned in Task 4's live test (`test_preset_tenant_is_ignored_and_restored`, every granted function) and Task 3's test of the attribute on every function in `pg_proc.proconfig`.
+1. **A definer function called with a preset `app.tenant_id` (session-level, by a compromised `mcp_exec`) must ignore it and must not leak its own tenant into the caller's session.** Spike §1 D measured that only "attribute + transaction-local `set_config`" does this. Pinned in Task 3 (`test_resolve_identity_ignores_a_preset_tenant_and_restores_it`, `test_every_run_path_function_leaves_the_callers_tenant_unchanged`), Task 4 (`test_resolve_invocation_binds_server_azp_expiry_and_revocation`, `test_write_path_grant_sent_outcome_once_and_only_once` and `test_mark_unknown_…`, each with a preset BETA and a restore assertion) and Task 3's catalog test of the attribute on every function in `pg_proc.proconfig`.
 2. **A reused connection whose GUC is `''` must see zero rows, not raise.** Spike §2: the policy as written in SA:512 raises 22P02 on `''`. Pinned in Task 2's R008 test (two tenants on one connection, then a bare statement after the unit ends → zero rows, no error).
 3. **`transition_run` called by `worker` with a post-grant target, or by any role but `worker`, must be refused and must leave `runs` untouched.** Pinned in Task 3 (R128: `api` calling it → 42501 from the EXECUTE ACL; the superuser, who bypasses the ACL, → `OC001` from `_authority`; `worker` asking for `EXECUTING` → `OC005 POST_GRANT_TARGET`; the row and its history unchanged).
 4. **A second `create_incident` for the same run, or a concurrent one, must never produce a second grant, a second `action_id` or a second incident; and a POST or abort onto an `ABORTED` or `REJECTED` key must return that tombstone whatever hash it carries.** Pinned in Task 6's replay test (unchanged review focus from Plan D over the new functions) and Task 7's race tests (`asyncio.gather` create-vs-abort ×20, spike §6).
@@ -42,8 +42,8 @@ Each answers a fact-sheet §5 question (Qn), cites what the spike measured, and 
 
 1. **Scope of definer functions (Q1): the functions that have callers today, plus the ones T09 names.** This plan creates `create_run`, `transition_run`, `append_event`, `freeze_proposal`, `record_decision`, `resolve_invocation`, `grant_execution`, `mark_sent`, `record_outcome`, `lookup_action`, `mark_unknown`, `revoke_handles`, the 24th function `resolve_identity` (ruling 4) and `app.current_time()`, with the internal helpers `_authority`, `_tenant_of_run`, `_tenant_of_action`, `_resolve_handle`, `_latest_attempt`, `_append_event`, `_transition`. `create_revision`, `create_manual_proposal`, `expire_proposal`, `request_cancel` (T21), `asset_scope`, `search_procedures_scoped` (T15–T17), `request_abort`, `escalate_run`, `resolve_escalation` (T22), `sync_memberships` (T11) and `reclaim_leases` (T13) arrive with their owning tasks, each in its own revision following the pattern set here; the grant matrix and RLS skeleton already cover their tables. Stub bodies that raise `not_implemented` were rejected: they would carry EXECUTE grants that mislead R124's enumeration and test nothing. Cost if wrong: later tasks write their functions against a pattern that is already measured; nothing here is thrown away.
 2. **Tables and columns (Q2).** Revision 0002 adds `tenant_id` to `run_state_history`, `jobs` (nullable: sweeper jobs have no tenant, SA:504), `drafts`, `decisions`, `execution_grant`, `action_attempt`, `action_attempt_state` (backfilled through `runs`, `proposals`, `execution_grant`, `action_attempt`), composite tenant foreign keys everywhere a child references a parent (R009: `(tenant_id, run_id) → runs`, `(tenant_id, proposal_id) → proposals` from `decisions` and from `execution_grant`, `(tenant_id, draft_id) → drafts`, `(tenant_id, action_id) → execution_grant`, `(tenant_id, action_id, attempt_no) → action_attempt`, `(tenant_id, message_id) → messages`; `jobs` carries `CHECK ((run_id IS NULL) = (tenant_id IS NULL))` so a run-bound job cannot dodge the key with a NULL tenant), `runs.slot_held` (the partial unique index moves from `state IN (…)` to `WHERE slot_held`, SA:451), `runs.next_event_seq` (SA:439), `runs.cancel_requested_at`, `runs.checkpoint_id`, `runs.budget_used` (so the AM-20.2 column grants can be exact), `decisions.idempotency_key`, `jobs.run_id` nullable, `invocation_context.handle_sha256` replacing the raw `handle` (the table is truncated: handles live 60 s), `invocation_context.fence bigint`, and the tables T09 names: `run_directory`, `run_lease` (shape SA:173; lease semantics are T13's), `sessions` (shape BS:229; T11 may alter it). `outbox`, `feedback`, `idempotency_request`, `operator_resolutions`, `documents`/`chunks`/`embeddings`, `model_permit` and schema `checkpoints` are created by their owners (T14, T12, T22, T17, T13, T20), who add their rows to the grant matrix. **R122 is deferred to T20**: `langgraph-checkpoint-postgres` is not locked (fact sheet §2.3), so "migrator ran setup()" cannot be evidenced here; the matrix row stays `NOT_RUN` with that note. Cost if wrong: a later revision adds a column; the composite keys and RLS are the hard part and they are done once.
-3. **Roles and passwords (Q3): every role now; bootstrap creates them; Alembic still runs as the Compose superuser.** `scripts/skeleton.py migrate` creates or re-keys the login roles `api`, `worker`, `sweeper`, `mcp_read`, `mcp_exec`, `operator`, `test_harness` (one secret file each, `postgres_<role>_password`) and `incident` (existing), and creates the `NOLOGIN` roles `migrator` (`BYPASSRLS`, granted by the superuser; owns schema `app` and its tables after revision 0002), `app_definer` (owns every definer function) and `incident_owner` (owns schema `incident`). `migrator` holds no login in this plan: Alembic keeps running as the Compose superuser `ops`, revision 0002 transfers ownership of everything in `app` to `migrator`, and later revisions create objects as `ops` and transfer them explicitly; a `migrator` login with its own secret is T30's (containerised migrations). All five processes switch to their roles in this plan (api → `api`, worker → `worker`, mcp-read → `mcp_read`, mcp-write → `mcp_exec`, incident-sim stays `incident`); `sweeper` and `operator` have no process until T13/T22 but exist so the per-role tests can connect as them. `CONNECT` is revoked from `PUBLIC` on both databases and granted to exactly the roles that use each (spike §3 measured the revoke on `incident`; `incident` can no longer connect to `ops`). `test_harness` is created only by a test-profile `migrate` (SA:403: test profile only) and receives its schema `USAGE`, its EXECUTE on `app.current_time()` and its table grants from the `testclock` branch, its `CONNECT` from the test-profile bootstrap; a dev or demo cluster never has the role. Cost if wrong: a role is one `CREATE ROLE` and one secret file; the matrix test catches a wrong grant.
-4. **Identity before tenant (Q4): a 24th definer function, `resolve_identity(issuer, subject)`, granted to `api` (and `sweeper`), iterating `tenants` the way SA:520 prescribes for the sweeper.** `memberships` is under `tenant_isolation` (SA:510) and SA:520 allows no further policy; `tenants` has no RLS (SA:523); so the function sets `app.tenant_id` per tenant and collects the active rows for `(issuer, subject)`. O(tenants) per request, tenants are few, and nothing new is granted. Proposed erratum (Task 9). Cost if wrong: T11's `sessions` stores the active tenant and the function becomes a one-tenant lookup.
+3. **Roles and passwords (Q3): every role now; bootstrap creates them; Alembic still runs as the Compose superuser.** `scripts/skeleton.py migrate` creates or re-keys the login roles `api`, `worker`, `sweeper`, `mcp_read`, `mcp_exec`, `operator`, `test_harness` (one secret file each, `postgres_<role>_password`) and `incident` (existing), and creates the `NOLOGIN` roles `migrator` (`BYPASSRLS`, granted by the superuser; owns schema `app` and its tables after revision 0002), `app_definer` (owns every definer function) and `incident_owner` (owns schema `incident`). `migrator` holds no login in this plan: Alembic keeps running as the Compose superuser `ops`, revision 0002 transfers ownership of everything in `app` to `migrator`, and later revisions create objects as `ops` and transfer them explicitly; a `migrator` login with its own secret is T30's (containerised migrations). All five processes switch to their roles in this plan (api → `api`, worker → `worker`, mcp-read → `mcp_read`, mcp-write → `mcp_exec`, incident-sim stays `incident`); `sweeper` and `operator` have no process until T13/T22 but exist so the per-role tests can connect as them. `CONNECT` is revoked from `PUBLIC` on both databases and granted to exactly the roles that use each (spike §3 measured the revoke on `incident`; `incident` can no longer connect to `ops`). `test_harness` is created only by a test-profile `migrate` (SA:403: test profile only) and receives its schema `USAGE`, its EXECUTE on `app.current_time()` and its table grants from the `testclock` branch, its `CONNECT` from the test-profile bootstrap; a dev or demo `migrate` neither creates it nor grants it anything (the role is cluster-wide, so a cluster that also runs the live suite holds it with no privilege in the dev database). Cost if wrong: a role is one `CREATE ROLE` and one secret file; the matrix test catches a wrong grant.
+4. **Identity before tenant (Q4): a 24th definer function, `resolve_identity(issuer, subject)`, granted to `api` (T11's sweeper sync adds itself when it has a caller), iterating `tenants` the way SA:520 prescribes for the sweeper.** `memberships` is under `tenant_isolation` (SA:510) and SA:520 allows no further policy; `tenants` has no RLS (SA:523); so the function sets `app.tenant_id` per tenant and collects the active rows for `(issuer, subject)`. O(tenants) per request, tenants are few, and nothing new is granted. Proposed erratum (Task 9). Cost if wrong: T11's `sessions` stores the active tenant and the function becomes a one-tenant lookup.
 5. **`persistence.py` becomes one thin wrapper per definer function with the spec's signature (Q5).** `transition()` is replaced by `transition_run()` (worker only); `create_run`, `append_event`, `freeze_proposal`, `record_decision`, `resolve_invocation`, `grant_execution`, `mark_sent`, `record_outcome`, `lookup_action`, `mark_unknown`, `revoke_handles`, `resolve_identity` are each `SELECT app.<fn>(…)` plus error translation. The events `run.accepted`, `run.failed`, `run.insufficient_evidence`, `proposal.ready`, `approval.recorded`, `run.rejected`, `action.granted`, `action.dispatched`, `action.confirmed/failed/conflict` and `action.uncertain` are emitted inside the functions (SA:452 refuses them from `append_event`). `ops_core.states.require_transition` stays as the Python mirror and as the source of `app.transitions` (ruling 10); `ops_core.outcomes.event_rules_ok` stays as the Python mirror of `_append_event`'s rules. Signature deviations, each a proposed erratum: `create_run` takes `request` as jsonb `{message_id, requester, asset_id, start_at, end_at}` and returns `(run_id, state_version)` (the id is minted inside); `transition_run` takes a sixth argument `detail jsonb` (the `run.failed` message, erratum 8 of Plan C); `freeze_proposal` takes the canonical bytes and the expiry instead of a jsonb payload (jsonb normalises key order, so SQL cannot recompute Plan C's canonical form; hashing the stored bytes preserves "the bytes frozen are the bytes validated"); `record_decision` takes `tenant_id` and `reviewer` first (the API is the identity trust anchor, exactly as for `create_run`'s tenant); `append_event` takes an optional `source` (only `worker` may pass `model_summary`, only for `explanation.ready`) and refuses every type a definer function emits (`run.*`, `action.*`, `review.*`, `proposal.*`, `approval.*`, `clarification.requested`), not only the three families SA:452 names; `freeze_proposal` verifies that the frozen bytes carry `runs.supersedes_run_id` rather than injecting it (the bytes are hashed before the function sees them, so injection would change the hash; the worker reads the value from `runs`, never from the draft).
 6. **mcp-write's UNKNOWN path (Q6): `mark_unknown` stays `worker`-only.** After a transport failure past `SENT`, mcp-write records nothing and returns the `UNKNOWN` envelope; the worker, which holds the `mark_unknown` grant (SA:467), records `OUTCOME_UNKNOWN` and `action.uncertain` when it receives that envelope. If the worker never receives it (mcp-write died mid-call), the attempt stays `SENT` and the run `EXECUTING`; the execute job is re-queued and the replay resends (idempotent at the destination) — T22's reconciliation closes the rest. `requeue_job` keeps writing `jobs.available_at`, so the `worker` grant (and only the worker's) gains that column (proposed erratum; the alternative, a non-spec definer function, buys nothing). The worker dispatches an `execute` job whose run is `APPROVED` **or** `EXECUTING` (`JOB_RULES[EXECUTE].run_states`): after a transport failure past the grant, the re-queued job must resend under the same action id, which `grant_execution`'s replay rule provides. Cost if wrong: a one-line grant change.
 7. **Tenant context for reads (Q7): `Session.read` is removed; every tenant read is a unit with the tenant set first.** `Session.unit(tenant_id)` runs `SELECT set_config('app.tenant_id', %s, true)` as the unit's first statement; `Session.unit()` (no tenant) is for non-RLS work and definer calls; `Session.ping()` replaces `read("SELECT 1")` for health. The AM-20.5 policy is written with `NULLIF(current_setting('app.tenant_id', true), '')::uuid` (spike §2: the literal text raises 22P02 on the `''` every reused connection holds), matching SA:446; R106 compares `pg_policies.qual` with the normalized form of that text. Proposed erratum.
@@ -81,7 +81,8 @@ Allowed shortcuts in T09/T10, each with its owning task:
 - `sessions` has the BUILD_SPEC §6 shape and no reader or writer → T11;
 - `check.py --profile test` runs the live suite against per-session databases rather than a Compose test profile → T30;
 - the fault factory implements `reject_next`, `drop_before_commit` and `lose_after_commit`; the other six BS:405 faults → T13;
-- `outbox`, `feedback`, `idempotency_request`, `operator_resolutions`, `documents`/`chunks`/`embeddings`, `model_permit` are absent, so their AM-20.2 rows are not yet in the grant matrix → T14/T12/T22/T17/T13.
+- `outbox`, `feedback`, `idempotency_request`, `operator_resolutions`, `documents`/`chunks`/`embeddings`, `model_permit` are absent, so their AM-20.2 rows are not yet in the grant matrix → T14/T12/T22/T17/T13;
+- the definer functions take no row lock on `proposals`, `decisions`, `memberships` or `execution_grant` (AM-20.3's lock column asks for `FOR SHARE`; a lock needs UPDATE, which AM-20.2 withholds); `runs FOR UPDATE` serialises the writers, and the `memberships` race against the sync → T11.
 ```
 
 ## Role and process map
@@ -93,7 +94,7 @@ Allowed shortcuts in T09/T10, each with its owning task:
 | mcp-read | `mcp_read` | `postgres_mcp_read_password` | `resolve_invocation`, `app.current_time` | none |
 | mcp-write | `mcp_exec` | `postgres_mcp_exec_password` | `resolve_invocation`, `grant_execution`, `mark_sent`, `record_outcome`, `lookup_action`, `app.current_time` | none |
 | incident-sim | `incident` (database `incident`) | `postgres_incident_password` | — | `action_key`, `incidents` sel+ins; sequence usage |
-| (none yet) | `sweeper` | `postgres_sweeper_password` | `resolve_identity`, `append_event`, `app.current_time` | per AM-20.2 (`sweeper_all` on `memberships`, `jobs`) |
+| (none yet) | `sweeper` | `postgres_sweeper_password` | `append_event`, `app.current_time` | per AM-20.2 (`sweeper_all` on `memberships`, `jobs`) |
 | (none yet) | `operator` | `postgres_operator_password` | `app.current_time` (`resolve_escalation` → T22) | none |
 | (test only) | `test_harness` | `postgres_test_harness_password` | `app.current_time` | `app.test_clock` ins/upd/del (branch `testclock`) |
 | migrations | superuser `ops` → owner `migrator` (NOLOGIN, BYPASSRLS) | `postgres_password` | — | owns schema `app` and every table |
@@ -126,7 +127,7 @@ Environment every process reads (set by `scripts/skeleton.py` from `.env`; defau
 
 **Interfaces:**
 - Produces: `ops_core.settings.Profile` (`StrEnum`: `DEV = "dev"`, `TEST = "test"`, `DEMO = "demo"`), `profile() -> Profile` (env `PROFILE`, default `dev`, anything else → `SettingsError`), `Role` (`StrEnum`: `API = "api"`, `WORKER = "worker"`, `SWEEPER = "sweeper"`, `MCP_READ = "mcp_read"`, `MCP_EXEC = "mcp_exec"`, `OPERATOR = "operator"`, `TEST_HARNESS = "test_harness"`), `superuser_postgres() -> Postgres` (user `OPS_PG_SUPERUSER` default `ops`, db `OPS_PG_DB` default `ops`, secret `postgres_password`), `app_postgres(role: Role) -> Postgres` (user `role.value`, same db, secret `postgres_<role>_password`), `incident_postgres()` unchanged (db from `OPS_INCIDENT_PG_DB`), `secret_name(role) -> str`.
-- Produces: `ops_core.privileges` — `SCHEMA = "app"`, `RUNTIME_ROLES`, `DEFINER_ROLE = "app_definer"`, `OWNER_ROLE = "migrator"`, `GRANTEES`, `POLICY_ROLES`, `Grant` (frozen dataclass: `sel`, `ins`, `upd: tuple[str, ...] | bool`, `dele`; `privileges() -> set[tuple[str, str | None]]`), `GRANTS: dict[str, dict[str, Grant]]`, `RLS_TABLES`, `SWEEPER_ALL`, `NO_RLS`, `TENANT_EXPR`, `POLICY_QUAL`, `DEFINER_FUNCTIONS: dict[str, tuple[str, tuple[str, ...]]]` (name → (argument type list, callers)), `HELPER_FUNCTIONS: dict[str, str]`, `schema_usage_statements()`, `grant_statements(tables)`, `rls_statements(tables)`, `function_grant_statements(name)`, `AUDIT_TABLES`.
+- Produces: `ops_core.privileges` — `SCHEMA = "app"`, `RUNTIME_ROLES`, `DEFINER_ROLE = "app_definer"`, `OWNER_ROLE = "migrator"`, `GRANTEES`, `POLICY_ROLES`, `Grant` (frozen dataclass: `sel`, `ins`, `upd: tuple[str, ...] | bool`, `dele`; `privileges() -> set[tuple[str, str | None]]`), `GRANTS: dict[str, dict[str, Grant]]`, `RLS_TABLES`, `SWEEPER_ALL`, `NO_RLS`, `TENANT_EXPR`, `POLICY_QUAL`, `DEFINER_FUNCTIONS: dict[str, tuple[str, tuple[str, ...]]]` (name → (argument type list, callers)), `HELPER_FUNCTIONS: dict[str, str]`, `MAIN_ROLES`, `TEST_ONLY_ROLES`, `MAIN_GRANTEES`, `schema_usage_statements(roles=MAIN_GRANTEES)`, `grant_statements(tables)`, `rls_statements(tables)`, `function_grant_statements(name, roles=None)`, `AUDIT_TABLES`.
 - Produces: the seven secret files' names; `tests/plan_e` on `testpaths`.
 
 - [ ] **Step 1: Commit the debt list (before any code)**
@@ -415,7 +416,7 @@ def test_rendered_statements() -> None:
 - [ ] **Step 9: Run the tests to verify they fail**
 
 Run: `uv run python -m pytest tests/plan_e/test_privileges.py -q`
-Expected: FAIL with `ModuleNotFoundError: No module named 'ops_core.privileges'`.
+Expected: FAIL with `ImportError: cannot import name 'privileges' from 'ops_core'`.
 
 - [ ] **Step 10: Write `ops_core.privileges`**
 
@@ -425,9 +426,10 @@ Create `core/src/ops_core/privileges.py`:
 """The AM-20 privilege matrix as data: roles, per-table grants, the RLS tables and policy text, and each definer
 function's callers (SPEC_AMENDMENTS AM-20.1, AM-20.2, AM-20.3, AM-20.5).
 
-One source of truth for two consumers: the migrations render GRANT, REVOKE and POLICY statements from it, and the
-R124/R106 tests enumerate the catalogs against it, so an extra or missing grant fails a test instead of hiding.
-Rows exist only for tables that exist; the owners of later tables (outbox → T14, feedback and idempotency_request
+One source of truth for two consumers: the migrations render GRANT, REVOKE and POLICY statements from it for the
+tables each revision creates or changes (never for "every table": an applied revision must not change when a row is
+added here), and the R124/R106 tests enumerate the catalogs against it, so an extra or missing grant fails a test
+instead of hiding. Rows exist only for tables that exist; the owners of later tables (outbox → T14, feedback and idempotency_request
 → T12, operator_resolutions → T22, documents/chunks/embeddings → T17, model_permit → T13) add their rows. Four
 departures from the printed table, each a proposed erratum (Plan E rulings 6, 10, 17, 23): the worker (not the
 sweeper) may UPDATE jobs.available_at (re-queue after a transport failure), app_definer may UPDATE runs.updated_at,
@@ -736,14 +738,14 @@ each database, all before Alembic runs. The profile picks the Alembic target: on
 ```
 
 ```python
-from ops_core import settings
+from ops_core import privileges, settings
 from ops_core.settings import Profile, Role
 from psycopg import sql
 ```
 
 ```python
 NOLOGIN_ROLES: tuple[tuple[str, bool], ...] = (("migrator", True), ("app_definer", False), ("incident_owner", False))
-TEST_ONLY_ROLES: frozenset[Role] = frozenset({Role.TEST_HARNESS})  # SA:403: the test profile alone has it
+TEST_ONLY_ROLES: frozenset[Role] = frozenset(Role(r) for r in privileges.TEST_ONLY_ROLES)  # SA:403; one source
 
 
 def login_roles(profile: Profile) -> tuple[Role, ...]:
@@ -968,8 +970,45 @@ depends_on = None
 ACTIVE = (
     "'QUEUED','AWAITING_INPUT','RETRIEVING','DRAFTING','AWAITING_APPROVAL','APPROVED','EXECUTING','OUTCOME_UNKNOWN'"
 )
-# Every table that exists after this revision; test_clock belongs to the testclock branch.
-TABLES = tuple(t for t in privileges.GRANTS if t != "test_clock")
+# The tables that exist after this revision, as literals: an applied revision must not change when a later task
+# adds a row to the live matrix (round-2 finding NI5); each later revision renders the statements for the tables it
+# creates or changes. test_clock belongs to the testclock branch.
+TABLES = (
+    "tenants",
+    "memberships",
+    "sessions",
+    "conversations",
+    "messages",
+    "runs",
+    "run_directory",
+    "run_state_history",
+    "run_lease",
+    "jobs",
+    "invocation_context",
+    "drafts",
+    "proposals",
+    "decisions",
+    "execution_grant",
+    "action_attempt",
+    "action_attempt_state",
+    "events",
+    "transitions",
+)
+RLS = (
+    "memberships",
+    "conversations",
+    "messages",
+    "runs",
+    "run_state_history",
+    "jobs",
+    "drafts",
+    "proposals",
+    "decisions",
+    "execution_grant",
+    "action_attempt",
+    "action_attempt_state",
+    "events",
+)
 _WORD = re.compile(r"^[A-Za-z_]+$")
 
 SCHEMA_CHANGES = (
@@ -1142,7 +1181,7 @@ def upgrade() -> None:
         op.execute(statement)
     for statement in privileges.grant_statements(TABLES):
         op.execute(statement)
-    for statement in privileges.rls_statements(privileges.RLS_TABLES):
+    for statement in privileges.rls_statements(RLS):
         op.execute(statement)
     op.execute(CURRENT_TIME)
     for statement in privileges.function_grant_statements("current_time", roles=privileges.MAIN_ROLES):
@@ -1151,9 +1190,9 @@ def upgrade() -> None:
 
 DOWNGRADE = (
     "DROP FUNCTION app.current_time()",
-    *[f"DROP POLICY IF EXISTS sweeper_all ON app.{t}" for t in privileges.SWEEPER_ALL],
-    *[f"DROP POLICY IF EXISTS tenant_isolation ON app.{t}" for t in privileges.RLS_TABLES],
-    *[f"ALTER TABLE app.{t} NO FORCE ROW LEVEL SECURITY, DISABLE ROW LEVEL SECURITY" for t in privileges.RLS_TABLES],
+    *[f"DROP POLICY IF EXISTS sweeper_all ON app.{t}" for t in ("memberships", "jobs")],
+    *[f"DROP POLICY IF EXISTS tenant_isolation ON app.{t}" for t in RLS],
+    *[f"ALTER TABLE app.{t} NO FORCE ROW LEVEL SECURITY, DISABLE ROW LEVEL SECURITY" for t in RLS],
     f"REVOKE ALL ON ALL TABLES IN SCHEMA app FROM {', '.join(privileges.MAIN_GRANTEES)}",
     f"REVOKE USAGE ON SCHEMA app FROM {', '.join(privileges.MAIN_GRANTEES)}",
     "DROP TABLE app.transitions",
@@ -1640,6 +1679,30 @@ async def test_r009_composite_keys_refuse_cross_tenant_children(app_conn: persis
                 "INSERT INTO app.jobs (id, type, tenant_id, run_id, dedup_key) VALUES (gen_random_uuid(), 'x', %s, %s, %s)",
                 (BETA, alpha_run, f"r009-{uuid4()}"),
             )
+        draft, proposal = uuid4(), uuid4()
+        await app_conn.execute(
+            "INSERT INTO app.drafts (id, tenant_id, run_id, draft_sha256, validated, kind) VALUES (%s, %s, %s, 'h', true, 'proposal')",
+            (draft, ALPHA, alpha_run),
+        )
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):  # an alpha proposal pointing at the draft as beta's
+            await app_conn.execute(
+                "INSERT INTO app.proposals (proposal_id, tenant_id, run_id, revision, draft_id, payload, payload_canonical,"
+                " payload_sha256, canonicalization_version, authored_by, expires_at)"
+                " VALUES (%s, %s, %s, 1, %s, '{}', '', 'h', 1, '{}', now())",
+                (proposal, BETA, alpha_run, draft),
+            )
+        await app_conn.execute(
+            "INSERT INTO app.proposals (proposal_id, tenant_id, run_id, revision, draft_id, payload, payload_canonical,"
+            " payload_sha256, canonicalization_version, authored_by, expires_at)"
+            " VALUES (%s, %s, %s, 1, %s, '{}', '', 'h', 1, '{}', now())",
+            (proposal, ALPHA, alpha_run, draft),
+        )
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):  # a grant naming the proposal under the other tenant
+            await app_conn.execute(
+                "INSERT INTO app.execution_grant (action_id, tenant_id, run_id, proposal_id, payload_sha256)"
+                " VALUES (gen_random_uuid(), %s, %s, %s, 'h')",
+                (BETA, alpha_run, proposal),
+            )
     finally:
         await purge_run(app_conn, alpha_run)
 
@@ -1768,7 +1831,7 @@ git commit -m "feat(migrations): roles, ownership, grants, RLS, app.current_time
   - `create_run(p_tenant_id uuid, p_conversation_id uuid, p_request jsonb, p_intent text, p_supersedes_run_id uuid) RETURNS TABLE (run_id uuid, state_version integer)` — callers `api`.
   - `transition_run(p_run_id uuid, p_from text, p_to text, p_reason text, p_expected_version integer, p_detail jsonb) RETURNS integer` — callers `worker`.
   - `append_event(p_run_id uuid, p_type text, p_payload jsonb, p_source text) RETURNS TABLE (event_id uuid, sequence integer, occurred_at timestamptz)` — callers `api`, `worker`, `sweeper`.
-  - `resolve_identity(p_issuer text, p_subject uuid) RETURNS TABLE (tenant_id uuid, role text)` — callers `api`, `sweeper`.
+  - `resolve_identity(p_issuer text, p_subject uuid) RETURNS TABLE (tenant_id uuid, role text)` — callers `api`.
   - `revoke_handles(p_run_id uuid, p_fence bigint) RETURNS integer` — callers `worker`.
 - Produces: `tests/e2e/test_definers_run_path_live.py` helpers `as_role(conn, tenant=None)` (a transaction with an optional preset tenant) used by Task 4's tests.
 
@@ -1778,12 +1841,15 @@ Create `tests/plan_e/test_transitions_table.py`:
 
 ```python
 """Revision 0002's `app.transitions` rows are generated from ops_core.states.TRANSITIONS (ruling 10), so the SQL
-mirror cannot drift from the T07 table; this pins the generator's output shape and its guard."""
+mirror cannot drift from the T07 table; this pins the generator's output shape and its guard, and scans every
+revision's op.execute strings for SQLAlchemy bind parameters."""
 
 import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+from ops_core import privileges
 from ops_core.states import TRANSITIONS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1809,14 +1875,27 @@ def test_one_insert_per_transition_row_with_sorted_reasons() -> None:
     assert all(" :" not in r for r in rows)  # never a SQLAlchemy bind
 
 
-REVISIONS = ("0002_roles_grants_rls", "0003_run_path_functions", "0004_write_path_functions", "tc_0001_test_clock")
+def test_revision_0002_lists_are_frozen_literals_within_the_matrix() -> None:
+    """0002 names its tables itself (NI5): a later matrix row must not change an applied revision."""
+    rev = load_revision()
+    assert set(rev.TABLES) <= set(privileges.GRANTS) and set(rev.RLS) <= set(privileges.RLS_TABLES)
+    assert "test_clock" not in rev.TABLES
+
+
+VERSIONS = ROOT / "migrations" / "app" / "versions"
+# The revisions that exist at this point of the plan; Tasks 3 and 4 add theirs and the cases appear (no skip, BS:597).
+REVISIONS = tuple(
+    n
+    for n in ("0002_roles_grants_rls", "0003_run_path_functions", "0004_write_path_functions", "tc_0001_test_clock")
+    if (VERSIONS / f"{n}.py").exists()
+)
 
 
 def executed_statements(name: str, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Every string a revision's upgrade() and downgrade() hand to op.execute, captured without a database."""
     import alembic.op
 
-    path = ROOT / "migrations" / "app" / "versions" / f"{name}.py"
+    path = VERSIONS / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"rev_{name}", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -1837,9 +1916,9 @@ def test_no_op_execute_string_carries_a_sqlalchemy_bind(name: str, monkeypatch: 
         assert text(statement)._bindparams == {}, statement[:120]
 ```
 
-(`import pytest` joins the imports; the revisions after 0002 do not exist yet when this task runs, so the parametrised cases for 0003 and 0004 fail with `FileNotFoundError` until Tasks 3 and 4 create them — run the test with `-k "0002 or tc_0001"` here and in full from Task 4 on.)
+(The parametrisation covers the revisions present on disk, so the 0003 case appears with this task's Step 3 and the 0004 case with Task 4.)
 
-Run: `uv run python -m pytest tests/plan_e/test_transitions_table.py -q -k "transition or 0002 or tc_0001"` → PASS already if Task 2's revision is correct (this test guards it; if it fails, fix the revision, not the test). Keep it; the 0003 case passes after Step 3.
+Run: `uv run python -m pytest tests/plan_e/test_transitions_table.py -q` → PASS already if Task 2's revision is correct (this test guards it; if it fails, fix the revision, not the test). Keep it; the 0003 case appears and must pass after Step 3.
 
 - [ ] **Step 2: Write the failing live tests**
 
@@ -2020,6 +2099,7 @@ async def test_append_event_rules_and_sequence(app_conn: persistence.Conn, role_
             (worker, "tool.started", "model_summary", {"message": "m"}),
             (worker, "tool.started", "destination", {}),
             (worker, "tool.completed", "application", {"receipt": {}}),  # evidence keys on a non-outcome type
+            (worker, "explanation.ready", "model_summary", {"message": "m", "evidence_refs": [1, ""]}),  # refs must be non-empty strings
             (sweeper, "tool.started", "application", []),
         ):
             assert await refused(conn, "SELECT * FROM app.append_event(%s, %s, %s, %s)", (run, event_type, Jsonb(payload), source)) == "OC006", event_type
@@ -2208,7 +2288,10 @@ BEGIN
     IF p_source = 'model_summary' THEN
         IF p_type <> 'explanation.ready' OR NOT (p_payload ? 'message') OR jsonb_typeof(p_payload->'message') <> 'string'
            OR length(p_payload->>'message') = 0
-           OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_payload) k WHERE k NOT IN ('message', 'evidence_refs')) THEN
+           OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_payload) k WHERE k NOT IN ('message', 'evidence_refs'))
+           OR (p_payload ? 'evidence_refs' AND (jsonb_typeof(p_payload->'evidence_refs') <> 'array'
+               OR EXISTS (SELECT 1 FROM jsonb_array_elements(p_payload->'evidence_refs') e
+                          WHERE jsonb_typeof(e) <> 'string' OR length(e #>> '{{}}') = 0))) THEN
             RAISE EXCEPTION 'event_rule_violation' USING ERRCODE = 'OC006', DETAIL = 'model_summary';
         END IF;
     ELSIF p_source = 'destination' THEN
@@ -2226,8 +2309,15 @@ BEGIN
         RAISE EXCEPTION 'event_rule_violation' USING ERRCODE = 'OC006', DETAIL = 'evidence keys';
     END IF;
     IF p_type = 'action.confirmed' AND (p_payload->>'status' IS DISTINCT FROM 'SUCCEEDED' OR p_payload ? 'tombstone'
-                                        OR jsonb_typeof(p_payload->'receipt') IS DISTINCT FROM 'object') THEN
+                                        OR jsonb_typeof(p_payload->'receipt') IS DISTINCT FROM 'object'
+                                        OR NOT (p_payload->'receipt' ?& ARRAY['receipt_id', 'incident_id', 'committed_at'])) THEN
         RAISE EXCEPTION 'event_rule_violation' USING ERRCODE = 'OC006', DETAIL = 'action.confirmed';
+    END IF;
+    IF p_type = 'action.late_evidence' AND NOT (
+        (p_payload->>'outcome' = 'SUCCEEDED' AND jsonb_typeof(p_payload->'receipt') = 'object' AND NOT (p_payload ? 'tombstone'))
+        OR (p_payload->>'outcome' = 'FAILED_NO_COMMIT' AND jsonb_typeof(p_payload->'tombstone') = 'object'
+            AND NOT (p_payload ? 'receipt'))) THEN
+        RAISE EXCEPTION 'event_rule_violation' USING ERRCODE = 'OC006', DETAIL = 'action.late_evidence';
     END IF;
     IF p_type = 'action.failed' AND (coalesce(p_payload->>'reason', '') <> ALL (v_failed_reasons) OR p_payload ? 'receipt') THEN
         RAISE EXCEPTION 'event_rule_violation' USING ERRCODE = 'OC006', DETAIL = 'action.failed';
@@ -2338,7 +2428,8 @@ BEGIN
     INSERT INTO run_directory (run_id, tenant_id) VALUES (v_run_id, p_tenant_id);
     INSERT INTO run_state_history (tenant_id, run_id, seq, from_state, to_state, performer, at)
     VALUES (p_tenant_id, v_run_id, 1, NULL, 'QUEUED', 'create_run', app.current_time());
-    -- format(), not a ':1' literal: a quote followed by a colon and a word is a SQLAlchemy bind (round-1 B2).
+    -- format('%s:1', ...), never a quote-colon-digit literal: SQLAlchemy reads a colon after a quote as a bind
+    -- (round-1 B2); the plan's unit test scans every revision string, comments included.
     INSERT INTO jobs (id, type, tenant_id, run_id, dedup_key)
     VALUES (gen_random_uuid(), 'investigate', p_tenant_id, v_run_id, format('%s:1', v_run_id));
     PERFORM app._append_event(p_tenant_id, v_run_id, 'run.accepted', 'application', '{{}}'::jsonb);
@@ -2416,7 +2507,7 @@ RETURNS TABLE (tenant_id uuid, role text)
 DECLARE
     v_tenant uuid;
 BEGIN
-    PERFORM app._authority('resolve_identity', ARRAY['api', 'sweeper']);
+    PERFORM app._authority('resolve_identity', ARRAY['api']);
     -- No policy admits a tenant-less read of memberships (SA:520), so the function walks the RLS-free tenants
     -- table and sets each tenant in turn, the pattern SA:520 prescribes for the sweeper (Plan E ruling 4).
     FOR v_tenant IN SELECT t.tenant_id FROM tenants t ORDER BY t.tenant_id LOOP
@@ -2479,7 +2570,7 @@ Notes for the implementer:
 
 - [ ] **Step 4: Format, then run the live tests**
 
-Run: `uv run ruff format migrations/app/versions/0003_run_path_functions.py tests/plan_e/test_transitions_table.py tests/e2e/test_definers_run_path_live.py && uv run ruff check --fix migrations tests/plan_e tests/e2e && uv run python -m pytest tests/plan_e/test_transitions_table.py -q -k "not 0004"`, then `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_definers_run_path_live.py tests/e2e/test_roles_live.py -q -x` and, from the persistence module, only its two Task 2 tests: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migrations_and_persistence.py -q -k "idempotent or r006"`.
+Run: `uv run ruff format migrations/app/versions/0003_run_path_functions.py tests/plan_e/test_transitions_table.py tests/e2e/test_definers_run_path_live.py && uv run ruff check --fix migrations tests/plan_e tests/e2e && uv run python -m pytest tests/plan_e/test_transitions_table.py -q`, then `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_definers_run_path_live.py tests/e2e/test_roles_live.py -q -x` and, from the persistence module, only its two Task 2 tests: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migrations_and_persistence.py -q -k "idempotent or r006"`.
 Expected: PASS (the Plan D tests in `test_migrations_and_persistence.py` stay red until Task 5, as declared). The R124 test still passes: functions carry no table grants. If `test_function_catalog_shape` shows an ACL with a `=X/app_definer` entry for PUBLIC, the `REVOKE … FROM PUBLIC` ran before the `CREATE OR REPLACE` recreated the function; the order in `upgrade()` (body first, then grants) is what makes it correct.
 
 - [ ] **Step 5: Gate and commit**
@@ -2739,18 +2830,20 @@ async def test_write_path_grant_sent_outcome_once_and_only_once(app_conn: persis
         row = await (await app_conn.execute("SELECT state, state_version FROM app.runs WHERE run_id = %s", (run,))).fetchone()
         assert dict(row) == {"state": "EXECUTING", "state_version": 6}
         action = grant["action_id"]
-        async with as_role(mcp_exec):
+        async with as_role(mcp_exec, preset=BETA):  # a hostile preset: ignored by mark_sent/lookup_action and restored
             assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s) AS r", (action,))).fetchone())["r"] == "sent"
             assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s) AS r", (action,))).fetchone())["r"] == "already_sent"
             cur = await mcp_exec.execute("SELECT * FROM app.lookup_action(%s)", (handle,))
             assert dict(await cur.fetchone())["attempt_state"] == "SENT"
+            assert (await (await mcp_exec.execute("SELECT current_setting('app.tenant_id', true) AS t")).fetchone())["t"] == str(BETA)
         states = await (await app_conn.execute("SELECT seq, state FROM app.action_attempt_state WHERE action_id = %s ORDER BY seq", (action,))).fetchall()
         assert [(s["seq"], s["state"]) for s in states] == [(1, "INTENT"), (2, "SENT")]
         assert await refused(mcp_exec, "SELECT app.record_outcome(%s, 'SUCCEEDED', %s)", (action, Jsonb({"status": "SUCCEEDED", "action_id": str(action), "payload_sha256": "0" * 64, "receipt": {"receipt_id": str(uuid4()), "incident_id": "INC-1", "committed_at": "2026-10-08T12:00:00Z"}}))) == "OC007"
         receipt = {"receipt_id": str(uuid4()), "incident_id": "INC-000009", "committed_at": "2026-10-08T12:00:00Z"}
         document = {"status": "SUCCEEDED", "action_id": str(action), "payload_sha256": digest, "receipt": receipt, "tombstone": None, "reason": None}
-        async with as_role(mcp_exec):
+        async with as_role(mcp_exec, preset=BETA):
             assert (await (await mcp_exec.execute("SELECT app.record_outcome(%s, 'SUCCEEDED', %s) AS r", (action, Jsonb(document)))).fetchone())["r"] == "SUCCEEDED"
+            assert (await (await mcp_exec.execute("SELECT current_setting('app.tenant_id', true) AS t")).fetchone())["t"] == str(BETA)
             # Idempotent: a second record (even a different one) returns what stands.
             assert (await (await mcp_exec.execute("SELECT app.record_outcome(%s, 'CONFLICT', %s) AS r", (action, Jsonb({"status": "CONFLICT", "action_id": str(action), "payload_sha256": digest})))).fetchone())["r"] == "SUCCEEDED"
             assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s) AS r", (action,))).fetchone())["r"] == "resolved"
@@ -2805,6 +2898,34 @@ async def test_mark_unknown_is_worker_only_revokes_handles_and_enqueues_recover(
         await purge_run(app_conn, run)
 
 
+async def test_late_evidence_on_a_terminal_run_records_without_a_transition(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
+    """SA:464: an outcome arriving after the run gave up is action.late_evidence, no transition, and its payload is
+    one the Python rule mirror accepts (round-2 finding NI4). The terminal state is forced by the superuser because
+    no Plan E function produces a terminal run with an unresolved attempt (T22's escalation path does)."""
+    api, worker, mcp_exec = [await role_conn(r) for r in (Role.API, Role.WORKER, Role.MCP_EXEC)]
+    run = await drafting_run(app_conn, api, worker)
+    try:
+        proposal, _, digest = await freeze(app_conn, worker, run)
+        await approve(api, proposal, digest)
+        handle = await handle_for(app_conn, run, "execute")
+        async with as_role(mcp_exec):
+            grant = dict(await (await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal))).fetchone())
+            await mcp_exec.execute("SELECT app.mark_sent(%s)", (grant["action_id"],))
+        await app_conn.execute("UPDATE app.runs SET state = 'FAILED', slot_held = false WHERE run_id = %s", (run,))
+        document = {"status": "SUCCEEDED", "action_id": str(grant["action_id"]), "payload_sha256": digest, "receipt": {"receipt_id": str(uuid4()), "incident_id": "INC-000011", "committed_at": "2026-10-08T12:00:00Z"}, "tombstone": None, "reason": None}
+        async with as_role(mcp_exec):
+            assert (await (await mcp_exec.execute("SELECT app.record_outcome(%s, 'SUCCEEDED', %s) AS r", (grant["action_id"], Jsonb(document)))).fetchone())["r"] == "SUCCEEDED"
+        row = await (await app_conn.execute("SELECT state FROM app.runs WHERE run_id = %s", (run,))).fetchone()
+        assert row["state"] == "FAILED"  # no transition on a terminal run
+        events = await (await app_conn.execute("SELECT type, source, payload FROM app.events WHERE run_id = %s ORDER BY sequence", (run,))).fetchall()
+        assert (events[-1]["type"], events[-1]["source"]) == ("action.late_evidence", "destination")
+        assert events[-1]["payload"]["outcome"] == "SUCCEEDED" and "tombstone" not in events[-1]["payload"]
+        for e in events:
+            event_rules_ok(EventType(e["type"]), EventSource(e["source"]), e["payload"])
+    finally:
+        await purge_run(app_conn, run)
+
+
 async def test_r106_the_definer_path_cannot_cross_tenants(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
     """Beta's handle and beta's reviewer against alpha's run and proposal: not found or refused, never a row."""
     api, worker, mcp_exec = [await role_conn(r) for r in (Role.API, Role.WORKER, Role.MCP_EXEC)]
@@ -2834,7 +2955,7 @@ async def test_mcp_exec_cannot_reach_the_tables_the_functions_touched(role_conn:
 
 `refused`, `as_role`, `conversation` and `create` are imported from Task 3's module, which already defines them.
 
-Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_definers_write_path_live.py -q -x` → FAIL (`UndefinedFunction: app.freeze_proposal`).
+Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_definers_write_path_live.py -q -x` → FAIL (the first `refused` call answers `42883`, an undefined function, instead of the code the test expects).
 
 - [ ] **Step 2: Write revision 0004**
 
@@ -3340,7 +3461,7 @@ Add `"_grant_row": "uuid"` to `ops_core.privileges.HELPER_FUNCTIONS` (Task 1's m
 Notes for the implementer:
 - `_grant_row` is created before `grant_execution` references it? PL/pgSQL resolves function references at run time, so the order inside `FUNCTIONS` only matters for the helper's grant statement; keep it as listed.
 - `v_handle record` holds `_resolve_handle`'s row; `SELECT * INTO v_handle FROM app._resolve_handle(...)` raises `OC008` from inside the helper before anything else runs, which is the behaviour the tests pin.
-- `record_outcome` on a run that is already terminal inserts the RESOLVED row and `action.late_evidence` with `outcome` plus the matching proof (`receipt` or `tombstone`), which is what `ops_core.outcomes.event_rules_ok` requires for that type; the live test replays every event row the functions wrote through `event_rules_ok`, so the SQL rules and their Python twin cannot drift.
+- `record_outcome` on a run that is already terminal inserts the RESOLVED row and `action.late_evidence` with `outcome` plus the matching proof (`receipt` or `tombstone`), which is what `ops_core.outcomes.event_rules_ok` requires for that type; the live tests replay every event row the functions wrote (the success path and the forced late-evidence case) through `event_rules_ok`, which is the drift check the SQL mirror has.
 
 - [ ] **Step 3: Format, then run the live tests**
 
@@ -3968,7 +4089,7 @@ async def mint_handle(
     return handle
 ```
 
-Notes for the implementer: `insert_job` reads `run_directory` (no RLS) for the tenant so the API's `resume_input` insert (T12) and tests need no tenant lookup; the worker never calls it today. `claim_job` requires the caller to be inside a transaction (the settings are transaction-local); `run_forever` already wraps it.
+Notes for the implementer: `insert_job` reads `run_directory` (no RLS) for the tenant so its callers (tests and the superuser today) need no tenant lookup; the worker never calls it, and the API's `resume_input` insert is T12's. `claim_job` requires the caller to be inside a transaction (the settings are transaction-local); `run_forever` already wraps it.
 
 - [ ] **Step 3: Update `tests/plan_d/test_persistence_pure.py`**
 
@@ -4014,7 +4135,7 @@ async def new_run(conn: persistence.Conn, tenant_id: UUID | None = None, *, api:
 
 Also in this task, because `Session.read` is gone and the skeleton's incident-sim must still start in Task 7: in `incident-sim/src/ops_incident_sim/app.py` replace `await st.session.read("SELECT 1", ())` by `await st.session.ping()` (one line; Task 8 rewrites the rest of that file).
 
-Run: `uv run ruff format core/src/ops_core/persistence.py tests/plan_e tests/plan_d/test_persistence_pure.py tests/e2e/test_migrations_and_persistence.py incident-sim/src && uv run ruff check --fix core/src tests incident-sim/src && uv run python -m pytest tests/plan_e tests/plan_d/test_persistence_pure.py -q` → PASS. Then `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migrations_and_persistence.py tests/e2e/test_roles_live.py tests/e2e/test_definers_run_path_live.py tests/e2e/test_definers_write_path_live.py -q -x` → PASS. The other live modules (`test_mcp_write_live.py`, `test_worker_live.py`, `test_mcp_read_live.py`, `test_r105_walking_skeleton.py`) stay red until Tasks 6–7 rewrite the services (declared in the Global Constraints); do not touch them here. `PYTHONUTF8=1 uv run python scripts/check.py`: ruff, format and pytest GREEN; mypy may fail **only** at the call sites of the removed names `transition`, `check_invocation`, `resolve_handle` and `Session.read` in `api/`, `worker/`, `mcp-read/` and `mcp-write/` — list them in the report; everything else must be clean.
+Run: `uv run ruff format core/src/ops_core/persistence.py tests/plan_e tests/plan_d/test_persistence_pure.py tests/e2e/test_migrations_and_persistence.py incident-sim/src && uv run ruff check --fix core/src tests incident-sim/src && uv run python -m pytest tests/plan_e tests/plan_d/test_persistence_pure.py -q` → PASS. Then `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migrations_and_persistence.py tests/e2e/test_roles_live.py tests/e2e/test_definers_run_path_live.py tests/e2e/test_definers_write_path_live.py -q -x` → PASS. The other live modules (`test_mcp_write_live.py`, `test_worker_live.py`, `test_mcp_read_live.py`, `test_r105_walking_skeleton.py`) stay red until Tasks 6–7 rewrite the services (declared in the Global Constraints); do not touch them here. `PYTHONUTF8=1 uv run python scripts/check.py`: ruff, format and pytest GREEN; mypy may fail **only** in `api/`, `worker/`, `mcp-read/` and `mcp-write/` at call sites of the names this task removed or re-signed (`transition`, `check_invocation`, `resolve_handle`, `Session.read`, `create_run`, `append_event`, `claim_job`) — list them in the report; everything else must be clean.
 
 - [ ] **Step 6: Commit**
 
@@ -4582,6 +4703,10 @@ async def create_incident(deps: Deps, *, handle: str, proposal_id: UUID) -> Acti
     except Exception:  # after SENT nothing may escape as "no effect" (SA:356, ruling 21): UNKNOWN, reconciled
         log.exception("destination call for action %s failed after SENT", grant.action_id)
         return destination.unknown(grant.action_id, grant.payload_sha256)
+    if outcome.status is ToolOutcome.UNKNOWN:
+        # A lost reply, a 503 or a malformed document: nothing is recorded here; the worker holds mark_unknown
+        # (SA:467, Plan E ruling 6), and record_outcome refuses UNKNOWN by design.
+        return outcome
     # Outside the try on purpose: a database failure here is a 500 and the replay recovers (the attempt is still SENT).
     async with deps.session.unit() as conn:
         standing = await persistence.record_outcome(conn, action_id=grant.action_id, outcome=outcome)
@@ -4620,10 +4745,10 @@ In `mcp-read/src/ops_mcp_read/server.py`, the tool body's resolution becomes `in
 `tests/e2e/test_mcp_read_live.py`: drop the `async with app_conn.transaction():` wrapper (the `api` connection could not see an uncommitted conversation); `new_run(app_conn, ALPHA, api=await role_conn(Role.API))`; the handle is minted by a worker role connection inside `async with worker.transaction(): await persistence.set_tenant(worker, ALPHA); handle = await persistence.mint_handle(worker, ...)`; everything else unchanged.
 
 `tests/e2e/test_mcp_write_live.py`:
-- `approved_run(app_conn, *, api, worker)` builds the run through the functions on the seeded tenant ALPHA (SAM is its reviewer, ALEX its requester; no membership seeding and no `purge_tenant` needed): `new_run(app_conn, ALPHA, api=api)` with no outer transaction, `transition_run(worker, …QUEUED→RETRIEVING→DRAFTING)`, the worker's drafts INSERT under `set_tenant(worker, ALPHA)`, `persistence.freeze_proposal(worker, run_id=run, draft_id=draft, payload_canonical=canonical, expires_at=…)` (the payload's `tenant_id` is ALPHA and it carries no `supersedes_run_id`), then `record_decision(api, tenant_id=ALPHA, proposal_id=proposal, reviewer=SAM, expected_payload_sha256=sha, decision="approve")`. The handle is minted by the worker role under the tenant.
+- `approved_run(app_conn, *, api, worker)` builds the run through the functions on the seeded tenant ALPHA (SAM is its reviewer, ALEX its requester; no membership seeding and no `purge_tenant` needed): `new_run(app_conn, ALPHA, api=api)` with no outer transaction, `transition_run(worker, …QUEUED→RETRIEVING→DRAFTING)`, then in one transaction on the worker connection (`set_tenant` is transaction-local; on autocommit the INSERT would meet RLS): `async with worker.transaction(): await persistence.set_tenant(worker, ALPHA); <the drafts INSERT>; await persistence.freeze_proposal(worker, run_id=run, draft_id=draft, payload_canonical=canonical, expires_at=…)` (the payload's `tenant_id` is ALPHA and it carries no `supersedes_run_id`), then `record_decision(api, tenant_id=ALPHA, proposal_id=proposal, reviewer=SAM, expected_payload_sha256=sha, decision="approve")`. The handle is minted by the worker role under the tenant.
 - The witness connection in `test_write_path_twice` uses `settings.superuser_postgres()`.
 - `make_deps(session, …)` builds the session over a `mcp_exec` role connection (`await role_conn(Role.MCP_EXEC)`), and every `execution.create_incident(deps, handle=handle, proposal_id=proposal)` call passes the raw handle.
-- `test_exception_after_sent_becomes_outcome_unknown` now asserts the run is still `EXECUTING` with the attempt `SENT` and the events `run.accepted, proposal.ready, approval.recorded, action.granted, action.dispatched` (the worker, not mcp-write, records UNKNOWN: Task 6's live test covers that); its name becomes `test_exception_after_sent_returns_unknown_and_records_nothing`.
+- `test_exception_after_sent_becomes_outcome_unknown` now asserts the run is still `EXECUTING` with the attempt `SENT` and the events `run.accepted, proposal.ready, approval.recorded, action.granted, action.dispatched` (the worker, not mcp-write, records UNKNOWN: Task 6's live test covers that); its name becomes `test_exception_after_sent_returns_unknown_and_records_nothing`, and it gains a second case in which `destination.post_incident` is monkeypatched to return `None` (a transport failure the client already swallowed) and a third in which it returns a reply with status 503 and an empty document: all three must yield the `UNKNOWN` envelope with the attempt `SENT` and the run `EXECUTING` (round-2 finding NI1: a classified UNKNOWN once reached `record_outcome` and raised).
 - The event-list assertions gain `proposal.ready` and `approval.recorded` after `run.accepted` (the functions emit them now).
 
 `tests/e2e/test_r105_walking_skeleton.py`: the destination's answers to the persona and worker tokens become `(403, 403)` once Task 8 lands; in this task keep `(401, 401)` and note it; `EXPECTED_EVENTS` is unchanged (the API's path produced the same nine events; check the list matches what the functions emit: `run.accepted`, `tool.started`, `tool.completed`, `explanation.ready`, `proposal.ready`, `approval.recorded`, `action.granted`, `action.dispatched`, `action.confirmed`); the replay handle is minted by a worker role connection under the alpha tenant; the final step reads `(action_id, payload_sha256)` from `app.execution_grant` (superuser on `ops_test`) and from `incident.action_key` (role `incident` on `incident_test`), asserts `scripts.skeleton.orphan_keys(keys, grants)` does not contain this run's action id, and adds `keys=consistent` to the evidence lines (the exit code of `skeleton.py keys` is not used: another live test plants an orphan on purpose). The skeleton processes inherit `PROFILE=test` and the test database names from the fixture (Task 2).
@@ -5281,7 +5406,7 @@ def environment_for(profile: Profile, base: dict[str, str]) -> dict[str, str]:
     return env
 ```
 
-`main()` takes `argv: list[str] | None = None`, resolves the profile, and passes `env=environment_for(profile, os.environ)` to `subprocess.run` for every step (`run(cmd, env)`). Update the module docstring's usage block with `--profile test` and the note that it needs the dev stack up.
+`main()` takes `argv: list[str] | None = None`, calls `members_importable()` first (the lazy `Profile` import must not be the thing that fails on an unsynced clone), then resolves the profile and passes `env=environment_for(profile, os.environ)` to `subprocess.run` for every step (`run(cmd, env)`). Update the module docstring's usage block with `--profile test` and the note that it needs the dev stack up.
 
 Run: `uv run python -m pytest tests/plan_e/test_check_cli.py -q` → PASS; `PYTHONUTF8=1 uv run python scripts/check.py` → GREEN; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → GREEN with the live suite included (record both counts in the report).
 
@@ -5297,7 +5422,7 @@ Run: `uv run python -m pytest tests/plan_e/test_check_cli.py -q` → PASS; `PYTH
 
 `SESSION_STATE.md`:
 - The "Next task" line: Plan E executed on `plan-e` (`<first>..<last>`); owner inputs pending unchanged; next is Plan F (T11 sessions and membership sync, or T13 leases, whichever the backlog's dependency graph puts first: T11 depends on T09 and T43 — both DONE — so T11).
-- A "Plan E executed" paragraph: the 22 rulings in one sentence each is too much; name the file and list the proposed errata (10–19): NULLIF policy text; worker `jobs.available_at` and `app_definer` `runs.updated_at`; the 24th function `resolve_identity`; the signature deviations (`create_run` request/return, `transition_run` detail, `freeze_proposal` bytes and a verified rather than injected `supersedes_run_id`, `record_decision` tenant and reviewer, `append_event` source and its wider reserved-type list); `mark_unknown` worker-only with mcp-write reporting UNKNOWN and the worker dispatching `execute` jobs for EXECUTING runs; `app.current_time()` as a definer function callable by every runtime role; `check.py --profile test` as the live suite; no row lock on `proposals`, `decisions`, `memberships` or `execution_grant` inside the definer functions (a lock needs UPDATE; ruling 23); the `OC001` authority check is reachable only past the EXECUTE ACL; the sweeper's `del` without `sel` on `sessions` and `idempotency_request` cannot run a `DELETE … WHERE expires_at < …` (spike §3) — flagged for T11/T12.
+- A "Plan E executed" paragraph: the 24 rulings in one sentence each is too much; name the file and list the proposed errata (10–19): NULLIF policy text; worker `jobs.available_at` and `app_definer` `runs.updated_at`; the 24th function `resolve_identity`; the signature deviations (`create_run` request/return, `transition_run` detail, `freeze_proposal` bytes and a verified rather than injected `supersedes_run_id`, `record_decision` tenant and reviewer, `append_event` source and its wider reserved-type list); `mark_unknown` worker-only with mcp-write reporting UNKNOWN and the worker dispatching `execute` jobs for EXECUTING runs; `app.current_time()` as a definer function callable by every runtime role; `check.py --profile test` as the live suite; no row lock on `proposals`, `decisions`, `memberships` or `execution_grant` inside the definer functions (a lock needs UPDATE; ruling 23); the `OC001` authority check is reachable only past the EXECUTE ACL; `resolve_invocation` returns `job_type`, `job_id` and `conversation_id` rather than SA:459's `allowed_tools` (ruling 21); `app.transitions` is a table outside AM-20.2 (ruling 10); a CONFLICT on a terminal run is `action.conflict`, not late evidence; the sweeper's `del` without `sel` on `sessions` and `idempotency_request` cannot run a `DELETE … WHERE expires_at < …` (spike §3) — flagged for T11/T12.
 - Open items for Plan F parked by the task reviews (from the ledger).
 
 `README.md` status line; `STATUS.md` row for T09/T10. `docs/runbooks/dev-topology.md`: one paragraph on the roles (which process connects as which role, where the secret files are, that the dev database never carries `app.test_clock`). `docs/runbooks/walking-skeleton.md`: final pass (migrate profiles, `keys`, the live suite's databases, the abort route and faults).
@@ -5325,7 +5450,7 @@ git commit -m "docs: close T09 and T10 — check.py profiles, handoff records, a
 
 ## Self-review (run by the plan's author before execution)
 
-1. **Spec coverage.** T09's instructions: Alembic schema incl. `run_state_history`, `action_attempt_state`, `drafts`, `run_directory`, `run_lease`, `jobs` with dedup keys, `execution_grant UNIQUE(run_id)`, `sessions` → Task 2; roles per AM-20.1 incl. `test_harness` via the `testclock` branch → Tasks 1–2; exact grants per AM-20.2 → Tasks 1–2 (matrix) with the three declared departures; definer functions with search_path/REVOKE/GRANT, `session_user` checks, transaction-local `set_config` → Tasks 3–4 (the fourteen with callers; the rest ruled to their owners, ruling 1); `transition_run` restricted to worker and pre-grant targets → Task 3; seed data under `migrator` BYPASSRLS → revision 1's seeds now owned by `migrator` (Task 2); `sweeper_all` on memberships and jobs → Task 2; `action_attempt_state` seq ordering → Task 4 (`_latest_attempt`); `clock_offset` column → Task 2 (`tc_0001`); RLS incl. FORCE → Task 2; `app.current_time()` → Task 2. DoD 1–5 → Tasks 2, 2, 2+4, 2, 3+4. Review notes 1–5 → Tasks 2/3 (run_directory, invocation_context readable by app_definer/sweeper, resolve_identity), 3–4 (attribute + preset test), 2 (test_clock only in the branch; no GUC), 3 (session_user), 5–8 (every service asserts at start). T10: single `action_key` table → unchanged; ON CONFLICT for incidents and abort → Task 8; recomputed hash → unchanged; never-expiring keys → Task 8 (grants); audience auth → unchanged + 403; test-only fault factory → Task 8; DoD 1–2 and review notes 1–4 → Task 8 (READ COMMITTED, GET retained, abort stores the grant hash, POST onto ABORTED/REJECTED returns the tombstone, azp enforced, REJECTED permanent, detective check). Requirement rows: R006–R009, R084, R106, R124, R126, R128, R010, R047, R096, R098 each have a named live or unit test; R122 deferred with a note (ruling 2).
+1. **Spec coverage.** T09's instructions: Alembic schema incl. `run_state_history`, `action_attempt_state`, `drafts`, `run_directory`, `run_lease`, `jobs` with dedup keys, `execution_grant UNIQUE(run_id)`, `sessions` → Task 2; roles per AM-20.1 incl. `test_harness` via the `testclock` branch → Tasks 1–2; exact grants per AM-20.2 → Tasks 1–2 (matrix) with the four declared departures; definer functions with search_path/REVOKE/GRANT, `session_user` checks, transaction-local `set_config` → Tasks 3–4 (the fourteen with callers; the rest ruled to their owners, ruling 1); `transition_run` restricted to worker and pre-grant targets → Task 3; seed data under `migrator` BYPASSRLS → revision 1's seeds now owned by `migrator` (Task 2); `sweeper_all` on memberships and jobs → Task 2; `action_attempt_state` seq ordering → Task 4 (`_latest_attempt`); `clock_offset` column → Task 2 (`tc_0001`); RLS incl. FORCE → Task 2; `app.current_time()` → Task 2. DoD 1–5 → Tasks 2, 2, 2+4, 2, 3+4. Review notes 1–5 → Tasks 2/3 (run_directory, invocation_context readable by app_definer/sweeper, resolve_identity), 3–4 (attribute + preset test), 2 (test_clock only in the branch; no GUC), 3 (session_user), 5–8 (every service asserts at start). T10: single `action_key` table → unchanged; ON CONFLICT for incidents and abort → Task 8; recomputed hash → unchanged; never-expiring keys → Task 8 (grants); audience auth → unchanged + 403; test-only fault factory → Task 8; DoD 1–2 and review notes 1–4 → Task 8 (READ COMMITTED, GET retained, abort stores the grant hash, POST onto ABORTED/REJECTED returns the tombstone, azp enforced, REJECTED permanent, detective check). Requirement rows: R006–R009, R084, R106, R124, R126, R128, R010, R047, R096, R098 each have a named live or unit test; R122 deferred with a note (ruling 2).
 2. **Placeholder scan.** No TBD/TODO-later/"similar to Task N" in the plan text; the `TODO(Txx)` strings inside code blocks are ownership markers required by `docs/CODE_COMMENTS.md`, not plan placeholders.
 3. **Type consistency.** `ops_core.privileges` renders grants for `MAIN_GRANTEES` on the main line and for `TEST_ONLY_ROLES` on the branch; `persistence.Session.unit(tenant_id)`, `ping()`, `set_tenant`, `resolve_identity`, `create_run -> (UUID, int)`, `transition_run`, `append_event -> Appended`, `freeze_proposal -> Frozen`, `record_decision -> Decided`, `resolve_invocation -> Invocation(run_id, job_id, job_type, tenant_id, conversation_id, run_state, attempt_state)`, `grant_execution/lookup_action -> Grant`, `mark_sent -> str`, `record_outcome -> ToolOutcome`, `mark_unknown -> RunState`, `claim_job(..., tenant_ids)` are the names Tasks 6–8 call; the SQL signatures in `ops_core.privileges.DEFINER_FUNCTIONS` match the `CREATE FUNCTION` argument lists in revisions 0003/0004 (`record_decision(uuid, uuid, uuid, text, text, text, text)` = tenant, proposal, reviewer, hash, decision, reason, idempotency_key; `transition_run(uuid, text, text, text, integer, jsonb)`; `append_event(uuid, text, jsonb, text)`); `HELPER_FUNCTIONS` gains `_grant_row` in Task 4.
 4. **Review Focus.** Each of the five lines names its test: preset tenant (Tasks 3 and 4 live tests), `''` on a reused connection (Task 2 R008), `transition_run` guards (Task 3), replay and races (Tasks 6–8), function-only roles and direct writes (Task 2).
