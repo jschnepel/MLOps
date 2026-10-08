@@ -55,8 +55,9 @@ def generate_secrets(directory: Path, names: Iterable[str]) -> list[str]:
     """Create each missing secret file with 43 URL-safe chars (32 random bytes), no newline. Existing files are kept.
 
     Never overwriting makes the bootstrap safe to re-run: regenerating a secret would lock the owner out of a
-    PostgreSQL volume that was initialised with the old password. The value has no trailing newline because Compose
-    mounts the file verbatim and a `*_FILE` reader or `cat` would otherwise see the newline as part of the secret.
+    PostgreSQL volume that was initialised with the old password. The file holds exactly the value, with no trailing
+    newline: readers that strip newlines (`cat` in a shell substitution, the entrypoint) do not care, but raw readers
+    such as `Path.read_text` in the live `secret` fixture would otherwise see the newline as part of the secret.
 
     Returns:
         The names of the files created on this call (empty on a repeat run).
@@ -67,9 +68,13 @@ def generate_secrets(directory: Path, names: Iterable[str]) -> list[str]:
         path = directory / name
         if path.exists():
             continue
-        # O_EXCL: never overwrite an existing secret even if two bootstraps race; 0o600: owner-only. On Windows the
-        # mode bits are advisory (NTFS ACLs apply, and %LOCALAPPDATA% is already user-private); on POSIX they are the control.
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        # O_EXCL: never overwrite an existing secret even if two bootstraps race (the loser gets FileExistsError and
+        # keeps the winner's file); 0o600: owner-only. On Windows the mode bits are advisory (NTFS ACLs apply, and
+        # %LOCALAPPDATA% is already user-private); on POSIX they are the control.
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
         with os.fdopen(fd, "wb") as fh:
             fh.write(_secrets.token_urlsafe(32).encode("ascii"))
         created.append(name)
@@ -101,7 +106,11 @@ def compose(*args: str) -> int:
 
 
 def main(argv: list[str]) -> int:
-    """Run one sub-command (secrets, up, down, status); return the process exit code, 2 for an unknown command."""
+    """Run one sub-command (secrets, up, down, status); return the process exit code, 2 for an unknown command.
+
+    Every sub-command, `down` and `status` included, first (idempotently) generates any missing secret files and
+    rewrites `.env`, so the Compose variables always resolve.
+    """
     command = argv[0] if argv else "secrets"
     if command not in {"secrets", "up", "down", "status"}:
         print(__doc__)
