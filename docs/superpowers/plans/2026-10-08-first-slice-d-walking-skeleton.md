@@ -23,14 +23,14 @@
 - **Libraries**: versions resolved by `uv lock` from PyPI at execution and recorded in the spike report; `mcp==2.3.0` exact (AM-30, SA:579); the rest `>=floor,<next-major`. `uv sync --locked --all-packages` after every `pyproject.toml` change; CI runs that command.
 - **Layout (ADR-0001):** services contain wiring, transport and process lifecycle; shared adapters live in `core/`; no member imports another member (`tests/plan_a/test_layout.py`); cross-service tests in `tests/e2e/`; unit tests for this plan in `tests/plan_d/`; both added to `testpaths`.
 - **Comments** per `docs/CODE_COMMENTS.md` (why, not what; every shortcut carries `TODO(T09)`-style ownership; no changelog comments). ≤120 columns, no `type: ignore`, ruff + mypy strict clean, UTF-8 without BOM, LF (hygiene test).
-- **Gates:** `PYTHONUTF8=1 uv run python scripts/check.py` GREEN after every task (unit tests, CI-safe; live tests skipped without `OPS_LIVE=1`); `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exit 0; the live suite `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e tests/plan_b/live -q` against the running stack. No test is marked xfail or skipped for a reason other than the live gate (BS:597).
+- **Gates:** `uv run ruff format <paths this task touched> && uv run ruff check --fix <same paths>` first (the plan's code blocks are hand-formatted; ruff's formatter is the authority), then `PYTHONUTF8=1 uv run python scripts/check.py` GREEN after every task (unit tests, CI-safe; live tests skipped without `OPS_LIVE=1`); `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exit 0; the live suite `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e tests/plan_b/live -q` against the running stack. No test is marked xfail or skipped for a reason other than the live gate (BS:597).
 - **Commits:** one logical group per step; messages free of any attribution trailer; never push.
 - **Bash tool (Git Bash)**; never PowerShell redirection; tests via `python -m pytest` from the repo root; never `docker compose down -v`; never change system settings.
 
 ## Review Focus
 
 1. **A second `create_incident` for the same proposal must not create a second incident or a second grant.** `execution_grant` is `UNIQUE (run_id)`; a repeat call with a grant already recorded resends the same `action_id` and hash (idempotent at the destination) or returns the recorded outcome. Pinned in Task 6's unit test and the e2e test's replay step.
-2. **A reviewer who is the requester, or not a member of the tenant, must be refused (403) and the run must stay `AWAITING_APPROVAL`.** Pinned in Task 7 (`alex` approving their own proposal → 403 FORBIDDEN; `riley` (beta) → 404 on an alpha proposal).
+2. **A reviewer who is the requester, or not a member of the tenant, must be refused (403) and the run must stay `AWAITING_APPROVAL`.** Pinned in Task 7 (`alex` approving their own proposal → 403 FORBIDDEN; `jordan` (beta reviewer) → 404 on an alpha proposal).
 3. **A token with the wrong audience must be refused by every resource server** — the worker's token at `incident-sim`, `mcp-write`'s token at `mcp-read`, a persona token at either MCP server — and the refusal must never carry an `action_id` (SA:357). Pinned in Task 3's unit tests (synthetic JWKS) and the e2e test's negative calls.
 4. **A tool argument that supplies a role, tenant, actor, approval or destination must be rejected** (SA:350) even by the skeleton's single tool: `search_procedures(tenant_id=…)` fails input validation. Pinned in Task 5.
 5. **`POST /internal/incidents` with the same `action_id` and a different hash must return the existing key as `CONFLICT`, never a second incident** (SA:268, BS:407). Pinned in Task 4's live DB test and the e2e test.
@@ -47,18 +47,22 @@ Each is recorded here, mirrored in the debt list where it is a shortcut, and pro
 6. **Alembic trees live in top-level `migrations/app/` and `migrations/incident/`** (BUILD_SPEC §5 `migrations/`, "application/destination/identity schema evolution"); each has its own `alembic.ini`-free programmatic config in `scripts/skeleton.py migrate`, which runs both to `head`. Revision IDs are fixed strings (`0001_walking_skeleton`), so T09's revision 2 chains on a known parent.
 7. **Revision 1 tables** (Q6) are the skeleton path's tables with the AM-20.2 names and columns the path needs — `app.tenants`, `app.memberships`, `app.conversations`, `app.messages`, `app.runs`, `app.run_state_history`, `app.jobs`, `app.invocation_context`, `app.drafts`, `app.proposals`, `app.decisions`, `app.execution_grant`, `app.action_attempt`, `app.action_attempt_state`, `app.events` — plus the seed rows for the two tenants and five persona memberships from `data/seed-ids.json`. No `run_directory`, `run_lease`, `sessions`, `outbox`, `feedback`, `idempotency_request`, corpus tables or `model_permit` (their owners add them). Columns T09 will re-own keep the spec's names so the later revision alters rather than renames; the one deliberate exception is `invocation_context.handle` (raw, ruling 19), which T09/T15 replaces by `handle_sha256`.
 8. **Events** (Q11): the happy path writes, in order, `run.accepted` (api), `tool.started` and `tool.completed` (worker, payload `{"message": "search_procedures"}`), `explanation.ready` (worker, `source=model_summary`, payload `{"message": "Drafted by model route fake (prompt incident-draft-v1).", "evidence_refs": [...]}`), `proposal.ready` (worker, `{"proposal_id": ...}`), `approval.recorded` (api, `{"proposal_id": ...}`), `action.granted` (mcp-write, `{"action_id": ..., "proposal_id": ...}`), `action.dispatched` (mcp-write, `{"action_id": ...}`), `action.confirmed` (mcp-write, `source=destination`, `{"status": "SUCCEEDED", "action_id": ..., "receipt": {...}}`). RETRIEVING and DRAFTING have no event type (none exists in AM-14); they are recorded in `run_state_history`. The failure path after `SENT` writes `action.uncertain` (`{"action_id": ...}`) with the `mark_unknown` transition. Every event is constructed as `ops_core.outcomes.Event` before insert.
-9. **incident-sim contract** (Q12), the base T10 extends: `POST /internal/incidents` with body `{"action_id": <uuid>, "payload_sha256": <hex>, "payload": <object>}` sent as canonical bytes; the service parses with `parse_json_strict`, recomputes `canonical_sha256(payload)` and refuses a mismatch with 422 before touching the key table; then `INSERT INTO incident.action_key … ON CONFLICT (action_id) DO NOTHING` and `SELECT` the row: COMMITTED with the same hash → 200 `{"state": "COMMITTED", "action_id", "payload_sha256", "receipt": {"receipt_id", "incident_id", "committed_at"}}`; existing key with a different hash → 409 `{"state": "CONFLICT", "action_id", "payload_sha256": <stored>}`; ABORTED/REJECTED → 200 with `"tombstone"` (T10 creates those states; the shape is defined now). `GET /internal/actions/{action_id}` returns the same document or 404 `NOT_FOUND`. Incident IDs are `INC-%06d` from a sequence; `receipt_id` is a UUIDv4 stored on the key row so the receipt is stable across replays.
+9. **incident-sim contract** (Q12), the base T10 extends: `POST /internal/incidents` with body `{"action_id": <uuid>, "payload_sha256": <hex>, "payload_canonical": <the proposal's canonical JSON, as one string>}`; the service hashes the UTF-8 bytes of `payload_canonical` exactly as received (SA:268: "recomputes sha256 over the received bytes"), parses them with `parse_json_strict` for storage, and refuses a mismatch with 422 before touching the key table; then `INSERT INTO incident.action_key … ON CONFLICT (action_id) DO NOTHING` and `SELECT` the row: COMMITTED with the same hash → 200 `{"state": "COMMITTED", "action_id", "payload_sha256", "receipt": {"receipt_id", "incident_id", "committed_at"}}`; existing key with a different hash → 409 `{"state": "CONFLICT", "action_id", "payload_sha256": <stored>}`; ABORTED/REJECTED → 200 with `"tombstone"` (T10 creates those states; the shape is defined now). `GET /internal/actions/{action_id}` returns the same document or 404 `NOT_FOUND`. Incident IDs are `INC-%06d` from a sequence; `receipt_id` is a UUIDv4 stored on the key row so the receipt is stable across replays.
 10. **Proposal storage** (Q13): `app.proposals(payload_canonical BYTEA, payload JSONB, payload_sha256 TEXT, …)`; the decision compares `expected_payload_sha256` and `expected_revision` with the stored row and returns 409 `VERSION_CONFLICT` on mismatch. The three open items from Plan C (null/whitespace, timestamp spelling) are decided for the API boundary thus: request bodies are parsed with `ops_core.contracts.load()` (explicit `null` for an optional field is accepted, as the models already do; whitespace-only strings are rejected); timestamps the API emits are `…Z` with seconds and no fractional part.
 11. **Reviewer independence and membership are enforced now** (Q14): `record_decision` in the API requires an active `memberships` row with role `reviewer` in the run's tenant for the token's `sub`, and `sub ∉ proposals.authored_by`; otherwise 403 `FORBIDDEN`. A proposal in another tenant is 404 `NOT_FOUND`. Only the first decision is accepted (409 `VERSION_CONFLICT` afterwards).
 12. **Job claiming** (Q15): `UPDATE app.jobs SET claimed_by, claimed_at, attempts = attempts + 1 WHERE id = (SELECT id FROM app.jobs WHERE done_at IS NULL AND claimed_at IS NULL AND available_at <= now() ORDER BY available_at, id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`; the worker polls every 0.5 s; `done_at` is set when the handler returns. The `execute` job is inserted by the decision path with `dedup_key(JobType.EXECUTE, proposal_id=…)`. No lease/fence/heartbeat (T13 debt); a job that raises is left claimed and logged (T13 reclaims).
 13. **`require_transition` is called in one place**, `ops_core.persistence.transition()`, which every service uses for every state change; it locks the `runs` row, checks `expected_version`, calls `require_transition(src, dst, performer, reason)`, updates `runs.state/state_version/reason`, inserts `run_state_history` and returns the new version (Q16). T09 replaces its body with a call to the SQL `transition_run`/definer functions without changing callers.
-14. **Fake model** (Q17): `ops_worker.drafting` defines `DraftGenerator` (a `Protocol` with `async def generate(request: DraftRequest, evidence: list[EvidenceItem]) -> ModelDraft`), `FakeDraftGenerator` (deterministic from the request and evidence; `kind="proposal"`, cites the first evidence item, one limitation naming the fake route) and `make_generator(mode: str)` that returns the fake for `"fake"` and raises `ModelRouteError` for anything else (R130: no silent fallback). `prompt_version = "incident-draft-v1"`, `workflow_version = "investigation-v1"`, `corpus_version` = the catalog's `fixture_version` (`handoff-1`, what mcp-read reports), `retrieval_mode = "lexical"`; a `RunManifest` is built and validated (not stored; T19 stores it).
-15. **MCP specifics** (Q18): servers use `MCPServer(..., auth=AuthSettings(issuer_url=<issuer>, resource_server_url=<resource URL>, validate_token_resource=False), token_verifier=<ops_core.tokens-backed verifier>)`, Streamable HTTP, `stateless_http=True`, `json_response=True`, mounted beside `/health/live` and `/health/ready`; the worker's client uses `streamable_http_client(url, http_client=httpx2.AsyncClient(headers=...))` and `mode="2026-07-28"`. The exact constructor and function signatures are the ones the spike measured (copied verbatim in Tasks 5, 6 and 8). The servers' derived input schemas are checked against `schemas/tools/<tool>.input.schema.json` for required keys, property names and enums (not byte equality).
+14. **Fake model** (Q17): `ops_worker.drafting` defines `DraftGenerator` (a `Protocol` with `async def generate(request: DraftRequest, evidence: list[EvidenceItem]) -> ModelDraft`), `FakeDraftGenerator` (deterministic from the request and evidence; `kind="proposal"`, cites the first evidence item, one limitation naming the fake route) and `make_generator(mode: str)` that returns the fake for `"fake"` and raises `ModelRouteError` for anything else (R130: no silent fallback); `MODEL_MODE` has no default — an unset variable is a refusal to start, not a quiet `fake`. `prompt_version = "incident-draft-v1"`, `workflow_version = "investigation-v1"`, `corpus_version` = the catalog's `fixture_version` (`handoff-1`, what mcp-read reports), `retrieval_mode = "lexical"`; a `RunManifest` is built and validated (not stored; T19 stores it).
+15. **MCP specifics** (Q18): servers use `MCPServer(..., auth=AuthSettings(issuer_url=AnyHttpUrl(<issuer>), resource_server_url=AnyHttpUrl(<resource URL>), validate_token_resource=False), token_verifier=<ops_core.tokens-backed verifier>)` (pydantic's `AnyHttpUrl`; mypy strict rejects a bare `str`), Streamable HTTP, `stateless_http=True`, `json_response=True`, mounted beside `/health/live` and `/health/ready`; the worker's client uses `streamable_http_client(url, http_client=httpx2.AsyncClient(headers=...))` and `mode="2026-07-28"`. The exact constructor and function signatures are the ones the spike measured (copied verbatim in Tasks 5, 6 and 8). The servers' derived input schemas are checked against `schemas/tools/<tool>.input.schema.json` for required keys, property names and enums (not byte equality).
 16. **The e2e test** lives at `tests/e2e/test_r105_walking_skeleton.py` (ADR-0001), gated by `OPS_LIVE=1` like Plan B's live tests, and writes `reports/skeleton/r105-walking-skeleton.txt` (run id, state sequence, event types, incident id, timestamps; no tokens). `handoff/acceptance-matrix.json` R105 becomes `RECORDED_LOCALLY` / `IMPLEMENTED_LOCALLY_VERIFIED` with that path (Q19).
 17. **Dependencies** (Q20): `core` gains psycopg, SQLAlchemy, Alembic, PyJWT, httpx2 (the shared adapters); `api` and `incident-sim` gain FastAPI and uvicorn; `worker`, `mcp-read` and `mcp-write` gain `mcp==2.3.0` and uvicorn. SQLAlchemy is used only by Alembic (the runtime uses psycopg directly, so there is one transaction owner, BS:70). Exact pins: Task 1.
 18. **Health** (Q21): every process serves `GET /health/live` (200 `{"status": "live"}`) and `GET /health/ready` (200 `{"status": "ready"}` after a `SELECT 1` on its database and, for the MCP servers, a loaded JWKS; otherwise 503). The `test_clock` assertion is T09's.
 19. **Invocation handles** (Q10): the worker mints a 256-bit `secrets.token_urlsafe(32)` handle per job, inserts `app.invocation_context(handle, run_id, job_id, server, azp='ops-worker', expires_at=now+60s)` and sends it as `X-Ops-Invocation`; each MCP server resolves the handle by equality (raw, T09/T15 hash it), checks `expires_at`, `revoked_at IS NULL`, the token's `azp == row.azp`, the job's type → server binding (`investigate` → read, `execute` → write; a read handle at `mcp-write` is refused and vice versa, R131 in miniature) and the tool against `JOB_RULES[job_type].allowed_tools`. The handle is never logged.
 20. **Error mapping** subset (BS:301): 401 `UNAUTHENTICATED`, 403 `FORBIDDEN`, 404 `NOT_FOUND`, 409 `VERSION_CONFLICT` / `GRANT_EXISTS` / `SLOT_OCCUPIED`, 422 `INVALID_INPUT`, 503 `UNAVAILABLE`; bodies are `ops_core.contracts.SafeError`; a FastAPI `RequestValidationError` becomes 422 `INVALID_INPUT` with a generic message (no field echo of authority fields).
+22. **`GET /api/v1/proposals/{id}`** is not in BUILD_SPEC's endpoint table; the reviewer needs the frozen document (revision, hash, payload, authors) to decide on exact content, so the skeleton serves it read-only to members of the proposal's tenant. T21 formalises it (or folds it into the run snapshot).
+23. **Event loops.** On Windows `uvicorn.run` chooses the Proactor loop (measured by the round-1 static critic, contradicting the spike's note, which is corrected), and psycopg async refuses it. Every process therefore serves uvicorn programmatically — `uvicorn.Server(uvicorn.Config(app, ...)).serve()` under `asyncio.run(..., loop_factory=asyncio.SelectorEventLoop)` on win32, plain `asyncio.run` elsewhere — through one `serve_app(app, port)` helper per service entrypoint (six lines, duplicated: `core/` does not depend on uvicorn).
+24. **Connections.** Each process holds one psycopg connection in **autocommit** mode, wrapped in `ops_core.persistence.Session`: `async with session.unit() as conn:` takes a process-wide `asyncio.Lock` and opens an explicit transaction, so a unit of work is a real BEGIN/COMMIT (never a savepoint inside a transaction a bare SELECT left open — the static critic measured that failure mode), and two concurrent requests never interleave on one connection. Reads outside a unit run as autocommit statements. Pools arrive with T13.
+25. **A wrong-audience token is 401 everywhere in T08** (the verifier rejects it before any identity exists); T10's 403 for "authenticated but not this audience" is its own refinement.
 21. **Failure after SENT** (Q12): if the POST to `incident-sim` raises or returns anything but the two defined documents, `mcp-write` records `OUTCOME_UNKNOWN` (`mark_unknown`, event `action.uncertain`) and returns the envelope `status="outcome"`, `data.status="UNKNOWN"`; reconciliation is T22. A `409 CONFLICT` from the destination is recorded as `ESCALATED` with reason `conflict` (`record_outcome`, event `action.conflict`) and returned as `data.status="CONFLICT"`.
 
 ## Debt-list additions (committed in Task 1, before coding)
@@ -71,9 +75,11 @@ Appended under "Allowed shortcuts in T08, each with its owning task:" in `SESSIO
 - the API accepts bearer persona tokens from the dev-only direct grant (audience `ops-api`) instead of browser sessions, CSRF and `Idempotency-Key` → T11/T12;
 - wall clock instead of an injected clock; the interval is resolved once at admission and stored; expiry and asset freshness are written but not enforced → T09/T21;
 - incident-sim implements `POST /internal/incidents` and `GET /internal/actions/{id}` only; abort, the fault factory and the detective check → T10;
-- the worker claims jobs with `FOR UPDATE SKIP LOCKED` and polls; no wake-ups, no outbox, no reclaim of a job whose handler crashed → T13/T14;
+- the worker claims jobs with `FOR UPDATE SKIP LOCKED` and polls; no wake-ups, no outbox, no reclaim of a job whose handler crashed (its run and conversation slot stay held) → T13/T14;
 - tenant scoping is a `WHERE tenant_id = …` in each query; no RLS, no `run_directory` → T09;
-- the raw invocation handle is stored in `invocation_context.handle` (not hashed) and resolved by equality → T09/T15.
+- handles are not revoked at job end and resolution ignores run and attempt state → T15 (the raw, unhashed handle is already on the list above);
+- the runtime connects as the Compose superuser `ops` (the single owner role); `incident` can CONNECT to `ops`; no CONNECT revocation → T09;
+- the grant re-reads no current membership, and neither grant nor mark_sent re-checks cancellation or the dispatch deadline → T09/T21/T22; request bodies are not size-bounded → T12.
 ```
 
 ## Process map
@@ -207,7 +213,7 @@ def test_keycloak_and_service_urls_default_to_the_dev_stack(secrets: Path, monke
 - [ ] **Step 3: Run the tests to verify they fail**
 
 Run: `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_settings.py -q`
-Expected: collection error, `ModuleNotFoundError: No module named 'ops_core.settings'` (the directory is not in `testpaths` yet, so pass the path explicitly as above).
+Expected: collection error, an `ImportError` for `ops_core.settings` (the module does not exist yet) (the directory is not in `testpaths` yet, so pass the path explicitly as above).
 
 - [ ] **Step 4: Dependencies and test paths**
 
@@ -219,7 +225,7 @@ Edit the member files so their `dependencies` read exactly:
 
 (`mcp==2.3.0` is the AM-30 pin, SA:579. If a floor above does not resolve, lower it to the version the spike report's "Resolved versions" section measured — never raise it past PyPI's latest and never invent one.)
 
-In the root `pyproject.toml` set `testpaths = ["tests/plan_a", "tests/plan_b", "tests/plan_c", "tests/plan_d", "tests/e2e"]`. Add the async test plugin to the dev group with `uv add --dev pytest-asyncio` (uv writes the floor it resolved; record the version — the plan's async tests use `@pytest.mark.asyncio` and `@pytest_asyncio.fixture`, strict mode).
+In the root `pyproject.toml` set `testpaths = ["tests/plan_a", "tests/plan_b", "tests/plan_c", "tests/plan_d", "tests/e2e"]` and add `asyncio_default_fixture_loop_scope = "function"` under `[tool.pytest.ini_options]` (pytest-asyncio 1.4 warns without it). Add the async test plugin to the dev group with `uv add --dev "pytest-asyncio>=1.4,<2"` (the dry run resolved 1.4.0; record the version — the plan's async tests use `@pytest.mark.asyncio` and `@pytest_asyncio.fixture`, strict mode).
 
 Run: `uv lock && uv sync --locked --all-packages`
 Expected: both succeed; `git diff --stat uv.lock` shows additions only for the new packages and their dependencies. Record the resolved versions of `mcp`, `fastapi`, `starlette`, `uvicorn`, `psycopg`, `sqlalchemy`, `alembic`, `pyjwt`, `httpx2` in your report (`uv pip list` or `grep -A1 'name = "<pkg>"' uv.lock`).
@@ -299,8 +305,10 @@ class Postgres:
     password: str = field(repr=False)  # dataclasses would otherwise print it in every traceback
 
     def conninfo(self) -> str:
+        # The session time zone is pinned so timestamptz values round-trip as UTC whatever the server's default.
         return make_conninfo(
-            host=self.host, port=self.port, user=self.user, dbname=self.dbname, password=self.password
+            host=self.host, port=self.port, user=self.user, dbname=self.dbname, password=self.password,
+            options="-c timezone=UTC",
         )
 
 
@@ -428,11 +436,11 @@ Expected: all pass, including the new `ops-api` audience assertion (record the s
 
 - [ ] **Step 10: Full check and commit**
 
-Run: `PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
+Run: `uv run ruff format core/src/ops_core/settings.py tests/plan_d && uv run ruff check --fix core/src/ops_core/settings.py tests/plan_d && PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
 Expected: `CHECK: GREEN` (totals: Plan C's 381 passed plus the 5 settings tests; skips unchanged).
 
 ```bash
-git add deploy/dev/keycloak/realm-ops-dev.json tests/plan_b/test_realm_template.py tests/plan_b/live/test_keycloak_tokens.py scripts/bootstrap_dev.py compose.yaml core/pyproject.toml api/pyproject.toml incident-sim/pyproject.toml worker/pyproject.toml mcp-read/pyproject.toml mcp-write/pyproject.toml pyproject.toml uv.lock core/src/ops_core/settings.py tests/plan_d tests/e2e
+git add deploy/dev/keycloak/realm-ops-dev.json tests/plan_b/test_realm_template.py tests/plan_b/live/test_keycloak_tokens.py scripts/bootstrap_dev.py compose.yaml core/pyproject.toml api/pyproject.toml incident-sim/pyproject.toml worker/pyproject.toml mcp-read/pyproject.toml mcp-write/pyproject.toml pyproject.toml uv.lock core/src/ops_core/settings.py tests/plan_d tests/e2e reports/bootstrap/keycloak-claims.txt
 git commit -m "feat(dev): ops-api audience for persona tokens, incident database secret, skeleton dependencies and the shared settings module"
 ```
 
@@ -445,7 +453,7 @@ git commit -m "feat(dev): ops-api audience for persona tokens, incident database
 
 **Interfaces:**
 - Consumes: `ops_core.settings` (Task 1); `ops_core.states.require_transition`, `RunState`, `Performer`, `Reason`, `ACTIVE_STATES`; `ops_core.jobs.JobType`, `JOB_RULES`, `Server`, `Tool`, `dedup_key`, `server_for`; `ops_core.outcomes.Event`, `EventType`, `EventSource`.
-- Produces: `ops_core.persistence` — exceptions `PersistenceError(Exception)`, `NotFound(PersistenceError)`, `VersionConflict(PersistenceError)`, `HandleRejected(PersistenceError)`; `Conn = psycopg.AsyncConnection[DictRow]`; `async connect(pg: Postgres) -> Conn`; `async transition(conn, *, run_id, dst, performer, reason=None, expected_version=None) -> int`; `async create_run(conn, *, run_id, tenant_id, conversation_id, message_id, requester, intent, asset_id, start_at, end_at, supersedes_run_id=None) -> int` (QUEUED, history seq 1, the `investigate` job; returns `state_version`); `async append_event(conn, *, tenant_id, conversation_id, run_id, type, source, payload, occurred_at=None) -> Event`; `async insert_job(conn, *, job_type, run_id, **ids) -> UUID | None`; `async claim_job(conn, *, worker_name) -> DictRow | None`; `async finish_job(conn, job_id) -> None`; `async mint_handle(conn, *, run_id, job_id, server, azp, ttl_seconds=60) -> str`; `@dataclass(frozen=True) class Invocation(run_id, job_id, job_type, tenant_id, conversation_id)`; `check_invocation(row, *, server, azp, tool, now) -> Invocation` (pure); `async resolve_handle(conn, *, handle, server, azp, tool) -> Invocation`; `async run_row(conn, run_id, *, lock=False) -> DictRow`.
+- Produces: `ops_core.persistence` — exceptions `PersistenceError(Exception)`, `NotFound(PersistenceError)`, `VersionConflict(PersistenceError)`, `HandleRejected(PersistenceError)`; `Conn = psycopg.AsyncConnection[DictRow]`; `async connect(pg: Postgres) -> Conn` (autocommit); `class Session(conn)` with `unit()` (lock + transaction) and `read(query, params)`; `async transition(conn, *, run_id, dst, performer, reason=None, expected_version=None) -> int`; `async create_run(conn, *, run_id, tenant_id, conversation_id, message_id, requester, intent, asset_id, start_at, end_at, supersedes_run_id=None) -> int` (QUEUED, history seq 1, the `investigate` job; returns `state_version`); `async append_event(conn, *, tenant_id, conversation_id, run_id, type, source, payload, occurred_at=None) -> Event`; `async insert_job(conn, *, job_type, run_id, **ids) -> UUID | None`; `async claim_job(conn, *, worker_name) -> DictRow | None`; `async finish_job(conn, job_id) -> None`; `async mint_handle(conn, *, run_id, job_id, server, azp, ttl_seconds=60) -> str`; `@dataclass(frozen=True) class Invocation(run_id, job_id, job_type, tenant_id, conversation_id)`; `check_invocation(row, *, server, azp, tool, now) -> Invocation` (pure); `async resolve_handle(conn, *, handle, server, azp, tool) -> Invocation`; `async run_row(conn, run_id, *, lock=False) -> DictRow`.
 - Produces: `scripts/skeleton.py migrate` (both databases to head, idempotent; creates/updates the `incident` role from the secret file first); `tests/e2e/conftest.py` fixtures `live`, `env`, `secret`, `app_conn` (async psycopg connection as `ops`), `migrated` (runs `migrate()` once per session).
 - Produces: schema `app` (15 tables, ruling 7) and schema `incident` (`action_key`, `incidents`, sequence `incident_seq`), revision ids `0001_walking_skeleton` in both trees.
 
@@ -505,7 +513,7 @@ def test_valid_read_handle_resolves_to_its_run_and_job():
         ({"job_type": "execute", "server": "read"}, Server.READ, "ops-worker", Tool.SEARCH_PROCEDURES),  # column lies
         ({}, Server.READ, "ops-mcp-write", Tool.SEARCH_PROCEDURES),  # another workload replays the handle
         ({}, Server.READ, "ops-worker", Tool.CREATE_INCIDENT),  # a read job may not call a write tool
-        ({"job_type": "execute"}, Server.WRITE, "ops-worker", Tool.GET_INCIDENT_RECEIPT),  # execute ≠ recover
+        ({"job_type": "execute", "server": "write"}, Server.WRITE, "ops-worker", Tool.GET_INCIDENT_RECEIPT),  # execute ≠ recover
     ],
 )
 def test_rejections(over: dict[str, object], server: Server, azp: str, tool: Tool):
@@ -521,7 +529,7 @@ def test_rejection_messages_never_echo_the_handle():
 ```
 
 Run: `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_persistence_pure.py -q`
-Expected: `ModuleNotFoundError: No module named 'ops_core.persistence'`.
+Expected: an `ImportError` for `ops_core.persistence` (the module does not exist yet).
 
 - [ ] **Step 2: The app database revision**
 
@@ -559,8 +567,8 @@ Create `migrations/app/env.py`:
 """Alembic environment for the application database (schema `app`).
 
 The connection is handed in by scripts/skeleton.py through `config.attributes["connection"]` (Alembic's documented
-pattern for programmatic runs), so no URL with a password is ever built or logged. Offline mode is not supported: the
-skeleton always migrates against a live database.
+pattern for programmatic runs); the engine behind it is built from a SQLAlchemy `URL` object whose password is never
+rendered into a string or logged. Offline mode is not supported: the skeleton always migrates against a live database.
 """
 
 from alembic import context
@@ -569,7 +577,8 @@ connection = context.config.attributes.get("connection")
 if connection is None:
     raise RuntimeError("migrations/app runs only through scripts/skeleton.py migrate (no URL mode)")
 
-context.configure(connection=connection, target_metadata=None, version_table="alembic_version", version_table_schema="app")
+# The version table stays in `public`: Alembic writes it before revision 0001 runs `CREATE SCHEMA app`.
+context.configure(connection=connection, target_metadata=None, version_table="alembic_version")
 with context.begin_transaction():
     context.run_migrations()
 ```
@@ -788,7 +797,7 @@ def upgrade() -> None:
     for statement in DDL.split(";\n"):
         if statement.strip():
             op.execute(statement)
-    seeds = json.loads(Path("data/seed-ids.json").read_text(encoding="utf-8"))
+    seeds = json.loads((Path(__file__).resolve().parents[3] / "data" / "seed-ids.json").read_text(encoding="utf-8"))
     # The issuer is part of the membership identity; the dev default matches scripts/bootstrap_dev.py.
     issuer = os.environ.get("OPS_KC_ISSUER") or "http://localhost:18080/realms/ops-dev"
     tenants = sa.table("tenants", sa.column("tenant_id"), sa.column("name"), schema="app")
@@ -812,7 +821,7 @@ def downgrade() -> None:
 
 - [ ] **Step 3: The incident database revision**
 
-Create `migrations/incident/script.py.mako` (same stock template as Step 2) and `migrations/incident/env.py` identical to the app one except the docstring's first line ("…for the destination database (schema `incident`)") and `version_table_schema="incident"`? No — the schema does not exist before the first revision runs. Use `version_table_schema=None` (the version table lives in `public` of database `incident`, which is the destination's own database anyway). Create `migrations/incident/versions/0001_walking_skeleton.py`:
+Create `migrations/incident/script.py.mako` (same stock template as Step 2) and `migrations/incident/env.py` identical to the app one except the docstring's first line ("…for the destination database (schema `incident`)"). Create `migrations/incident/versions/0001_walking_skeleton.py`:
 
 ```python
 """Destination (incident-sim) database: the single `action_key` table and the incidents it commits (AM-13 §4; T10 extends).
@@ -879,9 +888,9 @@ Create `scripts/skeleton.py`:
 """Walking-skeleton operations (T08): `migrate` both databases to head; Task 9 adds `up`, `down`, `status`.
 
 Reads `.env` (written by scripts/bootstrap_dev.py) for ports and the secrets directory, exports the `OPS_*` variables
-every service reads (ops_core.settings), and runs the two Alembic trees programmatically with a shared connection, so
-no URL carrying a password is built (Alembic cookbook: "Sharing a Connection across one or more programmatic
-migration commands"). The `incident` role is created or re-keyed from its secret file on every run; role credentials
+every service reads (ops_core.settings), and runs the two Alembic trees programmatically with a shared connection
+(Alembic cookbook: "Sharing a Connection across one or more programmatic migration commands"); the engine is built
+from a `URL` object, so the password is never rendered into a string. The `incident` role is created or re-keyed from its secret file on every run; role credentials
 are a bootstrap concern, schema is the migration's.
 """
 
@@ -961,7 +970,7 @@ def upgrade(tree: str, pg: settings.Postgres) -> None:
 
 
 def migrate() -> int:
-    export_environment(load_dotenv())
+    export_environment(load_dotenv(ROOT / ".env"))
     app_pg = settings.app_postgres()
     incident_as_superuser = settings.Postgres(app_pg.host, app_pg.port, app_pg.user, "incident", app_pg.password)
     ensure_incident_role(incident_as_superuser, settings.read_secret("postgres_incident_password"))
@@ -1000,7 +1009,10 @@ every producer. Plain INSERT/UPDATE as the single owner role is declared debt in
 
 from __future__ import annotations
 
+import asyncio
 import secrets
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -1011,7 +1023,7 @@ from psycopg.rows import DictRow, dict_row
 from psycopg.types.json import Jsonb
 
 from ops_core.jobs import JOB_RULES, JobType, Server, Tool, dedup_key, server_for
-from ops_core.outcomes import Event, EventSource, EventType
+from ops_core.outcomes import Event, EventSource, EventType, event_rules_ok
 from ops_core.settings import Postgres
 from ops_core.states import Intent, Performer, Reason, RunState, require_transition
 
@@ -1034,11 +1046,34 @@ class HandleRejected(PersistenceError):
     pass
 
 
-async def connect(pg: Postgres, *, autocommit: bool = False) -> Conn:
-    """One connection per process; callers wrap units of work in `async with conn.transaction()` (a bare execute on a
-    non-autocommit connection opens a transaction that stays open, measured in the spike). The MCP servers, which only
-    read, use `autocommit=True`."""
-    return await psycopg.AsyncConnection.connect(pg.conninfo(), row_factory=dict_row, autocommit=autocommit)
+async def connect(pg: Postgres) -> Conn:
+    """One autocommit connection per process (ruling 24).
+
+    With autocommit off, a bare SELECT silently opens a transaction that every later `transaction()` block nests into as
+    a savepoint, so nothing commits until the connection is closed (measured by the round-1 static critic). Autocommit
+    makes a bare statement its own transaction and `async with conn.transaction()` a real BEGIN/COMMIT.
+    """
+    return await psycopg.AsyncConnection.connect(pg.conninfo(), row_factory=dict_row, autocommit=True)
+
+
+class Session:
+    """One connection, one unit of work at a time: the lock keeps concurrent requests from interleaving on the
+    connection; the transaction makes the unit atomic. TODO(T13): a connection pool instead of a lock."""
+
+    def __init__(self, conn: Conn) -> None:
+        self.conn = conn
+        self._lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def unit(self) -> AsyncIterator[Conn]:
+        async with self._lock, self.conn.transaction():
+            yield self.conn
+
+    async def read(self, query: str, params: tuple[object, ...]) -> DictRow | None:
+        """A single autocommit SELECT (no transaction to leave open), serialised like a unit."""
+        async with self._lock:
+            cur = await self.conn.execute(query, params)
+            return await cur.fetchone()
 
 
 async def run_row(conn: Conn, run_id: UUID, *, lock: bool = False) -> DictRow:
@@ -1067,7 +1102,7 @@ async def transition(
     if expected_version is not None and row["state_version"] != expected_version:
         raise VersionConflict("stale state_version")
     require_transition(RunState(row["state"]), dst, performer, reason)  # raises IllegalTransition, never UPDATEs
-    version = row["state_version"] + 1
+    version: int = row["state_version"] + 1
     await conn.execute(
         "UPDATE app.runs SET state = %s, state_version = %s, reason = %s, updated_at = now() WHERE run_id = %s",
         (dst.value, version, reason.value if reason else None, run_id),
@@ -1127,16 +1162,18 @@ async def append_event(
     The runs row lock makes `sequence` gap-free and commit-ordered without T14's `next_event_seq` column.
     TODO(T14): `append_event` definer function with `next_event_seq`.
     """
+    event_rules_ok(type, source, payload)  # raises EventRuleViolation (AM-14) before the model wraps it
     await conn.execute("SELECT run_id FROM app.runs WHERE run_id = %s FOR UPDATE", (run_id,))
     cur = await conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM app.events WHERE run_id = %s", (run_id,))
     row = await cur.fetchone()
     assert row is not None  # COALESCE always yields one row
+    sequence: int = row["next"]
     event = Event(
         event_id=uuid4(),
         tenant_id=tenant_id,
         conversation_id=conversation_id,
         run_id=run_id,
-        sequence=row["next"],
+        sequence=sequence,
         type=type,
         occurred_at=occurred_at or datetime.now(UTC).replace(microsecond=0),
         source=source,
@@ -1250,8 +1287,9 @@ import pytest_asyncio
 from ops_core import persistence, settings
 
 if sys.platform == "win32":
-    # psycopg async refuses the Proactor loop (measured in the Plan D spike); pytest-asyncio builds its loops from the
-    # policy, so the selector policy is installed once, here, for every live test on the Windows dev machine.
+    # psycopg async refuses the Proactor loop, and Python's default policy on Windows (and uvicorn.run) picks it
+    # (measured in the Plan D spike and its round-1 review). pytest-asyncio builds its loops from the policy, so the
+    # selector policy is installed once, here, for every live test on the Windows dev machine.
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -1289,12 +1327,52 @@ def migrated(env: dict[str, str]) -> None:
 
 @pytest_asyncio.fixture
 async def app_conn(migrated: None) -> AsyncIterator[persistence.Conn]:
+    """An autocommit connection: a test that must leave nothing behind wraps itself in
+    `async with app_conn.transaction(force_rollback=True)`; a test whose rows another process must see cleans up with
+    `purge_run` in a `finally`."""
     conn = await persistence.connect(settings.app_postgres())
     try:
         yield conn
     finally:
-        await conn.rollback()
         await conn.close()
+
+
+PURGE_ORDER = (
+    "DELETE FROM app.invocation_context WHERE run_id = %s",
+    "DELETE FROM app.events WHERE run_id = %s",
+    "DELETE FROM app.action_attempt_state WHERE action_id IN (SELECT action_id FROM app.execution_grant WHERE run_id = %s)",
+    "DELETE FROM app.action_attempt WHERE action_id IN (SELECT action_id FROM app.execution_grant WHERE run_id = %s)",
+    "DELETE FROM app.execution_grant WHERE run_id = %s",
+    "DELETE FROM app.decisions WHERE proposal_id IN (SELECT proposal_id FROM app.proposals WHERE run_id = %s)",
+    "DELETE FROM app.proposals WHERE run_id = %s",
+    "DELETE FROM app.drafts WHERE run_id = %s",
+    "DELETE FROM app.jobs WHERE run_id = %s",
+    "DELETE FROM app.run_state_history WHERE run_id = %s",
+)
+
+
+async def purge_run(conn: persistence.Conn, run_id: object) -> None:
+    """Remove one test run, everything hanging off it, and the message and conversation `new_run` made for it
+    (reverse foreign-key order). A random tenant is removed by `purge_tenant`; a seeded tenant is never touched."""
+    async with conn.transaction():
+        for statement in PURGE_ORDER:
+            await conn.execute(statement, (run_id,))
+        cur = await conn.execute("DELETE FROM app.runs WHERE run_id = %s RETURNING message_id, conversation_id", (run_id,))
+        row = await cur.fetchone()
+        if row is not None:
+            await conn.execute("DELETE FROM app.messages WHERE message_id = %s", (row["message_id"],))
+            await conn.execute("DELETE FROM app.conversations WHERE conversation_id = %s", (row["conversation_id"],))
+
+
+SEEDED_TENANTS = {"3ea79c95-914c-52cb-9d10-c4e19dda8ff7", "5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201"}
+
+
+async def purge_tenant(conn: persistence.Conn, tenant_id: object) -> None:
+    if str(tenant_id) in SEEDED_TENANTS:
+        return  # seeded by the migration; never deleted by a test
+    async with conn.transaction():
+        await conn.execute("DELETE FROM app.memberships WHERE tenant_id = %s", (tenant_id,))
+        await conn.execute("DELETE FROM app.tenants WHERE tenant_id = %s", (tenant_id,))
 ```
 
 pytest-asyncio was added in Task 1 (strict mode: async tests carry `pytestmark = pytest.mark.asyncio`, async fixtures use `@pytest_asyncio.fixture`).
@@ -1310,7 +1388,7 @@ two workers claiming one job, and a handle resolving at the wrong server.
 """
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from ops_core import persistence
@@ -1324,9 +1402,13 @@ ALPHA = "3ea79c95-914c-52cb-9d10-c4e19dda8ff7"
 ALEX = "2fc05986-c7ec-544c-b628-fdb112bbf18a"
 
 
-async def new_run(conn: persistence.Conn) -> tuple:
-    tenant, conv, msg, run = uuid4(), uuid4(), uuid4(), uuid4()
-    await conn.execute("INSERT INTO app.tenants (tenant_id, name) VALUES (%s, %s)", (tenant, f"t-{tenant}"))
+async def new_run(conn: persistence.Conn, tenant_id: UUID | None = None) -> tuple:
+    """A QUEUED run in a fresh conversation; on a new random tenant unless a seeded one is given (mcp-read's corpus
+    exists only for the seeded tenants)."""
+    conv, msg, run = uuid4(), uuid4(), uuid4()
+    tenant = tenant_id or uuid4()
+    if tenant_id is None:
+        await conn.execute("INSERT INTO app.tenants (tenant_id, name) VALUES (%s, %s)", (tenant, f"t-{tenant}"))
     await conn.execute(
         "INSERT INTO app.conversations (conversation_id, tenant_id, created_by) VALUES (%s, %s, %s)", (conv, tenant, ALEX)
     )
@@ -1354,7 +1436,7 @@ async def test_migrate_is_idempotent_and_seeds_are_present(migrated: None, app_c
 
 
 async def test_transition_follows_the_table_and_rolls_back_illegal_moves(app_conn: persistence.Conn):
-    async with app_conn.transaction():
+    async with app_conn.transaction(force_rollback=True):  # nothing this test writes survives it
         _, _, run = await new_run(app_conn)
         assert await persistence.transition(app_conn, run_id=run, dst=RunState.RETRIEVING,
                                             performer=Performer.TRANSITION_RUN) == 2
@@ -1374,7 +1456,7 @@ async def test_transition_follows_the_table_and_rolls_back_illegal_moves(app_con
 
 
 async def test_events_are_gap_free_and_rule_checked(app_conn: persistence.Conn):
-    async with app_conn.transaction():
+    async with app_conn.transaction(force_rollback=True):
         tenant, conv, run = await new_run(app_conn)
         first = await persistence.append_event(app_conn, tenant_id=tenant, conversation_id=conv, run_id=run,
                                                type=EventType.RUN_ACCEPTED, source=EventSource.APPLICATION, payload={})
@@ -1391,7 +1473,7 @@ async def test_events_are_gap_free_and_rule_checked(app_conn: persistence.Conn):
 
 
 async def test_jobs_dedup_and_single_claim(app_conn: persistence.Conn):
-    async with app_conn.transaction():
+    async with app_conn.transaction(force_rollback=True):
         _, _, run = await new_run(app_conn)  # create_run inserted investigate run:1
         assert await persistence.insert_job(app_conn, job_type=JobType.INVESTIGATE, run_id=run, revision=1) is None
         proposal = uuid4()
@@ -1406,7 +1488,7 @@ async def test_jobs_dedup_and_single_claim(app_conn: persistence.Conn):
 
 
 async def test_handles_bind_to_one_server(app_conn: persistence.Conn):
-    async with app_conn.transaction():
+    async with app_conn.transaction(force_rollback=True):
         tenant, _, run = await new_run(app_conn)
         cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s", (run,))
         job = (await cur.fetchone())["id"]
@@ -1422,7 +1504,7 @@ async def test_handles_bind_to_one_server(app_conn: persistence.Conn):
                                              tool=Tool.SEARCH_PROCEDURES)
 ```
 
-Every test runs inside `async with app_conn.transaction()` and the fixture rolls back at the end, so the live database keeps only the migration's rows between runs (the first test's seed assertions do not depend on earlier tests).
+Every writing test runs inside `async with app_conn.transaction(force_rollback=True)` (psycopg rolls the block back on exit even when it succeeds), so the live database keeps only the migration's rows between runs.
 
 - [ ] **Step 7: Run migrate and the live tests against the dev stack**
 
@@ -1435,7 +1517,7 @@ Expected: `5 skipped`.
 
 - [ ] **Step 8: Lint, full check, commit**
 
-Run: `uv run ruff check . && uv run ruff format --check . && PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
+Run: `uv run ruff format migrations scripts/skeleton.py core/src/ops_core/persistence.py tests/plan_d tests/e2e && uv run ruff check --fix migrations scripts/skeleton.py core/src/ops_core/persistence.py tests/plan_d tests/e2e && PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
 Expected: clean; `CHECK: GREEN` (mypy covers `core/src`; `scripts/` and `migrations/` are ruff-checked).
 
 ```bash
@@ -1568,7 +1650,11 @@ async def test_unknown_kid_refreshes_keys_once(verifier: TokenVerifier):
     verifier.fetch = fetch
     assert (await verifier.verify_async(mint(PEM2, "k2"))).azp == "ops-worker"
     assert calls == ["unused"]
-    with pytest.raises(TokenRejected):  # still unknown after a refresh: rejected, not retried forever
+    with pytest.raises(TokenRejected):  # inside the cooldown: rejected without another fetch
+        await verifier.verify_async(mint(PEM1, "k3"))
+    assert len(calls) == 1
+    verifier._refreshed_at = 0.0  # cooldown elapsed: one more refresh, then rejected
+    with pytest.raises(TokenRejected):
         await verifier.verify_async(mint(PEM1, "k3"))
     assert len(calls) == 2
 
@@ -1612,7 +1698,7 @@ def test_bearer_header_parsing():
 ```
 
 Run: `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_tokens.py -q`
-Expected: `ModuleNotFoundError: No module named 'ops_core.tokens'`.
+Expected: an `ImportError` for `ops_core.tokens` (the module does not exist yet).
 
 - [ ] **Step 2: The verifier**
 
@@ -1641,6 +1727,7 @@ from jwt import PyJWKSet
 from jwt.exceptions import InvalidTokenError, PyJWKClientError, PyJWKSetError
 
 Fetch = Callable[[str], Awaitable[dict[str, Any]]]
+REFRESH_COOLDOWN = 60.0  # seconds between JWKS refreshes triggered by an unknown kid
 
 
 class TokenRejected(Exception):
@@ -1690,6 +1777,7 @@ class TokenVerifier:
         self._jwks_url = jwks_url
         self._algorithms = list(algorithms)
         self._keys: PyJWKSet | None = None
+        self._refreshed_at = 0.0
         self.fetch: Fetch = fetch_jwks  # replaceable so tests never open a socket
 
     @property
@@ -1704,6 +1792,7 @@ class TokenVerifier:
 
     async def load_keys(self, fetch: Fetch | None = None) -> None:
         self.install_keys(await (fetch or self.fetch)(self._jwks_url))
+        self._refreshed_at = time.time()
 
     def verify(self, token: str) -> Principal:
         if self._keys is None:
@@ -1740,8 +1829,8 @@ class TokenVerifier:
         try:
             return self.verify(token)
         except TokenRejected as exc:
-            if str(exc) != "unknown signing key":
-                raise
+            if str(exc) != "unknown signing key" or time.time() - self._refreshed_at < REFRESH_COOLDOWN:
+                raise  # a flood of unknown kids must not become a flood of JWKS fetches
         await self.load_keys()
         return self.verify(token)
 
@@ -1787,7 +1876,7 @@ class WorkloadTokenSource:
 - [ ] **Step 3: Run the tests**
 
 Run: `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_tokens.py -q`
-Expected: `18 passed` (9 parametrized rejections + 9). If `PyJWKSet.__getitem__` raises a different exception type for an unknown kid in the locked PyJWT version, catch that type too — the test `mint(PEM2, "k2")` pins the behaviour, not the exception.
+Expected: `16 passed` (9 parametrized rejections + 7). If `PyJWKSet.__getitem__` raises a different exception type for an unknown kid in the locked PyJWT version, catch that type too — the test `mint(PEM2, "k2")` pins the behaviour, not the exception.
 
 - [ ] **Step 4: Prove the verifier against the real realm (live, no new process)**
 
@@ -1810,18 +1899,22 @@ async def test_real_tokens_against_real_jwks(env: dict[str, str], secret) -> Non
     urls = settings.urls()
     worker = kc.token_client_credentials(keycloak.base_url, "ops-worker", secret("kc_client_secret_ops_worker"))
     alex = kc.token_password(keycloak.base_url, "ops-dev-direct", "alex", secret("kc_persona_alex_password"))
+    worker_token, alex_token = worker["access_token"], alex["access_token"]
     read = TokenVerifier(issuer=keycloak.issuer, audience=urls.mcp_read_resource,
                          allowed_azp=frozenset({"ops-worker"}), jwks_url=keycloak.jwks_url)
     await read.load_keys()
-    assert (await read.verify_async(worker["access_token"])).azp == "ops-worker"
+    # Pytest prints the operands of a failed assert, so the token never appears inside one (Plan B's lesson).
+    principal = await read.verify_async(worker_token)
+    assert principal.azp == "ops-worker"
     with pytest.raises(TokenRejected):  # persona token at the MCP server: wrong audience
-        await read.verify_async(alex["access_token"])
+        await read.verify_async(alex_token)
     api = TokenVerifier(issuer=keycloak.issuer, audience="ops-api", allowed_azp=frozenset({"ops-dev-direct"}),
                         jwks_url=keycloak.jwks_url)
     await api.load_keys()
-    assert (await api.verify_async(alex["access_token"])).claims["preferred_username"] == "alex"
+    persona = await api.verify_async(alex_token)
+    assert persona.claims["preferred_username"] == "alex"
     with pytest.raises(TokenRejected):  # worker token at the API: wrong audience and wrong azp
-        await api.verify_async(worker["access_token"])
+        await api.verify_async(worker_token)
 ```
 
 Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_tokens_live.py -q`
@@ -1831,6 +1924,8 @@ Expected: `1 passed`.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
 Expected: `CHECK: GREEN`.
+
+Run `uv run ruff format core/src/ops_core/tokens.py tests/plan_d/test_tokens.py tests/e2e/test_tokens_live.py && uv run ruff check --fix core/src/ops_core/tokens.py tests/plan_d/test_tokens.py tests/e2e/test_tokens_live.py` first.
 
 ```bash
 git add core/src/ops_core/tokens.py tests/plan_d/test_tokens.py tests/e2e/test_tokens_live.py
@@ -1846,7 +1941,7 @@ git commit -m "feat(core): one JWKS-backed token verifier (iss, aud, azp, exp, s
 
 **Interfaces:**
 - Consumes: `ops_core.settings.incident_postgres()`, `keycloak()`, `env_int`; `ops_core.tokens.TokenVerifier`, `bearer_token`, `TokenRejected`; `ops_core.canonical.parse_json_strict`, `canonical_sha256`; `ops_core.contracts.SafeError`, `ErrorCode`; `ops_core.outcomes.DestinationState`.
-- Produces: HTTP contract (ruling 9) — `POST /internal/incidents` body `{"action_id", "payload_sha256", "payload"}` → 200 `{"state": "COMMITTED", "action_id", "payload_sha256", "receipt": {"receipt_id", "incident_id", "committed_at"}}` or 409 `{"state": "CONFLICT", "action_id", "payload_sha256": <stored>}` or 200 `{"state": "ABORTED"|"REJECTED", ..., "tombstone": {"action_id", "state", "payload_sha256", "reason", "decided_at"}}`; 422 `SafeError(INVALID_INPUT)` when the recomputed hash differs or the body is malformed; 401 `SafeError(UNAUTHENTICATED)`; `GET /internal/actions/{action_id}` → the same document or 404 `SafeError(NOT_FOUND)`; `GET /health/live`, `/health/ready`. Python: `keys.commit(conn, *, action_id, payload_sha256, payload) -> KeyRow`; `keys.lookup(conn, action_id) -> KeyRow | None`; `keys.document(row, *, presented_sha256) -> tuple[int, dict]` (pure); `app.create_app(verifier, connect) -> FastAPI`.
+- Produces: HTTP contract (ruling 9) — `POST /internal/incidents` body `{"action_id", "payload_sha256", "payload_canonical"}` (the canonical JSON as one string; hashed as received) → 200 `{"state": "COMMITTED", "action_id", "payload_sha256", "receipt": {"receipt_id", "incident_id", "committed_at"}}` or 409 `{"state": "CONFLICT", "action_id", "payload_sha256": <stored>}` or 200 `{"state": "ABORTED"|"REJECTED", ..., "tombstone": {"action_id", "state", "payload_sha256", "reason", "decided_at"}}`; 422 `SafeError(INVALID_INPUT)` when the recomputed hash differs or the body is malformed; 401 `SafeError(UNAUTHENTICATED)`; `GET /internal/actions/{action_id}` → the same document or 404 `SafeError(NOT_FOUND)`; `GET /health/live`, `/health/ready`. Python: `keys.commit(conn, *, action_id, payload_sha256, payload) -> KeyRow` (inside the caller's unit of work); `keys.lookup(conn, action_id) -> KeyRow | None`; `keys.document(row, *, presented_sha256) -> tuple[int, dict]` (pure); `app.create_app(verifier, *, store=None, connect=None) -> FastAPI`; `serve_app(app, port)` in `__main__`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1868,7 +1963,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from ops_core.canonical import canonical_json, canonical_sha256
+from ops_core.canonical import canonical_json, canonical_sha256, sha256_hex
 from ops_core.tokens import Principal, TokenRejected
 from ops_incident_sim import keys
 from ops_incident_sim.app import create_app
@@ -1898,8 +1993,9 @@ def test_document_shapes():
 
 
 class StubVerifier:
-    def __init__(self) -> None:
-        self.ready = True
+    @property
+    def ready(self) -> bool:
+        return True
 
     async def load_keys(self) -> None:
         return None
@@ -1936,6 +2032,12 @@ def client() -> Iterator[tuple[TestClient, FakeStore]]:
         yield c, store
 
 
+def body_for(payload: dict[str, Any], *, sha: str | None = None, action: UUID = ACTION) -> dict[str, Any]:
+    canonical = canonical_json(payload).decode("utf-8")
+    return {"action_id": str(action), "payload_sha256": sha or sha256_hex(canonical.encode("utf-8")),
+            "payload_canonical": canonical}
+
+
 def post(c: TestClient, body: dict[str, Any], token: str = "good"):
     return c.post("/internal/incidents", content=canonical_json(body), headers={"Authorization": f"Bearer {token}",
                                                                                  "Content-Type": "application/json"})
@@ -1943,43 +2045,47 @@ def post(c: TestClient, body: dict[str, Any], token: str = "good"):
 
 def test_commit_then_replay_returns_the_same_receipt(client):
     c, store = client
-    first = post(c, {"action_id": str(ACTION), "payload_sha256": SHA, "payload": PAYLOAD})
+    first = post(c, body_for(PAYLOAD))
     assert first.status_code == 200 and first.json()["state"] == "COMMITTED"
-    again = post(c, {"action_id": str(ACTION), "payload_sha256": SHA, "payload": PAYLOAD})
+    again = post(c, body_for(PAYLOAD))
     assert again.json() == first.json() and len(store.rows) == 1
 
 
 def test_different_hash_under_an_existing_key_is_a_conflict_not_a_second_incident(client):
     c, store = client
-    post(c, {"action_id": str(ACTION), "payload_sha256": SHA, "payload": PAYLOAD})
-    other = {**PAYLOAD, "title": "Changed"}
-    r = post(c, {"action_id": str(ACTION), "payload_sha256": canonical_sha256(other), "payload": other})
+    post(c, body_for(PAYLOAD))
+    r = post(c, body_for({**PAYLOAD, "title": "Changed"}))
     assert r.status_code == 409 and r.json() == {"state": "CONFLICT", "action_id": str(ACTION), "payload_sha256": SHA}
     assert len(store.rows) == 1
 
 
 def test_presented_hash_must_match_the_received_bytes(client):
     c, store = client
-    r = post(c, {"action_id": str(ACTION), "payload_sha256": "0" * 64, "payload": PAYLOAD})
+    r = post(c, body_for(PAYLOAD, sha="0" * 64))
     assert r.status_code == 422 and r.json()["code"] == "INVALID_INPUT"
+    # The hash is over the bytes as received (SA:268): a re-serialisation that changes one byte is a mismatch.
+    spaced = {"action_id": str(ACTION), "payload_sha256": SHA, "payload_canonical": '{"asset_id": "A17", "revision": 1, "title": "Synthetic incident"}'}
+    assert post(c, spaced).status_code == 422
     assert store.commits == []  # refused before the key table is touched
 
 
 def test_malformed_bodies_are_422(client):
     c, _ = client
     for body in (b"{", b'{"action_id": "x"}', b'{"action_id": "%s", "payload_sha256": "%s"}' % (str(ACTION).encode(),
+                                                                                                  SHA.encode()),
+                 b'{"action_id": "%s", "payload_sha256": "%s", "payload_canonical": "[1]"}' % (str(ACTION).encode(),
                                                                                                   SHA.encode())):
         r = c.post("/internal/incidents", content=body, headers={"Authorization": "Bearer good",
                                                                  "Content-Type": "application/json"})
         assert r.status_code == 422, body
-    dup = b'{"action_id": "%s", "action_id": "%s", "payload_sha256": "%s", "payload": {}}' % (
+    dup = b'{"action_id": "%s", "action_id": "%s", "payload_sha256": "%s", "payload_canonical": "{}"}' % (
         str(ACTION).encode(), str(ACTION).encode(), SHA.encode())
     assert c.post("/internal/incidents", content=dup, headers={"Authorization": "Bearer good"}).status_code == 422
 
 
 def test_unauthenticated_calls_get_a_plain_safe_error(client):
     c, store = client
-    r = post(c, {"action_id": str(ACTION), "payload_sha256": SHA, "payload": PAYLOAD}, token="bad")
+    r = post(c, body_for(PAYLOAD), token="bad")
     assert r.status_code == 401 and r.json()["code"] == "UNAUTHENTICATED"
     assert str(ACTION) not in r.text and store.commits == []
     assert c.get(f"/internal/actions/{ACTION}").status_code == 401
@@ -1988,7 +2094,7 @@ def test_unauthenticated_calls_get_a_plain_safe_error(client):
 def test_lookup(client):
     c, _ = client
     assert c.get(f"/internal/actions/{ACTION}", headers={"Authorization": "Bearer good"}).status_code == 404
-    post(c, {"action_id": str(ACTION), "payload_sha256": SHA, "payload": PAYLOAD})
+    post(c, body_for(PAYLOAD))
     r = c.get(f"/internal/actions/{ACTION}", headers={"Authorization": "Bearer good"})
     assert r.status_code == 200 and r.json()["state"] == "COMMITTED"
 
@@ -2000,7 +2106,7 @@ def test_health(client):
 ```
 
 Run: `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_incident_sim.py -q`
-Expected: `ModuleNotFoundError: No module named 'ops_incident_sim.keys'`. (`fastapi.testclient.TestClient` is Starlette's client, which runs on httpx2 — measured in the spike — so no extra dependency is needed.)
+Expected: an `ImportError` for `ops_incident_sim.keys` (the module does not exist yet). (`fastapi.testclient.TestClient` is Starlette's client, which runs on httpx2 — measured in the spike — so no extra dependency is needed.)
 
 - [ ] **Step 2: The key table module**
 
@@ -2053,22 +2159,22 @@ def _row(record: DictRow) -> KeyRow:
 
 
 async def commit(conn: Conn, *, action_id: UUID, payload_sha256: str, payload: dict[str, Any]) -> KeyRow:
-    """Commit the key and its incident in one transaction, or return the existing key untouched."""
-    async with conn.transaction():
-        cur = await conn.execute(
-            "INSERT INTO incident.action_key (action_id, payload_sha256, state, incident_id, receipt_id)"
-            " VALUES (%s, %s, 'COMMITTED', 'INC-' || lpad(nextval('incident.incident_seq')::text, 6, '0'), %s)"
-            " ON CONFLICT (action_id) DO NOTHING RETURNING *",
-            (action_id, payload_sha256, uuid4()),
+    """Insert the key and its incident, or return the existing key untouched. The caller holds the unit of work
+    (`Session.unit()`), so the key and the incident row commit together or not at all."""
+    cur = await conn.execute(
+        "INSERT INTO incident.action_key (action_id, payload_sha256, state, incident_id, receipt_id)"
+        " VALUES (%s, %s, 'COMMITTED', 'INC-' || lpad(nextval('incident.incident_seq')::text, 6, '0'), %s)"
+        " ON CONFLICT (action_id) DO NOTHING RETURNING *",
+        (action_id, payload_sha256, uuid4()),
+    )
+    inserted = await cur.fetchone()
+    if inserted is not None:
+        # The incident row exists only when its key commits in this same transaction (SA:264).
+        await conn.execute(
+            "INSERT INTO incident.incidents (incident_id, action_id, payload) VALUES (%s, %s, %s)",
+            (inserted["incident_id"], action_id, Jsonb(payload)),
         )
-        inserted = await cur.fetchone()
-        if inserted is not None:
-            # The incident row exists only when its key committed in this same transaction (SA:264).
-            await conn.execute(
-                "INSERT INTO incident.incidents (incident_id, action_id, payload) VALUES (%s, %s, %s)",
-                (inserted["incident_id"], action_id, Jsonb(payload)),
-            )
-            return _row(inserted)
+        return _row(inserted)
     existing = await lookup(conn, action_id)
     assert existing is not None  # the conflict proved the row exists and rows are never deleted (SA:265)
     return existing
@@ -2109,11 +2215,10 @@ Create `incident-sim/src/ops_incident_sim/app.py`:
 azp `ops-mcp-write`, SA:262/270); recomputes the hash over the received bytes before touching the key table (SA:268);
 answers with the key's own view (keys.document). A 401 carries a plain safe error and never an action id (SA:357)."""
 
-from __future__ import annotations
-
+# No `from __future__ import annotations`: FastAPI resolves dependency annotations at import time (Plan D review).
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any, Protocol
+from typing import Annotated, Any, Protocol
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Request, Response
@@ -2121,14 +2226,17 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ops_core import persistence, settings
-from ops_core.canonical import CanonicalizationError, canonical_sha256, parse_json_strict
+from ops_core.canonical import CanonicalizationError, parse_json_strict, sha256_hex
 from ops_core.contracts import ErrorCode, SafeError, Sha256
 from ops_core.tokens import Principal, TokenRejected, TokenVerifier, bearer_token
 from ops_incident_sim import keys
 
 
 class Verifier(Protocol):
-    ready: bool
+    @property
+    def ready(self) -> bool: ...
+
+    async def load_keys(self) -> None: ...
 
     async def verify_async(self, token: str) -> Principal: ...
 
@@ -2141,20 +2249,22 @@ class Store(Protocol):
 
 class DbStore:
     def __init__(self, conn: persistence.Conn) -> None:
-        self.conn = conn
+        self.session = persistence.Session(conn)  # ruling 24: one unit of work at a time, each a real transaction
 
     async def commit(self, action_id: UUID, payload_sha256: str, payload: dict[str, Any]) -> keys.KeyRow:
-        return await keys.commit(self.conn, action_id=action_id, payload_sha256=payload_sha256, payload=payload)
+        async with self.session.unit() as conn:
+            return await keys.commit(conn, action_id=action_id, payload_sha256=payload_sha256, payload=payload)
 
     async def lookup(self, action_id: UUID) -> keys.KeyRow | None:
-        return await keys.lookup(self.conn, action_id)
+        async with self.session.unit() as conn:
+            return await keys.lookup(conn, action_id)
 
 
 class IncidentRequest(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
     action_id: UUID
     payload_sha256: Sha256
-    payload: dict[str, Any] = Field(min_length=1)
+    payload_canonical: str = Field(min_length=2)
 
 
 def safe_error(status: int, code: ErrorCode, message: str) -> JSONResponse:
@@ -2176,10 +2286,9 @@ def create_app(verifier: Verifier, *, store: Store | None = None,
             app.state.store = store
         else:
             assert connect is not None
-            conn = await connect()
-            app.state.store = DbStore(conn)
+            app.state.store = DbStore(await connect())
         if not verifier.ready:
-            await verifier.load_keys()  # type: ignore[attr-defined]  -- see note below
+            await verifier.load_keys()
         yield
 
     app = FastAPI(title="incident-sim", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -2203,28 +2312,33 @@ def create_app(verifier: Verifier, *, store: Store | None = None,
         st: Store = request.app.state.store
         if isinstance(st, DbStore):
             try:
-                await st.conn.execute("SELECT 1")
-            except Exception:  # noqa: BLE001  -- readiness reports any database failure as not ready
+                await st.session.read("SELECT 1", ())
+            except Exception:  # readiness reports any database failure as not ready
                 return safe_error(503, ErrorCode.UNAVAILABLE, "database not reachable")
         return JSONResponse({"status": "ready"})
 
     @app.post("/internal/incidents")
-    async def post_incident(request: Request, _: Principal = Depends(caller)) -> Response:
+    async def post_incident(request: Request, _: Annotated[Principal, Depends(caller)]) -> Response:
         raw = await request.body()
         try:
-            parsed = parse_json_strict(raw.decode("utf-8"))  # duplicate keys, floats and NaN are refused here
-            body = IncidentRequest.model_validate(parsed)
+            text = raw.decode("utf-8")
+            parse_json_strict(text)  # duplicate keys, floats and NaN in the envelope are refused here
+            body = IncidentRequest.model_validate_json(text)  # JSON mode: strict models parse UUID text
+            payload = parse_json_strict(body.payload_canonical)
         except (UnicodeDecodeError, CanonicalizationError, ValidationError, ValueError):
             return safe_error(422, ErrorCode.INVALID_INPUT, "body is not a well-formed incident request")
-        if canonical_sha256(body.payload) != body.payload_sha256:
+        if not isinstance(payload, dict) or not payload:
+            return safe_error(422, ErrorCode.INVALID_INPUT, "payload_canonical is not a JSON object")
+        # The hash is recomputed over the bytes exactly as received (SA:268), never over a re-serialisation.
+        if sha256_hex(body.payload_canonical.encode("utf-8")) != body.payload_sha256:
             return safe_error(422, ErrorCode.INVALID_INPUT, "payload hash does not match the received payload")
         st: Store = request.app.state.store
-        row = await st.commit(body.action_id, body.payload_sha256, body.payload)
+        row = await st.commit(body.action_id, body.payload_sha256, payload)
         status, doc = keys.document(row, presented_sha256=body.payload_sha256)
         return JSONResponse(status_code=status, content=doc)
 
     @app.get("/internal/actions/{action_id}")
-    async def get_action(action_id: UUID, request: Request, _: Principal = Depends(caller)) -> Response:
+    async def get_action(action_id: UUID, request: Request, _: Annotated[Principal, Depends(caller)]) -> Response:
         st: Store = request.app.state.store
         row = await st.lookup(action_id)
         if row is None:
@@ -2242,20 +2356,31 @@ def production_app() -> FastAPI:
     return create_app(verifier, connect=lambda: persistence.connect(settings.incident_postgres()))
 ```
 
-Replace the `# type: ignore` line: give the `Verifier` protocol an `async def load_keys(self) -> None: ...` member and let `StubVerifier` in the test implement it as a no-op (`async def load_keys(self) -> None: return None`). No `type: ignore` anywhere.
-
 Create `incident-sim/src/ops_incident_sim/__main__.py`:
 
 ```python
 """`python -m ops_incident_sim`: serve on 127.0.0.1:OPS_INCIDENT_SIM_PORT (default 8090)."""
+
+import asyncio
+import sys
 
 import uvicorn
 
 from ops_core.settings import env_int
 from ops_incident_sim.app import production_app
 
+def serve_app(app: object, port: int) -> None:
+    """Serve with uvicorn programmatically on a selector loop (ruling 23: `uvicorn.run` picks the Proactor loop on
+    Windows and psycopg async refuses it)."""
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    if sys.platform == "win32":
+        asyncio.run(server.serve(), loop_factory=asyncio.SelectorEventLoop)
+    else:
+        asyncio.run(server.serve())
+
+
 if __name__ == "__main__":
-    uvicorn.run(production_app(), host="127.0.0.1", port=env_int("OPS_INCIDENT_SIM_PORT", 8090), log_level="warning")
+    serve_app(production_app(), env_int("OPS_INCIDENT_SIM_PORT", 8090))
 ```
 
 - [ ] **Step 4: Run the unit tests**
@@ -2285,23 +2410,23 @@ pytestmark = pytest.mark.asyncio
 async def test_commit_replay_conflict_and_isolation(migrated: None) -> None:
     conn = await persistence.connect(settings.incident_postgres())
     try:
-        action = uuid4()
-        payload = {"title": "live", "n": 1}
-        first = await keys.commit(conn, action_id=action, payload_sha256=canonical_sha256(payload), payload=payload)
-        again = await keys.commit(conn, action_id=action, payload_sha256=canonical_sha256(payload), payload=payload)
-        assert first == again and first.incident_id.startswith("INC-") and first.state == "COMMITTED"
-        other = await keys.commit(conn, action_id=action, payload_sha256="0" * 64, payload={"x": 1})
-        assert other == first  # the key keeps its first hash; document() turns this into CONFLICT
-        assert keys.document(other, presented_sha256="0" * 64)[0] == 409
-        cur = await conn.execute("SELECT count(*) AS n FROM incident.incidents WHERE action_id = %s", (action,))
-        assert (await cur.fetchone())["n"] == 1
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        async with conn.transaction(force_rollback=True):  # the live key table keeps nothing from this test
+            action = uuid4()
+            payload = {"title": "live", "n": 1}
+            first = await keys.commit(conn, action_id=action, payload_sha256=canonical_sha256(payload), payload=payload)
+            again = await keys.commit(conn, action_id=action, payload_sha256=canonical_sha256(payload), payload=payload)
+            assert first == again and first.incident_id.startswith("INC-") and first.state == "COMMITTED"
+            other = await keys.commit(conn, action_id=action, payload_sha256="0" * 64, payload={"x": 1})
+            assert other == first  # the key keeps its first hash; document() turns this into CONFLICT
+            assert keys.document(other, presented_sha256="0" * 64)[0] == 409
+            cur = await conn.execute("SELECT count(*) AS n FROM incident.incidents WHERE action_id = %s", (action,))
+            assert (await cur.fetchone())["n"] == 1
+        # The application schema is not even visible from the destination's database (separate credentials).
+        with pytest.raises((psycopg.errors.InsufficientPrivilege, psycopg.errors.UndefinedTable)):
             await conn.execute("SELECT 1 FROM app.runs")
     finally:
         await conn.close()
 ```
-
-Note: role `incident` connects to database `incident`, where schema `app` does not exist, so Postgres raises `UndefinedTable` rather than `InsufficientPrivilege`; assert `pytest.raises((psycopg.errors.InsufficientPrivilege, psycopg.errors.UndefinedTable))` and keep the comment honest ("the application schema is not even visible from the destination's database").
 
 Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_incident_sim_live.py -q`
 Expected: `1 passed`.
@@ -2318,7 +2443,7 @@ Append to `incident-sim/README.md`:
 with T10.
 ```
 
-Run: `PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
+Run: `uv run ruff format incident-sim tests/plan_d/test_incident_sim.py tests/e2e/test_incident_sim_live.py && uv run ruff check --fix incident-sim tests/plan_d/test_incident_sim.py tests/e2e/test_incident_sim_live.py && PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
 Expected: `CHECK: GREEN`.
 
 ```bash
@@ -2335,7 +2460,7 @@ git commit -m "feat(incident-sim): atomic action_key destination with hash recom
 
 **Interfaces:**
 - Consumes: `ops_core.settings` (`keycloak()`, `urls()`, `app_postgres()`, `fixtures_dir()`, `env_int`); `ops_core.tokens.TokenVerifier`, `TokenRejected`, `Principal`; `ops_core.persistence.connect`, `resolve_handle`, `HandleRejected`, `Conn`; `ops_core.jobs.Server`, `Tool`.
-- Produces: `ops_mcp_read.procedures` — `section_bodies(markdown) -> dict[str, str]` (the same slicing as `scripts/gen_fixture_meta.py`), `@dataclass(frozen=True) Section(evidence_id, document_id, version, section, content_sha256, text, effective_from)`, `Hit(section, score)`, `Corpus(sections, corpus_version)` with `classmethod load(fixtures_dir: Path, tenant_slug: str) -> Corpus` and `search(query: str, limit: int) -> list[Hit]`, `load_corpora(fixtures_dir: Path) -> dict[UUID, Corpus]` (keyed by tenant UUID from `meta.json`). `ops_mcp_read.server` — `class ToolResult(TypedDict)` (the tool-result envelope: `tool_name, request_id, status, observed_at, truncated, data, error`), `envelope(tool_name, *, data=None, error=None) -> ToolResult`, `tool_error(code, message) -> dict[str, Any]`, `search_response(corpora, *, tenant_id, query, limit, now) -> ToolResult` (pure), `class McpVerifier` (the SDK's `TokenVerifier` protocol over `ops_core.tokens.TokenVerifier`), `strict_tool(fn) -> Tool`, `class State(conn: Conn | None, corpora, verifier)`, `build_server(state, *, issuer, resource_url) -> MCPServer`, `build_app(server, state) -> Starlette`, `production_app() -> Starlette`. The tool-result envelope shape is shared with mcp-write (Task 6) by convention, not by import.
+- Produces: `ops_mcp_read.procedures` — `section_bodies(markdown) -> dict[str, str]` (the same slicing as `scripts/gen_fixture_meta.py`), `@dataclass(frozen=True) Section(evidence_id, document_id, version, section, content_sha256, text, effective_from)`, `Hit(section, score)`, `Corpus(sections, corpus_version)` with `classmethod load(fixtures_dir: Path, tenant_slug: str) -> Corpus` and `search(query: str, limit: int) -> list[Hit]`, `load_corpora(fixtures_dir: Path) -> dict[UUID, Corpus]` (keyed by tenant UUID from `meta.json`). `ops_mcp_read.server` — `class ToolResult(TypedDict)` (the tool-result envelope: `tool_name, request_id, status, observed_at, truncated, data, error`), `envelope(tool_name, *, data=None, error=None) -> ToolResult`, `tool_error(code, message) -> dict[str, Any]`, `search_response(corpora, *, tenant_id, query, limit, now) -> ToolResult` (pure), `class McpVerifier` (the SDK's `TokenVerifier` protocol over `ops_core.tokens.TokenVerifier`), `strict_tool(fn) -> Tool`, `class State(session: Session | None, corpora, verifier)`, `build_server(state, *, issuer, resource_url) -> MCPServer`, `build_app(server, state) -> Starlette`, `production_app() -> Starlette`. The tool-result envelope shape is shared with mcp-write (Task 6) by convention, not by import.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2427,7 +2552,9 @@ def test_search_response_matches_the_tool_result_contract():
 
 
 class StubVerifier:
-    ready = True
+    @property
+    def ready(self) -> bool:
+        return True
 
     async def load_keys(self) -> None:
         return None
@@ -2438,7 +2565,7 @@ class StubVerifier:
 
 @pytest.mark.asyncio
 async def test_tool_schema_conforms_to_the_contract_and_rejects_extra_arguments():
-    state = server.State(conn=None, corpora=procedures.load_corpora(FIXTURES), verifier=StubVerifier())
+    state = server.State(session=None, corpora=procedures.load_corpora(FIXTURES), verifier=StubVerifier())
     mcp = server.build_server(state, issuer="http://localhost:18080/realms/ops-dev",
                               resource_url="http://mcp-read:8081/mcp")
     async with Client(mcp) as client:  # in-process: no HTTP, so no bearer middleware; schema and validation only
@@ -2463,7 +2590,7 @@ async def test_tool_schema_conforms_to_the_contract_and_rejects_extra_arguments(
 ```
 
 Run: `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_mcp_read.py -q`
-Expected: `ModuleNotFoundError: No module named 'ops_mcp_read.procedures'`.
+Expected: an `ImportError` for `ops_mcp_read.procedures` (the module does not exist yet).
 
 - [ ] **Step 2: The fixture corpus**
 
@@ -2592,9 +2719,9 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, Protocol, TypedDict
 from uuid import UUID, uuid4
 
 import uvicorn
@@ -2603,7 +2730,7 @@ from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.tools.base import Tool
-from pydantic import ConfigDict, Field
+from pydantic import AnyHttpUrl, ConfigDict, Field
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -2611,7 +2738,7 @@ from starlette.routing import Mount, Route
 
 from ops_core import persistence, settings
 from ops_core.jobs import Server, Tool as ToolName
-from ops_core.tokens import TokenRejected, TokenVerifier
+from ops_core.tokens import Principal, TokenRejected, TokenVerifier
 from ops_mcp_read import procedures
 
 
@@ -2670,12 +2797,13 @@ def search_response(
                                                "corpus_version": version})
 
 
-class Verifier:  # the subset of ops_core.tokens.TokenVerifier the server needs; unit tests stub it
-    ready: bool
+class Verifier(Protocol):  # the subset of ops_core.tokens.TokenVerifier the server needs; unit tests stub it
+    @property
+    def ready(self) -> bool: ...
 
     async def load_keys(self) -> None: ...
 
-    async def verify_async(self, token: str) -> Any: ...
+    async def verify_async(self, token: str) -> Principal: ...
 
 
 class McpVerifier:
@@ -2710,10 +2838,9 @@ def strict_tool(fn: Any) -> Tool:
 
 @dataclass
 class State:
-    conn: persistence.Conn | None
+    session: persistence.Session | None
     corpora: dict[UUID, procedures.Corpus]
     verifier: Verifier
-    lifespan_errors: list[str] = field(default_factory=list)
 
 
 def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
@@ -2726,11 +2853,12 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         """Lexical search over approved procedure sections of the calling run's tenant (AM-15 read tool)."""
         token = get_access_token()
         handle = (ctx.headers or {}).get("x-ops-invocation")  # header names arrive lower-case
-        if token is None or not handle or state.conn is None:
+        if token is None or not handle or state.session is None:
             return envelope("search_procedures", error=tool_error("INVALID_HANDLE", "missing invocation handle"))
         try:
-            invocation = await persistence.resolve_handle(state.conn, handle=handle, server=Server.READ,
-                                                          azp=token.client_id, tool=ToolName.SEARCH_PROCEDURES)
+            async with state.session.unit() as conn:
+                invocation = await persistence.resolve_handle(conn, handle=handle, server=Server.READ,
+                                                              azp=token.client_id, tool=ToolName.SEARCH_PROCEDURES)
         except persistence.HandleRejected as exc:
             return envelope("search_procedures", error=tool_error("INVALID_HANDLE", str(exc)))
         if mode != "lexical":
@@ -2740,7 +2868,8 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
 
     return MCPServer(
         name="mcp-read",
-        auth=AuthSettings(issuer_url=issuer, resource_server_url=resource_url, validate_token_resource=False),
+        auth=AuthSettings(issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url),
+                          validate_token_resource=False),
         token_verifier=McpVerifier(state.verifier, resource_url),
         tools=[strict_tool(search_procedures)],
     )
@@ -2751,24 +2880,24 @@ def build_app(server: MCPServer, state: State) -> Starlette:
 
     @contextlib.asynccontextmanager
     async def lifespan(_: Starlette) -> AsyncIterator[None]:
-        if state.conn is None:
-            state.conn = await persistence.connect(settings.app_postgres(), autocommit=True)
+        if state.session is None:
+            state.session = persistence.Session(await persistence.connect(settings.app_postgres()))
         if not state.verifier.ready:
             await state.verifier.load_keys()
         # A mounted sub-app's lifespan never runs on its own; the session manager lives in it (measured).
         async with mcp_app.router.lifespan_context(mcp_app):
             yield
-        await state.conn.close()
+        await state.session.conn.close()
 
     async def live(_: Request) -> JSONResponse:
         return JSONResponse({"status": "live"})
 
     async def ready(_: Request) -> JSONResponse:
-        if state.conn is None or not state.verifier.ready:
+        if state.session is None or not state.verifier.ready:
             return JSONResponse({"status": "not ready"}, status_code=503)
         try:
-            await state.conn.execute("SELECT 1")
-        except Exception:  # noqa: BLE001  -- readiness reports any database failure as not ready
+            await state.session.read("SELECT 1", ())
+        except Exception:  # readiness reports any database failure as not ready
             return JSONResponse({"status": "not ready"}, status_code=503)
         return JSONResponse({"status": "ready"})
 
@@ -2781,16 +2910,25 @@ def production_app() -> Starlette:
     urls = settings.urls()
     verifier = TokenVerifier(issuer=kc.issuer, audience=urls.mcp_read_resource,
                              allowed_azp=frozenset({"ops-worker"}), jwks_url=kc.jwks_url)
-    state = State(conn=None, corpora=procedures.load_corpora(settings.fixtures_dir()), verifier=verifier)
+    state = State(session=None, corpora=procedures.load_corpora(settings.fixtures_dir()), verifier=verifier)
     return build_app(build_server(state, issuer=kc.issuer, resource_url=urls.mcp_read_resource), state)
 
 
+def serve_app(app: object, port: int) -> None:
+    """Serve with uvicorn programmatically on a selector loop (ruling 23: `uvicorn.run` picks the Proactor loop on
+    Windows and psycopg async refuses it)."""
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    if sys.platform == "win32":
+        asyncio.run(server.serve(), loop_factory=asyncio.SelectorEventLoop)
+    else:
+        asyncio.run(server.serve())
+
+
 def serve() -> None:
-    uvicorn.run(production_app(), host="127.0.0.1", port=settings.env_int("OPS_MCP_READ_PORT", 8081),
-                log_level="warning")
+    serve_app(production_app(), settings.env_int("OPS_MCP_READ_PORT", 8081))
 ```
 
-Notes for the implementer: (a) `Verifier` is a structural type for the unit test's stub; if mypy prefers a `Protocol`, declare it as one (`class Verifier(Protocol)`) — either way no `type: ignore`. (b) If the SDK's `Context.headers` attribute name differs in the locked version, use the one the spike measured (`ctx.headers`). (c) `AuthSettings(issuer_url=...)` takes an `AnyHttpUrl`; passing a `str` validated in the spike. (d) Keep `from ops_core.jobs import Tool as ToolName` to avoid clashing with the SDK's `Tool`.
+(`import asyncio` and `import sys` join the imports.) Notes for the implementer: (a) `Context.headers` is the attribute the spike measured. (b) Keep `from ops_core.jobs import Tool as ToolName` to avoid clashing with the SDK's `Tool`.
 
 Create `mcp-read/src/ops_mcp_read/__main__.py`:
 
@@ -2827,6 +2965,7 @@ from ops_core import persistence, settings
 from ops_core.jobs import Server
 from ops_core.tokens import WorkloadTokenSource
 from ops_mcp_read.server import production_app
+from tests.e2e.conftest import purge_run
 from tests.e2e.test_migrations_and_persistence import new_run
 from tests.plan_b.live import kc
 
@@ -2836,25 +2975,30 @@ pytestmark = pytest.mark.asyncio
 async def test_search_over_http(app_conn: persistence.Conn, secret) -> None:
     kcs = settings.keycloak()
     urls = settings.urls()
-    server = uvicorn.Server(uvicorn.Config(production_app(), host="127.0.0.1", port=8081, log_level="warning"))
+    # Port 18081: the skeleton's own mcp-read may be up on 8081 in the same session (Task 9's fixture).
+    server = uvicorn.Server(uvicorn.Config(production_app(), host="127.0.0.1", port=18081, log_level="warning"))
+    url = "http://127.0.0.1:18081/mcp"
     task = asyncio.create_task(server.serve())
+    run = None
     try:
         while not server.started:
             await asyncio.sleep(0.05)
-        async with app_conn.transaction():
-            tenant, _, run = await new_run(app_conn)
+        async with app_conn.transaction():  # committed: the server reads the handle on its own connection
+            # The seeded alpha tenant: only seeded tenants have a fixture corpus (W11 in the round-1 dry run).
+            _, _, run = await new_run(app_conn, UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7"))
             cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s", (run,))
             job = (await cur.fetchone())["id"]
             handle = await persistence.mint_handle(app_conn, run_id=run, job_id=job, server=Server.READ,
                                                    azp="ops-worker")
-        await app_conn.commit()  # the server reads the handle on its own connection
         worker = WorkloadTokenSource(token_url=kcs.token_url, client_id="ops-worker",
                                      client_secret=secret("kc_client_secret_ops_worker"))
         headers = {"Authorization": f"Bearer {await worker.token()}", "X-Ops-Invocation": handle}
-        async with httpx2.AsyncClient(headers=headers) as hc:
-            async with Client(streamable_http_client(urls.mcp_read, http_client=hc), mode="2026-07-28") as client:
-                res = await client.call_tool("search_procedures", {"query": "reviewer inspect exact content",
-                                                                   "limit": 2, "mode": "lexical"})
+        async with (
+            httpx2.AsyncClient(headers=headers) as hc,
+            Client(streamable_http_client(url, http_client=hc), mode="2026-07-28") as client,
+        ):
+            res = await client.call_tool("search_procedures", {"query": "reviewer inspect exact content",
+                                                               "limit": 2, "mode": "lexical"})
         assert not res.is_error and res.structured_content["status"] == "ok"
         assert res.structured_content["data"]["results"][0]["evidence_id"] == "ALPHA-INCIDENT:v2:review"
         # The persona's token (aud ops-api) and mcp-write's token (aud incident-sim) are refused at the transport.
@@ -2862,23 +3006,20 @@ async def test_search_over_http(app_conn: persistence.Conn, secret) -> None:
         for token in (alex["access_token"], await WorkloadTokenSource(
                 token_url=kcs.token_url, client_id="ops-mcp-write",
                 client_secret=secret("kc_client_secret_ops_mcp_write")).token()):
-            async with httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}",
-                                                   "X-Ops-Invocation": handle}) as hc:
-                async with Client(streamable_http_client(urls.mcp_read, http_client=hc), mode="2026-07-28") as client:
-                    with pytest.raises(MCPError):
-                        await client.call_tool("search_procedures", {"query": "x", "limit": 1, "mode": "lexical"})
-        async with app_conn.transaction():
-            await app_conn.execute("DELETE FROM app.invocation_context WHERE handle = %s", (handle,))
-            await app_conn.execute("DELETE FROM app.jobs WHERE run_id = %s", (run,))
-            await app_conn.execute("DELETE FROM app.run_state_history WHERE run_id = %s", (run,))
-            await app_conn.execute("DELETE FROM app.runs WHERE run_id = %s", (run,))
-        await app_conn.commit()
+            async with (
+                httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}", "X-Ops-Invocation": handle}) as hc,
+                Client(streamable_http_client(url, http_client=hc), mode="2026-07-28") as client,
+            ):
+                with pytest.raises(MCPError):
+                    await client.call_tool("search_procedures", {"query": "x", "limit": 1, "mode": "lexical"})
     finally:
         server.should_exit = True
         await task
+        if run is not None:
+            await purge_run(app_conn, run)
 ```
 
-(`new_run` from the Task 2 test module creates the tenant, conversation and message rows too; the clean-up above removes the run's rows and leaves those small rows behind in the live database — acceptable for the dev stack, which `bootstrap_dev.py down`/`up` does not reset (the volume persists). If the implementer prefers, extend the clean-up to messages, conversations and tenants in that order.)
+(`purge_run` from the e2e conftest removes the run, its rows, and the conversation and message `new_run` made for it; the seeded tenant stays. Imports: add `from uuid import UUID`, drop `purge_tenant`; `urls` is no longer needed in this test.)
 
 Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_mcp_read_live.py -q`
 Expected: `1 passed`.
@@ -2895,7 +3036,7 @@ stateless. Verifies `aud ∋ MCP_READ_RESOURCE_URL`, `azp == ops-worker`; resolv
 jobs. One tool, `search_procedures` (lexical, fixture-backed until T17).
 ```
 
-Run: `PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
+Run: `uv run ruff format mcp-read tests/plan_d/test_mcp_read.py tests/e2e/test_mcp_read_live.py && uv run ruff check --fix mcp-read tests/plan_d/test_mcp_read.py tests/e2e/test_mcp_read_live.py && PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
 Expected: `CHECK: GREEN`.
 
 ```bash
@@ -2912,7 +3053,7 @@ git commit -m "feat(mcp-read): authenticated read server with search_procedures 
 
 **Interfaces:**
 - Consumes: Task 2 persistence (`transition`, `append_event`, `run_row`, `resolve_handle`, `Invocation`, `connect`, errors), Task 3 (`TokenVerifier`, `WorkloadTokenSource`), Task 4's HTTP contract, `ops_core.outcomes` (`ActionOutcome`, `Receipt`, `Tombstone`, `ToolOutcome`, `DestinationState`, `outcome_from_destination`, `EventType`, `EventSource`), `ops_core.states` (`RunState`, `Performer`, `Reason`), `ops_core.canonical.canonical_json`.
-- Produces: `ops_mcp_write.destination` — `@dataclass(frozen=True) Reply(status_code: int, document: dict[str, Any])`, `async post_incident(http, *, url, token, action_id, payload_sha256, payload_canonical) -> Reply | None`, `classify(reply, *, action_id, payload_sha256) -> ActionOutcome` (pure). `ops_mcp_write.execution` — `@dataclass(frozen=True) Grant(action_id, run_id, proposal_id, tenant_id, conversation_id, payload_sha256, payload_canonical, attempt_state, detail)`, `class GrantRefused(PersistenceError)`, `async load_grant(conn, run_id) -> Grant | None`, `async grant_execution(conn, *, invocation, proposal_id) -> Grant` (replays return the existing grant), `async mark_sent(conn, grant) -> None`, `async record_outcome(conn, grant, outcome) -> None`, `async mark_unknown(conn, grant) -> None`, `next_step(attempt_state: str) -> Literal["stored", "send", "resend"]` (pure), `async create_incident(deps, *, invocation, proposal_id) -> ActionOutcome`, `@dataclass Deps(conn, http, destination_url, destination_token)`. `ops_mcp_write.server` — the same `ToolResult`, `envelope`, `tool_error`, `McpVerifier`, `strict_tool` as mcp-read (duplicated on purpose: members do not import each other, ADR-0001), `outcome_envelope(outcome) -> ToolResult`, `State`, `build_server`, `build_app`, `production_app`, `serve`.
+- Produces: `ops_mcp_write.destination` — `@dataclass(frozen=True) Reply(status_code: int, document: dict[str, Any])`, `async post_incident(http, *, url, token, action_id, payload_sha256, payload_canonical) -> Reply | None`, `classify(reply, *, action_id, payload_sha256) -> ActionOutcome` (pure). `ops_mcp_write.execution` — `@dataclass(frozen=True) Grant(action_id, run_id, proposal_id, tenant_id, conversation_id, payload_sha256, payload_canonical, attempt_state, detail)`, `class GrantRefused(PersistenceError)`, `async load_grant(conn, run_id) -> Grant | None`, `async grant_execution(conn, *, invocation, proposal_id) -> Grant` (replays return the existing grant), `async mark_sent(conn, grant) -> None`, `async record_outcome(conn, grant, outcome) -> None`, `async mark_unknown(conn, grant) -> None`, `next_step(attempt_state: str) -> Literal["stored", "send", "resend"]` (pure), `async create_incident(deps, *, invocation, proposal_id) -> ActionOutcome`, `@dataclass Deps(session: persistence.Session, http, destination_url, destination_token)`; every `execution` function takes the `conn` of an open unit of work (`async with deps.session.unit() as conn`) and opens no transaction itself. `ops_mcp_write.server` — the same `ToolResult`, `envelope`, `tool_error`, `McpVerifier`, `strict_tool` as mcp-read (duplicated on purpose: members do not import each other, ADR-0001), `outcome_envelope(outcome) -> ToolResult`, `State`, `build_server`, `build_app`, `production_app`, `serve`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3010,7 +3151,9 @@ def test_next_step_replays_without_a_second_send_once_resolved():
 
 
 class StubVerifier:
-    ready = True
+    @property
+    def ready(self) -> bool:
+        return True
 
     async def load_keys(self) -> None:
         return None
@@ -3037,7 +3180,7 @@ async def test_tool_schema_matches_the_contract_and_rejects_extras():
 ```
 
 Run: `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_mcp_write.py -q`
-Expected: `ModuleNotFoundError: No module named 'ops_mcp_write.destination'`.
+Expected: an `ImportError` for `ops_mcp_write.destination` (the module does not exist yet).
 
 - [ ] **Step 2: The destination client**
 
@@ -3089,8 +3232,9 @@ async def post_incident(
     payload_canonical: bytes,
 ) -> Reply | None:
     """POST the approved bytes; None means the transport gave no usable answer (the caller records UNKNOWN)."""
+    # The canonical bytes travel as one JSON string, so the destination hashes exactly what the reviewer approved.
     body = canonical_json({"action_id": str(action_id), "payload_sha256": payload_sha256,
-                           "payload": json.loads(payload_canonical)})
+                           "payload_canonical": payload_canonical.decode("utf-8")})
     try:
         response = await http.post(f"{url}/internal/incidents", content=body,
                                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
@@ -3214,88 +3358,90 @@ async def _attempt_state(conn: persistence.Conn, action_id: UUID, state: str, *,
 
 
 async def grant_execution(conn: persistence.Conn, *, invocation: persistence.Invocation, proposal_id: UUID) -> Grant:
-    """The §13 final gate in its T08 form: the proposal is this run's active, approved revision; one grant per run."""
-    async with conn.transaction():
-        run = await persistence.run_row(conn, invocation.run_id, lock=True)
-        existing = await load_grant(conn, invocation.run_id)
-        if existing is not None:
-            return existing  # UNIQUE (run_id): a replay finds the grant it already has
-        cur = await conn.execute("SELECT * FROM app.proposals WHERE proposal_id = %s AND run_id = %s AND tenant_id = %s",
-                                 (proposal_id, invocation.run_id, invocation.tenant_id))
-        proposal = await cur.fetchone()
-        if proposal is None:
-            raise GrantRefused("proposal does not belong to this run")
-        if run["active_proposal_id"] != proposal_id or run["state"] != RunState.APPROVED.value:
-            raise GrantRefused("proposal is not the run's approved active revision")
-        cur = await conn.execute("SELECT 1 FROM app.decisions WHERE proposal_id = %s AND decision = 'approve'",
-                                 (proposal_id,))
-        if await cur.fetchone() is None:
-            raise GrantRefused("no approving decision is recorded")
-        action_id = uuid4()  # random inside the gate (SA:168), never derived from the proposal
-        await conn.execute(
-            "INSERT INTO app.execution_grant (action_id, run_id, proposal_id, payload_sha256) VALUES (%s, %s, %s, %s)",
-            (action_id, invocation.run_id, proposal_id, proposal["payload_sha256"]),
-        )
-        await conn.execute("INSERT INTO app.action_attempt (action_id, attempt_no) VALUES (%s, 1)", (action_id,))
-        await _attempt_state(conn, action_id, "INTENT")
-        await persistence.transition(conn, run_id=invocation.run_id, dst=RunState.EXECUTING,
-                                     performer=Performer.GRANT_EXECUTION)
-        await persistence.append_event(conn, tenant_id=invocation.tenant_id, conversation_id=invocation.conversation_id,
-                                       run_id=invocation.run_id, type=EventType.ACTION_GRANTED,
-                                       source=EventSource.APPLICATION,
-                                       payload={"action_id": str(action_id), "proposal_id": str(proposal_id)})
+    """The §13 final gate in its T08 form: the proposal is this run's active, approved revision; one grant per run.
+    Runs inside the caller's unit of work."""
+    run = await persistence.run_row(conn, invocation.run_id, lock=True)
+    existing = await load_grant(conn, invocation.run_id)
+    if existing is not None:
+        if existing.proposal_id != proposal_id:
+            raise GrantRefused("this run's grant binds another proposal")
+        return existing  # UNIQUE (run_id): a replay finds the grant it already has
+    cur = await conn.execute("SELECT * FROM app.proposals WHERE proposal_id = %s AND run_id = %s AND tenant_id = %s",
+                             (proposal_id, invocation.run_id, invocation.tenant_id))
+    proposal = await cur.fetchone()
+    if proposal is None:
+        raise GrantRefused("proposal does not belong to this run")
+    if run["active_proposal_id"] != proposal_id or run["state"] != RunState.APPROVED.value:
+        raise GrantRefused("proposal is not the run's approved active revision")
+    cur = await conn.execute("SELECT 1 FROM app.decisions WHERE proposal_id = %s AND decision = 'approve'",
+                             (proposal_id,))
+    if await cur.fetchone() is None:
+        raise GrantRefused("no approving decision is recorded")
+    action_id = uuid4()  # random inside the gate (SA:168), never derived from the proposal
+    await conn.execute(
+        "INSERT INTO app.execution_grant (action_id, run_id, proposal_id, payload_sha256) VALUES (%s, %s, %s, %s)",
+        (action_id, invocation.run_id, proposal_id, proposal["payload_sha256"]),
+    )
+    await conn.execute("INSERT INTO app.action_attempt (action_id, attempt_no) VALUES (%s, 1)", (action_id,))
+    await _attempt_state(conn, action_id, "INTENT")
+    await persistence.transition(conn, run_id=invocation.run_id, dst=RunState.EXECUTING,
+                                 performer=Performer.GRANT_EXECUTION)
+    await persistence.append_event(conn, tenant_id=invocation.tenant_id, conversation_id=invocation.conversation_id,
+                                   run_id=invocation.run_id, type=EventType.ACTION_GRANTED,
+                                   source=EventSource.APPLICATION,
+                                   payload={"action_id": str(action_id), "proposal_id": str(proposal_id)})
     grant = await load_grant(conn, invocation.run_id)
     assert grant is not None
     return grant
 
 
 async def mark_sent(conn: persistence.Conn, grant: Grant) -> None:
-    """SENT is committed before the first byte leaves (SA:229): a crash after this point is reconciled, not retried."""
-    async with conn.transaction():
-        await _attempt_state(conn, grant.action_id, "SENT")
-        await persistence.append_event(conn, tenant_id=grant.tenant_id, conversation_id=grant.conversation_id,
-                                       run_id=grant.run_id, type=EventType.ACTION_DISPATCHED,
-                                       source=EventSource.APPLICATION, payload={"action_id": str(grant.action_id)})
+    """SENT, in its own unit of work that commits before the first byte leaves (SA:229): a crash after this point is
+    reconciled, not retried."""
+    await _attempt_state(conn, grant.action_id, "SENT")
+    await persistence.append_event(conn, tenant_id=grant.tenant_id, conversation_id=grant.conversation_id,
+                                   run_id=grant.run_id, type=EventType.ACTION_DISPATCHED,
+                                   source=EventSource.APPLICATION, payload={"action_id": str(grant.action_id)})
 
 
 async def record_outcome(conn: persistence.Conn, grant: Grant, outcome: ActionOutcome) -> None:
     """RESOLVED plus the run transition the outcome implies; the event is the destination's assertion (AM-14)."""
     data = outcome.model_dump(mode="json")
-    async with conn.transaction():
-        await _attempt_state(conn, grant.action_id, "RESOLVED", outcome=outcome.status.value, detail=data)
-        common = {"tenant_id": grant.tenant_id, "conversation_id": grant.conversation_id, "run_id": grant.run_id}
-        if outcome.status is ToolOutcome.SUCCEEDED:
-            await persistence.transition(conn, run_id=grant.run_id, dst=RunState.SUCCEEDED,
-                                         performer=Performer.RECORD_OUTCOME)
-            await persistence.append_event(conn, type=EventType.ACTION_CONFIRMED, source=EventSource.DESTINATION,
-                                           payload={"status": "SUCCEEDED", "action_id": str(grant.action_id),
-                                                    "receipt": data["receipt"]}, **common)
-        elif outcome.status is ToolOutcome.FAILED_NO_COMMIT:
-            assert outcome.reason is not None  # ActionOutcome's own invariant
-            await persistence.transition(conn, run_id=grant.run_id, dst=RunState.FAILED,
-                                         performer=Performer.RECORD_OUTCOME, reason=outcome.reason)
-            await persistence.append_event(conn, type=EventType.ACTION_FAILED, source=EventSource.DESTINATION,
-                                           payload={"action_id": str(grant.action_id), "reason": outcome.reason.value,
-                                                    "tombstone": data["tombstone"]}, **common)
-        elif outcome.status is ToolOutcome.CONFLICT:
-            await persistence.transition(conn, run_id=grant.run_id, dst=RunState.ESCALATED,
-                                         performer=Performer.RECORD_OUTCOME, reason=Reason.CONFLICT)
-            await persistence.append_event(conn, type=EventType.ACTION_CONFLICT, source=EventSource.DESTINATION,
-                                           payload={"action_id": str(grant.action_id)}, **common)
-        else:
-            raise ValueError("UNKNOWN is recorded by mark_unknown, not record_outcome")
+    await _attempt_state(conn, grant.action_id, "RESOLVED", outcome=outcome.status.value, detail=data)
+    tenant, conversation, run = grant.tenant_id, grant.conversation_id, grant.run_id
+    if outcome.status is ToolOutcome.SUCCEEDED:
+        await persistence.transition(conn, run_id=run, dst=RunState.SUCCEEDED, performer=Performer.RECORD_OUTCOME)
+        await persistence.append_event(conn, tenant_id=tenant, conversation_id=conversation, run_id=run,
+                                       type=EventType.ACTION_CONFIRMED, source=EventSource.DESTINATION,
+                                       payload={"status": "SUCCEEDED", "action_id": str(grant.action_id),
+                                                "receipt": data["receipt"]})
+    elif outcome.status is ToolOutcome.FAILED_NO_COMMIT:
+        assert outcome.reason is not None  # ActionOutcome's own invariant
+        await persistence.transition(conn, run_id=run, dst=RunState.FAILED, performer=Performer.RECORD_OUTCOME,
+                                     reason=outcome.reason)
+        await persistence.append_event(conn, tenant_id=tenant, conversation_id=conversation, run_id=run,
+                                       type=EventType.ACTION_FAILED, source=EventSource.DESTINATION,
+                                       payload={"action_id": str(grant.action_id), "reason": outcome.reason.value,
+                                                "tombstone": data["tombstone"]})
+    elif outcome.status is ToolOutcome.CONFLICT:
+        await persistence.transition(conn, run_id=run, dst=RunState.ESCALATED, performer=Performer.RECORD_OUTCOME,
+                                     reason=Reason.CONFLICT)
+        await persistence.append_event(conn, tenant_id=tenant, conversation_id=conversation, run_id=run,
+                                       type=EventType.ACTION_CONFLICT, source=EventSource.DESTINATION,
+                                       payload={"action_id": str(grant.action_id)})
+    else:
+        raise ValueError("UNKNOWN is recorded by mark_unknown, not record_outcome")
 
 
 async def mark_unknown(conn: persistence.Conn, grant: Grant) -> None:
     """A transport failure after SENT: the run says so and waits for reconciliation (T22)."""
-    async with conn.transaction():
-        run = await persistence.run_row(conn, grant.run_id, lock=True)
-        if run["state"] == RunState.EXECUTING.value:  # a second UNKNOWN changes nothing
-            await persistence.transition(conn, run_id=grant.run_id, dst=RunState.OUTCOME_UNKNOWN,
-                                         performer=Performer.MARK_UNKNOWN)
-            await persistence.append_event(conn, tenant_id=grant.tenant_id, conversation_id=grant.conversation_id,
-                                           run_id=grant.run_id, type=EventType.ACTION_UNCERTAIN,
-                                           source=EventSource.APPLICATION, payload={"action_id": str(grant.action_id)})
+    run = await persistence.run_row(conn, grant.run_id, lock=True)
+    if run["state"] == RunState.EXECUTING.value:  # a second UNKNOWN changes nothing
+        await persistence.transition(conn, run_id=grant.run_id, dst=RunState.OUTCOME_UNKNOWN,
+                                     performer=Performer.MARK_UNKNOWN)
+        await persistence.append_event(conn, tenant_id=grant.tenant_id, conversation_id=grant.conversation_id,
+                                       run_id=grant.run_id, type=EventType.ACTION_UNCERTAIN,
+                                       source=EventSource.APPLICATION, payload={"action_id": str(grant.action_id)})
 
 
 def next_step(attempt_state: str) -> Literal["stored", "send", "resend"]:
@@ -3310,37 +3456,73 @@ def next_step(attempt_state: str) -> Literal["stored", "send", "resend"]:
 
 @dataclass
 class Deps:
-    conn: persistence.Conn
+    session: persistence.Session
     http: httpx2.AsyncClient
     destination_url: str
     destination_token: WorkloadTokenSource
 
 
 async def create_incident(deps: Deps, *, invocation: persistence.Invocation, proposal_id: UUID) -> ActionOutcome:
-    grant = await grant_execution(deps.conn, invocation=invocation, proposal_id=proposal_id)
+    """Four units of work in AM-13 order; the destination call sits between two commits, never inside one."""
+    async with deps.session.unit() as conn:
+        grant = await grant_execution(conn, invocation=invocation, proposal_id=proposal_id)
     step = next_step(grant.attempt_state)
     if step == "stored":
         assert grant.detail is not None
         return ActionOutcome.model_validate_json(json.dumps(grant.detail))
     if step == "send":
-        await mark_sent(deps.conn, grant)
+        async with deps.session.unit() as conn:
+            await mark_sent(conn, grant)  # committed here, before any I/O
     reply = await destination.post_incident(deps.http, url=deps.destination_url,
                                             token=await deps.destination_token.token(), action_id=grant.action_id,
                                             payload_sha256=grant.payload_sha256,
                                             payload_canonical=grant.payload_canonical)
     outcome = destination.classify(reply, action_id=grant.action_id, payload_sha256=grant.payload_sha256)
-    if outcome.status is ToolOutcome.UNKNOWN:
-        await mark_unknown(deps.conn, grant)
-    else:
-        await record_outcome(deps.conn, grant, outcome)
+    async with deps.session.unit() as conn:
+        if outcome.status is ToolOutcome.UNKNOWN:
+            await mark_unknown(conn, grant)
+        else:
+            await record_outcome(conn, grant, outcome)
     return outcome
 ```
 
-Note: `persistence.append_event(..., **common)` passes `tenant_id`, `conversation_id`, `run_id` as keywords; mypy accepts a `dict[str, UUID]` unpacked into keyword-only `UUID` parameters. If it complains, pass the three explicitly.
-
 - [ ] **Step 4: The server**
 
-Create `mcp-write/src/ops_mcp_write/server.py` with the same `ToolResult`, `stamp`, `tool_error`, `envelope`, `McpVerifier`, `Verifier`, `strict_tool` definitions as `ops_mcp_read.server` (copy them verbatim; add one comment above the block: "Duplicated from mcp-read on purpose: members never import each other (ADR-0001, test_layout); the shape is pinned by the tool-result contract tests in both packages."), then:
+Create `mcp-write/src/ops_mcp_write/server.py`. Its import block is:
+
+```python
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import sys
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any, Protocol, TypedDict
+from uuid import UUID, uuid4
+
+import httpx2
+import uvicorn
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.settings import AuthSettings
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.tools.base import Tool
+from pydantic import AnyHttpUrl, ConfigDict
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Mount, Route
+
+from ops_core import persistence, settings
+from ops_core.jobs import Server, Tool as ToolName
+from ops_core.outcomes import ActionOutcome, ToolOutcome
+from ops_core.tokens import Principal, TokenRejected, TokenVerifier, WorkloadTokenSource
+from ops_mcp_write import execution
+```
+
+Then the same `ToolResult`, `stamp`, `tool_error`, `envelope`, `Verifier` (Protocol), `McpVerifier`, `strict_tool` and `serve_app` definitions as `ops_mcp_read.server` (copy them verbatim; add one comment above the block: "Duplicated from mcp-read on purpose: members never import each other (ADR-0001, test_layout); the shape is pinned by the tool-result contract tests in both packages."), then:
 
 ```python
 def outcome_envelope(outcome: ActionOutcome) -> ToolResult:
@@ -3366,8 +3548,9 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         if token is None or not handle or state.deps is None:
             return envelope("create_incident", error=tool_error("INVALID_HANDLE", "missing invocation handle"))
         try:
-            invocation = await persistence.resolve_handle(state.deps.conn, handle=handle, server=Server.WRITE,
-                                                          azp=token.client_id, tool=ToolName.CREATE_INCIDENT)
+            async with state.deps.session.unit() as conn:
+                invocation = await persistence.resolve_handle(conn, handle=handle, server=Server.WRITE,
+                                                              azp=token.client_id, tool=ToolName.CREATE_INCIDENT)
             outcome = await execution.create_incident(state.deps, invocation=invocation, proposal_id=proposal_id)
         except persistence.HandleRejected as exc:
             return envelope("create_incident", error=tool_error("INVALID_HANDLE", str(exc)))
@@ -3379,7 +3562,8 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
 
     return MCPServer(
         name="mcp-write",
-        auth=AuthSettings(issuer_url=issuer, resource_server_url=resource_url, validate_token_resource=False),
+        auth=AuthSettings(issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url),
+                          validate_token_resource=False),
         token_verifier=McpVerifier(state.verifier, resource_url),
         tools=[strict_tool(create_incident)],
     )
@@ -3393,7 +3577,7 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         if state.deps is None:
             kc = settings.keycloak()
             state.deps = execution.Deps(
-                conn=await persistence.connect(settings.app_postgres()),
+                session=persistence.Session(await persistence.connect(settings.app_postgres())),
                 http=httpx2.AsyncClient(),
                 destination_url=settings.urls().incident_sim,
                 destination_token=WorkloadTokenSource(token_url=kc.token_url, client_id="ops-mcp-write",
@@ -3404,7 +3588,7 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         async with mcp_app.router.lifespan_context(mcp_app):
             yield
         await state.deps.http.aclose()
-        await state.deps.conn.close()
+        await state.deps.session.conn.close()
 
     async def live(_: Request) -> JSONResponse:
         return JSONResponse({"status": "live"})
@@ -3413,9 +3597,8 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         if state.deps is None or not state.verifier.ready:
             return JSONResponse({"status": "not ready"}, status_code=503)
         try:
-            async with state.deps.conn.transaction():
-                await state.deps.conn.execute("SELECT 1")
-        except Exception:  # noqa: BLE001  -- readiness reports any database failure as not ready
+            await state.deps.session.read("SELECT 1", ())
+        except Exception:  # readiness reports any database failure as not ready
             return JSONResponse({"status": "not ready"}, status_code=503)
         return JSONResponse({"status": "ready"})
 
@@ -3433,16 +3616,15 @@ def production_app() -> Starlette:
 
 
 def serve() -> None:
-    uvicorn.run(production_app(), host="127.0.0.1", port=settings.env_int("OPS_MCP_WRITE_PORT", 8082),
-                log_level="warning")
+    serve_app(production_app(), settings.env_int("OPS_MCP_WRITE_PORT", 8082))
 ```
 
-(Imports as in mcp-read plus `import httpx2`, `from ops_core.outcomes import ActionOutcome, ToolOutcome`, `from ops_core.tokens import TokenVerifier, WorkloadTokenSource`, `from ops_mcp_write import execution`, `from uuid import UUID`.) The write server's connection is not autocommit: every unit of work in `execution` is an explicit transaction, and `ready` wraps its probe in one so no implicit transaction lingers.
+The write server's connection is autocommit (ruling 24); every write happens inside `Session.unit()`, which is a real transaction, and `mark_sent`'s unit commits before `post_incident` is awaited.
 
 `__main__.py` mirrors mcp-read's with `ops_mcp_write.server.serve`.
 
 Run: `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_mcp_write.py -q`
-Expected: `9 passed` (4 parametrized envelopes + 5).
+Expected: `8 passed` (4 parametrized envelopes + 4).
 
 - [ ] **Step 5: Live: the whole write path against a real incident-sim, twice**
 
@@ -3467,7 +3649,8 @@ from ops_core.outcomes import EventSource, EventType, ToolOutcome
 from ops_core.states import Performer, RunState
 from ops_core.tokens import WorkloadTokenSource
 from ops_incident_sim.app import production_app as incident_sim_app
-from ops_mcp_write import execution
+from ops_mcp_write import destination, execution
+from tests.e2e.conftest import purge_run, purge_tenant
 from tests.e2e.test_migrations_and_persistence import new_run
 
 pytestmark = pytest.mark.asyncio
@@ -3520,26 +3703,47 @@ async def approved_run(conn: persistence.Conn) -> tuple:
     return tenant, conv, run, proposal, handle
 
 
-async def test_write_path_twice(app_conn: persistence.Conn, secret) -> None:
-    server = uvicorn.Server(uvicorn.Config(incident_sim_app(), host="127.0.0.1", port=8090, log_level="warning"))
+async def test_write_path_twice(app_conn: persistence.Conn, secret, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Port 18090: the skeleton's own incident-sim may hold 8090 in the same session (Task 9's fixture).
+    server = uvicorn.Server(uvicorn.Config(incident_sim_app(), host="127.0.0.1", port=18090, log_level="warning"))
     task = asyncio.create_task(server.serve())
+    observed: list[str] = []
+    original_post = destination.post_incident
+
+    async def post_with_probe(*args, **kwargs):
+        # SA:229 / BUILD_SPEC §11: by the time the first byte leaves, SENT must be durable. A second connection sees
+        # only committed rows, so it is the witness.
+        witness = await persistence.connect(settings.app_postgres())
+        try:
+            cur = await witness.execute(
+                "SELECT state FROM app.action_attempt_state WHERE action_id = %s ORDER BY seq DESC LIMIT 1",
+                (kwargs["action_id"],))
+            observed.append((await cur.fetchone() or {}).get("state", "NONE"))
+        finally:
+            await witness.close()
+        return await original_post(*args, **kwargs)
+
+    monkeypatch.setattr(destination, "post_incident", post_with_probe)
+    tenant = run = None
     try:
         while not server.started:
             await asyncio.sleep(0.05)
-        async with app_conn.transaction():
+        async with app_conn.transaction():  # committed: the witness connection must see the rows
             tenant, conv, run, proposal, handle = await approved_run(app_conn)
-        await app_conn.commit()
-        invocation = await persistence.resolve_handle(app_conn, handle=handle, server=Server.WRITE, azp="ops-worker",
-                                                      tool=Tool.CREATE_INCIDENT)
+        session = persistence.Session(app_conn)
+        async with session.unit() as conn:
+            invocation = await persistence.resolve_handle(conn, handle=handle, server=Server.WRITE, azp="ops-worker",
+                                                          tool=Tool.CREATE_INCIDENT)
         kc = settings.keycloak()
         async with httpx2.AsyncClient() as http:
-            deps = execution.Deps(conn=app_conn, http=http, destination_url=settings.urls().incident_sim,
+            deps = execution.Deps(session=session, http=http, destination_url="http://127.0.0.1:18090",
                                   destination_token=WorkloadTokenSource(
                                       token_url=kc.token_url, client_id="ops-mcp-write",
                                       client_secret=secret("kc_client_secret_ops_mcp_write")))
             first = await execution.create_incident(deps, invocation=invocation, proposal_id=proposal)
             second = await execution.create_incident(deps, invocation=invocation, proposal_id=proposal)
         assert first.status is ToolOutcome.SUCCEEDED and second == first
+        assert observed == ["SENT"]  # exactly one POST, and SENT was committed before it
         row = await persistence.run_row(app_conn, run)
         assert row["state"] == "SUCCEEDED"
         cur = await app_conn.execute("SELECT type, source FROM app.events WHERE run_id = %s ORDER BY sequence", (run,))
@@ -3549,13 +3753,15 @@ async def test_write_path_twice(app_conn: persistence.Conn, secret) -> None:
         cur = await app_conn.execute("SELECT count(*) AS n FROM app.action_attempt_state WHERE action_id = %s",
                                      (first.action_id,))
         assert (await cur.fetchone())["n"] == 3  # INTENT, SENT, RESOLVED and nothing for the replay
-        await app_conn.rollback()
     finally:
         server.should_exit = True
         await task
+        if run is not None:
+            await purge_run(app_conn, run)
+            await purge_tenant(app_conn, tenant)
 ```
 
-The incident database keeps the committed key; the application rows stay in the dev database (same note as Task 5).
+The incident database keeps the committed key (keys are permanent by design, SA:265; each run of the test mints a fresh action id); the application rows are purged in `finally`.
 
 Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_mcp_write_live.py -q`
 Expected: `1 passed`.
@@ -3573,7 +3779,7 @@ Append to `mcp-write/README.md`:
 token → RESOLVED. A replay returns the recorded outcome; a transport failure records OUTCOME_UNKNOWN (reconciliation: T22).
 ```
 
-Run: `PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
+Run: `uv run ruff format mcp-write tests/plan_d/test_mcp_write.py tests/e2e/test_mcp_write_live.py && uv run ruff check --fix mcp-write tests/plan_d/test_mcp_write.py tests/e2e/test_mcp_write_live.py && PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
 Expected: `CHECK: GREEN`.
 
 ```bash
@@ -3629,7 +3835,9 @@ MEMBERS = {ALEX: store.Membership(ALPHA, frozenset({"requester"})), SAM: store.M
 
 
 class StubVerifier:
-    ready = True
+    @property
+    def ready(self) -> bool:
+        return True
 
     async def load_keys(self) -> None:
         return None
@@ -3808,7 +4016,7 @@ def test_health(api):
 ```
 
 Run: `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_api.py -q`
-Expected: `ModuleNotFoundError: No module named 'ops_api.store'`.
+Expected: an `ImportError` for `ops_api.store` (the module does not exist yet).
 
 - [ ] **Step 2: The store**
 
@@ -3912,11 +4120,11 @@ class Store(Protocol):
 
 class DbStore:
     def __init__(self, conn: persistence.Conn) -> None:
-        self.conn = conn
+        self.session = persistence.Session(conn)  # ruling 24: one unit of work at a time, each a real transaction
 
     async def membership(self, issuer: str, subject: UUID) -> Membership | None:
-        async with self.conn.transaction():
-            cur = await self.conn.execute(
+        async with self.session.unit() as conn:
+            cur = await conn.execute(
                 "SELECT tenant_id, role FROM app.memberships WHERE issuer = %s AND subject = %s AND active",
                 (issuer, subject),
             )
@@ -3927,8 +4135,8 @@ class DbStore:
 
     async def create_conversation(self, tenant_id: UUID, created_by: UUID) -> UUID:
         cid = uuid4()
-        async with self.conn.transaction():
-            await self.conn.execute(
+        async with self.session.unit() as conn:
+            await conn.execute(
                 "INSERT INTO app.conversations (conversation_id, tenant_id, created_by) VALUES (%s, %s, %s)",
                 (cid, tenant_id, created_by),
             )
@@ -3939,26 +4147,26 @@ class DbStore:
         assert request.context is not None and request.context.asset_id is not None  # app.py checked the route
         message_id, run_id = uuid4(), uuid4()
         try:
-            async with self.conn.transaction():
-                cur = await self.conn.execute(
+            async with self.session.unit() as conn:
+                cur = await conn.execute(
                     "SELECT 1 FROM app.conversations WHERE conversation_id = %s AND tenant_id = %s",
                     (conversation_id, tenant_id),
                 )
                 if await cur.fetchone() is None:
                     raise NotFound
-                await self.conn.execute(
+                await conn.execute(
                     "INSERT INTO app.messages (message_id, tenant_id, conversation_id, kind, text, context, author)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s)",
                     (message_id, tenant_id, conversation_id, request.kind.value, request.text,
                      Jsonb(request.context.model_dump(mode="json")), requester),
                 )
                 version = await persistence.create_run(
-                    self.conn, run_id=run_id, tenant_id=tenant_id, conversation_id=conversation_id,
+                    conn, run_id=run_id, tenant_id=tenant_id, conversation_id=conversation_id,
                     message_id=message_id, requester=requester, intent=Intent.INVESTIGATE,
                     asset_id=request.context.asset_id, start_at=start_at, end_at=end_at,
                     supersedes_run_id=request.supersedes_run_id,
                 )
-                await persistence.append_event(self.conn, tenant_id=tenant_id, conversation_id=conversation_id,
+                await persistence.append_event(conn, tenant_id=tenant_id, conversation_id=conversation_id,
                                                run_id=run_id, type=EventType.RUN_ACCEPTED,
                                                source=EventSource.APPLICATION, payload={})
         except psycopg.errors.UniqueViolation as exc:
@@ -3969,27 +4177,22 @@ class DbStore:
         return Accepted(conversation_id, message_id, run_id, RunState.QUEUED.value, version)
 
     async def run(self, tenant_id: UUID, run_id: UUID) -> dict[str, Any] | None:
-        async with self.conn.transaction():
-            cur = await self.conn.execute("SELECT * FROM app.runs WHERE run_id = %s AND tenant_id = %s",
-                                          (run_id, tenant_id))
-            row = await cur.fetchone()
+        row = await self.session.read("SELECT * FROM app.runs WHERE run_id = %s AND tenant_id = %s", (run_id, tenant_id))
         return None if row is None else dict(row)
 
     async def proposal(self, tenant_id: UUID, proposal_id: UUID) -> dict[str, Any] | None:
-        async with self.conn.transaction():
-            cur = await self.conn.execute(
-                "SELECT p.*, r.requester, r.state AS run_state FROM app.proposals p JOIN app.runs r ON r.run_id = p.run_id"
-                " WHERE p.proposal_id = %s AND p.tenant_id = %s",
-                (proposal_id, tenant_id),
-            )
-            row = await cur.fetchone()
+        row = await self.session.read(
+            "SELECT p.*, r.requester, r.state AS run_state FROM app.proposals p JOIN app.runs r ON r.run_id = p.run_id"
+            " WHERE p.proposal_id = %s AND p.tenant_id = %s",
+            (proposal_id, tenant_id),
+        )
         return None if row is None else dict(row)
 
     async def decide(self, *, tenant_id: UUID, proposal_id: UUID, reviewer: UUID,
                      request: DecisionRequest) -> Decided:
         try:
-            async with self.conn.transaction():
-                cur = await self.conn.execute(
+            async with self.session.unit() as conn:
+                cur = await conn.execute(
                     "SELECT p.run_id, p.revision, p.payload_sha256 FROM app.proposals p"
                     " WHERE p.proposal_id = %s AND p.tenant_id = %s",
                     (proposal_id, tenant_id),
@@ -3997,41 +4200,44 @@ class DbStore:
                 proposal = await cur.fetchone()
                 if proposal is None:
                     raise NotFound
-                run = await persistence.run_row(self.conn, proposal["run_id"], lock=True)
+                run = await persistence.run_row(conn, proposal["run_id"], lock=True)
                 if run["active_proposal_id"] != proposal_id or run["state"] != RunState.AWAITING_APPROVAL.value:
                     raise Conflict("VERSION_CONFLICT")
                 if (proposal["revision"], proposal["payload_sha256"]) != (request.expected_revision,
                                                                          request.expected_payload_sha256):
                     raise Conflict("VERSION_CONFLICT")  # exact content binding (BUILD_SPEC §12)
-                await self.conn.execute(
+                await conn.execute(
                     "INSERT INTO app.decisions (decision_id, proposal_id, reviewer, decision, reason,"
                     " expected_payload_sha256) VALUES (%s, %s, %s, %s, %s, %s)",
                     (uuid4(), proposal_id, reviewer, request.decision, request.reason, request.expected_payload_sha256),
                 )
-                common = {"tenant_id": tenant_id, "conversation_id": run["conversation_id"], "run_id": run["run_id"]}
+                run_id: UUID = run["run_id"]
+                conversation_id: UUID = run["conversation_id"]
                 if request.decision == "approve":
-                    version = await persistence.transition(self.conn, run_id=run["run_id"], dst=RunState.APPROVED,
+                    version = await persistence.transition(conn, run_id=run_id, dst=RunState.APPROVED,
                                                            performer=Performer.RECORD_DECISION)
-                    await persistence.insert_job(self.conn, job_type=JobType.EXECUTE, run_id=run["run_id"],
+                    await persistence.insert_job(conn, job_type=JobType.EXECUTE, run_id=run_id,
                                                  proposal_id=proposal_id)
-                    await persistence.append_event(self.conn, type=EventType.APPROVAL_RECORDED,
+                    await persistence.append_event(conn, tenant_id=tenant_id, conversation_id=conversation_id,
+                                                   run_id=run_id, type=EventType.APPROVAL_RECORDED,
                                                    source=EventSource.APPLICATION,
-                                                   payload={"proposal_id": str(proposal_id)}, **common)
+                                                   payload={"proposal_id": str(proposal_id)})
                     status = RunState.APPROVED.value
                 else:
-                    version = await persistence.transition(self.conn, run_id=run["run_id"], dst=RunState.REJECTED,
+                    version = await persistence.transition(conn, run_id=run_id, dst=RunState.REJECTED,
                                                            performer=Performer.RECORD_DECISION, reason=Reason.REJECTED)
-                    await persistence.append_event(self.conn, type=EventType.RUN_REJECTED,
+                    await persistence.append_event(conn, tenant_id=tenant_id, conversation_id=conversation_id,
+                                                   run_id=run_id, type=EventType.RUN_REJECTED,
                                                    source=EventSource.APPLICATION,
-                                                   payload={"proposal_id": str(proposal_id)}, **common)
+                                                   payload={"proposal_id": str(proposal_id)})
                     status = RunState.REJECTED.value
         except psycopg.errors.UniqueViolation as exc:
             raise Conflict("VERSION_CONFLICT") from exc  # decisions.proposal_id UNIQUE: the first decision won
-        return Decided(proposal_id, run["run_id"], request.decision, status, version)
+        return Decided(proposal_id, run_id, request.decision, status, version)
 
     async def events(self, tenant_id: UUID, run_id: UUID, *, after: int, limit: int) -> list[dict[str, Any]]:
-        async with self.conn.transaction():
-            cur = await self.conn.execute(
+        async with self.session.unit() as conn:
+            cur = await conn.execute(
                 "SELECT sequence, type, source, occurred_at, payload FROM app.events"
                 " WHERE run_id = %s AND tenant_id = %s AND sequence > %s ORDER BY sequence LIMIT %s",
                 (run_id, tenant_id, after, limit),
@@ -4053,12 +4259,12 @@ Identity is the verified persona token's `sub` resolved against seeded membershi
 sessions, CSRF and Idempotency-Key are declared debt (T11/T12).
 """
 
-from __future__ import annotations
-
+# No `from __future__ import annotations` here: FastAPI resolves dependency annotations at import time, and a
+# string annotation naming a local alias becomes a query parameter (measured in the round-1 review).
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Protocol
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Query, Request, Response
@@ -4091,8 +4297,9 @@ def stamp(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-class Verifier:  # structural: the unit tests stub it
-    ready: bool
+class Verifier(Protocol):  # the unit tests stub it
+    @property
+    def ready(self) -> bool: ...
 
     async def load_keys(self) -> None: ...
 
@@ -4136,8 +4343,6 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
             raise ApiError(403, ErrorCode.FORBIDDEN, "no active membership")
         return Identity(principal, membership)
 
-    Who = Annotated[Identity, Depends(identity)]
-
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> Response:
         return safe(exc.status, exc.code, exc.message)
@@ -4161,24 +4366,24 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
         store: st.Store = request.app.state.store
         if isinstance(store, st.DbStore):
             try:
-                async with store.conn.transaction():
-                    await store.conn.execute("SELECT 1")
-            except Exception:  # noqa: BLE001  -- readiness reports any database failure as not ready
+                await store.session.read("SELECT 1", ())
+            except Exception:  # readiness reports any database failure as not ready
                 return safe(503, ErrorCode.UNAVAILABLE, "database not reachable")
         return JSONResponse({"status": "ready"})
 
     @app.get("/api/v1/me")
-    async def me(who: Who) -> dict[str, Any]:
+    async def me(who: Annotated[Identity, Depends(identity)]) -> dict[str, Any]:
         return {"subject": str(who.subject), "tenant_id": str(who.tenant_id), "roles": sorted(who.roles),
                 "username": who.username}
 
     @app.post("/api/v1/conversations", status_code=201)
-    async def create_conversation(request: Request, who: Who) -> dict[str, str]:
+    async def create_conversation(request: Request, who: Annotated[Identity, Depends(identity)]) -> dict[str, str]:
         cid = await request.app.state.store.create_conversation(who.tenant_id, who.subject)
         return {"conversation_id": str(cid)}
 
     @app.post("/api/v1/conversations/{conversation_id}/messages", status_code=202)
-    async def post_message(conversation_id: UUID, request: Request, who: Who) -> dict[str, Any]:
+    async def post_message(conversation_id: UUID, request: Request,
+                           who: Annotated[Identity, Depends(identity)]) -> dict[str, Any]:
         who.require("requester")
         message: MessageRequest = await body(request, MessageRequest)
         # T08 routes only `investigate` with a resolvable asset and interval; the admission router (T12) adds the rest.
@@ -4199,7 +4404,7 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
                 "status_url": f"/api/v1/runs/{accepted.run_id}", "events_url": f"/api/v1/runs/{accepted.run_id}/events"}
 
     @app.get("/api/v1/runs/{run_id}")
-    async def get_run(run_id: UUID, request: Request, who: Who) -> dict[str, Any]:
+    async def get_run(run_id: UUID, request: Request, who: Annotated[Identity, Depends(identity)]) -> dict[str, Any]:
         row = await request.app.state.store.run(who.tenant_id, run_id)
         if row is None:
             raise ApiError(404, ErrorCode.NOT_FOUND, "no such run")
@@ -4210,7 +4415,8 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
                 "created_at": stamp(row["created_at"])}
 
     @app.get("/api/v1/proposals/{proposal_id}")
-    async def get_proposal(proposal_id: UUID, request: Request, who: Who) -> dict[str, Any]:
+    async def get_proposal(proposal_id: UUID, request: Request,
+                           who: Annotated[Identity, Depends(identity)]) -> dict[str, Any]:
         row = await request.app.state.store.proposal(who.tenant_id, proposal_id)
         if row is None:
             raise ApiError(404, ErrorCode.NOT_FOUND, "no such proposal")
@@ -4219,7 +4425,8 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
                 "authored_by": [str(a) for a in row["authored_by"]], "expires_at": stamp(row["expires_at"])}
 
     @app.post("/api/v1/proposals/{proposal_id}/decisions")
-    async def post_decision(proposal_id: UUID, request: Request, who: Who) -> dict[str, Any]:
+    async def post_decision(proposal_id: UUID, request: Request,
+                            who: Annotated[Identity, Depends(identity)]) -> dict[str, Any]:
         decision: DecisionRequest = await body(request, DecisionRequest)
         store: st.Store = request.app.state.store
         row = await store.proposal(who.tenant_id, proposal_id)
@@ -4240,7 +4447,8 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
                 "status": decided.status, "state_version": decided.state_version}
 
     @app.get("/api/v1/runs/{run_id}/events")
-    async def get_events(run_id: UUID, request: Request, who: Who, after: Annotated[int, Query(ge=0)] = 0,
+    async def get_events(run_id: UUID, request: Request, who: Annotated[Identity, Depends(identity)],
+                         after: Annotated[int, Query(ge=0)] = 0,
                          limit: Annotated[int, Query(ge=1, le=500)] = 100) -> dict[str, Any]:
         store: st.Store = request.app.state.store
         if await store.run(who.tenant_id, run_id) is None:
@@ -4267,13 +4475,27 @@ Create `api/src/ops_api/__main__.py`:
 ```python
 """`python -m ops_api`: serve on 127.0.0.1:OPS_API_PORT (default 8000)."""
 
+import asyncio
+import sys
+
 import uvicorn
 
 from ops_api.app import production_app
 from ops_core.settings import env_int
 
+
+def serve_app(app: object, port: int) -> None:
+    """Serve with uvicorn programmatically on a selector loop (ruling 23: `uvicorn.run` picks the Proactor loop on
+    Windows and psycopg async refuses it)."""
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    if sys.platform == "win32":
+        asyncio.run(server.serve(), loop_factory=asyncio.SelectorEventLoop)
+    else:
+        asyncio.run(server.serve())
+
+
 if __name__ == "__main__":
-    uvicorn.run(production_app(), host="127.0.0.1", port=env_int("OPS_API_PORT", 8000), log_level="warning")
+    serve_app(production_app(), env_int("OPS_API_PORT", 8000))
 ```
 
 Notes: the events endpoint serialises `payload` (jsonb → dict) and `occurred_at` as `…Z`; `source` and `type` are plain strings. `ErrorCode(exc.code)` relies on the store raising only codes in the enum (`SLOT_OCCUPIED`, `VERSION_CONFLICT`).
@@ -4295,7 +4517,7 @@ resolved to a tenant and roles through seeded memberships. Endpoints: `/api/v1/m
 `GET /api/v1/runs/{id}/events`. Sessions, CSRF and Idempotency-Key: T11/T12.
 ```
 
-Run: `PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
+Run: `uv run ruff format api tests/plan_d/test_api.py && uv run ruff check --fix api tests/plan_d/test_api.py && PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
 Expected: `CHECK: GREEN`.
 
 ```bash
@@ -4398,7 +4620,7 @@ def test_evidence_from_search_requires_the_contract_fields():
 ```
 
 Run: `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_worker.py -q`
-Expected: `ModuleNotFoundError: No module named 'ops_worker.drafting'`.
+Expected: an `ImportError` for `ops_worker.drafting` (the module does not exist yet).
 
 - [ ] **Step 2: Drafting and proposals**
 
@@ -4645,12 +4867,13 @@ from ops_core import persistence
 from ops_core.jobs import JobType, Server
 from ops_core.outcomes import EventSource, EventType
 from ops_core.settings import Urls
-from ops_core.states import Performer, RunState
+from ops_core.states import Intent, Performer, RunState, freeze_allowed
 from ops_worker import proposals
 from ops_worker.drafting import DraftGenerator, DraftRequest
 from ops_worker.mcp import McpCallFailed, McpCaller
 
 log = logging.getLogger("ops_worker")
+QUERY_CHARS = 500  # schemas/tools/search_procedures.input.schema.json maxLength
 
 
 @dataclass
@@ -4694,8 +4917,9 @@ async def investigate(deps: Deps, job: dict[str, Any]) -> None:
                                                azp="ops-worker")
     await _event(deps, run, EventType.TOOL_STARTED, {"message": "search_procedures"})
     try:
+        # The tool input caps `query` at 500 characters (schemas/tools); the message itself may be 4,000.
         doc = await deps.mcp.call(deps.urls.mcp_read, handle=handle, tool="search_procedures",
-                                  arguments={"query": text, "limit": 3, "mode": "lexical"})
+                                  arguments={"query": text[:QUERY_CHARS], "limit": 3, "mode": "lexical"})
         evidence = proposals.evidence_from_search(doc)
     except (McpCallFailed, ValueError) as exc:
         log.warning("investigate job %s: retrieval failed: %s", job["id"], exc)
@@ -4711,6 +4935,7 @@ async def investigate(deps: Deps, job: dict[str, Any]) -> None:
                                      performer=Performer.TRANSITION_RUN)
     request = DraftRequest(asset_id=run["asset_id"], text=text, start_at=run["start_at"], end_at=run["end_at"])
     draft = await deps.generator.generate(request, evidence)
+    freeze_allowed(Intent(run["intent"]))  # an answer_only run never freezes a proposal (SA:453)
     now = datetime.now(UTC).replace(microsecond=0)
     proposal_id, draft_id = uuid4(), uuid4()
     frozen = proposals.build_proposal(tenant_id=run["tenant_id"], run_id=run["run_id"], proposal_id=proposal_id,
@@ -4821,23 +5046,21 @@ async def run_forever(deps: handlers.Deps, stop: asyncio.Event) -> None:
             continue
         try:
             await handlers.handle(deps, dict(job))
-        except Exception:  # noqa: BLE001  -- a crashed handler leaves the job claimed for T13's reclaim; the loop lives
+        except Exception:  # a crashed handler leaves the job claimed for T13's reclaim; the loop lives on
             log.exception("job %s failed", job["id"])
-            try:
-                await deps.conn.rollback()
-            except Exception:  # noqa: BLE001
-                log.exception("rollback after a failed job")
 
 
-def health_app(deps: handlers.Deps) -> Starlette:
+def health_app(probe: persistence.Conn) -> Starlette:
+    """Readiness on its own connection: sharing the poll loop's connection let a health call interleave with a job's
+    transaction and wedge it idle-in-transaction while still answering "ready" (reproduced in the round-1 dry run)."""
+
     async def live(_: Request) -> JSONResponse:
         return JSONResponse({"status": "live"})
 
     async def ready(_: Request) -> JSONResponse:
         try:
-            async with deps.conn.transaction():
-                await deps.conn.execute("SELECT 1")
-        except Exception:  # noqa: BLE001
+            await probe.execute("SELECT 1")  # autocommit: no transaction is left open
+        except Exception:
             return JSONResponse({"status": "not ready"}, status_code=503)
         return JSONResponse({"status": "ready"})
 
@@ -4846,14 +5069,15 @@ def health_app(deps: handlers.Deps) -> Starlette:
 
 async def _main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    generator = make_generator(settings.env("MODEL_MODE", "fake"))  # refuses to start on any other route (R130)
+    generator = make_generator(settings.env("MODEL_MODE"))  # unset or any other route: refuse to start (R130)
     kc = settings.keycloak()
     tokens = WorkloadTokenSource(token_url=kc.token_url, client_id="ops-worker",
                                  client_secret=settings.read_secret("kc_client_secret_ops_worker"))
     conn = await persistence.connect(settings.app_postgres())
+    probe = await persistence.connect(settings.app_postgres())  # the health server's own connection (see health_app)
     deps = handlers.Deps(conn=conn, mcp=HttpMcpCaller(tokens), generator=generator, urls=settings.urls(),
                          worker_name=f"{socket.gethostname()}:{os.getpid()}")
-    server = uvicorn.Server(uvicorn.Config(health_app(deps), host="127.0.0.1",
+    server = uvicorn.Server(uvicorn.Config(health_app(probe), host="127.0.0.1",
                                            port=settings.env_int("OPS_WORKER_HEALTH_PORT", 8070), log_level="warning"))
     stop = asyncio.Event()
     serving = asyncio.create_task(server.serve())
@@ -4864,6 +5088,7 @@ async def _main() -> None:
         stop.set()
         await polling
         await conn.close()
+        await probe.close()
 
 
 def main() -> None:
@@ -4929,16 +5154,27 @@ class ScriptedMcp:
                                          "receipt": None, "tombstone": None, "reason": None}}
 
 
+async def own_job(conn: persistence.Conn, run, job_type: str) -> dict:
+    """The run's own job, claimed by this test (claim_job takes the oldest available job of any run, so a leftover
+    from another test would be claimed instead)."""
+    cur = await conn.execute("UPDATE app.jobs SET claimed_by = 't', claimed_at = now(), attempts = attempts + 1"
+                             " WHERE run_id = %s AND type = %s AND done_at IS NULL RETURNING *", (run, job_type))
+    row = await cur.fetchone()
+    assert row is not None, (run, job_type)
+    return dict(row)
+
+
 async def test_investigate_then_execute(app_conn: persistence.Conn) -> None:
     mcp = ScriptedMcp(app_conn)
     deps = handlers.Deps(conn=app_conn, mcp=mcp, generator=FakeDraftGenerator(), urls=settings.urls(), worker_name="t")
-    async with app_conn.transaction():
-        tenant, conv, run = await new_run(app_conn)
-    await app_conn.commit()
-    async with app_conn.transaction():
-        job = await persistence.claim_job(app_conn, worker_name="t")
-    assert job is not None and job["type"] == "investigate" and job["run_id"] == run
-    await handlers.handle(deps, dict(job))
+    async with app_conn.transaction(force_rollback=True):  # everything below rolls back; nothing else sees it
+        await _investigate_then_execute(app_conn, deps, mcp)
+
+
+async def _investigate_then_execute(app_conn: persistence.Conn, deps: handlers.Deps, mcp: ScriptedMcp) -> None:
+    tenant, conv, run = await new_run(app_conn)
+    job = await own_job(app_conn, run, "investigate")
+    await handlers.handle(deps, job)
     row = await persistence.run_row(app_conn, run)
     assert row["state"] == "AWAITING_APPROVAL" and row["active_proposal_id"] is not None
     cur = await app_conn.execute("SELECT * FROM app.proposals WHERE proposal_id = %s", (row["active_proposal_id"],))
@@ -4953,25 +5189,21 @@ async def test_investigate_then_execute(app_conn: persistence.Conn) -> None:
     cur = await app_conn.execute("SELECT seq, to_state FROM app.run_state_history WHERE run_id = %s ORDER BY seq", (run,))
     assert [r["to_state"] for r in await cur.fetchall()] == ["QUEUED", "RETRIEVING", "DRAFTING", "AWAITING_APPROVAL"]
     # Approve directly (the API does this in Task 7) and run the execute job.
-    async with app_conn.transaction():
-        await app_conn.execute("INSERT INTO app.decisions (decision_id, proposal_id, reviewer, decision,"
-                               " expected_payload_sha256) VALUES (gen_random_uuid(), %s, %s, 'approve', %s)",
-                               (proposal["proposal_id"], UUID("03f7eb09-e18d-5f33-bf75-12c57d5aaa54"),
-                                proposal["payload_sha256"]))
-        await persistence.transition(app_conn, run_id=run, dst=RunState.APPROVED, performer=Performer.RECORD_DECISION)
-        await persistence.insert_job(app_conn, job_type=JobType.EXECUTE, run_id=run, proposal_id=proposal["proposal_id"])
-    async with app_conn.transaction():
-        job = await persistence.claim_job(app_conn, worker_name="t")
-    assert job is not None and job["type"] == "execute"
-    await handlers.handle(deps, dict(job))
+    await app_conn.execute("INSERT INTO app.decisions (decision_id, proposal_id, reviewer, decision,"
+                           " expected_payload_sha256) VALUES (gen_random_uuid(), %s, %s, 'approve', %s)",
+                           (proposal["proposal_id"], UUID("03f7eb09-e18d-5f33-bf75-12c57d5aaa54"),
+                            proposal["payload_sha256"]))
+    await persistence.transition(app_conn, run_id=run, dst=RunState.APPROVED, performer=Performer.RECORD_DECISION)
+    await persistence.insert_job(app_conn, job_type=JobType.EXECUTE, run_id=run, proposal_id=proposal["proposal_id"])
+    job = await own_job(app_conn, run, "execute")
+    await handlers.handle(deps, job)
     assert [c[1] for c in mcp.calls] == ["search_procedures", "create_incident"]
     assert mcp.calls[1][2] == {"proposal_id": str(proposal["proposal_id"])}
     cur = await app_conn.execute("SELECT done_at IS NOT NULL AS done FROM app.jobs WHERE id = %s", (job["id"],))
     assert (await cur.fetchone())["done"]
-    await app_conn.rollback()
 ```
 
-(`gen_random_uuid()` is built into PostgreSQL 13+.) The scripted caller resolves the real handle in the database, so the server binding and allowlist are exercised even without the transport.
+(`gen_random_uuid()` is built into PostgreSQL 13+.) The scripted caller resolves the real handle in the database, so the server binding and allowlist are exercised even without the transport. The handlers' own `transaction()` blocks nest inside the test's `force_rollback` block as savepoints, so the whole test rolls back at the end.
 
 Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_worker_live.py -q`
 Expected: `1 passed`.
@@ -4989,7 +5221,7 @@ T19) → frozen proposal → AWAITING_APPROVAL. `execute`: `create_incident` on 
 both MCP audiences; one handle per call. Lease, fence, heartbeat and LangGraph: T13/T20.
 ```
 
-Run: `PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
+Run: `uv run ruff format worker tests/plan_d/test_worker.py tests/e2e/test_worker_live.py && uv run ruff check --fix worker tests/plan_d/test_worker.py tests/e2e/test_worker_live.py && PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3`
 Expected: `CHECK: GREEN`.
 
 ```bash
@@ -5001,12 +5233,12 @@ git commit -m "feat(worker): polling loop with investigate (read tool, fake draf
 ### Task 9: `skeleton.py up/down`, the R105 end-to-end proof, evidence, handoff documents
 
 **Files:**
-- Modify: `scripts/skeleton.py` (`up`, `down`, `status`, the `Skeleton` class), `tests/e2e/conftest.py` (`skeleton` fixture), `handoff/tasks.json` (T08 → `DONE`), `handoff/BUILD_BACKLOG.md`, `handoff/acceptance-matrix.json` (R105), `STATUS.md`, `SESSION_STATE.md`, `docs/PROJECT_HISTORY.md` (new §19; the closing section becomes §20), `README.md` (status line), `docs/runbooks/dev-topology.md` (host-process ports)
-- Create: `tests/e2e/test_r105_walking_skeleton.py`, `tests/plan_d/test_skeleton_evidence.py`, `reports/skeleton/r105-walking-skeleton.txt` (written by the test; committed as evidence), `docs/runbooks/walking-skeleton.md`
+- Modify: `scripts/skeleton.py` (`up`, `down`, `status`, the `Skeleton` class), `tests/plan_b/test_evidence.py` (the no-secret rule covers `reports/skeleton/` too), `handoff/tasks.json` (T08 → `DONE`), `handoff/BUILD_BACKLOG.md`, `handoff/acceptance-matrix.json` (R105), `STATUS.md`, `SESSION_STATE.md`, `docs/PROJECT_HISTORY.md` (new §19; the closing section becomes §20), `README.md` (status line), `docs/runbooks/dev-topology.md` (host-process ports)
+- Create: `tests/e2e/test_r105_walking_skeleton.py` (with its module-scoped `skeleton` fixture), `tests/plan_d/test_skeleton_evidence.py`, `reports/skeleton/r105-walking-skeleton.txt` (written by the test; committed as evidence), `docs/runbooks/walking-skeleton.md`
 
 **Interfaces:**
 - Consumes: everything above; `tests/plan_b/live/kc.py` for persona tokens.
-- Produces: `scripts/skeleton.py` — `PROCESSES: tuple[Process, ...]` (`Process(name, module, port, health_url)`), `class Skeleton` with `start(timeout=90) -> None`, `stop() -> None`, `logs_dir = Path("runtime/skeleton")`; CLI `up` (start, write `runtime/skeleton/pids.json`), `down` (terminate the pids), `status` (health of each). The `skeleton` session fixture in `tests/e2e/conftest.py`.
+- Produces: `scripts/skeleton.py` — `PROCESSES: tuple[Process, ...]` (`Process(name, module, port, health_url)`), `class Skeleton` with `start(timeout=90) -> None`, `stop() -> None`, module constant `LOGS = ROOT / "runtime" / "skeleton"`; CLI `up` (start, write `runtime/skeleton/pids.json`), `down` (terminate the pids), `status` (health of each). The `skeleton` fixture lives in the R105 test module with `scope="module"`, so the five processes (the worker in particular) are down again before `test_worker_live` runs.
 
 - [ ] **Step 1: The process harness**
 
@@ -5020,6 +5252,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from typing import IO
 
 
 @dataclass(frozen=True)
@@ -5058,7 +5291,7 @@ def process_environment() -> dict[str, str]:
 
 def healthy(url: str) -> bool:
     try:
-        with urllib.request.urlopen(url, timeout=2) as response:  # noqa: S310  -- loopback health URL only
+        with urllib.request.urlopen(url, timeout=5) as response:  # loopback health URL only
             return bool(response.status == 200)
     except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
         return False
@@ -5069,12 +5302,14 @@ class Skeleton:
 
     def __init__(self) -> None:
         self.children: dict[str, subprocess.Popen[bytes]] = {}
+        self.logs: list[IO[bytes]] = []
 
     def start(self, timeout: float = 90.0) -> None:
         LOGS.mkdir(parents=True, exist_ok=True)
         env = process_environment()
         for proc in PROCESSES:
-            log = open(LOGS / f"{proc.name}.log", "ab")  # noqa: SIM115  -- the child owns the handle until stop()
+            log = open(LOGS / f"{proc.name}.log", "ab")  # closed in stop(): the child writes to it until then
+            self.logs.append(log)
             self.children[proc.name] = subprocess.Popen([sys.executable, "-m", proc.module], env=env, stdout=log,
                                                         stderr=subprocess.STDOUT, cwd=ROOT)
         deadline = time.monotonic() + timeout
@@ -5094,12 +5329,17 @@ class Skeleton:
     def stop(self) -> None:
         for child in self.children.values():
             if child.poll() is None:
-                child.terminate()
+                child.terminate()  # TerminateProcess on Windows: no lifespan shutdown, which the skeleton tolerates
         for child in self.children.values():
             try:
                 child.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 child.kill()
+            if child.stdout is not None:
+                child.stdout.close()
+        for handle in self.logs:
+            handle.close()
+        self.logs.clear()
         self.children.clear()
 
 
@@ -5132,22 +5372,7 @@ def status() -> int:
     return 0
 ```
 
-and the `main` dispatch: `{"migrate": migrate, "up": up, "down": down, "status": status}`. On Windows `terminate()` is `TerminateProcess`, which uvicorn's children survive only by not having any; the processes here spawn none. Note: `up` leaves the children running after the script exits (they are not killed with the parent); `down` sends SIGTERM by pid (on Windows, `os.kill` with `SIGTERM` terminates).
-
-Add to `tests/e2e/conftest.py`:
-
-```python
-@pytest.fixture(scope="session")
-def skeleton(migrated: None):
-    from scripts.skeleton import Skeleton
-
-    sk = Skeleton()
-    sk.start()
-    try:
-        yield sk
-    finally:
-        sk.stop()
-```
+and the `main` dispatch: `{"migrate": migrate, "up": up, "down": down, "status": status}`; these imports (`json`, `signal`, `subprocess`, `time`, `urllib`, `IO`) join the module's import block at the top of the file, not mid-file. On Windows `terminate()` is `TerminateProcess`; the processes here spawn no children. `up` leaves the children running after the script exits; `down` sends SIGTERM by pid (on Windows, `os.kill` with `SIGTERM` terminates).
 
 - [ ] **Step 2: The end-to-end test**
 
@@ -5163,12 +5388,18 @@ the API, a persona token at the destination. Writes redacted evidence to reports
 """
 
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import httpx2
 import pytest
-from ops_core import settings
+from mcp import Client, MCPError
+from mcp.client.streamable_http import streamable_http_client
+from ops_core import persistence, settings
+from ops_core.jobs import Server
+from scripts.skeleton import Skeleton
 from tests.plan_b.live import kc
 
 API = "http://127.0.0.1:8000"
@@ -5178,6 +5409,32 @@ EXPECTED_EVENTS = [
     ("explanation.ready", "model_summary"), ("proposal.ready", "application"), ("approval.recorded", "application"),
     ("action.granted", "application"), ("action.dispatched", "application"), ("action.confirmed", "destination"),
 ]
+
+
+@pytest.fixture(scope="module")
+def skeleton(migrated: None) -> Iterator[Skeleton]:
+    """Module scope on purpose: the skeleton worker must be down before test_worker_live claims jobs itself."""
+    sk = Skeleton()
+    sk.start()
+    try:
+        yield sk
+    finally:
+        sk.stop()
+
+
+async def mcp_call(url: str, token: str, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    """One tool call over the real transport; None when the transport refused the token (MCPError)."""
+    headers = {"Authorization": f"Bearer {token}", "X-Ops-Invocation": handle}
+    try:
+        async with (
+            httpx2.AsyncClient(headers=headers) as hc,
+            Client(streamable_http_client(url, http_client=hc), mode="2026-07-28") as client,
+        ):
+            res = await client.call_tool(tool, arguments)
+    except MCPError:
+        return None
+    content = res.structured_content
+    return content if isinstance(content, dict) else {"is_error": res.is_error}
 
 
 def wait_for(client: httpx2.Client, url: str, headers: dict[str, str], states: set[str], timeout: float = 45.0) -> dict:
@@ -5191,17 +5448,23 @@ def wait_for(client: httpx2.Client, url: str, headers: dict[str, str], states: s
     raise AssertionError(f"run did not reach {states}; last snapshot status={last.get('status')}")
 
 
-def test_r105_walking_skeleton(skeleton, secret) -> None:
+@pytest.mark.asyncio
+async def test_r105_walking_skeleton(skeleton: Skeleton, secret, app_conn: persistence.Conn) -> None:
     kcs = settings.keycloak()
+    urls = settings.urls()
     alex = kc.token_password(kcs.base_url, "ops-dev-direct", "alex", secret("kc_persona_alex_password"))["access_token"]
     sam = kc.token_password(kcs.base_url, "ops-dev-direct", "sam", secret("kc_persona_sam_password"))["access_token"]
     worker = kc.token_client_credentials(kcs.base_url, "ops-worker", secret("kc_client_secret_ops_worker"))["access_token"]
     mcp_write = kc.token_client_credentials(kcs.base_url, "ops-mcp-write",
                                             secret("kc_client_secret_ops_mcp_write"))["access_token"]
+    mcp_read = kc.token_client_credentials(kcs.base_url, "ops-mcp-read",
+                                           secret("kc_client_secret_ops_mcp_read"))["access_token"]
     a, s = {"Authorization": f"Bearer {alex}"}, {"Authorization": f"Bearer {sam}"}
     lines: list[str] = [f"R105 walking skeleton — {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}"]
     with httpx2.Client(base_url=API, timeout=10.0) as c:
-        assert c.get("/api/v1/me", headers={"Authorization": f"Bearer {worker}"}).status_code == 401  # wrong aud/azp
+        # Responses are bound before every assert: pytest prints assert operands, and a header would carry a token.
+        refused = c.get("/api/v1/me", headers={"Authorization": f"Bearer {worker}"})
+        assert refused.status_code == 401  # a workload token at the API: wrong audience and azp
         cid = c.post("/api/v1/conversations", headers=a).json()["conversation_id"]
         accepted = c.post(f"/api/v1/conversations/{cid}/messages", headers=a, json={
             "kind": "investigate", "text": "Investigate the alerts on Asset A17 over the last 24 hours.",
@@ -5214,16 +5477,19 @@ def test_r105_walking_skeleton(skeleton, secret) -> None:
         pid = snapshot["active_proposal_id"]
         proposal = c.get(f"/api/v1/proposals/{pid}", headers=s).json()
         sha, revision = proposal["payload_sha256"], proposal["revision"]
-        assert proposal["payload"]["evidence_refs"] and proposal["authored_by"] == [c.get("/api/v1/me", headers=a).json()["subject"]]
+        me = c.get("/api/v1/me", headers=a).json()
+        assert proposal["payload"]["evidence_refs"] and proposal["authored_by"] == [me["subject"]]
         lines.append(f"proposal_id={pid} revision={revision} payload_sha256={sha} evidence={proposal['payload']['evidence_refs']}")
         decision = {"expected_revision": revision, "expected_payload_sha256": sha, "decision": "approve",
                     "reason": "Reviewed the exact synthetic proposal."}
-        assert c.post(f"/api/v1/proposals/{pid}/decisions", headers=a, json=decision).status_code == 403  # requester
+        self_decision = c.post(f"/api/v1/proposals/{pid}/decisions", headers=a, json=decision)
+        assert self_decision.status_code == 403  # the requester may not approve their own proposal
         stale = c.post(f"/api/v1/proposals/{pid}/decisions", headers=s, json={**decision, "expected_payload_sha256": "0" * 64})
         assert stale.status_code == 409 and stale.json()["code"] == "VERSION_CONFLICT"
         approved = c.post(f"/api/v1/proposals/{pid}/decisions", headers=s, json=decision)
         assert approved.status_code == 200 and approved.json()["status"] == "APPROVED", approved.text
-        assert c.post(f"/api/v1/proposals/{pid}/decisions", headers=s, json=decision).status_code == 409  # first wins
+        second = c.post(f"/api/v1/proposals/{pid}/decisions", headers=s, json=decision)
+        assert second.status_code == 409  # the first decision wins
         final = wait_for(c, f"/api/v1/runs/{run_id}", a, {"SUCCEEDED", "FAILED", "OUTCOME_UNKNOWN", "ESCALATED"})
         assert final["status"] == "SUCCEEDED", final
         events = c.get(f"/api/v1/runs/{run_id}/events", headers=a).json()["events"]
@@ -5234,35 +5500,56 @@ def test_r105_walking_skeleton(skeleton, secret) -> None:
         lines.append(f"state={final['status']} state_version={final['state_version']} action_id={action_id} "
                      f"incident_id={confirmed['receipt']['incident_id']}")
         lines.append("events=" + ",".join(e["type"] for e in events))
-    with httpx2.Client(base_url=settings.urls().incident_sim, timeout=10.0) as d:
-        assert d.get(f"/internal/actions/{action_id}", headers=a).status_code == 401  # persona token at the destination
+    with httpx2.Client(base_url=urls.incident_sim, timeout=10.0) as d:
+        persona_at_destination = d.get(f"/internal/actions/{action_id}", headers=a)
+        worker_at_destination = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {worker}"})
+        assert (persona_at_destination.status_code, worker_at_destination.status_code) == (401, 401)
+        assert action_id not in persona_at_destination.text and action_id not in worker_at_destination.text
         key = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {mcp_write}"}).json()
         assert key["state"] == "COMMITTED" and key["payload_sha256"] == sha
+    # Review focus 1 and 3 over the real transport: a replayed create_incident with a fresh execute handle returns
+    # the recorded outcome (same action id, no second incident), and the wrong tokens are refused at mcp-write.
+    cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s AND type = 'execute'", (UUID(run_id),))
+    execute_job = (await cur.fetchone())["id"]
+    handle = await persistence.mint_handle(app_conn, run_id=UUID(run_id), job_id=execute_job, server=Server.WRITE,
+                                           azp="ops-worker")
+    replay = await mcp_call(urls.mcp_write, worker, handle, "create_incident", {"proposal_id": pid})
+    assert replay is not None and replay["status"] == "ok" and replay["data"]["action_id"] == action_id
+    for wrong in (alex, mcp_read):
+        assert await mcp_call(urls.mcp_write, wrong, handle, "create_incident", {"proposal_id": pid}) is None
+    with httpx2.Client(base_url=urls.incident_sim, timeout=10.0) as d:
+        again = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {mcp_write}"}).json()
+        assert again["receipt"] == key["receipt"]  # the same receipt, so no second incident
+    lines.append("replay=same_action_id refusals=api:worker,destination:persona+worker,mcp-write:persona+mcp-read")
     EVIDENCE.parent.mkdir(parents=True, exist_ok=True)
     EVIDENCE.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 ```
 
-Create `tests/plan_d/test_skeleton_evidence.py`:
+In `tests/plan_b/test_evidence.py` replace `EVIDENCE_ROOT = Path("reports/bootstrap")` with `EVIDENCE_ROOTS = (Path("reports/bootstrap"), Path("reports/skeleton"))` and make `test_evidence_has_no_token_shapes` iterate `for root in EVIDENCE_ROOTS: if not root.exists(): continue; for path in root.rglob("*"): ...` (the proof test monkeypatches `EVIDENCE_ROOTS` with a one-element tuple instead of `EVIDENCE_ROOT`). Update the module docstring's first line to "Nothing under reports/bootstrap/ or reports/skeleton/ may contain…". The secret-value scan and the JWT regex then cover the skeleton's evidence with no second implementation.
+
+Create `tests/plan_d/test_skeleton_evidence.py` for the shape only:
 
 ```python
-"""Evidence files under reports/skeleton/ carry ids and states, never a token or a secret (AGENTS.md; Plan B's rule for
-reports/bootstrap/ applied to the skeleton)."""
+"""The R105 evidence file names the run, the incident and the event sequence (its redaction is tests/plan_b/
+test_evidence.py's job, which scans reports/skeleton/ too). Absent evidence is not a failure: CI never runs the
+live suite."""
 
 from pathlib import Path
 
 
-def test_skeleton_evidence_is_redacted():
-    for path in Path("reports/skeleton").glob("*.txt"):
+def test_skeleton_evidence_names_run_incident_and_events():
+    files = sorted(Path("reports/skeleton").glob("*.txt"))
+    assert files, "the committed R105 evidence is missing"  # not vacuous: the file is tracked
+    for path in files:
         text = path.read_text(encoding="utf-8")
-        assert "eyJ" not in text and "Bearer" not in text and "secret" not in text.lower(), path
-        assert "run_id=" in text and "incident_id=" in text, path
+        assert "run_id=" in text and "incident_id=" in text and "events=run.accepted," in text, path
 ```
 
 - [ ] **Step 3: Run it**
 
 Run: `uv run python scripts/skeleton.py status` (all `down`), then:
 `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q -p no:cacheprovider`
-Expected: every live test passes (`8 passed` or the count the earlier tasks produced), `reports/skeleton/r105-walking-skeleton.txt` written. Then `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_skeleton_evidence.py -q` → `1 passed`. Record the pytest summary and the evidence file's lines (they contain no secret) in your report. If a process fails to start, read `runtime/skeleton/<name>.log` and fix the wiring in this task's scope (environment, ports); a defect in an earlier task's code is reported to the controller, not patched silently.
+Expected: every live test passes (`9 passed`: 5 persistence, tokens, incident-sim, mcp-read, mcp-write, worker and R105 — record the real count), `reports/skeleton/r105-walking-skeleton.txt` written. Then `PYTHONUTF8=1 uv run python -m pytest tests/plan_d/test_skeleton_evidence.py tests/plan_b/test_evidence.py -q` → all pass. Record the pytest summary and the evidence file's lines (they contain no secret) in your report. If a process fails to start, read `runtime/skeleton/<name>.log` and fix the wiring in this task's scope (environment, ports); a defect in an earlier task's code is reported to the controller, not patched silently.
 
 - [ ] **Step 4: Runbook and topology**
 
@@ -5277,11 +5564,14 @@ files), so nothing is throwaway.
 
 1. `uv run python scripts/bootstrap_dev.py up` (Keycloak, Postgres; secrets under `OPS_SECRETS_DIR`).
 2. `uv run python scripts/skeleton.py migrate` (Alembic revision 1 for `ops` and `incident`; creates role `incident`).
-3. `uv run python scripts/skeleton.py up` — starts incident-sim :8090, mcp-read :8081, mcp-write :8082, api :8000,
-   worker :8070 (health only), all on 127.0.0.1; logs in `runtime/skeleton/`.
-4. `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q` — the R105 proof writes
-   `reports/skeleton/r105-walking-skeleton.txt`.
-5. `uv run python scripts/skeleton.py down`.
+3. Either, for a manual session: `uv run python scripts/skeleton.py up` — starts incident-sim :8090, mcp-read
+   :8081, mcp-write :8082, api :8000, worker :8070 (health only), all on 127.0.0.1; logs in `runtime/skeleton/`;
+   `uv run python scripts/skeleton.py down` when finished.
+4. Or, for the proof: with no skeleton processes running (`scripts/skeleton.py status` shows every process `down`),
+   `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q` — the R105 module starts and stops its own five
+   processes and writes `reports/skeleton/r105-walking-skeleton.txt`. The in-process live tests of Tasks 5 and 6
+   bind 18081 and 18090, so they never collide with a running skeleton.
+5. The evidence file is rewritten by every live run; commit it when its content changed for a reason worth keeping.
 
 Tokens: personas through the dev-only direct grant (`ops-dev-direct`, audience `ops-api`); the worker through
 `ops-worker` (both MCP audiences); mcp-write through `ops-mcp-write` (audience `incident-sim`). The MCP resource URLs
@@ -5295,9 +5585,9 @@ In `docs/runbooks/dev-topology.md` add a short "Host processes (T08)" table with
 
 - [ ] **Step 5: Handoff documents**
 
-- `handoff/tasks.json` T08: `status` → `DONE`; add a `review_notes` entry: "Plan D (branch plan-d): done in <first commit>..<last commit>; host processes started by scripts/skeleton.py (containers → T30); evidence tests/e2e/test_r105_walking_skeleton.py and reports/skeleton/r105-walking-skeleton.txt (live only, OPS_LIVE=1; CI has no Docker); debt list in SESSION_STATE.md; rulings in docs/superpowers/plans/2026-10-08-first-slice-d-walking-skeleton.md." Keep formatting, key order, LF.
+- `handoff/tasks.json` T08: `status` → `DONE`; add the key `review_notes` (T08 has none yet) with one entry: "Plan D (branch plan-d): done in <Task 1's first commit>..<the commit before this docs commit>; host processes started by scripts/skeleton.py (containers → T30); evidence tests/e2e/test_r105_walking_skeleton.py and reports/skeleton/r105-walking-skeleton.txt (live only, OPS_LIVE=1; CI has no Docker); debt list in SESSION_STATE.md; rulings in docs/superpowers/plans/2026-10-08-first-slice-d-walking-skeleton.md." Keep formatting, key order, LF.
 - `handoff/BUILD_BACKLOG.md`: mirror the T08 line.
-- `handoff/acceptance-matrix.json` R105: `evidence_status` → `RECORDED_LOCALLY`, `implementation_status` → `IMPLEMENTED_LOCALLY_VERIFIED`, `evidence_paths` → `["tests/e2e/test_r105_walking_skeleton.py", "reports/skeleton/r105-walking-skeleton.txt"]`, add `"note": "Live only (OPS_LIVE=1 against the dev profile); scripts/check.py and CI collect the test and skip it."`
+- `handoff/acceptance-matrix.json` R105: `evidence_status` → `RECORDED_LOCALLY_LIVE`, `implementation_status` → `IMPLEMENTED_LOCALLY_VERIFIED`, `evidence_paths` → `["tests/e2e/test_r105_walking_skeleton.py", "reports/skeleton/r105-walking-skeleton.txt"]`; extend the file's top-level `note` vocabulary sentence with " RECORDED_LOCALLY_LIVE: the test passes against the running dev profile with OPS_LIVE=1 and is collected but skipped by scripts/check.py and CI; the evidence file records a run." (the existing `RECORDED_LOCALLY` definition requires the test to pass in CI, which a live test cannot).
 - `STATUS.md`: a "Plan D (T08)" bullet: branch, commit range, `check.py` totals, the live suite's totals, what is evidenced (R105), the five processes and ports, and that the application processes are host processes until T30.
 - `SESSION_STATE.md`: "Plan D executed" section (commit range; the 21 rulings in one paragraph each at most one sentence, or a pointer to the plan with the eight debt additions summarised; the three Plan C open items now decided by ruling 10 and 4; open items for Plan E), update the "Next task" line: Plan E = T09 (migrations, roles, RLS, definer functions) and T10 (incident-sim action_key hardening), written from revision 1 and the skeleton's persistence seams; update the "Exact next step" block with the skeleton runbook commands.
 - `docs/PROJECT_HISTORY.md`: insert `## 19. The skeleton walked before the plan was perfect` before the closing section and renumber the closing section to `## 20. What the process taught`. Problem/Change paragraphs in the file's voice: what the research and spike found before planning (the MCP SDK's snake_case results, missing `additionalProperties`, 401 as a protocol error, the Windows event loop, the password-leaking `CREATE ROLE`, persona tokens with no audience), what the plan reviews found (filled in by the controller from the review record), and what execution found (the implementers' fix rounds — the controller supplies the list at dispatch time; leave a clearly marked one-sentence placeholder only if the controller's dispatch did not supply it, and say so in the report).
@@ -5307,8 +5597,10 @@ In `docs/runbooks/dev-topology.md` add a short "Host processes (T08)" table with
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py 2>&1 | tail -3` → `CHECK: GREEN`; `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts; echo exit=$?` → exit 0 (the task graph and matrix stay consistent); `python -c "import json; json.load(open('handoff/tasks.json', encoding='utf-8')); json.load(open('handoff/acceptance-matrix.json', encoding='utf-8'))"`.
 
+Run `uv run ruff format scripts/skeleton.py tests/e2e tests/plan_d tests/plan_b/test_evidence.py && uv run ruff check --fix scripts/skeleton.py tests/e2e tests/plan_d tests/plan_b/test_evidence.py` first.
+
 ```bash
-git add scripts/skeleton.py tests/e2e/conftest.py tests/e2e/test_r105_walking_skeleton.py tests/plan_d/test_skeleton_evidence.py reports/skeleton docs/runbooks/walking-skeleton.md docs/runbooks/dev-topology.md
+git add scripts/skeleton.py tests/plan_b/test_evidence.py tests/e2e/test_r105_walking_skeleton.py tests/plan_d/test_skeleton_evidence.py reports/skeleton docs/runbooks/walking-skeleton.md docs/runbooks/dev-topology.md
 git commit -m "feat(skeleton): process harness, the R105 end-to-end proof and its evidence"
 git add handoff/tasks.json handoff/BUILD_BACKLOG.md handoff/acceptance-matrix.json STATUS.md SESSION_STATE.md docs/PROJECT_HISTORY.md README.md
 git commit -m "docs: handoff state after Plan D (T08 done; skeleton debt owed to T09-T30)"
@@ -5320,12 +5612,12 @@ git commit -m "docs: handoff state after Plan D (T08 done; skeleton debt owed to
 
 - T08 instructions: processes ✓ (Tasks 4–8, host processes per ruling 1); real client-credentials tokens ✓ (Tasks 3, 5, 6, 8); the path POST run → job → worker → mcp-read → fake draft → decision → mcp-write → incident-sim → receipt → event ✓ (Task 9's test asserts the nine events); Alembic revision 1 ✓ (Task 2); incident-sim as T10's base ✓ (Task 4); debt list before coding ✓ (Task 1 step 1); decision by a second persona ✓ (Task 7, `check_reviewer`); every transition through the table ✓ (`persistence.transition`, Task 2; the e2e history assertion in Task 8's live test).
 - T08 DoD 1 ✓ Task 9; DoD 2 ✓ Task 1 + runbook; DoD 3 ✓ Task 2.
-- Review Focus 1 ✓ Task 6 (`next_step`, live replay); 2 ✓ Task 7 and Task 9; 3 ✓ Tasks 3, 5 (live), 9; 4 ✓ Task 5 (strict schema); 5 ✓ Task 4.
+- Review Focus 1 ✓ Task 6 (`next_step`, live replay with the commit-before-I/O witness) and Task 9 (replay over the real transport); 2 ✓ Task 7 and Task 9; 3 ✓ Tasks 3, 5 (live), 9 (worker token at the API and the destination; persona and mcp-read tokens at mcp-write; persona token at mcp-read); 4 ✓ Task 5 (strict schema); 5 ✓ Task 4.
 - Not in this plan: `tool.started`/`tool.completed` payload richness (T14), the admission router's other routes (T12), asset tools and asset-sim (T16), governed retrieval (T17), containers (T30), reconciliation (T22), the SQL definer functions and RLS (T09).
 
 ## Resolved versions
 
-Recorded by the spike (`docs/superpowers/research/2026-10-08-plan-d-spike.md`, "Resolved versions") and re-measured by Task 1's `uv lock`: mcp 2.3.0, mcp-types 2.3.0, fastapi 0.142.4, starlette 1.7.0, uvicorn 0.54.0, psycopg 3.3.6, sqlalchemy 2.1.4, alembic 1.20.0, pyjwt 2.15.1, httpx2 2.13.1, cryptography 50.0.2. pytest-asyncio: whatever `uv add --dev` resolves on the day (recorded in Task 1's report).
+Measured by the round-1 dry run's `uv lock` (2026-10-08): mcp 2.3.0, mcp-types 2.3.0, fastapi 0.143.0, starlette 1.7.0, uvicorn 0.54.0, psycopg 3.3.6, sqlalchemy 2.1.4, alembic 1.20.0, pyjwt 2.15.1, httpx2 2.13.1, cryptography 50.0.2, pytest-asyncio 1.4.0, ruff 0.16.10 (already locked). Task 1 records what it resolves; floors in the plan are never raised past PyPI's latest.
 
 ## After Plan D
 
