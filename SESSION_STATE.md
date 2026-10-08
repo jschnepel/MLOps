@@ -159,6 +159,11 @@
   - the decision-hash cross-check, and BLOCKED_REVIEW on a refused grant (T21/T22);
   - per-service `tests/` directories (T30);
   - `authored_by` is read outside the decision transaction (T21).
+  - the request body is parsed before authorisation in the API (T12), and the in-memory `FakeStore` does not check the tenant (T09 tests);
+  - mcp-read truncates an excerpt silently (bounded by the contract) and answers every handle rejection with the same `INVALID_HANDLE` (T15);
+  - event sequence gaps are documented, not prevented (T14); a foreign tombstone maps to UNKNOWN (T22);
+  - the token verifier propagates a non-transport exception from an injected fetch (test code only; T13);
+  - Task 8 M3 (worker health-probe note) and the Task 1 cosmetics: duplicated old persona lines in `reports/bootstrap/keycloak-claims.txt`, no unit assertion on timezone UTC. The ledger (`.superpowers/sdd/2026-10-08-first-slice-d-walking-skeleton/progress.md`) has the detail.
 
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 

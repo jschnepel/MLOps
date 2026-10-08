@@ -169,7 +169,8 @@ async def test_r105_walking_skeleton(skeleton: Skeleton, secret, app_conn: persi
     replay = await mcp_call(urls.mcp_write, worker, handle, "create_incident", {"proposal_id": pid})
     assert replay is not None and replay["status"] == "ok" and replay["data"]["action_id"] == action_id
     for wrong in (alex, mcp_read):
-        assert await mcp_call(urls.mcp_write, wrong, handle, "create_incident", {"proposal_id": pid}) is None
+        refused_wrong = await mcp_call(urls.mcp_write, wrong, handle, "create_incident", {"proposal_id": pid})
+        assert refused_wrong is None
     with httpx2.Client(base_url=urls.incident_sim, timeout=10.0) as d:
         again = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {mcp_write}"}).json()
         assert again["receipt"] == key["receipt"]  # the same receipt, so no second incident

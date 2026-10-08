@@ -201,9 +201,16 @@ class Skeleton:
 
 
 def up() -> int:
-    """Start the five processes and record their pids for `down`; they outlive this script."""
+    """Start the five processes and record their pids for `down`; they outlive this script. Refuses a second set."""
+    if (LOGS / "pids.json").exists() or any(healthy(p.health_url) for p in PROCESSES):
+        print("UP: refused — processes already running (see status); run down first")
+        return 2
     skeleton = Skeleton()
-    skeleton.start()
+    try:
+        skeleton.start()
+    except RuntimeError as error:
+        print(f"UP: failed — {error}")
+        return 1
     (LOGS / "pids.json").write_text(json.dumps({n: c.pid for n, c in skeleton.children.items()}), encoding="utf-8")
     print("UP: " + ", ".join(f"{p.name}:{p.port}" for p in PROCESSES))
     return 0

@@ -9,7 +9,8 @@ files), so nothing is throwaway.
 3. Either, for a manual session: `uv run python scripts/skeleton.py up` — starts incident-sim :8090, mcp-read
    :8081, mcp-write :8082, api :8000, worker :8070 (health only), all on 127.0.0.1; logs in `runtime/skeleton/`;
    `uv run python scripts/skeleton.py status` shows each process's readiness;
-   `uv run python scripts/skeleton.py down` when finished.
+   `uv run python scripts/skeleton.py down` when finished. `up` refuses (exit 2) while a set is running or
+   `runtime/skeleton/pids.json` exists, so a second `up` can never orphan the first set: run `down` first.
 4. Or, for the proof: with no skeleton processes running (`scripts/skeleton.py status` shows every process `down`),
    `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q` — the R105 module starts and stops its own five
    processes and writes `reports/skeleton/r105-walking-skeleton.txt`. The in-process live tests of Tasks 5 and 6
