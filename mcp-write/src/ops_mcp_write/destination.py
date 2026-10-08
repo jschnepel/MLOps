@@ -67,7 +67,8 @@ async def post_incident(
     return Reply(response.status_code, document)
 
 
-def _unknown(action_id: UUID, payload_sha256: str) -> ActionOutcome:
+def unknown(action_id: UUID, payload_sha256: str) -> ActionOutcome:
+    """The outcome for an answer we cannot trust: UNKNOWN, never "no effect"."""
     return ActionOutcome(
         status=ToolOutcome.UNKNOWN,
         action_id=action_id,
@@ -92,13 +93,13 @@ def _conflict(action_id: UUID, payload_sha256: str) -> ActionOutcome:
 def classify(reply: Reply | None, *, action_id: UUID, payload_sha256: str) -> ActionOutcome:
     """Map the destination's answer to a tool outcome; anything unrecognised is UNKNOWN, never success."""
     if reply is None:
-        return _unknown(action_id, payload_sha256)
+        return unknown(action_id, payload_sha256)
     doc = reply.document
     try:
         if reply.status_code == 409 and doc.get("state") == "CONFLICT":
             return _conflict(action_id, payload_sha256)
         if reply.status_code != 200:
-            return _unknown(action_id, payload_sha256)
+            return unknown(action_id, payload_sha256)
         if doc.get("action_id") != str(action_id) or doc.get("payload_sha256") != payload_sha256:
             return _conflict(action_id, payload_sha256)  # a receipt for something else is not our receipt
         if doc.get("state") == "COMMITTED":
@@ -123,4 +124,4 @@ def classify(reply: Reply | None, *, action_id: UUID, payload_sha256: str) -> Ac
             reason=reason,
         )
     except (KeyError, ValueError, ValidationError):
-        return _unknown(action_id, payload_sha256)
+        return unknown(action_id, payload_sha256)

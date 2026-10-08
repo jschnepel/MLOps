@@ -2,6 +2,8 @@
 same call again: one action id, one incident, the stored outcome returned without a second POST (review focus 1)."""
 
 import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -159,6 +161,110 @@ async def test_write_path_twice(app_conn: persistence.Conn, secret, monkeypatch:
     finally:
         server.should_exit = True
         await task
+        if run is not None:
+            await purge_run(app_conn, run)
+            await purge_tenant(app_conn, tenant)
+
+
+@contextlib.asynccontextmanager
+async def running_sim() -> AsyncIterator[None]:
+    """An in-process incident-sim on 18090 for the duration of the block."""
+    server = uvicorn.Server(uvicorn.Config(incident_sim_app(), host="127.0.0.1", port=18090, log_level="warning"))
+    task = asyncio.create_task(server.serve())
+    try:
+        while not server.started:
+            await asyncio.sleep(0.05)
+        yield
+    finally:
+        server.should_exit = True
+        await task
+
+
+def make_deps(session: persistence.Session, http: httpx2.AsyncClient, secret) -> execution.Deps:
+    """Write-path dependencies pointing at the in-process incident-sim."""
+    kc = settings.keycloak()
+    return execution.Deps(
+        session=session,
+        http=http,
+        destination_url="http://127.0.0.1:18090",
+        destination_token=WorkloadTokenSource(
+            token_url=kc.token_url, client_id="ops-mcp-write", client_secret=secret("kc_client_secret_ops_mcp_write")
+        ),
+    )
+
+
+async def test_concurrent_calls_share_one_attempt(
+    app_conn: persistence.Conn, secret, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    posts: list[int] = []
+    original_post = destination.post_incident
+
+    async def counting_post(*args, **kwargs):
+        posts.append(1)
+        return await original_post(*args, **kwargs)
+
+    monkeypatch.setattr(destination, "post_incident", counting_post)
+    tenant = run = None
+    try:
+        async with running_sim():
+            async with app_conn.transaction():
+                tenant, _, run, proposal, handle = await approved_run(app_conn)
+            session = persistence.Session(app_conn)
+            async with session.unit() as conn:
+                invocation = await persistence.resolve_handle(
+                    conn, handle=handle, server=Server.WRITE, azp="ops-worker", tool=Tool.CREATE_INCIDENT
+                )
+            async with httpx2.AsyncClient() as http:
+                deps = make_deps(session, http, secret)
+                first, second = await asyncio.gather(
+                    execution.create_incident(deps, invocation=invocation, proposal_id=proposal),
+                    execution.create_incident(deps, invocation=invocation, proposal_id=proposal),
+                )
+        assert first.status is ToolOutcome.SUCCEEDED and first == second
+        assert len(posts) <= 2
+        assert (await persistence.run_row(app_conn, run))["state"] == "SUCCEEDED"
+        cur = await app_conn.execute("SELECT action_id FROM app.execution_grant WHERE run_id = %s", (run,))
+        assert [r["action_id"] for r in await cur.fetchall()] == [first.action_id]
+        cur = await app_conn.execute(
+            "SELECT state FROM app.action_attempt_state WHERE action_id = %s ORDER BY seq", (first.action_id,)
+        )
+        assert [r["state"] for r in await cur.fetchall()] == ["INTENT", "SENT", "RESOLVED"]
+    finally:
+        if run is not None:
+            await purge_run(app_conn, run)
+            await purge_tenant(app_conn, tenant)
+
+
+async def test_exception_after_sent_becomes_outcome_unknown(
+    app_conn: persistence.Conn, secret, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exploding_post(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(destination, "post_incident", exploding_post)
+    tenant = run = None
+    try:
+        async with app_conn.transaction():
+            tenant, _, run, proposal, handle = await approved_run(app_conn)
+        session = persistence.Session(app_conn)
+        async with session.unit() as conn:
+            invocation = await persistence.resolve_handle(
+                conn, handle=handle, server=Server.WRITE, azp="ops-worker", tool=Tool.CREATE_INCIDENT
+            )
+        async with httpx2.AsyncClient() as http:
+            outcome = await execution.create_incident(
+                make_deps(session, http, secret), invocation=invocation, proposal_id=proposal
+            )
+        assert outcome.status is ToolOutcome.UNKNOWN
+        assert (await persistence.run_row(app_conn, run))["state"] == "OUTCOME_UNKNOWN"
+        cur = await app_conn.execute("SELECT type FROM app.events WHERE run_id = %s ORDER BY sequence", (run,))
+        assert [r["type"] for r in await cur.fetchall()] == [
+            "run.accepted",
+            "action.granted",
+            "action.dispatched",
+            "action.uncertain",
+        ]
+    finally:
         if run is not None:
             await purge_run(app_conn, run)
             await purge_tenant(app_conn, tenant)

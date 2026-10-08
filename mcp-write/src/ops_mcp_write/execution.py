@@ -10,6 +10,7 @@ second action id for one run.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -22,6 +23,8 @@ from ops_core.tokens import WorkloadTokenSource
 from psycopg.types.json import Jsonb
 
 from ops_mcp_write import destination
+
+log = logging.getLogger(__name__)
 
 
 class GrantRefused(persistence.PersistenceError):
@@ -134,9 +137,23 @@ async def grant_execution(conn: persistence.Conn, *, invocation: persistence.Inv
     return grant
 
 
+async def _latest_attempt(conn: persistence.Conn, action_id: UUID) -> str:
+    """The newest attempt state; callers hold the runs row lock, so the answer cannot change under them."""
+    cur = await conn.execute(
+        "SELECT state FROM app.action_attempt_state WHERE action_id = %s ORDER BY attempt_no DESC, seq DESC LIMIT 1",
+        (action_id,),
+    )
+    row = await cur.fetchone()
+    assert row is not None  # INTENT is written in the grant's own unit of work
+    return str(row["state"])
+
+
 async def mark_sent(conn: persistence.Conn, grant: Grant) -> None:
     """SENT, in its own unit of work that commits before the first byte leaves (SA:229): a crash after this point is
-    reconciled, not retried."""
+    reconciled, not retried. Idempotent: a concurrent caller that got here first leaves nothing to write."""
+    await persistence.run_row(conn, grant.run_id, lock=True)  # also serialises the seq computation (SA:462)
+    if await _latest_attempt(conn, grant.action_id) in ("SENT", "RESOLVED"):
+        return
     await _attempt_state(conn, grant.action_id, "SENT")
     await persistence.append_event(
         conn,
@@ -150,7 +167,16 @@ async def mark_sent(conn: persistence.Conn, grant: Grant) -> None:
 
 
 async def record_outcome(conn: persistence.Conn, grant: Grant, outcome: ActionOutcome) -> None:
-    """RESOLVED plus the run transition the outcome implies; the event is the destination's assertion (AM-14)."""
+    """RESOLVED plus the run transition the outcome implies; the event is the destination's assertion (AM-14).
+    Idempotent (SA:464): a resolved attempt or an already-terminal run stands; late evidence is T22's."""
+    run_state = (await persistence.run_row(conn, grant.run_id, lock=True))["state"]
+    implied = {
+        ToolOutcome.SUCCEEDED: RunState.SUCCEEDED,
+        ToolOutcome.FAILED_NO_COMMIT: RunState.FAILED,
+        ToolOutcome.CONFLICT: RunState.ESCALATED,
+    }.get(outcome.status)
+    if await _latest_attempt(conn, grant.action_id) == "RESOLVED" or (implied and run_state == implied.value):
+        return
     data = outcome.model_dump(mode="json")
     await _attempt_state(conn, grant.action_id, "RESOLVED", outcome=outcome.status.value, detail=data)
     tenant, conversation, run = grant.tenant_id, grant.conversation_id, grant.run_id
@@ -246,18 +272,26 @@ async def create_incident(deps: Deps, *, invocation: persistence.Invocation, pro
     if step == "send":
         async with deps.session.unit() as conn:
             await mark_sent(conn, grant)  # committed here, before any I/O
-    reply = await destination.post_incident(
-        deps.http,
-        url=deps.destination_url,
-        token=await deps.destination_token.token(),
-        action_id=grant.action_id,
-        payload_sha256=grant.payload_sha256,
-        payload_canonical=grant.payload_canonical,
-    )
-    outcome = destination.classify(reply, action_id=grant.action_id, payload_sha256=grant.payload_sha256)
+    try:
+        reply = await destination.post_incident(
+            deps.http,
+            url=deps.destination_url,
+            token=await deps.destination_token.token(),
+            action_id=grant.action_id,
+            payload_sha256=grant.payload_sha256,
+            payload_canonical=grant.payload_canonical,
+        )
+        outcome = destination.classify(reply, action_id=grant.action_id, payload_sha256=grant.payload_sha256)
+    except Exception:  # after SENT nothing may escape as "no effect" (SA:356, ruling 21): UNKNOWN, reconciled
+        log.exception("destination call for action %s failed after SENT", grant.action_id)
+        outcome = destination.unknown(grant.action_id, grant.payload_sha256)
+    # Outside the try on purpose: a database failure here is a 500 and the replay recovers (the attempt is still SENT).
     async with deps.session.unit() as conn:
         if outcome.status is ToolOutcome.UNKNOWN:
             await mark_unknown(conn, grant)
         else:
             await record_outcome(conn, grant, outcome)
+        final = await load_grant(conn, grant.run_id)
+    if final is not None and final.attempt_state == "RESOLVED" and final.detail is not None:
+        return ActionOutcome.model_validate_json(json.dumps(final.detail))  # a concurrent caller's record stands
     return outcome

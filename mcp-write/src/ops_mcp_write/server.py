@@ -79,11 +79,17 @@ class Verifier(Protocol):  # the subset of ops_core.tokens.TokenVerifier the ser
     """Token-verifier subset the server needs, so unit tests can stub it."""
 
     @property
-    def ready(self) -> bool: ...
+    def ready(self) -> bool:
+        """Whether the signing keys are loaded."""
+        ...
 
-    async def load_keys(self) -> None: ...
+    async def load_keys(self) -> None:
+        """Fetch the signing keys."""
+        ...
 
-    async def verify_async(self, token: str) -> Principal: ...
+    async def verify_async(self, token: str) -> Principal:
+        """Verify a bearer token or raise TokenRejected."""
+        ...
 
 
 class McpVerifier:
@@ -95,6 +101,7 @@ class McpVerifier:
         self._resource = resource_url
 
     async def verify_token(self, token: str) -> AccessToken | None:
+        """Return the access token for a valid bearer token, None (401) otherwise."""
         try:
             principal = await self._verifier.verify_async(token)
         except TokenRejected:
