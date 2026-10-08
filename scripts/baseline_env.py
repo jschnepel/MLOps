@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 def tool_version(cmd: list[str]) -> str | None:
-    """First line of the version a command prints, or None when it is missing, fails or hangs."""
+    """Return the first line of the version a command prints, or None when it is missing, fails or hangs."""
     try:
         # The 20 s cap stops a wedged tool (a daemon that never answers `--version`) from hanging the capture.
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=20, check=False)
@@ -45,11 +45,13 @@ def capture(venv_python: str) -> dict:
 
 
 def main() -> int:
+    """Write the capture to reports/baseline/environment.json and return 0 (exit code for the shell)."""
     venv_python = sys.argv[1]
     out = Path("reports/baseline/environment.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     # newline="\n" because text mode on Windows would write CRLF, and the committed capture must be LF
-    # (T01 "normalize baseline captures to UTF-8/LF"); the same applies to every file these scripts write.
+    # (commit b80f94f, 'T01: normalize baseline captures to UTF-8/LF'); the same applies to every file these
+    # scripts write.
     out.write_text(json.dumps(capture(venv_python), indent=2) + "\n", encoding="utf-8", newline="\n")
     print(f"wrote {out}")
     return 0

@@ -21,7 +21,7 @@ def test_generate_makes_at_least_30_distinct_inputs():
 def test_every_scenario_appears_at_least_five_times():
     counts = Counter(c["scenario"] for c in generate())
     assert set(counts) == set(SCENARIOS)
-    # Five is the smallest count that keeps a per-scenario rate from being decided by one case.
+    # Chosen so that a single case cannot decide a per-scenario rate.
     assert min(counts.values()) >= 5, counts
 
 
@@ -29,7 +29,7 @@ def test_each_input_has_a_small_evidence_bundle():
     for c in generate():
         bundle = c["evidence"]
         assert bundle["status"]["asset_id"] == c["asset_id"]
-        assert 0 <= len(bundle["alerts"]) <= 4  # the generator's one-digit hour in alert timestamps allows at most 4
+        assert 0 <= len(bundle["alerts"]) <= 4  # the current maximum; the generator's one-digit hour allows up to 10
         assert all(d["document_id"].startswith(("ALPHA", "BETA")) for d in bundle["documents"])
 
 

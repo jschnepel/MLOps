@@ -52,8 +52,9 @@ from scripts.seal import sha256_of
 MODEL = "qwen3:8b"
 # Loopback only: the probe must never send evidence or prompts to a remote host.
 OLLAMA = "http://127.0.0.1:11434"
-# Hard cap per model call so one stuck generation cannot stall the run (T02 "bound every probe call"). It is the
-# same 60 s cap the model_permit release rule refers to (AM-12), so a call that exceeds it counts as a failure.
+# Hard cap per model call so one stuck generation cannot stall the run (commit c77ce1a, 'T02: bound every probe
+# call'). Treating a call that exceeds it as a failure is this script's own rule; AM-12 only uses the same 60 s
+# figure in the model_permit release rule ("until /api/ps shows idle or the 60 s cap passes").
 TIMEOUT_S = 60
 PROMPT_DRAFT = ROOT / "handoff/prompts/incident-draft-v1.md"
 PROMPT_REPAIR = ROOT / "handoff/prompts/schema-repair-v1.md"
@@ -69,7 +70,7 @@ EXPECTED = {
 
 
 def ollama_json(path: str, payload: dict | None = None) -> dict:
-    """GET `path` from the local Ollama (POST with `payload` as JSON when one is given) and return the JSON reply."""
+    """Fetch `path` from the local Ollama (POST with `payload` as JSON when one is given); return the JSON reply."""
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
         OLLAMA + path, data=data, headers={"Content-Type": "application/json"}, method="POST" if data else "GET"
@@ -81,7 +82,7 @@ def ollama_json(path: str, payload: dict | None = None) -> dict:
 
 
 def model_digest() -> str:
-    """/api/tags lists installed models with their digests; /api/show does not carry one."""
+    """Return the digest of the installed model; /api/tags carries digests, /api/show does not."""
     for m in ollama_json("/api/tags").get("models", []):
         if m.get("name") == MODEL or m.get("model") == MODEL:
             return m["digest"]
@@ -89,12 +90,12 @@ def model_digest() -> str:
 
 
 def unload_model() -> None:
-    """keep_alive=0 on a generate request unloads the model so the next call is cold."""
+    """Unload the model (keep_alive=0 on a generate request) so the next call is cold."""
     ollama_json("/api/generate", {"model": MODEL, "keep_alive": 0})
 
 
 def _nvidia_smi(query: str) -> str | None:
-    """First line of an nvidia-smi query, or None when nvidia-smi is missing or fails.
+    """Return the first line of an nvidia-smi query, or None when nvidia-smi is missing or fails.
 
     Only the first GPU is reported on a multi-GPU machine; the report labels the figure with that GPU's name.
     """
@@ -114,7 +115,7 @@ def _nvidia_smi(query: str) -> str | None:
 
 
 def vram_mb() -> int | None:
-    """Whole-GPU memory.used in MB, or None (never 0) when it cannot be read."""
+    """Return whole-GPU memory.used in MB, or None (never 0) when it cannot be read."""
     value = _nvidia_smi("memory.used")
     try:
         return int(value) if value is not None else None
@@ -123,12 +124,12 @@ def vram_mb() -> int | None:
 
 
 def gpu_name() -> str | None:
-    """Name of the first GPU, or None when nvidia-smi is unavailable."""
+    """Return the name of the first GPU, or None when nvidia-smi is unavailable."""
     return _nvidia_smi("name")
 
 
 class VramSampler:
-    """Samples whole-GPU memory.used every VRAM_INTERVAL_S seconds while a model call is pending."""
+    """Sample whole-GPU memory.used every VRAM_INTERVAL_S seconds while a model call is pending."""
 
     def __init__(self) -> None:
         self.samples: list[int] = []
@@ -390,9 +391,11 @@ def main() -> int:
         if actual != h:
             print(f"prompt {name} hash {actual} != sealed/pinned {h}; refusing to run", file=sys.stderr)
             return 2
-    # TODO(T46): rename the comprehension variable `l` (easily misread as 1) to `line`.
+    # TODO(T46): rename the single-letter names `l` (easily misread as 1), `c`, `s` and `n` here and in run_probe and
+    # render_report to descriptive ones (`line`, `case`, `summary`, `count`).
     cases = [json.loads(l) for l in (ROOT / "evals/probe/inputs.jsonl").read_text(encoding="utf-8").splitlines()]
-    # AM-31 asks for at least 30 distinct inputs so the Wilson intervals in the report are meaningful.
+    # AM-31 requires at least 30 distinct inputs; we treat 30 as the floor at which the Wilson intervals stay
+    # informative.
     if len(cases) < 30:
         print("need >= 30 distinct inputs", file=sys.stderr)
         return 2

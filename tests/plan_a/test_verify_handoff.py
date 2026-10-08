@@ -1,4 +1,6 @@
-"""Protect scripts/verify_handoff.py, the integrity gate for the delivered handoff and reference/ (T42, final review F1).
+"""Protect scripts/verify_handoff.py, the integrity gate for the delivered handoff and reference/.
+
+It serves T42 and final review I1 (fix F1).
 
 The checker is the only thing stopping hash-pinned inherited code from drifting unnoticed. These tests run it as a
 subprocess against the real repository and against tampered copies, and catch a checker that passes when it should

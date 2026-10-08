@@ -27,7 +27,7 @@ def members_importable() -> bool:
     """Return True when the workspace members are installed, else print how to fix it.
 
     Without this guard a bare `python scripts/check.py` on a fresh clone fails deep inside mypy and pytest with
-    import errors that hide the real cause (final review F2).
+    import errors that hide the real cause (final review I2, fix F2).
     """
     try:
         # Imported only to prove the workspace is synced; ops_core is a representative member, hence the noqa.
@@ -39,6 +39,7 @@ def members_importable() -> bool:
 
 
 def main() -> int:
+    """Run ruff, ruff format, mypy and pytest; return 0 only if all pass, 1 if the workspace is not installed."""
     if not members_importable():
         return 1
     # sys.executable keeps every tool inside the interpreter (and virtual environment) that launched this script.

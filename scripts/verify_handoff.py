@@ -119,8 +119,9 @@ def reference_tree_files() -> set[str]:
 
 
 def check_reference_tree(zip_path: Path) -> int:
-    """Enforce the whole reference/ tree against provenance/reference-tree.json and the delivered zip (final review F1).
+    """Enforce the whole reference/ tree against provenance/reference-tree.json and the delivered zip.
 
+    Final review I1 (fix F1) showed that hashing only the pinned files let edits elsewhere under reference/ pass.
     The per-file hashes only cover files that have a hash entry; this also catches modified unhashed files
     (Dockerfile, Makefile ...), deleted files, files added under reference/, and remap targets that point outside it.
     Returns 0 on success, 1 after printing each failure.
@@ -331,7 +332,8 @@ def main() -> int:
             f"PASS: {len(schema_paths)} JSON Schema documents; {positive} accepted examples; {negative} rejected negative examples"
         )
 
-    # Combine with `|=` so every requested check runs and prints its failures; stopping at the first would hide the rest.
+    # Combine with `|=` so every requested check runs and prints its failures; stopping at the first would
+    # hide the rest.
     rc = 0
     if args.reference_code:
         rc |= check_reference_code()

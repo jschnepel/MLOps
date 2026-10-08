@@ -64,7 +64,7 @@ def generate() -> list[dict]:
                         "evidence": {
                             # Fixed timestamps (no clock reads) keep the output deterministic.
                             "status": {"asset_id": asset, "state": "running", "observed_at": "2026-10-07T08:00:00Z"},
-                            # The hour is one digit, so this format only works for up to four alerts per scenario.
+                            # The hour must stay one digit (at most 10 alerts); the current scenarios use at most 3.
                             "alerts": [
                                 {"severity": s, "message": m, "at": f"2026-10-07T0{i}:30:00Z"}
                                 for i, (s, m) in enumerate(alerts)

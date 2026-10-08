@@ -4,7 +4,7 @@ Lists `git ls-files reference` minus the repository-owned reference/README.md, a
 to write unless every listed file is byte-identical to zip member operations-copilot/<path>
 in provenance/handoff-1.0.zip.
 
-scripts/verify_handoff.py reads the result to enforce the whole reference/ tree (final review F1), not only the
+scripts/verify_handoff.py reads the result to enforce the whole reference/ tree (final review I1, fix F1), not only the
 files that have an individual hash. Run it after any deliberate change to what is delivered under reference/.
 """
 

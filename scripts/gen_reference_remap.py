@@ -32,7 +32,8 @@ def build() -> dict[str, str]:
     for e in entries:
         new = remap_path(e["path"])
         actual = hashlib.sha256(Path(new).read_bytes()).hexdigest()
-        # A mismatch means the move (or a line-ending conversion) changed the file; the remap must never paper over that.
+        # A mismatch means the move (or a line-ending conversion) changed the file; the remap must never
+        # paper over that.
         if actual != e["sha256"]:
             raise SystemExit(f"hash mismatch after move: {e['path']} -> {new}")
         out[e["path"]] = new

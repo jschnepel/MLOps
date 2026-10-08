@@ -177,7 +177,7 @@ def test_cold_row_uses_first_row_only_without_error():
 
 def test_cold_row_renders_the_error_not_a_timeout_as_latency():
     # A call that hit the 60 s cap took "60.01 s" only because we gave up; reporting that as a cold-start latency
-    # would understate a real failure (final review F5).
+    # would understate a real failure (final review M4, fix F5).
     s = summarize([_row(True, 60.01, "TimeoutError: "), _row(False, 4.0, None)])
     assert s["cold_seconds"] is None
     assert s["cold_error"] == "TimeoutError: "

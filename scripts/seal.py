@@ -25,6 +25,7 @@ def seal_lines(paths: list[Path]) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    """Print a seal line for each path in `argv`; return 0, or 2 (usage) when no paths are given."""
     if not argv:
         # Exit 2 (usage error) so a script that forgets its arguments cannot be mistaken for a successful seal.
         print(__doc__, file=sys.stderr)

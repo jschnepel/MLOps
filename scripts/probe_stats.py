@@ -15,8 +15,8 @@ import re
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     """Wilson score interval for k successes in n trials, at 95% confidence by default.
 
-    Wilson is used instead of the normal approximation because the probe has only 30-60 inputs and pass rates
-    near 0% or 100%, where the normal interval is too narrow and can leave [0, 1].
+    Wilson is used instead of the normal approximation because the probe has few inputs (AM-31 requires at least 30) and
+    pass rates near 0% or 100%, where the normal interval is too narrow and can leave [0, 1].
 
     Raises:
         ValueError: if n is not positive or k is outside 0..n.
