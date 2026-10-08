@@ -59,10 +59,17 @@
     },
     "created_by": {
       "type": "array",
+      "minItems": 1,
       "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 80
+        "enum": [
+          "api",
+          "create_revision",
+          "mark_unknown",
+          "reclaim_leases",
+          "record_decision",
+          "sweeper",
+          "worker"
+        ]
       }
     },
     "dedup_key": {

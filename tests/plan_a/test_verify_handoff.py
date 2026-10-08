@@ -16,6 +16,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
+
 # -I matches how CI runs the checker: no environment variables or working-directory modules can alter it.
 CHECKER = [sys.executable, "-I", "scripts/verify_handoff.py"]
 
@@ -197,3 +199,20 @@ def test_contracts_require_index_version(tmp_path: Path):
     p.write_text(json.dumps(doc), encoding="utf-8", newline="\n")
     r = _run_contracts(copy)
     assert r.returncode == 1 and "index.json version" in r.stdout + r.stderr
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="needs uv")
+def test_contracts_block_when_the_date_time_validator_is_missing():
+    """An interpreter with jsonschema but no rfc3339-validator must stop the gate (exit 2), not pass it silently."""
+    env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "VIRTUAL_ENV"}}
+    r = subprocess.run(
+        ["uv", "run", "--isolated", "--no-project", "--python", "3.13", "--with", "jsonschema>=4.26,<5"]
+        + ["python", "-I", "scripts/verify_handoff.py", "--contracts"],
+        cwd=Path(__file__).resolve().parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert r.returncode == 2 and "BLOCKED" in r.stderr and "rfc3339-validator" in r.stderr, r.stdout + r.stderr

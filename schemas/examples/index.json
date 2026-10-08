@@ -295,6 +295,22 @@
       "reason_match": "^\\$\\.occurred_at: 'yesterday' is not a 'date-time'$"
     },
     {
+      "path": "schemas/examples/event-invalid-late-evidence-succeeded-without-receipt.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A SUCCEEDED late-evidence outcome is proved by a receipt, never a tombstone.",
+      "reason_match": "^\\$\\.payload: ('receipt' is a required property|.* should not be valid under)"
+    },
+    {
+      "path": "schemas/examples/event-invalid-outcome-on-conflict.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "Only action.confirmed, action.failed and action.late_evidence may carry an outcome.",
+      "reason_match": "^\\$\\.payload: .* should not be valid under"
+    },
+    {
       "path": "schemas/examples/tool-invalid-ok-unknown.json",
       "schema": "schemas/tool-result.schema.json",
       "valid": false,

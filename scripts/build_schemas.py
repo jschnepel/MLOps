@@ -47,6 +47,13 @@ FAILED_REASONS = [r.value for r in Reason if r in FAILED_NO_COMMIT_REASONS]  # p
 TOOL_OUTCOMES = [o.value for o in ToolOutcome]
 EVENT_TYPES = [e.value for e in EventType]
 DESTINATION_TYPES = [e.value for e in EventType if e in DESTINATION_EVIDENCE]
+OUTCOME_EVENT_TYPES = [
+    EventType.ACTION_CONFIRMED.value,
+    EventType.ACTION_FAILED.value,
+    EventType.ACTION_LATE_EVIDENCE.value,
+]
+# Every creator named in JOB_RULES (AM-20.4 "Inserted by"), so a job document cannot name an unknown inserter.
+JOB_CREATORS = sorted({c for rule in JOB_RULES.values() for c in rule.created_by})
 TOOLS = [t.value for t in Tool]
 READ_TOOLS = [Tool.GET_ASSET_STATUS.value, Tool.GET_RECENT_ALERTS.value, Tool.SEARCH_PROCEDURES.value]
 RECEIPT_TOOLS = [Tool.CREATE_INCIDENT.value, Tool.GET_INCIDENT_RECEIPT.value]  # data = the action-outcome shape
@@ -434,13 +441,21 @@ def event() -> Doc:
                     props(type={"const": EventType.ACTION_CONFIRMED.value}),
                     props(payload={"required": ["status", "receipt"], **props(status={"const": "SUCCEEDED"})}),
                 ),
-                # (6) action.late_evidence requires the destination outcome plus a receipt or tombstone (AM-10).
+                # (6) action.late_evidence requires the destination outcome and pairs it with its evidence exactly as
+                # abort_outcome does (AM-10): SUCCEEDED carries a receipt and no tombstone, otherwise the reverse.
+                # Mirrors event_rules_ok; `outcome` stays required, so the inner `if` cannot pass vacuously.
                 when(
                     props(type={"const": EventType.ACTION_LATE_EVIDENCE.value}),
                     props(
                         payload={
                             "required": ["outcome"],
-                            "anyOf": [{"required": ["receipt"]}, {"required": ["tombstone"]}],
+                            "allOf": [
+                                when(
+                                    props(outcome={"const": ToolOutcome.SUCCEEDED.value}),
+                                    {"required": ["receipt"], "not": {"required": ["tombstone"]}},
+                                    {"required": ["tombstone"], "not": {"required": ["receipt"]}},
+                                )
+                            ],
                         }
                     ),
                 ),
@@ -449,6 +464,22 @@ def event() -> Doc:
                     props(type={"const": EventType.ACTION_FAILED.value}),
                     props(payload={"required": ["reason"]}),
                 ),
+                # (8) Outcome evidence belongs to the three types that report one; any other type carrying an
+                # outcome, receipt or tombstone would present evidence the event's own type does not vouch for.
+                {
+                    "if": props(type={"enum": OUTCOME_EVENT_TYPES}),
+                    "else": props(
+                        payload={
+                            "not": {
+                                "anyOf": [
+                                    {"required": ["outcome"]},
+                                    {"required": ["receipt"]},
+                                    {"required": ["tombstone"]},
+                                ]
+                            }
+                        }
+                    ),
+                },
             ],
         ),
     )
@@ -714,7 +745,7 @@ def job() -> Doc:
                 "type": {"enum": [t.value for t in JOB_RULES]},
                 "allowed_tools": {"type": "array", "uniqueItems": True, "items": {"enum": TOOLS}},
                 "run_states": {"type": "array", "uniqueItems": True, "items": {"enum": STATES}},
-                "created_by": {"type": "array", "items": text(1, 80)},
+                "created_by": {"type": "array", "minItems": 1, "items": {"enum": JOB_CREATORS}},
                 "dedup_key": text(1, 200),
             },
             ["type", "allowed_tools", "run_states", "created_by", "dedup_key"],
@@ -1253,6 +1284,24 @@ def examples(root: Path = ROOT) -> list[tuple[Doc, Doc]]:
         {**event_valid, "occurred_at": "yesterday"},
         "occurred_at must be an RFC 3339 date-time (FormatChecker with rfc3339-validator).",
         "^\\$\\.occurred_at: 'yesterday' is not a 'date-time'$",
+    )
+    invalid(
+        "event-invalid-late-evidence-succeeded-without-receipt",
+        "event",
+        event_doc(
+            "destination",
+            {"action_id": ACTION, "outcome": "SUCCEEDED", "tombstone": tombstone},
+            EventType.ACTION_LATE_EVIDENCE.value,
+        ),
+        "A SUCCEEDED late-evidence outcome is proved by a receipt, never a tombstone.",
+        "^\\$\\.payload: ('receipt' is a required property|.* should not be valid under)",
+    )
+    invalid(
+        "event-invalid-outcome-on-conflict",
+        "event",
+        event_doc("destination", {"action_id": ACTION, "outcome": "SUCCEEDED"}, EventType.ACTION_CONFLICT.value),
+        "Only action.confirmed, action.failed and action.late_evidence may carry an outcome.",
+        "^\\$\\.payload: .* should not be valid under",
     )
     invalid(
         "tool-invalid-ok-unknown",

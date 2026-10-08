@@ -336,6 +336,14 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
+        # Without rfc3339-validator the FormatChecker silently skips `date-time`, so a malformed timestamp would
+        # validate; fail closed here instead of relying on one probe's unexpected success to notice.
+        if "date-time" not in FormatChecker.checkers:
+            print(
+                "BLOCKED: --contracts requires rfc3339-validator (date-time format checks). This gate did not pass.",
+                file=sys.stderr,
+            )
+            return 2
         from jsonschema.exceptions import best_match
 
         # Meta-validate every schema: the top-level contracts, the per-tool input schemas and the evals schemas

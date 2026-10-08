@@ -43,4 +43,5 @@ def test_workflow_runs_the_one_command_with_all_packages():
     text = WF.read_text(encoding="utf-8")
     assert "uv sync --locked --all-packages" in text
     assert "python scripts/check.py" in text
-    assert "verify_handoff.py --reference-code --manifest" in text
+    # The full command, so dropping --contracts (or uv run, which supplies jsonschema) from CI fails here.
+    assert "uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts" in text

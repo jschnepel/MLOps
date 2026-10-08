@@ -361,16 +361,35 @@
             "required": [
               "outcome"
             ],
-            "anyOf": [
+            "allOf": [
               {
-                "required": [
-                  "receipt"
-                ]
-              },
-              {
-                "required": [
-                  "tombstone"
-                ]
+                "if": {
+                  "properties": {
+                    "outcome": {
+                      "const": "SUCCEEDED"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "receipt"
+                  ],
+                  "not": {
+                    "required": [
+                      "tombstone"
+                    ]
+                  }
+                },
+                "else": {
+                  "required": [
+                    "tombstone"
+                  ],
+                  "not": {
+                    "required": [
+                      "receipt"
+                    ]
+                  }
+                }
               }
             ]
           }
@@ -391,6 +410,44 @@
             "required": [
               "reason"
             ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "action.confirmed",
+              "action.failed",
+              "action.late_evidence"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "payload": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "outcome"
+                  ]
+                },
+                {
+                  "required": [
+                    "receipt"
+                  ]
+                },
+                {
+                  "required": [
+                    "tombstone"
+                  ]
+                }
+              ]
+            }
           }
         }
       }

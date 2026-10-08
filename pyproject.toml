@@ -34,6 +34,7 @@ dev = [
   "pytest>=9.0,<10",
   "ruff>=0.14,<1",
   "mypy>=1.19,<2",
+  # best_match ranking is version-sensitive: the negatives' reason_match values are tuned to the locked version.
   "jsonschema>=4.26,<5",
   "hypothesis>=6.140,<7",
   "pyyaml>=6.0,<7",
