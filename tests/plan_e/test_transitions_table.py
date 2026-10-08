@@ -106,6 +106,7 @@ def test_no_op_execute_string_carries_a_sqlalchemy_bind(name: str, monkeypatch: 
 
 
 def test_event_type_allowlist_lists_every_event_type_once() -> None:
+    """0003's inlined allowlist is exactly EventType, each value once (Task 3 review finding 1)."""
     from ops_core.outcomes import EventType
 
     listed = load_module("0003_run_path_functions").EVENT_TYPES.split(", ")
