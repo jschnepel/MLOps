@@ -1527,7 +1527,7 @@
       "requirement": "Fault-injection hooks are unreachable outside the test profile",
       "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Hook routes 404 in default and demo profiles; factories refuse to start without PROFILE=test.",
-      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_status": "RECORDED_LOCALLY",
       "evidence_paths": [
         "tests/plan_e/test_incident_sim_t10.py",
         "tests/plan_e/test_faults.py"

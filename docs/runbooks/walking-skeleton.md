@@ -42,8 +42,18 @@ commits, then answers 503; recover with `GET /internal/actions/{action_id}`); th
 `uv run python scripts/skeleton.py keys` lists destination keys that no execution grant carries (exit 1 if any).
 
 If mcp-write is down, approved runs wait in APPROVED and their execute jobs retry every 30 s until it returns. The
-R105 run, its conversation and its incident stay in the dev database on purpose: they are the evidence the proof
-file describes, and nothing purges them.
+R105 test runs against the per-session `ops_test` and `incident_test` databases, which the next live session drops and
+recreates, so the run ids, action id and incident id in `reports/skeleton/r105-walking-skeleton.txt` exist nowhere
+after that session; the proof file, not the database, is the retained evidence.
+
+Recovering a dev database that was migrated under `PROFILE=test`: the testclock branch is then applied, and `up`
+refuses to start while `app.test_clock` exists. There is no CLI verb for the branch downgrade; with `PROFILE` unset (or
+`dev`), take the branch off and migrate the main line again:
+
+```
+uv run python -c "from scripts.skeleton import downgrade, load_dotenv, export_environment; from ops_core import settings; export_environment(load_dotenv()); downgrade('app', settings.superuser_postgres(), 'testclock@base')"
+uv run python scripts/skeleton.py migrate
+```
 
 Tokens: personas through the dev-only direct grant (`ops-dev-direct`, audience `ops-api`); the worker through
 `ops-worker` (both MCP audiences); mcp-write through `ops-mcp-write` (audience `incident-sim`). The MCP resource URLs
