@@ -32,18 +32,24 @@ TRANSPORT_FAILURES = (MCPError, httpx2.HTTPError, OSError)
 
 
 class TokenSource(Protocol):
+    """Where the caller gets its workload token, so tests and the real client share one seam."""
+
     async def token(self) -> str:
         """Return a bearer token valid now."""
         ...
 
 
 class McpCaller(Protocol):
+    """What a handler needs from an MCP client, so tests can script it without a transport."""
+
     async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Call one tool on one server under one invocation handle and return its structured result."""
         ...
 
 
 class HttpMcpCaller:
+    """The real client: one fresh connection per call, token and handle sent as headers."""
+
     def __init__(self, token_source: TokenSource, *, connect_timeout: float = 10.0) -> None:
         """Hold the token source and the timeouts; connections are opened per call."""
         self._tokens = token_source

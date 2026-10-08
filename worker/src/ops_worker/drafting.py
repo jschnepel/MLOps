@@ -21,6 +21,8 @@ WORKFLOW_VERSION = "investigation-v1"
 
 @dataclass(frozen=True)
 class DraftRequest:
+    """What the model may know about the ask; no identity, credential or tool is part of it."""
+
     asset_id: str
     text: str
     start_at: datetime
@@ -29,6 +31,8 @@ class DraftRequest:
 
 @dataclass(frozen=True)
 class EvidenceItem:
+    """One retrieved procedure section, with the hash that later binds it into the proposal snapshot."""
+
     evidence_id: str
     document_id: str
     version: str
@@ -38,6 +42,8 @@ class EvidenceItem:
 
 
 class DraftGenerator(Protocol):
+    """The model router's seam: a route turns request and evidence into a draft and nothing else."""
+
     async def generate(self, request: DraftRequest, evidence: list[EvidenceItem]) -> ModelDraft:
         """Draft a proposal from the request and the evidence bundle alone."""
         ...
@@ -48,6 +54,8 @@ class ModelRouteError(ValueError):
 
 
 class FakeDraftGenerator:
+    """The deterministic route that exercises the control path without a model (BUILD_SPEC §1)."""
+
     async def generate(self, request: DraftRequest, evidence: list[EvidenceItem]) -> ModelDraft:
         """Draft deterministically from the first evidence item; no evidence is an error."""
         if not evidence:

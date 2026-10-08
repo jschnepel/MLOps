@@ -118,3 +118,28 @@ async def _investigate_then_execute(app_conn: persistence.Conn, deps: handlers.D
     assert mcp.calls[1][2] == {"proposal_id": str(proposal["proposal_id"])}
     cur = await app_conn.execute("SELECT done_at IS NOT NULL AS done FROM app.jobs WHERE id = %s", (job["id"],))
     assert (await cur.fetchone())["done"]
+
+
+class RaisingGenerator:
+    async def generate(self, request: Any, evidence: Any) -> Any:
+        """Stand in for a model route that fails mid-draft."""
+        raise RuntimeError("model route failed")
+
+
+async def test_drafting_failure_fails_the_run(app_conn: persistence.Conn) -> None:
+    mcp = ScriptedMcp(app_conn)
+    deps = handlers.Deps(conn=app_conn, mcp=mcp, generator=RaisingGenerator(), urls=settings.urls(), worker_name="t")
+    async with app_conn.transaction(force_rollback=True):
+        _, _, run = await new_run(app_conn)
+        job = await own_job(app_conn, run, "investigate")
+        await handlers.handle(deps, job)
+        row = await persistence.run_row(app_conn, run)
+        assert row["state"] == "FAILED" and row["active_proposal_id"] is None
+        cur = await app_conn.execute("SELECT type FROM app.events WHERE run_id = %s ORDER BY sequence", (run,))
+        assert [r["type"] for r in await cur.fetchall()] == ["tool.started", "tool.completed", "run.failed"]
+        cur = await app_conn.execute(
+            "SELECT to_state FROM app.run_state_history WHERE run_id = %s ORDER BY seq", (run,)
+        )
+        assert [r["to_state"] for r in await cur.fetchall()] == ["QUEUED", "RETRIEVING", "DRAFTING", "FAILED"]
+        cur = await app_conn.execute("SELECT done_at IS NOT NULL AS done FROM app.jobs WHERE id = %s", (job["id"],))
+        assert (await cur.fetchone())["done"]

@@ -24,6 +24,8 @@ EXPIRY = timedelta(minutes=15)  # BUILD_SPEC §12 default; enforced by T21
 
 @dataclass(frozen=True)
 class Frozen:
+    """The proposal as frozen: payload, the exact bytes, their hash and the run manifest."""
+
     payload: ProposalPayload
     canonical: bytes
     sha256: str

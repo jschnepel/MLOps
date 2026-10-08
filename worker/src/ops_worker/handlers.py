@@ -22,7 +22,7 @@ from ops_core.states import Intent, Performer, RunState, freeze_allowed
 from psycopg.types.json import Jsonb
 
 from ops_worker import proposals
-from ops_worker.drafting import DraftGenerator, DraftRequest
+from ops_worker.drafting import DraftGenerator, DraftRequest, EvidenceItem
 from ops_worker.mcp import McpCaller, McpCallFailed
 
 log = logging.getLogger("ops_worker")
@@ -31,6 +31,8 @@ QUERY_CHARS = 500  # schemas/tools/search_procedures.input.schema.json maxLength
 
 @dataclass
 class Deps:
+    """What a handler needs: the loop's connection, the MCP client, the model route and the server URLs."""
+
     conn: persistence.Conn
     mcp: McpCaller
     generator: DraftGenerator
@@ -117,6 +119,18 @@ async def investigate(deps: Deps, job: dict[str, Any]) -> None:
         await persistence.transition(
             deps.conn, run_id=run["run_id"], dst=RunState.DRAFTING, performer=Performer.TRANSITION_RUN
         )
+    try:
+        await _draft_and_freeze(deps, run, text, evidence, str(doc["data"]["corpus_version"]))
+    except Exception:
+        # No reclaim until T13: a run left in DRAFTING would hold its conversation slot with the job claimed forever.
+        log.exception("investigate job %s: drafting or freezing failed", job["id"])
+        await _fail(deps, run, RunState.FAILED, EventType.RUN_FAILED, "drafting failed")
+
+
+async def _draft_and_freeze(
+    deps: Deps, run: dict[str, Any], text: str, evidence: list[EvidenceItem], corpus_version: str
+) -> None:
+    """Draft from the evidence and freeze the proposal; any failure here is the caller's to turn into FAILED."""
     request = DraftRequest(asset_id=run["asset_id"], text=text, start_at=run["start_at"], end_at=run["end_at"])
     draft = await deps.generator.generate(request, evidence)
     freeze_allowed(Intent(run["intent"]))  # an answer_only run never freezes a proposal (SA:453)
@@ -132,7 +146,7 @@ async def investigate(deps: Deps, job: dict[str, Any]) -> None:
         end_at=run["end_at"],
         draft=draft,
         evidence=evidence,
-        corpus_version=str(doc["data"]["corpus_version"]),
+        corpus_version=corpus_version,
         now=now,
     )
     async with deps.conn.transaction():

@@ -38,7 +38,7 @@ async def run_forever(deps: handlers.Deps, stop: asyncio.Event) -> None:
                 await handlers.handle(deps, dict(job))
                 continue
         except psycopg.OperationalError:
-            if deps.conn.broken:
+            if deps.conn.broken or deps.conn.closed:
                 log.exception("database connection lost; the poll loop stops and the process exits non-zero")
                 raise
             log.exception("transient database error (deadlock, serialization); the loop continues")
@@ -107,8 +107,10 @@ async def _main() -> None:
         await asyncio.gather(serving, polling, return_exceptions=True)
         await conn.close()
         await probe.close()
-    if polling.done() and not polling.cancelled() and polling.exception() is not None:
-        raise SystemExit(1)  # a supervisor restarts a worker that lost its database; exit 0 would hide it
+    # A supervisor restarts a worker that lost its database or its health server; exit 0 would hide either.
+    for task in (polling, serving):
+        if task.done() and not task.cancelled() and task.exception() is not None:
+            raise SystemExit(1)
 
 
 def main() -> None:
