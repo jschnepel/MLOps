@@ -178,6 +178,12 @@ DESTINATION_EVIDENCE: Final = frozenset(
 )  # AM-80 event row: the only types source=destination may emit, and they come only from record_outcome
 
 
+# AM-14 (who may assert outcomes) and the event schema's rule (8): only these types vouch for outcome evidence.
+OUTCOME_EVENT_TYPES: Final = frozenset(
+    {EventType.ACTION_CONFIRMED, EventType.ACTION_FAILED, EventType.ACTION_LATE_EVIDENCE}
+)
+
+
 class EventRuleViolation(ValueError):
     """The event asserts something its source may not assert (AM-14 'who may assert outcomes')."""
 
@@ -197,6 +203,7 @@ def event_rules_ok(event_type: EventType, source: EventSource, payload: Mapping[
 
     Code enforces who may assert what and the evidence each outcome event must carry; the shape of every other payload
     key is the JSON schema's job, so unknown keys are not rejected here (except for the closed model_summary payload).
+    Evidence keys are the exception: they are an authority claim, so types that do not vouch for them refuse them.
     """
     if source is EventSource.MODEL_SUMMARY:
         # The schema's closed summary_payload, mirrored: a non-empty message, optional evidence_refs, nothing else
@@ -221,6 +228,10 @@ def event_rules_ok(event_type: EventType, source: EventSource, payload: Mapping[
     # application callers, so an application-sourced copy is a forgery.
     if event_type in DESTINATION_EVIDENCE and source is not EventSource.DESTINATION:
         raise EventRuleViolation(f"{event_type} comes only from record_outcome with source=destination")
+    if event_type not in OUTCOME_EVENT_TYPES and not {"outcome", "receipt", "tombstone"}.isdisjoint(payload):
+        raise EventRuleViolation(
+            "only action.confirmed, action.failed and action.late_evidence may carry an outcome, receipt or tombstone"
+        )
     if event_type is EventType.ACTION_CONFIRMED:
         if payload.get("status") != RunState.SUCCEEDED.value:
             raise EventRuleViolation("action.confirmed requires a receipt and status SUCCEEDED")

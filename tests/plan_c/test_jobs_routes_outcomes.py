@@ -311,6 +311,20 @@ def test_event_rules_late_evidence_failed_and_summary():
         event_rules_ok(EventType.EXPLANATION_READY, EventSource.MODEL_SUMMARY, {"message": "m", "evidence_refs": [""]})
 
 
+def test_outcome_evidence_is_refused_on_events_that_do_not_vouch_for_it():
+    action_id = "00000000-0000-4000-8000-000000000007"
+    with pytest.raises(EventRuleViolation):
+        event_rules_ok(
+            EventType.ACTION_CONFLICT, EventSource.DESTINATION, {"action_id": action_id, "outcome": "SUCCEEDED"}
+        )
+    with pytest.raises(EventRuleViolation):
+        event_rules_ok(EventType.ACTION_GRANTED, EventSource.APPLICATION, {"action_id": action_id, "receipt": {}})
+    with pytest.raises(EventRuleViolation):
+        event_rules_ok(EventType.RUN_FAILED, EventSource.APPLICATION, {"tombstone": {}})
+    # Positive control: a conflict event without evidence keys is still fine.
+    event_rules_ok(EventType.ACTION_CONFLICT, EventSource.DESTINATION, {"action_id": action_id, "status": "CONFLICT"})
+
+
 def test_strict_models_reject_loose_values():
     naive = datetime(2026, 10, 8)  # noqa: DTZ001 - naive on purpose
     with pytest.raises(ValidationError):
