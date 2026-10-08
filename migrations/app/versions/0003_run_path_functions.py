@@ -130,6 +130,7 @@ BEGIN
     END IF;
     IF p_type = 'action.late_evidence' AND NOT (
         (p_payload->>'outcome' = 'SUCCEEDED' AND jsonb_typeof(p_payload->'receipt') = 'object'
+            AND (p_payload->'receipt' ?& ARRAY['receipt_id', 'incident_id', 'committed_at'])
             AND NOT (p_payload ? 'tombstone'))
         OR (p_payload->>'outcome' = 'FAILED_NO_COMMIT' AND jsonb_typeof(p_payload->'tombstone') = 'object'
             AND NOT (p_payload ? 'receipt'))) THEN

@@ -178,6 +178,11 @@ DECLARE
     v_run runs%ROWTYPE;
 BEGIN
     PERFORM app._authority('record_decision', ARRAY['api']);
+    -- A NULL would make every comparison below UNKNOWN and slip past its guard, so refuse before any read.
+    IF p_tenant_id IS NULL OR p_proposal_id IS NULL OR p_reviewer IS NULL OR p_decision IS NULL
+       OR p_expected_payload_sha256 IS NULL THEN
+        RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'INVALID_ARGUMENT';
+    END IF;
     -- The API is the identity trust anchor (SA:454): tenant and reviewer are arguments it has authenticated.
     PERFORM set_config('app.tenant_id', p_tenant_id::text, true);
     IF p_decision NOT IN ('approve', 'reject') THEN
@@ -191,7 +196,7 @@ BEGIN
     -- (ruling 23).
     SELECT * INTO v_run FROM runs r WHERE r.run_id = v_proposal.run_id FOR UPDATE;
     IF v_run.state <> 'AWAITING_APPROVAL' OR v_run.active_proposal_id IS DISTINCT FROM p_proposal_id
-       OR v_proposal.payload_sha256 <> p_expected_payload_sha256 THEN
+       OR v_proposal.payload_sha256 IS DISTINCT FROM p_expected_payload_sha256 THEN
         RAISE EXCEPTION 'version_conflict' USING ERRCODE = 'OC003', DETAIL = 'not the active undecided revision';
     END IF;
     -- Independence (BS:466, SA:539): a current reviewer of this tenant who is neither requester nor author.
@@ -257,12 +262,15 @@ DECLARE
     v_action_id uuid;
 BEGIN
     PERFORM app._authority('grant_execution', ARRAY['mcp_exec']);
+    IF p_proposal_id IS NULL THEN
+        RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'INVALID_ARGUMENT';
+    END IF;
     SELECT * INTO v_handle FROM app._resolve_handle(p_raw_handle, 'ops-worker', 'write');
     SELECT * INTO v_run FROM runs r WHERE r.run_id = v_handle.run_id FOR UPDATE;
     SELECT * INTO v_grant FROM execution_grant g WHERE g.run_id = v_handle.run_id;
     IF FOUND THEN
         -- UNIQUE (run_id): one grant per run, ever (SA:167); a replay finds the grant it already has.
-        IF v_grant.proposal_id <> p_proposal_id THEN
+        IF v_grant.proposal_id IS DISTINCT FROM p_proposal_id THEN
             RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'OTHER_PROPOSAL';
         END IF;
         RETURN QUERY SELECT * FROM app._grant_row(v_grant.action_id);
@@ -362,6 +370,12 @@ BEGIN
     ELSIF v_latest.state = 'SENT' THEN
         RETURN 'already_sent';
     END IF;
+    -- A stale mcp-write must not write SENT on a run mark_unknown already moved: the handle revocation is the fence,
+    -- and the caller holds only an action_id, so it cannot see that fence itself.
+    IF v_run.state <> 'EXECUTING' THEN
+        RAISE EXCEPTION 'version_conflict' USING ERRCODE = 'OC003',
+                                                 DETAIL = format('run %s is %s', v_grant.run_id, v_run.state);
+    END IF;
     -- SA:463: cancellation is re-checked before SENT; nothing is written. TODO(T22): the dispatch deadline.
     IF v_run.cancel_requested THEN
         RETURN 'cancelled';
@@ -397,6 +411,15 @@ BEGIN
         RETURN v_latest.outcome;  -- idempotent (SA:464): the first record stands
     END IF;
     IF p_outcome NOT IN ('SUCCEEDED', 'FAILED_NO_COMMIT', 'CONFLICT') THEN
+        RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'INVALID_ARGUMENT';
+    END IF;
+    -- SENT is committed before any dispatch, so a receipt or conflict without SENT is a protocol violation;
+    -- FAILED_NO_COMMIT from INTENT stays allowed for a cancellation before send.
+    IF p_outcome IN ('SUCCEEDED', 'CONFLICT') AND v_latest.state <> 'SENT' THEN
+        RAISE EXCEPTION 'version_conflict' USING ERRCODE = 'OC003', DETAIL = 'outcome before SENT';
+    END IF;
+    -- The document must describe the outcome it is recorded under.
+    IF (p_document->>'status') IS DISTINCT FROM p_outcome THEN
         RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'INVALID_ARGUMENT';
     END IF;
     -- The document's hash must be the grant's (SA:464); a CONFLICT is precisely the case where it is not.

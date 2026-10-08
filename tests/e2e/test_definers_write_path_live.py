@@ -200,6 +200,7 @@ async def test_record_decision_independence_hash_and_first_wins(
         assert await refused(api, call, (BETA, proposal, JORDAN, digest)) == "OC002"  # through beta: not found, no leak
         assert await refused(api, call, (ALPHA, proposal, SAM, "0" * 64)) == "OC003"  # a stale hash
         assert await refused(worker, call, (ALPHA, proposal, SAM, digest)) == "42501"
+        assert await refused(api, call, (ALPHA, proposal, SAM, None)) == "OC005"  # a NULL hash must not slip past
         decided = await approve(api, proposal, digest)
         assert decided == {"run_id": run, "state": "APPROVED", "state_version": 5}
         assert await refused(api, call, (ALPHA, proposal, SAM, digest)) == "OC003"  # the first decision won
@@ -544,6 +545,9 @@ async def test_late_evidence_on_a_terminal_run_records_without_a_transition(
             "tombstone": None,
             "reason": None,
         }
+        empty = {**document, "receipt": {}}  # a receipt without its three keys is no proof (AM-14)
+        record = "SELECT app.record_outcome(%s, 'SUCCEEDED', %s)"
+        assert await refused(mcp_exec, record, (grant["action_id"], Jsonb(empty))) == "OC006"
         async with as_role(mcp_exec):
             assert (
                 await (
@@ -568,8 +572,7 @@ async def test_late_evidence_on_a_terminal_run_records_without_a_transition(
 
 
 async def test_r106_the_definer_path_cannot_cross_tenants(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
-    """R106: no handle, reviewer or tenant reaches another tenant's proposal or run."""
-    """Beta's handle and beta's reviewer against alpha's run and proposal: not found or refused, never a row."""
+    """R106: beta's handle and reviewer never reach alpha's proposal or run (not found or refused, never a row)."""
     api, worker, mcp_exec = [await role_conn(r) for r in (Role.API, Role.WORKER, Role.MCP_EXEC)]
     alpha_run = await drafting_run(app_conn, api, worker, ALPHA)
     beta_run = await drafting_run(app_conn, api, worker, BETA)
@@ -613,3 +616,53 @@ async def test_mcp_exec_cannot_reach_the_tables_the_functions_touched(role_conn:
     for table in ("execution_grant", "action_attempt_state", "proposals", "runs", "invocation_context"):
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             await mcp_exec.execute(f"SELECT 1 FROM app.{table} LIMIT 1")
+
+
+async def test_stale_mark_sent_and_early_outcome_are_refused(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
+    """A moved run refuses SENT, a receipt before SENT is a violation, and a cancel-before-send outcome stands."""
+    api, worker, mcp_exec = [await role_conn(r) for r in (Role.API, Role.WORKER, Role.MCP_EXEC)]
+    runs: list[UUID] = []
+    try:
+        grants = []
+        for _ in range(2):
+            run = await drafting_run(app_conn, api, worker)
+            runs.append(run)
+            proposal, _, digest = await freeze(app_conn, worker, run)
+            await approve(api, proposal, digest)
+            handle = await handle_for(app_conn, run, "execute")
+            async with as_role(mcp_exec):
+                cur = await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal))
+                grants.append((dict(await cur.fetchone())["action_id"], digest))
+        (stale, stale_digest), (cancelled, cancelled_digest) = grants
+        # The superuser moves the run as mark_unknown would, leaving the attempt at INTENT.
+        await app_conn.execute("UPDATE app.runs SET state = 'OUTCOME_UNKNOWN' WHERE run_id = %s", (runs[0],))
+        assert await refused(mcp_exec, "SELECT app.mark_sent(%s)", (stale,)) == "OC003"
+        early = {"status": "SUCCEEDED", "action_id": str(stale), "payload_sha256": stale_digest}
+        record = "SELECT app.record_outcome(%s, %s, %s)"
+        assert await refused(mcp_exec, record, (stale, "SUCCEEDED", Jsonb(early))) == "OC003"  # outcome before SENT
+        # Cancelled before send: FAILED_NO_COMMIT from INTENT on an EXECUTING run is allowed.
+        tombstone = {
+            "action_id": str(cancelled),
+            "state": "ABORTED",
+            "payload_sha256": cancelled_digest,
+            "reason": "cancelled_before_send",
+            "decided_at": "2026-10-08T12:00:00Z",
+        }
+        failed = {
+            "status": "FAILED_NO_COMMIT",
+            "action_id": str(cancelled),
+            "payload_sha256": cancelled_digest,
+            "reason": "cancelled_before_send",
+            "tombstone": tombstone,
+            "receipt": None,
+        }
+        wrong_status = {**failed, "status": "SUCCEEDED"}  # a document that disagrees with the outcome recorded
+        assert await refused(mcp_exec, record, (cancelled, "FAILED_NO_COMMIT", Jsonb(wrong_status))) == "OC005"
+        async with as_role(mcp_exec):
+            cur = await mcp_exec.execute(record + " AS r", (cancelled, "FAILED_NO_COMMIT", Jsonb(failed)))
+            assert (await cur.fetchone())["r"] == "FAILED_NO_COMMIT"
+        row = await (await app_conn.execute("SELECT state FROM app.runs WHERE run_id = %s", (runs[1],))).fetchone()
+        assert row["state"] == "FAILED"
+    finally:
+        for run in runs:
+            await purge_run(app_conn, run)
