@@ -1,4 +1,5 @@
-"""Walking-skeleton operations (T08): `migrate` both databases to head; Task 9 adds `up`, `down`, `status`.
+"""Walking-skeleton operations (T08): `migrate` both databases to head;
+`up`, `down` and `status` run the five processes.
 
 Reads `.env` (written by scripts/bootstrap_dev.py) for ports and the secrets directory, exports the `OPS_*` variables
 every service reads (ops_core.settings), and runs the two Alembic trees programmatically with a shared connection
@@ -9,9 +10,17 @@ from its secret file on every run; role credentials are a bootstrap concern, sch
 
 from __future__ import annotations
 
+import json
 import os
+import signal
+import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
+from typing import IO
 
 import psycopg
 from alembic import command
@@ -95,9 +104,138 @@ def migrate() -> int:
     return 0
 
 
+@dataclass(frozen=True)
+class Process:
+    """One skeleton process: its name, `python -m` module and loopback port."""
+
+    name: str
+    module: str
+    port: int
+
+    @property
+    def health_url(self) -> str:
+        """The process's own readiness URL on loopback."""
+        return f"http://127.0.0.1:{self.port}/health/ready"
+
+
+PROCESSES: tuple[Process, ...] = (
+    Process("incident-sim", "ops_incident_sim", 8090),
+    Process("mcp-read", "ops_mcp_read", 8081),
+    Process("mcp-write", "ops_mcp_write", 8082),
+    Process("api", "ops_api", 8000),
+    Process("worker", "ops_worker", 8070),
+)
+LOGS = ROOT / "runtime" / "skeleton"  # git-ignored (runtime/)
+
+
+def process_environment() -> dict[str, str]:
+    """The environment every child inherits: .env-derived OPS_* variables plus the port defaults."""
+    export_environment(load_dotenv(ROOT / ".env"))
+    env = dict(os.environ)
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("MODEL_MODE", "fake")
+    env.setdefault("OPS_API_PORT", "8000")
+    env.setdefault("OPS_WORKER_HEALTH_PORT", "8070")
+    env.setdefault("OPS_MCP_READ_PORT", "8081")
+    env.setdefault("OPS_MCP_WRITE_PORT", "8082")
+    env.setdefault("OPS_INCIDENT_SIM_PORT", "8090")
+    return env
+
+
+def healthy(url: str) -> bool:
+    """True when the loopback health URL answers 200."""
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:  # loopback health URL only
+            return bool(response.status == 200)
+    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+        return False
+
+
+class Skeleton:
+    """The five host processes as children of this one; logs under runtime/skeleton/ (never committed)."""
+
+    def __init__(self) -> None:
+        self.children: dict[str, subprocess.Popen[bytes]] = {}
+        self.logs: list[IO[bytes]] = []
+
+    def start(self, timeout: float = 90.0) -> None:
+        """Start every process and wait for each /health/ready; stop all and raise if one dies or is late."""
+        LOGS.mkdir(parents=True, exist_ok=True)
+        env = process_environment()
+        for proc in PROCESSES:
+            log = open(LOGS / f"{proc.name}.log", "ab")  # noqa: SIM115  -- closed in stop(); the child writes to it
+            self.logs.append(log)
+            self.children[proc.name] = subprocess.Popen(
+                [sys.executable, "-m", proc.module], env=env, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT
+            )
+        deadline = time.monotonic() + timeout
+        pending = {p.name: p for p in PROCESSES}
+        while pending and time.monotonic() < deadline:
+            for name, proc in list(pending.items()):
+                if self.children[name].poll() is not None:
+                    self.stop()
+                    raise RuntimeError(f"{name} exited early; see runtime/skeleton/{name}.log")
+                if healthy(proc.health_url):
+                    del pending[name]
+            time.sleep(0.25)
+        if pending:
+            self.stop()
+            raise RuntimeError(f"not ready in {timeout}s: {sorted(pending)}; see runtime/skeleton/*.log")
+
+    def stop(self) -> None:
+        """Terminate every child, kill any that outlives 15 s, and close the log handles."""
+        for child in self.children.values():
+            if child.poll() is None:
+                child.terminate()  # TerminateProcess on Windows: no lifespan shutdown, which the skeleton tolerates
+        for child in self.children.values():
+            try:
+                child.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                child.kill()
+            if child.stdout is not None:
+                child.stdout.close()
+        for handle in self.logs:
+            handle.close()
+        self.logs.clear()
+        self.children.clear()
+
+
+def up() -> int:
+    """Start the five processes and record their pids for `down`; they outlive this script."""
+    skeleton = Skeleton()
+    skeleton.start()
+    (LOGS / "pids.json").write_text(json.dumps({n: c.pid for n, c in skeleton.children.items()}), encoding="utf-8")
+    print("UP: " + ", ".join(f"{p.name}:{p.port}" for p in PROCESSES))
+    return 0
+
+
+def down() -> int:
+    """Terminate the pids `up` recorded."""
+    pids_path = LOGS / "pids.json"
+    if not pids_path.exists():
+        print("DOWN: nothing recorded")
+        return 0
+    for name, pid in json.loads(pids_path.read_text(encoding="utf-8")).items():
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+        print(f"DOWN: {name} ({pid})")
+    pids_path.unlink()
+    return 0
+
+
+def status() -> int:
+    """Print each process's readiness; a worker whose poll loop died has exited (non-zero) and shows `down`."""
+    for proc in PROCESSES:
+        print(f"{proc.name:13s} {'ready' if healthy(proc.health_url) else 'down':6s} 127.0.0.1:{proc.port}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
-    if argv[1:] == ["migrate"]:
-        return migrate()
+    commands = {"migrate": migrate, "up": up, "down": down, "status": status}
+    if len(argv) == 2 and argv[1] in commands:
+        return commands[argv[1]]()
     print(__doc__)
     return 2
 

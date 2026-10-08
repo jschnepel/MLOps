@@ -64,3 +64,15 @@ All five personas (`alex`, `sam`, `lee` in tenant alpha; `riley`, `jordan` in te
 | containers (the worker in Compose, T08) | `OLLAMA_BASE_URL_CONTAINER=http://host.docker.internal:11434` |
 
 `tests/plan_b/live/test_ollama_bridge.py` proves both routes answer the same version. Because Docker Desktop delivers container traffic to the host from `127.0.0.1` (measured 2026-10-08), the owner removes LAN exposure by binding Ollama to loopback — `docs/runbooks/ollama-network.md`; no firewall rule is needed on this machine. The worker's digest check reads `data/model-pins.json` through `ops_core.model_pins.load_model_pins` (T19).
+
+## Host processes (T08)
+
+The five application processes run on the host until T30 containerises them (`docs/runbooks/walking-skeleton.md`). Every listener binds `127.0.0.1`.
+
+| Process | Module | Port | Notes |
+|---|---|---|---|
+| incident-sim | `ops_incident_sim` | 8090 | destination; database `incident`, role `incident` |
+| mcp-read | `ops_mcp_read` | 8081 | `/mcp`, read tool `search_procedures` |
+| mcp-write | `ops_mcp_write` | 8082 | `/mcp`, write tool `create_incident` |
+| api | `ops_api` | 8000 | persona bearer tokens, audience `ops-api` |
+| worker | `ops_worker` | 8070 | health only; polls `app.jobs` |
