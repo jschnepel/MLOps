@@ -303,7 +303,7 @@
         "R102",
         "R101"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "One command brings up the dev profile from a clean clone on Windows; `docker compose ps` shows only 127.0.0.1 bindings.",
         "Workload tokens carry the expected aud and azp; user tokens' sub equals the Keycloak user ID; iss identical from host and container (asserted).",
@@ -312,7 +312,8 @@
       "external_approval_required": false,
       "review_notes": [
         "Do not route host callers through host.docker.internal: it resolves to the LAN IP and cannot reach 127.0.0.1-bound ports. Keycloak: KC_HOSTNAME=http://localhost:<port> plus KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true (verified in the round-4 dry run).",
-        "Two MCP audiences and clients: MCP_READ_RESOURCE_URL / MCP_WRITE_RESOURCE_URL; the worker holds one client but two handle types."
+        "Two MCP audiences and clients: MCP_READ_RESOURCE_URL / MCP_WRITE_RESOURCE_URL; the worker holds one client but two handle types.",
+        "Plan B (branch plan-b): done in f864197, a23f602 (Compose dev profile, file secrets, bootstrap script) and b7b5266, e530082 (ops-dev realm, workload audiences, seeded personas, token claims asserted from host and container). Evidence: reports/bootstrap/. Reviewed: docs/reviews/plan-review-b-2026-10-08.md (plan) and the per-task reviews in the execution ledger."
       ]
     },
     {
@@ -327,12 +328,15 @@
         "R101",
         "R102"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "All five personas and both tenants log in via the direct-grant test client; service account can read `enabled` and nothing more is granted.",
         "Bootstrap admin absent after bootstrap; documented rotation procedure."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Plan B (branch plan-b): done in 051c828, 628c638. All five personas and both tenants log in through ops-dev-direct; ops-view-users holds exactly realm-management/view-users (200 on GET user, 403 on PUT/POST users and GET clients, live-tested); the bootstrap admin is deleted by `bootstrap_dev.py up` with its own token and stays absent across a restart (HTTP 400 on Keycloak 26.8, measured). Memberships and tenants are seeded in PostgreSQL by T08/T09, not in Keycloak (users carry no tenant attribute)."
+      ]
     },
     {
       "id": "T44",
@@ -345,12 +349,15 @@
       "requirement_ids": [
         "R101"
       ],
-      "status": "PLANNED",
+      "status": "DONE_PENDING_OWNER",
       "definition_of_done": [
         "A container reaches Ollama and the host cannot be reached from the LAN once the owner applies the runbook (owner attests).",
         "Runbook committed with exact commands and a verification step."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Plan B (branch plan-b): agent part done in 06bcec0, 8841305 (host and container routes to Ollama proven, ops_core.model_pins loader with 13 tests, docs/runbooks/ollama-network.md). Measured 2026-10-08: container traffic to host.docker.internal reaches the host from 127.0.0.1 (Docker Desktop proxies it), so the runbook's primary control is a loopback bind (OLLAMA_HOST=127.0.0.1:11434 at User scope) with the scoped firewall rule as fallback; it proposes an AM-31 errata. Pending owner step 10: apply step A, verify, fill the attestation table, decide on the errata."
+      ]
     },
     {
       "id": "T06",

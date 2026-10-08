@@ -2,7 +2,7 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** owner inputs pending: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) `gh auth login`, then push, then record the first CI run URL (T06 step 7); the Ollama firewall runbook lands in T44. Then write Plan B (T05, T43, T44) and Plan C (T07, T45, T46, T08) from the real artifacts and dry-run on scratch copies before executing.
+**Next task:** Plan B (T05, T43, T44) is executed on branch `plan-b` (a638801…8841305 plus the whole-branch review's fixes). Owner inputs pending: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) push `plan-b` and open/merge the PR, record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata. Then write Plan C (T07, T45, T46, T08) from the real `compose.yaml`, realm and secrets layout, and dry-run it on scratch copies before executing.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-a` (Plan A work; not merged). Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
 
@@ -117,6 +117,13 @@
 - `docs/ARCHITECTURE.md` maps the four concepts to components, requirement IDs and demos; the README has a "What this demonstrates" table.
 - 47 tasks, 131 requirements.
 
+## Plan B executed (2026-10-08, branch `plan-b`)
+
+- Plan written from the real Plan A artifacts; three adversarial rounds before execution (static + builder dry-run twice; `docs/reviews/plan-review-b-2026-10-08.md`). Findings that changed the plan: the model-pins loader rejected the digest format the probe writes; the readiness probe grepped a body that is `UP` even when DOWN; audience assertions were "contains" not exact; a wildcard redirect; Keycloak answers a deleted admin's password grant with 400; the ruff formatter rejected the plan's code; **container traffic reaches the host from 127.0.0.1** (so a loopback bind, not a WSL-subnet firewall rule, is the control); `OLLAMA_HOST` is set at User scope, not Machine.
+- Execution: T05 (f864197, a23f602, b7b5266, e530082), T43 (051c828, 628c638), T44 (06bcec0, 8841305). Task reviews found plan-mandated defects fixed in the fix rounds: a rotation recipe that put the secret in argv while claiming otherwise, a placeholder test whose failure message would echo a leaked literal, a runbook fallback that duplicated its rule on re-run and referenced plan-internal steps.
+- Evidence: `reports/bootstrap/keycloak-claims.txt` (9 redacted claim lines), `bootstrap-admin.txt`, `compose-ps.txt`, `ollama-bridge.txt`; `tests/plan_b/test_evidence.py` rejects any token or secret value there.
+- Plan A code re-commented per `docs/CODE_COMMENTS.md` (c25ee89, 32bf85d); commit history carries no tool attribution.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -160,7 +167,8 @@ Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss 
 
 - `gh auth login`, then approval to push.
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
-- T06: decide whether to publish early (public repo at M01) or start private and make it public at T34.
+- T06: decide whether to publish early (public repo at M01) or start private and make it public at T34. (The repo `jschnepel/MLOps` exists and `main`/`plan-a` were pushed on 2026-10-07; `plan-b` is local.)
+- T44 step 10: run `docs/runbooks/ollama-network.md` step A (`OLLAMA_HOST=127.0.0.1:11434` at User scope, restart Ollama), verify with the three checks, fill the attestation table, and decide whether to adopt the proposed AM-31 errata (loopback bind primary, firewall fallback).
 
 ## Exact next step
 
@@ -180,6 +188,6 @@ uv pip install --python "$LOCALAPPDATA/ops-ref-venv" "./reference[web,test]"
 (cd reference && "$LOCALAPPDATA/ops-ref-venv/Scripts/python" -m pytest -q)
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push, then first CI run) and write Plan B and Plan C as described in the Next task line.
+Then wait for the owner inputs above (holdout seal, then live probe; push and PR; the Ollama runbook step A) and write Plan C as described in the Next task line.
 
 Do not store secrets or private reasoning in this file.
