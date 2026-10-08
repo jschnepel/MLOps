@@ -194,7 +194,9 @@ def _validated(model: type[BaseModel], value: object, what: str) -> None:
         raise EventRuleViolation(f"{what} must be an object")
     try:
         model.model_validate_json(json.dumps(dict(value)))
-    except (ValidationError, TypeError) as exc:
+    except (ValidationError, TypeError, ValueError, RecursionError) as exc:
+        # json.dumps raises TypeError on non-JSON values, ValueError on a circular reference and RecursionError on
+        # absurd nesting; all three mean the evidence is malformed, and none may escape as a bare exception.
         raise EventRuleViolation(f"{what} is malformed") from exc
 
 
@@ -203,8 +205,13 @@ def event_rules_ok(event_type: EventType, source: EventSource, payload: Mapping[
 
     Code enforces who may assert what and the evidence each outcome event must carry; the shape of every other payload
     key is the JSON schema's job, so unknown keys are not rejected here (except for the closed model_summary payload).
-    Evidence keys are the exception: they are an authority claim, so types that do not vouch for them refuse them.
+    Evidence keys are the exception: they are an authority claim, so types that do not vouch for them refuse them,
+    and each outcome type refuses the other kind of proof (a receipt on action.failed, a tombstone on
+    action.confirmed).
     """
+    if not isinstance(payload, Mapping):
+        # Callers pass decoded JSON, which can be any value; a list or string payload asserts nothing checkable.
+        raise EventRuleViolation("an event payload must be an object")
     if source is EventSource.MODEL_SUMMARY:
         # The schema's closed summary_payload, mirrored: a non-empty message, optional evidence_refs, nothing else
         # (so no status, AM-14).
@@ -220,8 +227,7 @@ def event_rules_ok(event_type: EventType, source: EventSource, payload: Mapping[
         ):
             raise EventRuleViolation("model_summary may emit only explanation.ready with a message and evidence_refs")
         return
-    # The model_summary branch returned, so the source is application or destination from here on; the former
-    # action/run/review source check could never fire and is gone.
+    # The model_summary branch returned, so the source is application or destination from here on.
     if source is EventSource.DESTINATION and event_type not in DESTINATION_EVIDENCE:
         raise EventRuleViolation(f"source=destination may not emit {event_type}")
     # AM-20.3 record_outcome emits these four, always with source=destination; append_event refuses action.* from
@@ -235,10 +241,15 @@ def event_rules_ok(event_type: EventType, source: EventSource, payload: Mapping[
     if event_type is EventType.ACTION_CONFIRMED:
         if payload.get("status") != RunState.SUCCEEDED.value:
             raise EventRuleViolation("action.confirmed requires a receipt and status SUCCEEDED")
+        if "tombstone" in payload:  # a tombstone proves no commit, which contradicts the confirmation
+            raise EventRuleViolation("action.confirmed carries a receipt, never a tombstone")
         _validated(Receipt, payload.get("receipt"), "action.confirmed receipt")
-    failed_reasons = {r.value for r in FAILED_NO_COMMIT_REASONS}
-    if event_type is EventType.ACTION_FAILED and payload.get("reason") not in failed_reasons:
-        raise EventRuleViolation("action.failed requires a reason from the FAILED_NO_COMMIT set")  # AM-14
+    if event_type is EventType.ACTION_FAILED:
+        failed_reasons = {r.value for r in FAILED_NO_COMMIT_REASONS}
+        if payload.get("reason") not in failed_reasons:
+            raise EventRuleViolation("action.failed requires a reason from the FAILED_NO_COMMIT set")  # AM-14
+        if "receipt" in payload:  # a receipt proves a commit, which contradicts the failure
+            raise EventRuleViolation("action.failed never carries a receipt")
     if event_type is EventType.ACTION_LATE_EVIDENCE:
         # Late evidence arrives after the run gave up; the outcome picks which proof it must carry.
         outcome = payload.get("outcome")

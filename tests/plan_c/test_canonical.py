@@ -114,3 +114,17 @@ def test_oversized_int_is_a_canonicalization_error():
         parse_json_strict("1" * 5000)
     with pytest.raises(CanonicalizationError):
         canonical_json(10**5000)
+
+
+def test_deep_nesting_is_a_canonicalization_error():
+    # Final review I1: 2000-deep JSON passes the strict parser (the C scanner's limit is higher than `_normalize`'s
+    # Python recursion), so the canonicaliser must turn its own RecursionError into the documented error type.
+    deep_text = "[" * 2000 + "]" * 2000
+    parsed = parse_json_strict(deep_text)
+    with pytest.raises(CanonicalizationError):
+        canonical_json(parsed)
+    deep_list: list[object] = []
+    for _ in range(5000):
+        deep_list = [deep_list]
+    with pytest.raises(CanonicalizationError):
+        canonical_json(deep_list)

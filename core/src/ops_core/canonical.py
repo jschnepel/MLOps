@@ -9,7 +9,7 @@ not a merge: a silent merge would hash a different payload from the one supplied
 
 Arrays keep the producer's order; this module never sorts them, because some arrays are ordered by meaning. The
 producer is therefore responsible for a stable order ("documented stable array order", BUILD_SPEC §6), and
-`ProposalPayload` (Task 4 of Plan C) enforces it for the hashed payload: `evidence_refs` sorted ascending by code
+`ops_core.contracts.ProposalPayload` enforces it for the hashed payload: `evidence_refs` sorted ascending by code
 point, `source_snapshots` sorted by `evidence_id`.
 
 Tuples are accepted and emitted as arrays, so callers may pass them for immutable sequences. Sets, bytes and datetimes
@@ -64,15 +64,19 @@ def canonical_json(value: object) -> bytes:
     (see the module docstring).
 
     Raises:
-        CanonicalizationError: a float, a non-string key, two keys equal after NFC, or an unsupported type.
+        CanonicalizationError: a float, a non-string key, two keys equal after NFC, an unsupported type, an integer
+            too long to print, or nesting deeper than the interpreter's recursion limit.
     """
-    normalized = _normalize(value)
     # Untrusted input must never surface a bare ValueError (e.g. CPython's 4300-digit int limit) or RecursionError to
-    # callers that catch CanonicalizationError.
+    # callers that catch CanonicalizationError. `_normalize` recurses once per nesting level, so it sits inside the
+    # `try` too: JSON nested 2000 deep passes `parse_json_strict` and would otherwise blow the stack here.
     try:
+        normalized = _normalize(value)
         return json.dumps(
             normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
         ).encode("utf-8")
+    except CanonicalizationError:
+        raise
     except (ValueError, RecursionError) as exc:
         raise CanonicalizationError(f"cannot canonicalise: {exc}") from exc
 

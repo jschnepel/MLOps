@@ -65,12 +65,12 @@ class JobRule:
 
 
 _READ: Final = frozenset({Tool.GET_ASSET_STATUS, Tool.GET_RECENT_ALERTS, Tool.SEARCH_PROCEDURES})
-S = RunState
+_S = RunState
 JOB_RULES: Final[dict[JobType, JobRule]] = {
     JobType.INVESTIGATE: JobRule(
         JobType.INVESTIGATE,
         _READ,
-        frozenset({S.QUEUED, S.RETRIEVING, S.DRAFTING}),
+        frozenset({_S.QUEUED, _S.RETRIEVING, _S.DRAFTING}),
         Server.READ,
         ("api", "create_revision"),
         "run_id:revision",
@@ -78,7 +78,7 @@ JOB_RULES: Final[dict[JobType, JobRule]] = {
     JobType.RESUME_INPUT: JobRule(
         JobType.RESUME_INPUT,
         _READ,
-        frozenset({S.AWAITING_INPUT, S.QUEUED}),
+        frozenset({_S.AWAITING_INPUT, _S.QUEUED}),
         Server.READ,
         ("api",),
         "run_id:clarification_event_id",
@@ -86,7 +86,7 @@ JOB_RULES: Final[dict[JobType, JobRule]] = {
     JobType.EXECUTE: JobRule(
         JobType.EXECUTE,
         frozenset({Tool.CREATE_INCIDENT}),
-        frozenset({S.APPROVED, S.EXECUTING}),
+        frozenset({_S.APPROVED, _S.EXECUTING}),
         Server.WRITE,
         ("record_decision",),
         "proposal_id",
@@ -94,7 +94,7 @@ JOB_RULES: Final[dict[JobType, JobRule]] = {
     JobType.RECOVER: JobRule(
         JobType.RECOVER,
         frozenset({Tool.CREATE_INCIDENT, Tool.GET_INCIDENT_RECEIPT, Tool.ABORT_INCIDENT}),
-        frozenset({S.EXECUTING, S.OUTCOME_UNKNOWN, S.ESCALATED, S.ABANDONED_UNVERIFIED}),
+        frozenset({_S.EXECUTING, _S.OUTCOME_UNKNOWN, _S.ESCALATED, _S.ABANDONED_UNVERIFIED}),
         Server.WRITE,
         ("mark_unknown", "worker", "reclaim_leases"),  # never an MCP server (AM-15)
         "action_id:trigger",
@@ -113,6 +113,11 @@ _BUCKET: Final = re.compile(_BUCKET_RE)
 # AM-20.4 recover triggers; a sweep trigger carries the same minute bucket as maintenance jobs, so one sweep tick
 # cannot mint several keys for one action.
 _TRIGGER: Final = re.compile(rf"timeout|cancel|deadline|sweep:{_BUCKET_RE}")
+# The parts each job type's key is built from (AM-20.4). Every id is a UUID and a revision is a positive int, so two
+# job types can never mint the same key: an int where a UUID belongs (a clarification event's per-run `sequence` in
+# place of its `event_id`) would make `INVESTIGATE(run, revision=2)` and `RESUME_INPUT(run, 2)` both "<run>:2", and
+# `INSERT … ON CONFLICT (dedup_key) DO NOTHING` would silently drop the second job.
+_UUID_PARTS: Final = frozenset({"run_id", "proposal_id", "action_id", "clarification_event_id"})
 _PARTS: Final = {
     JobType.INVESTIGATE: ("run_id", "revision"),
     JobType.RESUME_INPUT: ("run_id", "clarification_event_id"),
@@ -121,22 +126,42 @@ _PARTS: Final = {
 }
 
 
+class DedupKeyError(ValueError):
+    """A dedup key part is missing, unexpected, of the wrong type, or malformed (AM-20.4)."""
+
+
 def server_for(job_type: JobType) -> Server | None:
     """The server whose handles this job type receives, or None for maintenance jobs that call no tool."""
     return JOB_RULES[job_type].server
 
 
+def _check_part(job_type: JobType, part: str, value: object) -> None:
+    if part in _UUID_PARTS:
+        if not isinstance(value, UUID):
+            raise DedupKeyError(f"{job_type.value} needs {part} as a UUID")
+    elif part == "revision":
+        # bool is an int subclass but never a revision.
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise DedupKeyError(f"{job_type.value} needs revision as an int >= 1")
+    elif not isinstance(value, str) or not value:  # trigger, minute_bucket: dedup_key checks their shape
+        raise DedupKeyError(f"{job_type.value} needs {part} as a non-empty str")
+
+
 def dedup_key(job_type: JobType, **ids: UUID | int | str) -> str:
-    """Build the AM-20.4 dedup key for a job; missing, empty, unknown or malformed parts raise ValueError."""
+    """Build the AM-20.4 dedup key for a job.
+
+    Ids (`run_id`, `proposal_id`, `action_id`, `clarification_event_id`) must be UUIDs, `revision` an int >= 1, and
+    `trigger` / `minute_bucket` strings of their documented shape.
+
+    Raises:
+        DedupKeyError: a part is missing, unexpected, of the wrong type, or malformed.
+    """
     needed = _PARTS.get(job_type, ("minute_bucket",))
     # A misspelt part (`proposal_ID=`) must fail loudly rather than be ignored next to a valid-looking key.
     if extra := sorted(set(ids) - set(needed)):
-        raise ValueError(f"unexpected key(s): {', '.join(extra)}")
+        raise DedupKeyError(f"unexpected key(s): {', '.join(extra)}")
     for part in needed:
-        value = ids.get(part)
-        # None or "" would format as "None"/"" and still look like a key; bool is an int subclass but never an id.
-        if not isinstance(value, UUID | int | str) or isinstance(value, bool) or value == "":
-            raise ValueError(f"{job_type.value} needs {part} as a non-empty str, int or UUID")
+        _check_part(job_type, part, ids.get(part))
     match job_type:
         case JobType.INVESTIGATE:
             return f"{ids['run_id']}:{ids['revision']}"
@@ -147,10 +172,12 @@ def dedup_key(job_type: JobType, **ids: UUID | int | str) -> str:
         case JobType.RECOVER:
             trigger = str(ids["trigger"])
             if not _TRIGGER.fullmatch(trigger):
-                raise ValueError("recover trigger must be one of timeout, cancel, deadline, sweep:<YYYY-MM-DDTHH:MM>")
+                raise DedupKeyError(
+                    "recover trigger must be one of timeout, cancel, deadline, sweep:<YYYY-MM-DDTHH:MM>"
+                )
             return f"{ids['action_id']}:{trigger}"
         case _:
             bucket = str(ids["minute_bucket"])
             if not _BUCKET.fullmatch(bucket):
-                raise ValueError("maintenance jobs need minute_bucket as YYYY-MM-DDTHH:MM")
+                raise DedupKeyError("maintenance jobs need minute_bucket as YYYY-MM-DDTHH:MM")
             return f"{job_type.value}:{bucket}"

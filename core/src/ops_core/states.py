@@ -227,6 +227,11 @@ TERMINAL_STATES: Final = frozenset(
 PRE_GRANT_STATES: Final = frozenset(
     {_S.QUEUED, _S.AWAITING_INPUT, _S.RETRIEVING, _S.DRAFTING, _S.AWAITING_APPROVAL, _S.APPROVED, _S.BLOCKED_REVIEW}
 )
+# States a run reaches only through grant_execution (APPROVED → EXECUTING) or after it (AM-10 table, AM-20.3
+# performers). FAILED is not here: RETRIEVING/DRAFTING → FAILED by transition_run (ruling 8) needs no grant.
+POST_GRANT_STATES: Final = frozenset(
+    {_S.EXECUTING, _S.OUTCOME_UNKNOWN, _S.ESCALATED, _S.SUCCEEDED, _S.ABANDONED_UNVERIFIED}
+)
 WORKER_TRANSITION_TARGETS: Final = frozenset(
     {_S.RETRIEVING, _S.DRAFTING, _S.AWAITING_INPUT, _S.INSUFFICIENT_EVIDENCE, _S.FAILED, _S.ANSWERED, _S.QUEUED}
 )  # AM-20.3 transition_run
@@ -251,9 +256,9 @@ def require_transition(
             raise IllegalTransition(f"{src} -> {dst}: performer {performer} may not make this transition")
         raise IllegalTransition(f"{src} -> {dst} is not in the transition table")
     if row.reasons and reason not in row.reasons:
-        raise IllegalTransition(
-            f"{src} -> {dst} by {performer}: reason must be one of {sorted(row.reasons)}, got {reason}"
-        )
+        allowed = ", ".join(sorted(r.value for r in row.reasons))
+        got = None if reason is None else reason.value
+        raise IllegalTransition(f"{src} -> {dst} by {performer}: reason must be one of [{allowed}], got {got}")
     if not row.reasons and reason is not None:
         raise IllegalTransition(f"{src} -> {dst} by {performer}: no reason is recorded on this transition")
     return row

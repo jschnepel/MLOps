@@ -10,6 +10,7 @@ import itertools
 import pytest
 from ops_core.states import (
     ACTIVE_STATES,
+    POST_GRANT_STATES,
     PRE_GRANT_STATES,
     TERMINAL_STATES,
     TRANSITIONS,
@@ -230,3 +231,23 @@ def test_answer_only_runs_cannot_freeze():
     freeze_allowed(Intent.INVESTIGATE)
     with pytest.raises(AnswerOnlyRun):
         freeze_allowed(Intent.ANSWER_ONLY)
+
+
+def test_reason_message_renders_values_not_enum_reprs():
+    # These messages reach logs and 409 bodies; `<Reason.ASSET_INCIDENT_EXISTS: ...>` would leak Python internals.
+    with pytest.raises(IllegalTransition) as caught:
+        require_transition(S.DRAFTING, S.BLOCKED_REVIEW, P.FREEZE_PROPOSAL, Reason.EXPIRED)
+    assert str(caught.value) == (
+        "DRAFTING -> BLOCKED_REVIEW by freeze_proposal: "
+        "reason must be one of [asset_action_unresolved, asset_incident_exists], got expired"
+    )
+
+
+def test_post_grant_states_are_reached_only_through_a_grant():
+    """CancelResponse relies on this set: a status in it implies a grant, so FAILED (ruling 8) is not in it."""
+    assert S.FAILED not in POST_GRANT_STATES
+    assert POST_GRANT_STATES.isdisjoint(PRE_GRANT_STATES)
+    # Every row into a post-grant state starts from APPROVED via grant_execution or from another post-grant state.
+    for row in TRANSITIONS:
+        if row.dst in POST_GRANT_STATES:
+            assert row.src in POST_GRANT_STATES or (row.src is S.APPROVED and row.performer is P.GRANT_EXECUTION)

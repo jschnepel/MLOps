@@ -3,8 +3,9 @@
 Every model is strict, frozen and closed (`extra="forbid"`): the server sets actor, tenant, roles, timestamps and
 authority fields, and a body that tries to supply them is rejected before any handler runs (R004). Bodies are parsed
 with `load()` (JSON mode) so numbers are never coerced from strings or booleans. The JSON Schemas under `schemas/`
-say the same things declaratively; Tasks 6-7 of Plan C add `scripts/build_schemas.py` and
-`tests/plan_c/test_schema_conformance.py`, which generate the schemas and keep the two in step.
+say the same things declaratively: `scripts/build_schemas.py` generates them from the vocabularies here, and
+`tests/plan_c/test_schema_conformance.py` checks that schema and model give every example, and every mutation of a
+valid one, the same verdict.
 
 Timestamps (plan ruling 6): every instant must carry a zero UTC offset. Inputs may spell it `Z` or `+00:00`; the
 hashed and stored form is pydantic's JSON output, which spells it `Z`, so the proposal schema accepts only `Z` while
@@ -34,20 +35,7 @@ from pydantic import (
 )
 
 from ops_core.canonical import canonical_sha256
-from ops_core.states import AttemptState, Intent, RunState
-
-# Post-grant states: a run can only be here if a grant was issued (AM-10 state table), so a cancel response that
-# reports one of them with `grant_exists=False` contradicts itself.
-_POST_GRANT_STATES: Final = frozenset(
-    {
-        RunState.EXECUTING,
-        RunState.OUTCOME_UNKNOWN,
-        RunState.ESCALATED,
-        RunState.SUCCEEDED,
-        RunState.FAILED,
-        RunState.ABANDONED_UNVERIFIED,
-    }
-)
+from ops_core.states import POST_GRANT_STATES, PRE_GRANT_STATES, AttemptState, Intent, RunState
 
 AUTHORITY_FIELDS: Final = frozenset(
     {
@@ -253,8 +241,14 @@ class CancelResponse(BaseModel):
         # AM-20.3 request_cancel: CANCELLED only when no grant exists; reporting it after a grant is the "undo" claim.
         if self.status is RunState.CANCELLED and self.grant_exists:
             raise ValueError("CANCELLED cannot be reported once a grant exists")
-        if not self.grant_exists and self.status in _POST_GRANT_STATES:
+        # POST_GRANT_STATES holds only states a run reaches through or after grant_execution, so reporting one without
+        # a grant is false. FAILED is excluded: a run can fail in RETRIEVING/DRAFTING before any grant (ruling 8).
+        if not self.grant_exists and self.status in POST_GRANT_STATES:
             raise ValueError(f"status {self.status.value} requires a grant")
+        # The grant and APPROVED → EXECUTING commit in one transaction (AM-20.3 grant_execution), so a run still in a
+        # pre-grant state cannot have one.
+        if self.grant_exists and self.status in PRE_GRANT_STATES:
+            raise ValueError(f"status {self.status.value} is pre-grant, so no grant can exist")
         return self
 
 

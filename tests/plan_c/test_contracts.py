@@ -372,6 +372,9 @@ def test_cancel_response_reports_grant_and_never_undo():
         )  # no grant, no attempt
     cancelled = {**body, "status": "CANCELLED", "grant_exists": False, "attempt_state": None, "note": None}
     assert c.load(c.CancelResponse, json.dumps(cancelled)).status is RunState.CANCELLED
+    # A run can fail in RETRIEVING/DRAFTING before any grant (ruling 8); the truthful answer must be expressible.
+    failed_early = {**cancelled, "status": "FAILED"}
+    assert not c.load(c.CancelResponse, json.dumps(failed_early)).grant_exists
     for bad in (
         {**body, "cancel_requested": False},  # it is a cancel response
         {**body, "status": "CANCELLED"},  # CANCELLED after a grant would be an undo claim
@@ -380,6 +383,9 @@ def test_cancel_response_reports_grant_and_never_undo():
     ):
         with pytest.raises(ValidationError):
             c.load(c.CancelResponse, json.dumps(bad))
+    # The grant commits together with APPROVED → EXECUTING, so a pre-grant status with a grant contradicts itself.
+    with pytest.raises(ValidationError, match="pre-grant, so no grant can exist"):
+        c.load(c.CancelResponse, json.dumps({**body, "status": "QUEUED"}))
 
 
 def test_safe_error_codes():

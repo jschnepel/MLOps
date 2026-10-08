@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from ops_core.jobs import JOB_RULES, RECOVER_CADENCE, JobType, Server, Tool, dedup_key, server_for
+from ops_core.jobs import JOB_RULES, RECOVER_CADENCE, DedupKeyError, JobType, Server, Tool, dedup_key, server_for
 from ops_core.outcomes import (
     ActionOutcome,
     DestinationState,
@@ -253,13 +253,34 @@ def test_dedup_rejects_newline_and_seconds_variants():
 
 
 def test_dedup_validates_parts():
-    for kwargs in ({}, {"proposal_id": ""}, {"proposal_id": None}):
-        with pytest.raises(ValueError, match="proposal_id"):
-            dedup_key(JobType.EXECUTE, **kwargs)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="action_id"):
+    with pytest.raises(DedupKeyError, match="proposal_id"):
+        dedup_key(JobType.EXECUTE)
+    with pytest.raises(DedupKeyError, match="proposal_id"):
+        dedup_key(JobType.EXECUTE, proposal_id="")
+    with pytest.raises(DedupKeyError, match="action_id"):
         dedup_key(JobType.RECOVER, trigger="timeout")
-    with pytest.raises(ValueError, match="unexpected key"):
+    with pytest.raises(DedupKeyError, match="unexpected key"):
         dedup_key(JobType.EXECUTE, proposal_id=ACTION, proposl=1)
+
+
+def test_dedup_parts_are_typed_so_job_types_cannot_collide():
+    run = uuid.UUID("00000000-0000-4000-8000-000000000003")
+    # Final review I5: an int clarification id (a per-run sequence) would mint "<run>:2", INVESTIGATE revision 2's key.
+    with pytest.raises(DedupKeyError, match="clarification_event_id as a UUID"):
+        dedup_key(JobType.RESUME_INPUT, run_id=run, clarification_event_id=2)
+    for revision in (0, -1, True, "2"):
+        with pytest.raises(DedupKeyError, match="revision as an int >= 1"):
+            dedup_key(JobType.INVESTIGATE, run_id=run, revision=revision)
+    with pytest.raises(DedupKeyError, match="run_id as a UUID"):
+        dedup_key(JobType.INVESTIGATE, run_id=str(run), revision=1)  # "x:y" strings would split ambiguously
+    with pytest.raises(DedupKeyError, match="proposal_id as a UUID"):
+        dedup_key(JobType.EXECUTE, proposal_id=1)
+    # Valid keys are unchanged, pinned as literals.
+    assert dedup_key(JobType.INVESTIGATE, run_id=run, revision=2) == "00000000-0000-4000-8000-000000000003:2"
+    assert (
+        dedup_key(JobType.RESUME_INPUT, run_id=run, clarification_event_id=ACTION)
+        == "00000000-0000-4000-8000-000000000003:00000000-0000-4000-8000-000000000010"
+    )
 
 
 def test_action_outcome_tombstone_cross_checks():
@@ -338,3 +359,28 @@ def test_strict_models_reject_loose_values():
         RunManifest(model_route=ModelRoute.FAKE, model_digest=None, retrieval_mode="vector", **common)
     with pytest.raises(ValidationError):
         RunManifest(model_route=ModelRoute.QWEN3_8B, model_digest=SHA.upper(), retrieval_mode="lexical", **common)
+
+
+def test_event_rules_refuse_malformed_payloads_and_crossed_evidence():
+    receipt = {"receipt_id": str(ACTION), "incident_id": "INC-1", "committed_at": "2026-10-08T00:00:00Z"}
+    tomb = {
+        "action_id": str(ACTION),
+        "state": "ABORTED",
+        "payload_sha256": SHA,
+        "reason": "x",
+        "decided_at": "2026-10-08T00:00:00Z",
+    }
+    dest = EventSource.DESTINATION
+    for payload in ([], "SUCCEEDED", None):  # decoded JSON may be any value; only an object can be checked
+        with pytest.raises(EventRuleViolation, match="must be an object"):
+            event_rules_ok(EventType.RUN_ACCEPTED, EventSource.APPLICATION, payload)
+    deep: list[object] = []
+    for _ in range(5000):
+        deep = [deep]
+    with pytest.raises(EventRuleViolation, match="malformed"):  # json.dumps recursion, never a bare RecursionError
+        event_rules_ok(EventType.ACTION_CONFIRMED, dest, {"status": "SUCCEEDED", "receipt": {"x": deep}})
+    with pytest.raises(EventRuleViolation, match="never carries a receipt"):
+        event_rules_ok(EventType.ACTION_FAILED, dest, {"reason": "expired", "receipt": receipt})
+    with pytest.raises(EventRuleViolation, match="never a tombstone"):
+        event_rules_ok(EventType.ACTION_CONFIRMED, dest, {"status": "SUCCEEDED", "receipt": receipt, "tombstone": tomb})
+    event_rules_ok(EventType.ACTION_FAILED, dest, {"reason": "expired", "tombstone": tomb})  # positive control
