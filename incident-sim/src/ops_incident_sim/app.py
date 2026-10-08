@@ -109,7 +109,7 @@ def create_app(
         st: Store = request.app.state.store
         if isinstance(st, DbStore):
             try:
-                await st.session.read("SELECT 1", ())
+                await st.session.ping()
             except (psycopg.Error, OSError):  # readiness reports a database failure as not ready
                 return safe_error(503, ErrorCode.UNAVAILABLE, "database not reachable")
         return JSONResponse({"status": "ready"})
