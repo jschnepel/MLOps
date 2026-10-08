@@ -70,7 +70,7 @@ def test_iss_is_identical_from_host_and_container(env, secret: Callable[[str], s
     # The container mints its own token through the Docker network name and prints only `iss`. The secret file is
     # mounted read-only instead of passed as an argument so it never appears on a command line or in `docker ps`.
     script = (
-        "import json,sys,urllib.parse,urllib.request,base64;"
+        "import json,urllib.parse,urllib.request,base64;"
         "d=urllib.parse.urlencode({'grant_type':'client_credentials','client_id':'ops-worker',"
         "'client_secret':open('/run/s','r').read()}).encode();"
         "t=json.loads(urllib.request.urlopen('http://keycloak:8080/realms/ops-dev/protocol/openid-connect/token',"
@@ -102,7 +102,10 @@ def test_iss_is_identical_from_host_and_container(env, secret: Callable[[str], s
 
 
 def _record(label: str, data: dict) -> None:
-    """Append one redacted evidence line; LF newlines keep the committed file identical across platforms."""
+    """Append one redacted evidence line; LF newlines keep the committed file identical across platforms.
+
+    It appends, so the plan's step deletes the file before the run that produces committed evidence.
+    """
     EVIDENCE.parent.mkdir(parents=True, exist_ok=True)
     with EVIDENCE.open("a", encoding="utf-8", newline="\n") as fh:
         fh.write(f"{label}: {json.dumps(data, sort_keys=True)}\n")

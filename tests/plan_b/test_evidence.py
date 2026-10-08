@@ -27,7 +27,9 @@ def test_evidence_has_no_token_shapes():
     if not root.exists():
         return
     directory = local_secrets_dir()
-    values = [p.read_text(encoding="utf-8") for p in directory.glob("*")] if directory.exists() else []
+    files = [p for p in directory.glob("*") if p.is_file()] if directory.exists() else []
+    # Empty values are skipped: "" is a substring of every text and would fail every file.
+    values = [v for v in (p.read_text(encoding="utf-8").strip() for p in files) if v]
     for path in root.rglob("*"):
         if path.is_file():
             text = path.read_text(encoding="utf-8")

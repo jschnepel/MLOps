@@ -47,12 +47,14 @@ def test_realm_name_and_roles():
 
 
 def test_every_secret_and_password_is_a_placeholder():
+    # Failure messages name the client or user and the field only: echoing the offending value would print the very
+    # literal secret this test exists to catch into the terminal or CI log.
     for cid, c in clients().items():
         if not c.get("publicClient", False):
-            assert PLACEHOLDER.match(c["secret"]), (cid, c.get("secret"))
+            assert PLACEHOLDER.match(c["secret"]), (cid, "secret")
     for name, u in users().items():
         for cred in u.get("credentials", []):
-            assert cred["type"] == "password" and PLACEHOLDER.match(cred["value"]), (name, cred)
+            assert cred["type"] == "password" and PLACEHOLDER.match(cred["value"]), (name, "credentials[].value")
 
 
 def test_workload_clients_are_service_accounts_with_audiences():
@@ -71,9 +73,8 @@ def test_browser_client_uses_code_flow_with_pkce():
     assert web["standardFlowEnabled"] is True and web["directAccessGrantsEnabled"] is False
     assert web["serviceAccountsEnabled"] is False and web["publicClient"] is False
     assert web["attributes"]["pkce.code.challenge.method"] == "S256"
-    assert web["redirectUris"] == [
-        "http://localhost:8000/auth/callback"
-    ]  # exact allowlist (BUILD_SPEC §9), no wildcard
+    # Exact allowlist (BUILD_SPEC §9), no wildcard.
+    assert web["redirectUris"] == ["http://localhost:8000/auth/callback"]
     assert web["attributes"]["post.logout.redirect.uris"] == "http://localhost:8000/"
 
 
