@@ -123,7 +123,13 @@ async def connect(pg: Postgres) -> Conn:
 
 
 async def set_tenant(conn: Conn, tenant_id: UUID) -> None:
-    """Transaction-local (`is_local = true`): gone at COMMIT or ROLLBACK, so the next unit starts tenant-less."""
+    """Transaction-local (`is_local = true`): gone at COMMIT or ROLLBACK, so the next unit starts tenant-less.
+
+    Raises PersistenceError outside a transaction: on an autocommit connection the setting would last one statement
+    and the unit's reads would silently see nothing.
+    """
+    if conn.info.transaction_status == psycopg.pq.TransactionStatus.IDLE:
+        raise PersistenceError("set_tenant needs a transaction")
     await conn.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_id),))
 
 
@@ -347,7 +353,8 @@ class Invocation:
 def allowed_tool(job_type: JobType, tool: Tool) -> None:
     """The AM-15 allowlist stays in Python (ruling 21); the function has already bound server, azp and expiry."""
     if tool not in JOB_RULES[job_type].allowed_tools:
-        raise HandleRejected("tool is not allowed for this job type")
+        log.info("tool %s is not allowed for job type %s", tool.value, job_type.value)  # never the handle
+        raise HandleRejected("invocation handle rejected")  # the one fixed message (SA:357)
 
 
 def handle_hash(handle: str) -> str:
@@ -422,7 +429,9 @@ async def lookup_action(conn: Conn, *, handle: str) -> Grant:
 async def mark_sent(conn: Conn, action_id: UUID) -> str:
     """`sent`, `already_sent`, `resolved` or `cancelled` (SA:463); committed by the caller before any I/O."""
     row = await _call(conn, "SELECT app.mark_sent(%s) AS outcome", (action_id,))
-    return "sent" if row is None else str(row["outcome"])
+    if row is None:
+        raise PersistenceError("mark_sent returned nothing")  # a missing row must never read as "go ahead"
+    return str(row["outcome"])
 
 
 async def record_outcome(conn: Conn, *, action_id: UUID, outcome: ActionOutcome) -> ToolOutcome:
@@ -442,13 +451,16 @@ async def record_outcome(conn: Conn, *, action_id: UUID, outcome: ActionOutcome)
 async def insert_job(conn: Conn, *, job_type: JobType, run_id: UUID, **ids: UUID | int | str) -> UUID | None:
     """Insert a wake-up under the caller's tenant unit; a duplicate dedup key is a no-op and returns None."""
     key = dedup_key(job_type, run_id=run_id, **ids) if job_type is not JobType.EXECUTE else dedup_key(job_type, **ids)
+    cur = await conn.execute("SELECT tenant_id FROM app.run_directory WHERE run_id = %s", (run_id,))
+    found = await cur.fetchone()
+    if found is None:
+        raise NotFound("run not found")  # an unknown run must not read as "already queued"
     # ON CONFLICT (target) and RETURNING need SELECT (spike §3): this helper serves the tests and the superuser;
     # the API's `resume_input` insert (T12) goes through a definer function or a target-less ON CONFLICT DO NOTHING.
     cur = await conn.execute(
-        "INSERT INTO app.jobs (id, type, tenant_id, run_id, dedup_key)"
-        " SELECT %s, %s, tenant_id, %s, %s FROM app.run_directory WHERE run_id = %s"
+        "INSERT INTO app.jobs (id, type, tenant_id, run_id, dedup_key) VALUES (%s, %s, %s, %s, %s)"
         " ON CONFLICT (dedup_key) DO NOTHING RETURNING id",
-        (uuid4(), job_type.value, run_id, key, run_id),
+        (uuid4(), job_type.value, found["tenant_id"], run_id, key),
     )
     row = await cur.fetchone()
     return None if row is None else UUID(str(row["id"]))
@@ -459,7 +471,9 @@ async def claim_job(conn: Conn, *, worker_name: str, tenant_ids: Sequence[UUID])
 
     jobs is under tenant_isolation for the worker (only the sweeper has sweeper_all), so the claim runs once per
     tenant with the tenant set (Plan E ruling 18); the caller rotates the order. Runs inside a transaction so the
-    settings last exactly as long as the claim. TODO(T13): lease + fence + wake-ups instead of polling.
+    settings last exactly as long as the claim; `set_tenant` refuses outside a transaction. On return the
+    transaction's tenant stays set to the claimed job's tenant (or the last one tried), which the worker's handler
+    relies on. TODO(T13): lease + fence + wake-ups instead of polling.
     """
     for tenant_id in tenant_ids:
         await set_tenant(conn, tenant_id)

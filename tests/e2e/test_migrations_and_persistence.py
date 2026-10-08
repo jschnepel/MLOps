@@ -32,28 +32,36 @@ async def new_run(conn: persistence.Conn, tenant_id: UUID | None = None, *, api:
     tenant = tenant_id or uuid4()
     if tenant_id is None:
         await conn.execute("INSERT INTO app.tenants (tenant_id, name) VALUES (%s, %s)", (tenant, f"t-{tenant}"))
-    await conn.execute(
-        "INSERT INTO app.conversations (conversation_id, tenant_id, created_by) VALUES (%s, %s, %s)",
-        (conv, tenant, ALEX),
-    )
-    await conn.execute(
-        "INSERT INTO app.messages (message_id, tenant_id, conversation_id, kind, text, author)"
-        " VALUES (%s, %s, %s, 'investigate', 'x', %s)",
-        (msg, tenant, conv, ALEX),
-    )
-    end = datetime.now(UTC).replace(microsecond=0)
-    async with api.transaction():  # the function sets its own tenant
-        run, _ = await persistence.create_run(
-            api,
-            tenant_id=tenant,
-            conversation_id=conv,
-            message_id=msg,
-            requester=UUID(ALEX),
-            intent=Intent.INVESTIGATE,
-            asset_id="A17",
-            start_at=end - timedelta(hours=24),
-            end_at=end,
+    try:
+        await conn.execute(
+            "INSERT INTO app.conversations (conversation_id, tenant_id, created_by) VALUES (%s, %s, %s)",
+            (conv, tenant, ALEX),
         )
+        await conn.execute(
+            "INSERT INTO app.messages (message_id, tenant_id, conversation_id, kind, text, author)"
+            " VALUES (%s, %s, %s, 'investigate', 'x', %s)",
+            (msg, tenant, conv, ALEX),
+        )
+        end = datetime.now(UTC).replace(microsecond=0)
+        async with api.transaction():  # the function sets its own tenant
+            run, _ = await persistence.create_run(
+                api,
+                tenant_id=tenant,
+                conversation_id=conv,
+                message_id=msg,
+                requester=UUID(ALEX),
+                intent=Intent.INVESTIGATE,
+                asset_id="A17",
+                start_at=end - timedelta(hours=24),
+                end_at=end,
+            )
+    except BaseException:
+        # A failed create_run must not leave the seeded rows behind (the run does not exist, so purge_run cannot).
+        await conn.execute("DELETE FROM app.messages WHERE message_id = %s", (msg,))
+        await conn.execute("DELETE FROM app.conversations WHERE conversation_id = %s", (conv,))
+        if tenant_id is None:
+            await purge_tenant(conn, tenant)
+        raise
     return tenant, conv, run
 
 
@@ -125,8 +133,7 @@ async def test_events_are_gap_free_and_rule_checked(app_conn: persistence.Conn, 
 async def test_jobs_dedup_and_single_claim(app_conn: persistence.Conn, role_conn: RoleConn):
     api = await role_conn(Role.API)
     tenant, _, run = await new_run(app_conn, api=api)  # create_run inserted investigate run:1
-    first = await persistence.connect(settings.superuser_postgres())
-    second = await persistence.connect(settings.superuser_postgres())
+    other, _, other_run = await new_run(app_conn, api=api)  # a second tenant with its own investigate job
     try:
         assert await persistence.insert_job(app_conn, job_type=JobType.INVESTIGATE, run_id=run, revision=1) is None
         proposal = uuid4()
@@ -134,6 +141,9 @@ async def test_jobs_dedup_and_single_claim(app_conn: persistence.Conn, role_conn
         assert (
             await persistence.insert_job(app_conn, job_type=JobType.EXECUTE, run_id=run, proposal_id=proposal) is None
         )
+        with pytest.raises(persistence.NotFound):  # an unknown run is not "already queued"
+            await persistence.insert_job(app_conn, job_type=JobType.INVESTIGATE, run_id=uuid4(), revision=1)
+        first, second = await role_conn(Role.WORKER), await role_conn(Role.WORKER)
         # Both claims stay open (uncommitted), so SKIP LOCKED must hand the second worker the other job.
         async with first.transaction(force_rollback=True), second.transaction(force_rollback=True):
             one = await persistence.claim_job(first, worker_name="w1", tenant_ids=[tenant])
@@ -141,11 +151,12 @@ async def test_jobs_dedup_and_single_claim(app_conn: persistence.Conn, role_conn
             assert one is not None and one["claimed_by"] == "w1" and one["attempts"] == 1
             assert two is not None and two["id"] != one["id"] and two["tenant_id"] == tenant
             assert await persistence.claim_job(first, worker_name="w3", tenant_ids=[tenant]) is None  # none left
+            theirs = await persistence.claim_job(first, worker_name="w4", tenant_ids=[other])
+            assert theirs is not None and theirs["tenant_id"] == other and theirs["run_id"] == other_run
     finally:
-        await first.close()
-        await second.close()
-        await purge_run(app_conn, run)
-        await purge_tenant(app_conn, tenant)
+        for r, t in ((run, tenant), (other_run, other)):
+            await purge_run(app_conn, r)
+            await purge_tenant(app_conn, t)
 
 
 async def test_handles_bind_to_one_server(app_conn: persistence.Conn, role_conn: RoleConn):
@@ -155,7 +166,7 @@ async def test_handles_bind_to_one_server(app_conn: persistence.Conn, role_conn:
     try:
         cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s", (run,))
         job = (await cur.fetchone())["id"]
-        async with worker.transaction():  # the worker's INSERT grant, under the tenant unit RLS requires
+        async with worker.transaction():  # invocation_context has no RLS; the transaction is for set_tenant's own check
             await persistence.set_tenant(worker, tenant)
             handle = await persistence.mint_handle(worker, run_id=run, job_id=job, server=Server.READ, azp="ops-worker")
         cur = await app_conn.execute("SELECT handle_sha256 FROM app.invocation_context WHERE run_id = %s", (run,))
