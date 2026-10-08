@@ -1540,7 +1540,7 @@
         "T13"
       ],
       "suggested_test": "tests/acceptance/test_r098_fault_injection_hooks_are_unreachable_outside_th.py",
-      "note": "Plan E (T09/T10): live evidence runs under check.py --profile test (OPS_LIVE=1)."
+      "note": "Plan E (T10): unit-level evidence (fault hooks 404 outside the test profile; the factory refuses any other profile); the live suite runs incident-sim under PROFILE=test."
     },
     {
       "id": "R099",
