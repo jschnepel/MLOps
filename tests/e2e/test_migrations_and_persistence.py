@@ -9,9 +9,10 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from ops_core import persistence
+from ops_core import persistence, settings
 from ops_core.jobs import JobType, Server, Tool
 from ops_core.outcomes import EventRuleViolation, EventSource, EventType
+from ops_core.settings import Profile
 from ops_core.states import IllegalTransition, Intent, Performer, RunState
 
 pytestmark = pytest.mark.asyncio
@@ -55,7 +56,7 @@ async def new_run(conn: persistence.Conn, tenant_id: UUID | None = None) -> tupl
 async def test_migrate_is_idempotent_and_seeds_are_present(migrated: None, app_conn: persistence.Conn):
     from scripts.skeleton import migrate
 
-    assert migrate() == 0  # second run: no-op
+    assert migrate(Profile.TEST) == 0  # second run: no-op
     cur = await app_conn.execute("SELECT count(*) AS n FROM app.memberships WHERE tenant_id = %s", (ALPHA,))
     assert (await cur.fetchone())["n"] == 3  # alex, sam, lee
     cur = await app_conn.execute("SELECT role FROM app.memberships WHERE subject = %s", (ALEX,))
@@ -163,3 +164,24 @@ async def test_handles_bind_to_one_server(app_conn: persistence.Conn):
             await persistence.resolve_handle(
                 app_conn, handle="nope", server=Server.READ, azp="ops-worker", tool=Tool.SEARCH_PROCEDURES
             )
+
+
+async def test_r006_fresh_database_upgrades_downgrades_and_upgrades_again(migrated: None, app_conn: persistence.Conn):
+    """R006: both heads apply to an empty database, 0002 and the testclock branch come off cleanly, and come back."""
+    from scripts.skeleton import downgrade, migrate
+
+    superuser = settings.superuser_postgres()
+    cur = await app_conn.execute("SELECT version_num FROM public.alembic_version ORDER BY 1")
+    versions = {r["version_num"] for r in await cur.fetchall()}
+    # With `depends_on` pointing at the main head, Alembic stores one row until a later main revision exists (round 1).
+    assert "tc_0001_test_clock" in versions, versions
+    downgrade("app", superuser, "testclock@base")
+    downgrade("app", superuser, "0001_walking_skeleton")
+    for relation in ("app.test_clock", "app.run_directory", "app.transitions"):
+        cur = await app_conn.execute("SELECT to_regclass(%s) IS NULL AS gone", (relation,))
+        assert (await cur.fetchone())["gone"], relation
+    cur = await app_conn.execute("SELECT count(*) AS n FROM pg_policies WHERE schemaname = 'app'")
+    assert (await cur.fetchone())["n"] == 0
+    assert migrate(Profile.TEST) == 0
+    cur = await app_conn.execute("SELECT version_num FROM public.alembic_version ORDER BY 1")
+    assert {r["version_num"] for r in await cur.fetchall()} == versions
