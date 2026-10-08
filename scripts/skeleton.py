@@ -160,6 +160,8 @@ class Skeleton:
 
     def start(self, timeout: float = 90.0) -> None:
         """Start every process and wait for each /health/ready; stop all and raise if one dies or is late."""
+        if any(healthy(p.health_url) for p in PROCESSES):
+            raise RuntimeError("skeleton processes already running; run down first")
         LOGS.mkdir(parents=True, exist_ok=True)
         env = process_environment()
         for proc in PROCESSES:

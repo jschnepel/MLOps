@@ -12,6 +12,7 @@ from ops_core.jobs import JobType, Server, Tool
 from ops_core.states import Performer, RunState
 from ops_worker import handlers
 from ops_worker.drafting import FakeDraftGenerator
+from ops_worker.mcp import McpCallFailed
 
 from tests.e2e.test_migrations_and_persistence import new_run
 
@@ -143,3 +144,36 @@ async def test_drafting_failure_fails_the_run(app_conn: persistence.Conn) -> Non
         assert [r["to_state"] for r in await cur.fetchall()] == ["QUEUED", "RETRIEVING", "DRAFTING", "FAILED"]
         cur = await app_conn.execute("SELECT done_at IS NOT NULL AS done FROM app.jobs WHERE id = %s", (job["id"],))
         assert (await cur.fetchone())["done"]
+
+
+class WriteDownMcp(ScriptedMcp):
+    """A scripted MCP whose write server cannot be reached."""
+
+    async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if tool == "create_incident":
+            raise McpCallFailed("create_incident: transport or protocol failure")
+        return await super().call(url, handle=handle, tool=tool, arguments=arguments)
+
+
+async def test_unreachable_write_server_requeues_the_execute_job(app_conn: persistence.Conn) -> None:
+    mcp = WriteDownMcp(app_conn)
+    deps = handlers.Deps(conn=app_conn, mcp=mcp, generator=FakeDraftGenerator(), urls=settings.urls(), worker_name="t")
+    async with app_conn.transaction(force_rollback=True):
+        _, _, run = await new_run(app_conn)
+        await handlers.handle(deps, await own_job(app_conn, run, "investigate"))
+        row = await persistence.run_row(app_conn, run)
+        proposal_id = row["active_proposal_id"]
+        await persistence.transition(app_conn, run_id=run, dst=RunState.APPROVED, performer=Performer.RECORD_DECISION)
+        await persistence.insert_job(app_conn, job_type=JobType.EXECUTE, run_id=run, proposal_id=proposal_id)
+        job = await own_job(app_conn, run, "execute")
+        await handlers.handle(deps, job)
+        assert (await persistence.run_row(app_conn, run))["state"] == "APPROVED"
+        cur = await app_conn.execute(
+            "SELECT done_at IS NULL AS open, claimed_by IS NULL AS free, available_at > now() AS later"
+            " FROM app.jobs WHERE id = %s",
+            (job["id"],),
+        )
+        assert dict(await cur.fetchone()) == {"open": True, "free": True, "later": True}
+        # Once the delay has passed the same job can be claimed again.
+        await app_conn.execute("UPDATE app.jobs SET available_at = now() WHERE id = %s", (job["id"],))
+        assert (await own_job(app_conn, run, "execute"))["id"] == job["id"]

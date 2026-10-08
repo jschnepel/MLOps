@@ -26,6 +26,7 @@ from ops_worker.drafting import DraftGenerator, DraftRequest, EvidenceItem
 from ops_worker.mcp import McpCaller, McpCallFailed
 
 log = logging.getLogger("ops_worker")
+EXECUTE_RETRY_SECONDS = 30  # how long an execute job waits after mcp-write could not be reached
 QUERY_CHARS = 500  # schemas/tools/search_procedures.input.schema.json maxLength
 
 
@@ -150,6 +151,7 @@ async def _draft_and_freeze(
         now=now,
     )
     async with deps.conn.transaction():
+        # TODO(T09): freeze_proposal definer function; the worker loses INSERT on proposals under the grant table
         # drafts.draft_sha256 is the hash freeze_proposal (T09) recomputes and compares: the payload's hash.
         await deps.conn.execute(
             "INSERT INTO app.drafts (id, run_id, draft_sha256, validated, kind) VALUES (%s, %s, %s, true, %s)",
@@ -201,13 +203,13 @@ async def _draft_and_freeze(
         )
 
 
-async def execute(deps: Deps, job: dict[str, Any]) -> None:
-    """Call `create_incident` on mcp-write for an approved run; mcp-write owns the grant and the outcome."""
+async def execute(deps: Deps, job: dict[str, Any]) -> bool:
+    """Call `create_incident` on mcp-write for an approved run; True when the job is finished, False when re-queued."""
     async with deps.conn.transaction():
         run = dict(await persistence.run_row(deps.conn, job["run_id"], lock=True))
         if run["state"] != RunState.APPROVED.value:
             log.info("execute job %s: run is %s, nothing to dispatch", job["id"], run["state"])
-            return
+            return True
         proposal_id: UUID = run["active_proposal_id"]
         handle = await persistence.mint_handle(
             deps.conn, run_id=run["run_id"], job_id=job["id"], server=Server.WRITE, azp="ops-worker"
@@ -217,21 +219,26 @@ async def execute(deps: Deps, job: dict[str, Any]) -> None:
             deps.urls.mcp_write, handle=handle, tool="create_incident", arguments={"proposal_id": str(proposal_id)}
         )
     except McpCallFailed as exc:
-        # mcp-write owns the grant and the outcome; if the call never reached it nothing happened, and if it did the
-        # outcome is recorded there. The worker records nothing it did not observe (BUILD_SPEC §1). TODO(T22).
-        log.warning("execute job %s: %s", job["id"], exc)
-        return
+        # mcp-write owns the grant and the outcome; the run stays APPROVED and the job retries, which is safe because
+        # create_incident is idempotent per run. The worker records nothing it did not observe (BUILD_SPEC §1).
+        # TODO(T13): bounded retries; TODO(T22): reconciliation.
+        log.warning("execute job %s: %s; re-queued in %s s", job["id"], exc, EXECUTE_RETRY_SECONDS)
+        async with deps.conn.transaction():
+            await persistence.requeue_job(deps.conn, job["id"], EXECUTE_RETRY_SECONDS)
+        return False
     data = doc.get("data") or {}
     log.info("execute job %s: %s %s", job["id"], doc.get("status"), data.get("status"))
+    return True
 
 
 async def handle(deps: Deps, job: dict[str, Any]) -> None:
-    """Dispatch a claimed job by type, then mark it done."""
+    """Dispatch a claimed job by type, then mark it done unless the handler re-queued it."""
     kind = JobType(job["type"])
     if kind is JobType.INVESTIGATE:
         await investigate(deps, job)
     elif kind is JobType.EXECUTE:
-        await execute(deps, job)
+        if not await execute(deps, job):
+            return
     else:
         log.info("job %s of type %s is not handled by the walking skeleton", job["id"], kind.value)
     async with deps.conn.transaction():

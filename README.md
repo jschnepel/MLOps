@@ -2,7 +2,7 @@
 
 **An evidence-backed incident assistant with controlled tool use, independent approval, and recoverable execution.**
 
-> **Status: walking skeleton runs locally (T08); hardening in progress** ([runbook](docs/runbooks/walking-skeleton.md)). Read [STATUS.md](STATUS.md) before interpreting any capability below as built. The capabilities described are **targets**.
+> **Status: walking skeleton runs locally (T08); hardening starts with Plan E (T09/T10)** ([runbook](docs/runbooks/walking-skeleton.md)). Read [STATUS.md](STATUS.md) before interpreting any capability below as built. The capabilities described are **targets**.
 
 Start with **[START_HERE.md](START_HERE.md)**. The implementation contract is [BUILD_SPEC.md](BUILD_SPEC.md) as amended by **[SPEC_AMENDMENTS.md](SPEC_AMENDMENTS.md)**.
 

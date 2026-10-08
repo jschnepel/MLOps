@@ -188,6 +188,8 @@ Allowed shortcuts in T08, each with its owning task:
 - the runtime connects as the Compose superuser `ops` (the single owner role); `incident` can CONNECT to `ops`; no CONNECT revocation → T09;
 - the grant re-reads no current membership, and neither grant nor mark_sent re-checks cancellation or the dispatch deadline → T09/T21/T22; request bodies are not size-bounded → T12;
 - the membership rows' `issuer` is frozen at migration time from `OPS_KC_ISSUER` (a realm moved to another port needs a re-migration) → T09's membership sync.
+- an execute job whose write call cannot reach mcp-write is re-queued every 30 s without a retry bound → T13/T22;
+- no reconnect after a database restart: every process must be restarted → T13;
 
 Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss checks in mcp-read, mcp-write and incident-sim; `action_key` ON CONFLICT; a decision step by a second persona; every transition routed through T07's table.
 

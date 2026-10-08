@@ -1,5 +1,5 @@
 """Live fixtures for the walking skeleton: only with OPS_LIVE=1 and the dev profile up. Secrets are read from files,
-never printed. Task 9 adds the `skeleton` fixture that starts the five processes."""
+never printed. The `skeleton` fixture that starts the five processes lives in the R105 module."""
 
 import asyncio
 import os

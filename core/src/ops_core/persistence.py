@@ -182,7 +182,8 @@ async def append_event(
         "SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM app.events WHERE run_id = %s", (run_id,)
     )
     row = await cur.fetchone()
-    assert row is not None  # COALESCE always yields one row
+    if row is None:  # COALESCE always yields one row
+        raise PersistenceError("event sequence could not be computed")
     sequence: int = row["next"]
     event = Event(
         event_id=uuid4(),
@@ -238,6 +239,15 @@ async def claim_job(conn: Conn, *, worker_name: str) -> DictRow | None:
 
 async def finish_job(conn: Conn, job_id: UUID) -> None:
     await conn.execute("UPDATE app.jobs SET done_at = now() WHERE id = %s", (job_id,))
+
+
+async def requeue_job(conn: Conn, job_id: UUID, delay_seconds: int) -> None:
+    """Release a claimed job and make it claimable again after `delay_seconds`. TODO(T13): bounded retries."""
+    await conn.execute(
+        "UPDATE app.jobs SET claimed_by = NULL, claimed_at = NULL, available_at = now() + make_interval(secs => %s)"
+        " WHERE id = %s",
+        (delay_seconds, job_id),
+    )
 
 
 async def mint_handle(

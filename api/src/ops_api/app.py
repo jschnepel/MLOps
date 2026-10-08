@@ -121,6 +121,10 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
     async def _api_error(_: Request, exc: ApiError) -> Response:
         return safe(exc.status, exc.code, exc.message)
 
+    @app.exception_handler(psycopg.Error)
+    async def _database(_: Request, __: psycopg.Error) -> Response:
+        return safe(503, ErrorCode.UNAVAILABLE, "database unavailable")
+
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, __: RequestValidationError) -> Response:
         return safe(422, ErrorCode.INVALID_INPUT, "request is not valid")

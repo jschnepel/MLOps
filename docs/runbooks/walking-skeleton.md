@@ -22,6 +22,10 @@ files), so nothing is throwaway.
    `reports/bootstrap/*.txt`), so the tree is dirty after a live run; commit the files when their content changed for
    a reason worth keeping, otherwise `git checkout -- reports/`.
 
+If mcp-write is down, approved runs wait in APPROVED and their execute jobs retry every 30 s until it returns. The
+R105 run, its conversation and its incident stay in the dev database on purpose: they are the evidence the proof
+file describes, and nothing purges them.
+
 Tokens: personas through the dev-only direct grant (`ops-dev-direct`, audience `ops-api`); the worker through
 `ops-worker` (both MCP audiences); mcp-write through `ops-mcp-write` (audience `incident-sim`). The MCP resource URLs
 in `.env` are audience identifiers (`http://mcp-read:8081/mcp`), while the host processes listen on

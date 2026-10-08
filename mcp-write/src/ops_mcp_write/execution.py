@@ -133,7 +133,8 @@ async def grant_execution(conn: persistence.Conn, *, invocation: persistence.Inv
         payload={"action_id": str(action_id), "proposal_id": str(proposal_id)},
     )
     grant = await load_grant(conn, invocation.run_id)
-    assert grant is not None
+    if grant is None:
+        raise RuntimeError("the grant just written cannot be read back")
     return grant
 
 
@@ -144,7 +145,8 @@ async def _latest_attempt(conn: persistence.Conn, action_id: UUID) -> str:
         (action_id,),
     )
     row = await cur.fetchone()
-    assert row is not None  # INTENT is written in the grant's own unit of work
+    if row is None:  # INTENT is written in the grant's own unit of work
+        raise RuntimeError("the grant has no attempt state")
     return str(row["state"])
 
 
@@ -192,7 +194,8 @@ async def record_outcome(conn: persistence.Conn, grant: Grant, outcome: ActionOu
             payload={"status": "SUCCEEDED", "action_id": str(grant.action_id), "receipt": data["receipt"]},
         )
     elif outcome.status is ToolOutcome.FAILED_NO_COMMIT:
-        assert outcome.reason is not None  # ActionOutcome's own invariant
+        if outcome.reason is None:  # ActionOutcome's own invariant
+            raise RuntimeError("a FAILED_NO_COMMIT outcome carries no reason")
         await persistence.transition(
             conn, run_id=run, dst=RunState.FAILED, performer=Performer.RECORD_OUTCOME, reason=outcome.reason
         )
@@ -267,7 +270,8 @@ async def create_incident(deps: Deps, *, invocation: persistence.Invocation, pro
         grant = await grant_execution(conn, invocation=invocation, proposal_id=proposal_id)
     step = next_step(grant.attempt_state)
     if step == "stored":
-        assert grant.detail is not None
+        if grant.detail is None:
+            raise RuntimeError("a stored outcome has no detail")
         return ActionOutcome.model_validate_json(json.dumps(grant.detail))
     if step == "send":
         async with deps.session.unit() as conn:

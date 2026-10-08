@@ -57,8 +57,8 @@ class HttpMcpCaller:
 
     async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Call the tool over Streamable HTTP; every failure to obtain a tool result is McpCallFailed."""
-        headers = {"Authorization": f"Bearer {await self._tokens.token()}", "X-Ops-Invocation": handle}
         try:
+            headers = {"Authorization": f"Bearer {await self._tokens.token()}", "X-Ops-Invocation": handle}
             async with (
                 httpx2.AsyncClient(headers=headers, timeout=self._timeout) as http,
                 Client(streamable_http_client(url, http_client=http), mode="2026-07-28") as client,

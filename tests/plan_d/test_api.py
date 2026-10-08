@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from ops_api import store
@@ -298,3 +299,18 @@ def test_pure_rules():
 def test_health(api):
     c, _ = api
     assert c.get("/health/live").json() == {"status": "live"} and c.get("/health/ready").status_code == 200
+
+
+class BrokenStore(FakeStore):
+    async def run(self, tenant_id: UUID, run_id: UUID) -> dict[str, Any] | None:
+        """Stand in for a store whose database connection is gone."""
+        raise psycopg.OperationalError("connection lost")
+
+
+def test_database_failure_is_a_safe_503() -> None:
+    app = create_app(StubVerifier(), store_factory=lambda: BrokenStore())
+    with TestClient(app) as c:
+        response = c.get(f"/api/v1/runs/{uuid4()}", headers=auth("alex"))
+    assert response.status_code == 503
+    assert response.json()["code"] == "UNAVAILABLE" and response.json()["retryable"] is True
+    assert "connection lost" not in response.text
