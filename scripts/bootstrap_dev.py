@@ -167,7 +167,9 @@ def main(argv: list[str]) -> int:
         rc = compose("up", "-d", "--wait", "--wait-timeout", "240")
         if rc == 0:
             # The temporary master-realm admin is only needed to bootstrap; remove it with its own token (T43).
-            secret = (directory / "kc_bootstrap_admin_password").read_text(encoding="utf-8")
+            # Strip like the entrypoint's `$(cat ...)` does: a hand-edited file with a trailing newline would otherwise
+            # send a different password than Keycloak holds, get a 400 and report "absent" while tmpadmin still exists.
+            secret = (directory / "kc_bootstrap_admin_password").read_text(encoding="utf-8").strip()
             print("bootstrap admin:", delete_bootstrap_admin(f"http://localhost:{KC_HTTP_PORT}", "tmpadmin", secret))
         return rc
     if command == "down":
