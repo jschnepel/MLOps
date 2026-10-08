@@ -2,7 +2,7 @@
 
 **Decision (owner, 2026-10-07):** Ollama on port 11434 must be reachable only from loopback and from the project's containers, never from the LAN. **The agent changes no system setting**; the owner runs the commands below and attests the result.
 
-## What was measured (2026-10-08, read-only, Task 4 step 6)
+## What was measured (2026-10-08, read-only)
 
 - `OLLAMA_HOST=0.0.0.0:11434` is set at **User** scope (Machine scope is empty), so Ollama currently listens on every interface (`Get-NetTCPConnection` shows the listener on `::`):
 
@@ -13,7 +13,7 @@ LocalAddress LocalPort
 ------------ ---------
 ::               11434
 ```
-- Firewall rules for Ollama (created when Windows asked at Ollama's first run, or by its installer):
+- Firewall rules for Ollama (present on this machine; their origin was not recorded):
 
 ```
 DisplayName Enabled Direction Action         Profile
@@ -45,11 +45,17 @@ LocalAddress RemoteAddress
 127.0.0.1    127.0.0.1
 ```
 
-The last measurement is the decisive one: on this machine (Docker Desktop 29.6.2, WSL2 backend) a container's connection to `host.docker.internal:11434` arrives at the host **from 127.0.0.1**, because Docker's backend process proxies it. A listener bound to loopback is therefore still reachable from containers (verified in the plan's round-2 dry run with a loopback-only test listener). The `vEthernet (WSL)` subnet never appears as a source address, so a firewall rule scoped to it would admit nothing.
+The last measurement is the decisive one: on this machine (Docker Desktop 29.6.2, WSL2 backend) a container's connection to `host.docker.internal:11434` arrives at the host **from 127.0.0.1**, because Docker's backend process proxies it. A listener bound to loopback is therefore still reachable from containers (verified on 2026-10-08, see `docs/reviews/plan-review-b-2026-10-08.md`, round-2 builder dry run). The `vEthernet (WSL)` subnet never appears as a source address, so a firewall rule scoped to it would admit nothing.
+
+### How to re-measure the source address
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -d --name ops-srcaddr python:3.13-slim@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c python -c "import socket,time; s=socket.create_connection(('host.docker.internal',11434)); time.sleep(20)" >/dev/null && sleep 3 && powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 11434 -State Established | Select-Object LocalAddress,RemoteAddress | Format-Table -AutoSize" | tr -d ''; docker rm -f ops-srcaddr >/dev/null
+```
 
 ## Step A (recommended) — bind Ollama to loopback
 
-Ollama's own default is `127.0.0.1:11434`; the `0.0.0.0` value is an explicit override set in your **User** environment (measured; Machine scope is empty). Replace it at the scope where it is set — no elevation needed:
+Ollama's own default is `127.0.0.1:11434` (per Ollama's FAQ, "How do I configure Ollama server?": https://github.com/ollama/ollama/blob/main/docs/faq.md); the `0.0.0.0` value is an explicit override set in your **User** environment (measured; Machine scope is empty). Replace it at the scope where it is set — no elevation needed for the variable itself:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("OLLAMA_HOST", "127.0.0.1:11434", "User")
@@ -72,9 +78,9 @@ OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/plan_b/live/test_ollama_br
 ```
 Expected: `1 passed`.
 
-3. The LAN cannot: from another device on the same network, `curl -m 5 http://<this host's LAN IP>:11434/api/version` must be refused or time out. Record the attestation below.
+**3. LAN refused.** From another device on the same network, `curl -m 5 http://<this host's LAN IP>:11434/api/version` must be refused or time out. Record the attestation below.
 
-With step A applied, the existing allow-any firewall rules for `ollama.exe` are harmless (nothing listens on a LAN address), but disabling them costs nothing and removes a surprise for the next person who changes `OLLAMA_HOST`:
+With step A applied, the existing allow-any firewall rules for `ollama.exe` are harmless (nothing listens on a LAN address), but disabling them costs nothing and removes a surprise for the next person who changes `OLLAMA_HOST`. Run this in an **elevated PowerShell**:
 
 ```powershell
 Get-NetFirewallApplicationFilter | Where-Object Program -like '*ollama*' | Get-NetFirewallRule | Disable-NetFirewallRule
@@ -82,7 +88,7 @@ Get-NetFirewallApplicationFilter | Where-Object Program -like '*ollama*' | Get-N
 
 ## Step B (fallback) — scoped firewall rule, only if containers stop arriving from loopback
 
-A future Docker Desktop could deliver container traffic from the WSL VM's address instead of proxying it. The symptom: step A's verification 2 fails while `Get-NetTCPConnection -LocalPort 11434 -State Established` (run during the Task 4 step 6 command) shows a non-loopback `RemoteAddress`. Then:
+A future Docker Desktop could deliver container traffic from the WSL VM's address instead of proxying it. The symptom: step A's verification 2 fails while `Get-NetTCPConnection -LocalPort 11434 -State Established` (re-measure with the command above) shows a `RemoteAddress` that is not `127.0.0.1`. Then:
 
 1. Set `OLLAMA_HOST` back to `0.0.0.0:11434` and restart Ollama.
 2. In an elevated PowerShell, allow 11434 only from loopback and the **measured** source address's subnet (`Get-NetIPAddress -AddressFamily IPv4 | Where-Object InterfaceAlias -like '*WSL*'` prints the WSL adapter; on 2026-10-08 it was `172.28.32.1/20`, i.e. `172.28.32.0/20`, and this subnet can change after a reboot):
@@ -91,6 +97,8 @@ A future Docker Desktop could deliver container traffic from the WSL VM's addres
 $subnet = "<measured subnet>"
 Get-NetFirewallApplicationFilter | Where-Object Program -like '*ollama*' | Get-NetFirewallRule | Disable-NetFirewallRule
 Get-NetFirewallRule -DisplayName '*ollama*' | Where-Object DisplayName -notlike 'Ollama 11434*' | Disable-NetFirewallRule
+# DisplayName is not a key: without this removal a re-run would create a duplicate rule.
+Remove-NetFirewallRule -DisplayName "Ollama 11434 - loopback and Docker/WSL only" -ErrorAction SilentlyContinue
 New-NetFirewallRule -DisplayName "Ollama 11434 - loopback and Docker/WSL only" -Direction Inbound -Protocol TCP -LocalPort 11434 -RemoteAddress 127.0.0.1,$subnet -Action Allow -Profile Any
 ```
 No block rule is added on purpose: an explicit Block rule wins over an Allow rule and would cut the containers off too. With the allow-any rules disabled, each profile's default inbound action (`Block` in the effective policy — confirm with `Get-NetFirewallProfile -PolicyStore ActiveStore`) refuses everyone else; loopback traffic is not filtered. After a reboot that changes the subnet: `Set-NetFirewallRule -DisplayName "Ollama 11434 - loopback and Docker/WSL only" -RemoteAddress 127.0.0.1,"<new subnet>"`.
@@ -109,8 +117,11 @@ AM-31 says Ollama "is reachable only from loopback and the Docker/WSL subnet" an
 
 ## Rollback
 
+The variable needs no elevation; the firewall lines need an **elevated PowerShell**.
+
 ```powershell
 [Environment]::SetEnvironmentVariable("OLLAMA_HOST", "0.0.0.0:11434", "User")   # the scope it was set in; then restart Ollama
 Remove-NetFirewallRule -DisplayName "Ollama 11434 - loopback and Docker/WSL only" -ErrorAction SilentlyContinue
 Get-NetFirewallApplicationFilter | Where-Object Program -like '*ollama*' | Get-NetFirewallRule | Enable-NetFirewallRule
+Get-NetFirewallRule -DisplayName '*ollama*' | Enable-NetFirewallRule   # the scoped rule is already removed above
 ```
