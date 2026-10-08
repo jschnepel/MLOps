@@ -389,5 +389,10 @@ async def test_r006_populated_revision_1_database_upgrades_in_place(
         grant = await persistence.lookup_action(mcp_exec, handle=handle)
         assert grant.action_id == action and grant.attempt_state == "RESOLVED"
     finally:
-        for run in runs:
-            await purge_run(app_conn, run)
+        # A failure between the downgrade and the migrate would leave ops_test at revision 1 for the rest of the
+        # session; bringing it back to heads first is a no-op when the test passed.
+        try:
+            migrate(Profile.TEST)
+        finally:
+            for run in runs:
+                await purge_run(app_conn, run)

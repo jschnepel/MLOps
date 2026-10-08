@@ -194,7 +194,8 @@
   - untested branches -> T13/T22: FAILED_NO_COMMIT from SENT, CONFLICT on EXECUTING, redispatch, `mark_sent` on a cancelled run, `freeze_proposal` ANSWER_ONLY / SUPERSEDES_MISMATCH / revision, `grant_execution` NO_APPROVAL / CANCELLED / MEMBERSHIP_INACTIVE, a write handle at mcp_read;
   - the abort client and the `abort_incident` tool -> T47/T22; the six remaining BS:405 faults -> T13; a schedule for the detective check (`skeleton.py keys`) -> T32;
   - the pre-SENT `STALE_RUN` / `HASH_MISMATCH` envelopes and the expired-handle read-back have no dedicated test -> T13/T47;
-  - `transition_run` called with a NULL `expected_version` relies on the from-state under `FOR UPDATE` rather than a version check (by design, Task 3 review M3).
+  - `transition_run` called with a NULL `expected_version` relies on the from-state under `FOR UPDATE` rather than a version check (by design, Task 3 review M3)
+  - a zero-orphan case for `skeleton.py keys` needs a clean database pair -> T32/T13; a shared connect-and-assert helper for the three servers (the MCP lifespans duplicate it and incident-sim never closes its connection) -> T13/T30; the `testclock` branch revision still renders its grantee tuples from the live matrix (freeze them in the next migration task).
 
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 

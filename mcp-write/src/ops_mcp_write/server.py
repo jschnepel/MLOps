@@ -184,7 +184,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         except persistence.NotFound:
             return envelope("create_incident", error=tool_error("NOT_FOUND", "run not found"))
         except persistence.VersionConflict:
-            # Only grant_execution and mark_sent can raise this here, both before SENT, so nothing was sent and the
+            # Only grant_execution and mark_sent can raise this here, both before this call sends anything, so the
             # worker closes the job without a retry cycle. After SENT execution.py answers UNKNOWN instead (AM-13).
             return envelope("create_incident", error=tool_error("STALE_RUN", "run is no longer executing"))
         except persistence.HashMismatch:
