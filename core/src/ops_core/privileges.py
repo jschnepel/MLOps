@@ -168,6 +168,7 @@ HELPER_FUNCTIONS: Final[dict[str, str]] = {
     "_tenant_of_action": "uuid",
     "_resolve_handle": "text, text, text",
     "_latest_attempt": "uuid",
+    "_grant_row": "uuid",
     "_append_event": "uuid, uuid, text, text, jsonb",
     "_transition": "uuid, text, text, text, integer, text, jsonb",
 }
