@@ -124,5 +124,24 @@ async def test_r010_destination_rows_outlive_the_application_store(
     found = await keys.lookup(incident_conn, action)
     assert grants is not None and grants["n"] == 0 and found is not None and found.state == "COMMITTED"
     from scripts.skeleton import keys as detective
+    from scripts.skeleton import orphan_keys
 
     assert detective() == 1  # the orphan this test planted is reported, exit 1
+    # Exit 1 alone proves little (other tests leave grant-less keys); this run's own key must be named as the orphan.
+    cur = await incident_conn.execute("SELECT action_id, payload_sha256 FROM incident.action_key")
+    destination_keys = [(r["action_id"], r["payload_sha256"]) for r in await cur.fetchall()]
+    cur = await app_conn.execute("SELECT action_id, payload_sha256 FROM app.execution_grant")
+    grant_hashes = {(r["action_id"], r["payload_sha256"]) for r in await cur.fetchall()}
+    assert (action, "c" * 64) in orphan_keys(destination_keys, grant_hashes)
+
+
+async def test_r096_rejection_is_permanent_in_the_real_table(incident_conn: persistence.Conn) -> None:
+    """A later POST with the right bytes onto a REJECTED key gets the tombstone and creates no incident."""
+    action = uuid4()
+    await keys.reject(incident_conn, action_id=action, payload_sha256="d" * 64, reason="hash_mismatch")
+    async with incident_conn.transaction():
+        row = await keys.commit(incident_conn, action_id=action, payload_sha256="d" * 64, payload={"x": 1})
+    assert row.state == "REJECTED" and row.reason == "hash_mismatch"
+    assert await count_incidents(incident_conn, action) == 0
+    status, doc = keys.document(row, presented_sha256="d" * 64)
+    assert status == 200 and doc["tombstone"]["state"] == "REJECTED"
