@@ -2,9 +2,9 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan C (T07, T45, T46) is executed on branch `plan-c` (`36c1007..843f365` as of 2026-10-08, plus plan commits 36eb767 and 28fe2a6). Owner inputs still pending: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) push `plan-b` and `plan-c` and open/merge the PRs, record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata below. Then write Plan D = T08, the walking skeleton, from the real contracts in `core/`, `compose.yaml` and the realm, with the debt list below as its constraint, and dry-run it on scratch copies before executing.
+**Next task:** Plan D (T08, the walking skeleton) is executed on branch `plan-d` (`8136ee6..89eb1e6`). Owner inputs still pending: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) push `plan-b`, `plan-c` and `plan-d` and open/merge the PRs, record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata below. Then write Plan E = T09 (migrations, roles, RLS, definer functions) and T10 (incident-sim `action_key` hardening) from revision 1 and the skeleton's persistence seams (`TODO(T09)` in `ops_core.persistence`), and dry-run it on scratch copies before executing.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-c` (Plan C work on top of `plan-b`, which is on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` and `plan-c` are local only and await the owner's push and PRs.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-d` (Plan D work on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b`, `plan-c` and `plan-d` are local only and await the owner's push and PRs.
 
 ## Done in the planning session (2026-10-06)
 
@@ -148,6 +148,18 @@
   - Timestamp edge cases: more than six fractional digits are truncated (two inputs freeze to one instant), and the code accepts `…T12:00Z` without seconds, which the schema refuses.
 - Findings worth remembering: the canonicaliser hashes NFC-normalised bytes, so uniqueness and ordering are checked on normalised strings (a Critical caught in Task 4); duplicate JSON keys are rejected; the conformance test caught the schema and the code disagreeing on `action.conflict` carrying an outcome (the schema was right, AM-14). Pytest totals drifted +39 from the plan's expectations because each fix round added tests; the ledger tracked the offset.
 
+## Plan D executed (2026-10-08, branch `plan-d`)
+
+- T08 = `8136ee6..89eb1e6`. The plan (`docs/superpowers/plans/2026-10-08-first-slice-d-walking-skeleton.md`) holds the 27 rulings (processes on the host, the one read tool, persona tokens at the API, wall clock, owner role and databases, Alembic layout, revision 1 tables, the event sequence, the incident-sim contract, proposal storage, reviewer independence, job claiming, the single transition function, the fake model, MCP specifics, the e2e test, dependencies, health, invocation handles, error mapping, failure after SENT, the proposal read route, event loops, connections, 401 for any refused token, test locations, live clean-up) and the eleven debt additions; `docs/reviews/plan-review-d-2026-10-08.md` keeps the review record.
+- The three Plan C open items are decided by rulings 10 and 4: the stored, sent and hashed proposal bytes are `canonical_json(ProposalPayload.canonical_dict())`; request bodies take explicit `null` for optional fields and reject whitespace-only strings; emitted timestamps are `...Z` with seconds and no fraction.
+- Evidence: `reports/skeleton/r105-walking-skeleton.txt`; the live suite is `14 passed`; `check.py` ends `457 passed, 44 skipped`, `CHECK: GREEN`. Run it per `docs/runbooks/walking-skeleton.md`.
+- **The eleven declared shortcuts** (the debt list below, each with its owning task): processes on the host (T30); lexical `search_procedures` from fixtures, no asset tools (T16/T17); persona bearer tokens instead of sessions (T11/T12); wall clock and unenforced expiry (T09/T21); incident-sim's two routes only (T10); polling worker without reclaim (T13/T14); `WHERE tenant_id` instead of RLS (T09); handles not revoked (T15); the single owner role (T09); grant and `mark_sent` without membership, cancellation or deadline re-checks, and unbounded bodies (T09/T12/T21/T22); frozen membership `issuer` (T09).
+- **Open items for Plan E (T09/T10) and later**, parked by the task reviews:
+  - mcp-write reconciliation-era items (T22): an early return before `escalate_run` exists; the service token is fetched after SENT;
+  - the decision-hash cross-check, and BLOCKED_REVIEW on a refused grant (T21/T22);
+  - per-service `tests/` directories (T30);
+  - `authored_by` is read outside the decision transaction (T21).
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -224,6 +236,14 @@ uv pip install --python "$LOCALAPPDATA/ops-ref-venv" "./reference[web,test]"
 (cd reference && "$LOCALAPPDATA/ops-ref-venv/Scripts/python" -m pytest -q)
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push and PR; the Ollama runbook step A) and write Plan D (T08) as described in the Next task line.
+To run the walking skeleton (dev stack up; see `docs/runbooks/walking-skeleton.md`):
+
+```bash
+uv run python scripts/skeleton.py migrate
+uv run python scripts/skeleton.py up      # then: status, and down when finished
+OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
+```
+
+Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan E (T09, T10) as described in the Next task line.
 
 Do not store secrets or private reasoning in this file.

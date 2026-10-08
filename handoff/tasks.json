@@ -463,13 +463,16 @@
       "requirement_ids": [
         "R105"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "One e2e test drives a run to SUCCEEDED across the five processes with real tokens, crossing both MCP servers.",
         "Skeleton shortcuts listed in SESSION_STATE.md as debt with owning tasks; no throwaway auth.",
         "Schema created as Alembic revision 1 (owner role; T09 re-owns and enables RLS in later revisions)."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Plan D (branch plan-d): done in 8136ee6..89eb1e6; host processes started by scripts/skeleton.py (containers -> T30); evidence tests/e2e/test_r105_walking_skeleton.py and reports/skeleton/r105-walking-skeleton.txt (live only, OPS_LIVE=1; CI has no Docker); debt list in SESSION_STATE.md; rulings in docs/superpowers/plans/2026-10-08-first-slice-d-walking-skeleton.md."
+      ]
     },
     {
       "id": "T09",
