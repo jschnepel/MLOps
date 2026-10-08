@@ -28,12 +28,16 @@ ALEX, SAM, LEE = (
 JORDAN = UUID("cb551e64-83ec-582b-9047-8dadf20e151a")
 SHA = "9" * 64
 PERSONAS = {"alex": ALEX, "sam": SAM, "lee": LEE, "jordan": JORDAN}
-MEMBERS = {
-    ALEX: store.Membership(ALPHA, frozenset({"requester"})),
-    SAM: store.Membership(ALPHA, frozenset({"reviewer"})),
-    LEE: store.Membership(ALPHA, frozenset({"reader"})),
-    JORDAN: store.Membership(BETA, frozenset({"reviewer"})),
+DUAL = UUID("11111111-2222-5333-8444-555555555555")  # a subject seeded in two tenants
+PERSONAS["dual"] = DUAL
+ROWS = {
+    ALEX: [(ALPHA, "requester")],
+    SAM: [(ALPHA, "reviewer")],
+    LEE: [(ALPHA, "reader")],
+    JORDAN: [(BETA, "reviewer")],
+    DUAL: [(ALPHA, "requester"), (BETA, "reviewer")],
 }
+MEMBERS = {who: store.single_tenant(rows) for who, rows in ROWS.items()}
 
 
 class StubVerifier:
@@ -65,7 +69,7 @@ class FakeStore:
         self.slot_occupied = False
 
     async def membership(self, issuer: str, subject: UUID) -> store.Membership | None:
-        return MEMBERS.get(subject) if issuer == ISSUER else None
+        return store.single_tenant(ROWS.get(subject, [])) if issuer == ISSUER else None
 
     async def create_conversation(self, tenant_id: UUID, created_by: UUID) -> UUID:
         cid = uuid4()
@@ -83,6 +87,9 @@ class FakeStore:
         end_at: datetime,
     ) -> store.Accepted:
         if self.conversations.get(conversation_id) != tenant_id:
+            raise store.NotFound
+        sup = request.supersedes_run_id
+        if sup is not None and (sup not in self.runs or self.runs[sup]["conversation_id"] != conversation_id):
             raise store.NotFound
         if self.slot_occupied:
             raise store.Conflict("SLOT_OCCUPIED")
@@ -146,6 +153,23 @@ def test_identity_and_membership(api):
     assert c.get("/api/v1/me", headers=auth("nobody")).status_code == 401
     me = c.get("/api/v1/me", headers=auth("alex")).json()
     assert me == {"subject": str(ALEX), "tenant_id": str(ALPHA), "roles": ["requester"], "username": "alex"}
+
+
+def test_multi_tenant_subject_cannot_act_and_roles_do_not_merge(api):
+    c, _ = api
+    assert c.get("/api/v1/me", headers=auth("dual")).status_code == 403
+    assert c.get("/api/v1/me", headers=auth("alex")).json()["roles"] == ["requester"]
+    assert store.single_tenant([]) is None
+
+
+def test_supersedes_run_must_be_in_the_same_conversation(api):
+    c, _ = api
+    cid = c.post("/api/v1/conversations", headers=auth("alex")).json()["conversation_id"]
+    body = {"kind": "investigate", "text": "x", "context": {"asset_id": "A17", "hours": 2}}
+    first = c.post(f"/api/v1/conversations/{cid}/messages", headers=auth("alex"), json=body).json()["run_id"]
+    url = f"/api/v1/conversations/{cid}/messages"
+    assert c.post(url, headers=auth("alex"), json={**body, "supersedes_run_id": str(uuid4())}).status_code == 404
+    assert c.post(url, headers=auth("alex"), json={**body, "supersedes_run_id": first}).status_code == 202
 
 
 def test_admission_validates_the_body_and_returns_202(api):

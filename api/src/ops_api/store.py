@@ -82,6 +82,15 @@ def check_reviewer(membership: Membership, *, requester: UUID, authored_by: list
         raise Forbidden
 
 
+def single_tenant(rows: list[tuple[UUID, str]]) -> Membership | None:
+    """Fold (tenant, role) rows into one Membership; None when there are none or they span tenants."""
+    tenants = {tenant for tenant, _ in rows}
+    if len(tenants) != 1:
+        # TODO(T11): explicit tenant selection; until then a multi-tenant subject cannot act, and roles never merge.
+        return None
+    return Membership(next(iter(tenants)), frozenset(role for _, role in rows))
+
+
 class Store(Protocol):
     """The seven operations the application needs; the unit tests fake it, `DbStore` implements it."""
 
@@ -137,9 +146,7 @@ class DbStore:
                 (issuer, subject),
             )
             rows = await cur.fetchall()
-        if not rows:
-            return None
-        return Membership(rows[0]["tenant_id"], frozenset(r["role"] for r in rows))
+        return single_tenant([(r["tenant_id"], r["role"]) for r in rows])
 
     async def create_conversation(self, tenant_id: UUID, created_by: UUID) -> UUID:
         """Create an empty conversation in the tenant."""
@@ -172,6 +179,14 @@ class DbStore:
                 )
                 if await cur.fetchone() is None:
                     raise NotFound
+                if request.supersedes_run_id is not None:
+                    # TODO(T21): the semantic supersede rules (active run, revision); here only tenant scoping.
+                    cur = await conn.execute(
+                        "SELECT 1 FROM app.runs WHERE run_id = %s AND tenant_id = %s AND conversation_id = %s",
+                        (request.supersedes_run_id, tenant_id, conversation_id),
+                    )
+                    if await cur.fetchone() is None:
+                        raise NotFound
                 await conn.execute(
                     "INSERT INTO app.messages (message_id, tenant_id, conversation_id, kind, text, context, author)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s)",

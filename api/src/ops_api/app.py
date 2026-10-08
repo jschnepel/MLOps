@@ -177,7 +177,7 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
                 end_at=end_at,
             )
         except st.NotFound as exc:
-            raise ApiError(404, ErrorCode.NOT_FOUND, "no such conversation") from exc
+            raise ApiError(404, ErrorCode.NOT_FOUND, "no such conversation or superseded run") from exc
         except st.Conflict as exc:
             raise ApiError(409, ErrorCode(exc.code), "the conversation already has an active run") from exc
         return {
