@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate this handoff package, not the target production application.
 
-Default checks need only Python's standard library. --contracts requires the
+Default checks need only Python's standard library (they import the stdlib-only scripts.gen_fixture_meta from this repository). --contracts requires the
 jsonschema package. Snapshot/reference hash checks are intended before edits.
 
 --reference-tree (implied by --reference-code) enforces the whole reference/ tree against
@@ -24,6 +24,12 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[1]
+# `python -I` (how CI and the tests run this checker) drops both the script directory and the working directory from
+# sys.path, so put the repository root on it explicitly; without this `scripts.*` cannot be imported (the
+# scripts/probe.py pattern). The imported module is stdlib-only, so the default checks stay stdlib-only.
+sys.path.insert(0, str(ROOT))
+from scripts.gen_fixture_meta import generate as generate_fixture_meta
+
 # Directories the repository-wide walks ignore: environments and build output are not part of the package, and
 # reference/ is inherited code verified separately by hash, not parsed or syntax-checked as ours.
 SKIP_DIRS = {".venv", "node_modules", "reference", ".git", "__pycache__", ".pytest_cache", "build"}
@@ -261,6 +267,12 @@ def main() -> int:
         p = within("data/handoff-fixtures/" + doc["path"])
         actual = hashlib.sha256(p.read_bytes()).hexdigest()
         check(actual == doc["content_sha256"], f"Fixture hash mismatch: {p.name}")
+    # meta.json (T45) is derived from the markdown and the seed namespace; a stale copy would let an example cite a
+    # section hash that no longer matches the fixture bytes.
+    check(
+        load("data/handoff-fixtures/meta.json") == generate_fixture_meta(ROOT / "data/handoff-fixtures"),
+        "Fixture meta.json is stale: run uv run python -m scripts.gen_fixture_meta",
+    )
     scenarios = []
     for line in (ROOT / "evals/handoff-development/scenarios.jsonl").read_text(encoding="utf-8").splitlines():
         if line.strip():
@@ -299,7 +311,7 @@ def main() -> int:
         f"PASS: package structure; {len(json_paths)} JSON files; {len(tasks)} acyclic tasks; {len(requirements)} covered requirements"
     )
     print(
-        f"PASS: {len(catalog['documents'])} source hashes; {len(scenarios)} development scenario cards; {py_count} Python syntax checks; 6 SVG XML files"
+        f"PASS: {len(catalog['documents'])} source hashes; {len(scenarios)} development scenario cards; {py_count} Python syntax checks; 6 SVG XML files; fixture meta.json current"
     )
     print("PASS: synthetic proposal/decision/outcome example hashes agree")
 
