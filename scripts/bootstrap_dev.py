@@ -37,6 +37,14 @@ SECRET_NAMES: tuple[str, ...] = (
     "kc_persona_lee_password",
     "kc_persona_riley_password",
     "kc_persona_jordan_password",
+    # One login per AM-20.1 role (T09); read by scripts/skeleton.py migrate and by each service, never mounted.
+    "postgres_api_password",
+    "postgres_worker_password",
+    "postgres_sweeper_password",
+    "postgres_mcp_read_password",
+    "postgres_mcp_exec_password",
+    "postgres_operator_password",
+    "postgres_test_harness_password",
 )
 ENV_PATH = Path(".env")
 # Non-default high ports keep clear of a local PostgreSQL (5432) or another Keycloak/web server (8080) on the host.

@@ -95,7 +95,7 @@ def upgrade(tree: str, pg: settings.Postgres) -> None:
 
 def migrate() -> int:
     export_environment(load_dotenv(ROOT / ".env"))
-    app_pg = settings.app_postgres()
+    app_pg = settings.superuser_postgres()
     incident_as_superuser = settings.Postgres(app_pg.host, app_pg.port, app_pg.user, "incident", app_pg.password)
     ensure_incident_role(incident_as_superuser, settings.read_secret("postgres_incident_password"))
     upgrade("app", app_pg)

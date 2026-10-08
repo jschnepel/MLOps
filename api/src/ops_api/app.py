@@ -297,6 +297,7 @@ def production_app() -> FastAPI:
     )
 
     async def make_store() -> st.Store:
-        return st.DbStore(await persistence.connect(settings.app_postgres()))
+        # TODO(T09): connect as this service's own role (Task 6/7)
+        return st.DbStore(await persistence.connect(settings.superuser_postgres()))
 
     return create_app(verifier, make_store)

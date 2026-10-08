@@ -106,7 +106,7 @@ async def test_write_path_twice(app_conn: persistence.Conn, secret, monkeypatch:
     async def post_with_probe(*args, **kwargs):
         # SA:229 / BUILD_SPEC §11: by the time the first byte leaves, SENT must be durable. A second connection sees
         # only committed rows, so it is the witness.
-        witness = await persistence.connect(settings.app_postgres())
+        witness = await persistence.connect(settings.superuser_postgres())
         try:
             cur = await witness.execute(
                 "SELECT state FROM app.action_attempt_state WHERE action_id = %s ORDER BY seq DESC LIMIT 1",

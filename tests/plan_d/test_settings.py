@@ -20,7 +20,15 @@ def secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (directory / "postgres_incident_password").write_text("incident-secret-value", encoding="utf-8")
     (directory / "empty_secret").write_text("\n", encoding="utf-8")
     monkeypatch.setenv("OPS_SECRETS_DIR", str(directory))
-    for name in ("OPS_PG_HOST", "OPS_PG_PORT", "OPS_PG_USER", "OPS_PG_DB", "OPS_KC_BASE_URL", "OPS_KC_ISSUER"):
+    for name in (
+        "OPS_PG_HOST",
+        "OPS_PG_PORT",
+        "OPS_PG_USER",
+        "OPS_PG_SUPERUSER",
+        "OPS_PG_DB",
+        "OPS_KC_BASE_URL",
+        "OPS_KC_ISSUER",
+    ):
         monkeypatch.delenv(name, raising=False)
     return directory
 
@@ -48,7 +56,7 @@ def test_missing_variable_names_the_variable(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_postgres_settings_build_a_conninfo_and_hide_the_password(secrets: Path):
-    pg = settings.app_postgres()
+    pg = settings.superuser_postgres()
     assert (pg.host, pg.port, pg.user, pg.dbname) == ("127.0.0.1", 15432, "ops", "ops")
     assert "password=pg-secret-value" in pg.conninfo() and "dbname=ops" in pg.conninfo()
     assert "pg-secret-value" not in repr(pg) and "pg-secret-value" not in str(pg)

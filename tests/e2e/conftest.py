@@ -53,7 +53,7 @@ async def app_conn(migrated: None) -> AsyncIterator[persistence.Conn]:
     """An autocommit connection: a test that must leave nothing behind wraps itself in
     `async with app_conn.transaction(force_rollback=True)`; a test whose rows another process must see cleans up with
     `purge_run` in a `finally`."""
-    conn = await persistence.connect(settings.app_postgres())
+    conn = await persistence.connect(settings.superuser_postgres())
     try:
         yield conn
     finally:

@@ -205,7 +205,8 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         if state.deps is None:
             kc = settings.keycloak()
             state.deps = execution.Deps(
-                session=persistence.Session(await persistence.connect(settings.app_postgres())),
+                # TODO(T09): connect as this service's own role (Task 6/7)
+                session=persistence.Session(await persistence.connect(settings.superuser_postgres())),
                 http=httpx2.AsyncClient(),
                 destination_url=settings.urls().incident_sim,
                 destination_token=WorkloadTokenSource(

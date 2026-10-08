@@ -78,8 +78,10 @@ async def _main() -> None:
         client_id="ops-worker",
         client_secret=settings.read_secret("kc_client_secret_ops_worker"),
     )
-    conn = await persistence.connect(settings.app_postgres())
-    probe = await persistence.connect(settings.app_postgres())  # the health server's own connection (see health_app)
+    # TODO(T09): connect as this service's own role (Task 6/7)
+    conn = await persistence.connect(settings.superuser_postgres())
+    # The health server's own connection (see health_app).
+    probe = await persistence.connect(settings.superuser_postgres())
     deps = handlers.Deps(
         conn=conn,
         mcp=HttpMcpCaller(tokens),
