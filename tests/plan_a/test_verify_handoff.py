@@ -1,3 +1,10 @@
+"""Protect scripts/verify_handoff.py, the integrity gate for the delivered handoff and reference/ (T42, final review F1).
+
+The checker is the only thing stopping hash-pinned inherited code from drifting unnoticed. These tests run it as a
+subprocess against the real repository and against tampered copies, and catch a checker that passes when it should
+fail: a modified, deleted or added file under reference/, a remap target outside reference/, or a corrupted zip.
+"""
+
 import hashlib
 import json
 import shutil
@@ -6,6 +13,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+# -I matches how CI runs the checker: no environment variables or working-directory modules can alter it.
 CHECKER = [sys.executable, "-I", "scripts/verify_handoff.py"]
 
 
@@ -23,6 +31,7 @@ def test_remap_file_covers_every_original_entry_with_identical_hash():
 def test_reference_code_check_passes():
     out = subprocess.run(CHECKER + ["--reference-code"], capture_output=True, text=True, check=False)
     assert out.returncode == 0, out.stdout + out.stderr
+    # 19 and the counts below are the size of the delivered package; they change only if the reference set does.
     assert "PASS: 19 inherited" in out.stdout
 
 
@@ -46,6 +55,8 @@ def test_manifest_check_fails_on_corrupted_zip(tmp_path: Path):
 
 
 def test_checker_skips_venv_dirs():
+    # A local environment can hold files that are not valid package content; the repository-wide syntax check
+    # must ignore directories starting with ".venv" rather than fail on them.
     junk = Path(".venv-probe-junk")
     junk.mkdir(exist_ok=True)
     try:
@@ -57,7 +68,11 @@ def test_checker_skips_venv_dirs():
 
 
 def _tracked_copy(tmp_path: Path) -> Path:
-    """Copy every git-tracked file (the repository as a fresh clone sees it) to a temporary root."""
+    """Copy every git-tracked file (the repository as a fresh clone sees it) to a temporary root.
+
+    Tampering tests must never touch the real working tree, and using tracked files only keeps local caches and
+    environments out of the copy so the untouched baseline behaves like CI.
+    """
     root = tmp_path / "repo"
     listed = subprocess.run(["git", "ls-files", "-z"], capture_output=True, check=True).stdout.decode("utf-8")
     for rel in filter(None, listed.split("\0")):
@@ -85,6 +100,7 @@ def test_reference_tree_passes_on_untouched_copy(tmp_path: Path):
 
 def test_reference_tree_fails_on_modified_unhashed_file(tmp_path: Path):
     root = _tracked_copy(tmp_path)
+    # Makefile has no individual hash entry, so only the whole-tree check (F1) can notice this edit.
     with (root / "reference/Makefile").open("ab") as f:
         f.write(b"\n# tampered\n")
     out = _run_tree(root)
@@ -112,6 +128,8 @@ def test_reference_tree_fails_on_remap_outside_reference(tmp_path: Path):
     root = _tracked_copy(tmp_path)
     remap_path = root / "provenance/reference-code-hashes.remap.json"
     remap = json.loads(remap_path.read_text(encoding="utf-8"))
+    # Point a remap entry at a byte-identical copy outside reference/: the hash would still match, so only the
+    # explicit "under reference/" rule can reject it.
     remap["tests/conftest.py"] = "scripts/conftest.py"
     shutil.copyfile(root / "reference/tests/conftest.py", root / "scripts/conftest.py")
     remap_path.write_text(json.dumps(remap, indent=2) + "\n", encoding="utf-8", newline="\n")

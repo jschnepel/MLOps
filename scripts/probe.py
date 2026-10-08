@@ -2,6 +2,12 @@
 
 uv run --isolated --no-project --python 3.13 --with "langchain-ollama==1.1.0" --with "jsonschema" python -I scripts/probe.py
 
+T02 / R081: the owner runs this once, by hand, against a local Ollama, and decides from the report whether the
+model and prompts are acceptable. It is never run in CI. The isolated environment (`--isolated --no-project`)
+keeps the measured package versions independent of the workspace lockfile, and `-I` stops stray environment
+variables or a working-directory module from changing what is imported; the pinned versions are recorded in
+reports/model-probe-freeze.txt.
+
 Preconditions: evals/holdout.sha256 exists (T03 sealed), Ollama is running. Writes
 reports/model-probe-qwen3-8b.md, reports/model-probe-freeze.txt, data/model-pins.json.
 This is measurement, not prompt tuning: the prompts are the sealed starters, unchanged.
@@ -27,6 +33,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# `python -I` drops the script directory from sys.path, so put the repository root on it explicitly; without this
+# the `scripts.*` imports below fail when the probe is run the documented way.
 sys.path.insert(0, str(ROOT))
 from scripts.probe_stats import (
     VRAM_INTERVAL_S,
@@ -42,12 +50,18 @@ from scripts.probe_stats import (
 from scripts.seal import sha256_of
 
 MODEL = "qwen3:8b"
+# Loopback only: the probe must never send evidence or prompts to a remote host.
 OLLAMA = "http://127.0.0.1:11434"
+# Hard cap per model call so one stuck generation cannot stall the run (T02 "bound every probe call"). It is the
+# same 60 s cap the model_permit release rule refers to (AM-12), so a call that exceeds it counts as a failure.
 TIMEOUT_S = 60
 PROMPT_DRAFT = ROOT / "handoff/prompts/incident-draft-v1.md"
 PROMPT_REPAIR = ROOT / "handoff/prompts/schema-repair-v1.md"
 SCHEMA = ROOT / "schemas/model-draft.schema.json"
 SEAL = ROOT / "evals/holdout.sha256"
+# sha256 of the two sealed starter prompts. They duplicate lines 2-3 of evals/holdout.sha256 on purpose: main()
+# refuses to run unless the seal file AND the prompt files on disk both match, so the probe can never measure a
+# prompt that was edited after sealing (AM-50).
 EXPECTED = {
     PROMPT_DRAFT.name: "e3c26da349dcb0a9bfafb6c786a06f15fece389c21fa63b1b64fef7659b6a942",
     PROMPT_REPAIR.name: "8b6658eb0f08136699b78e7ab1d76972f88f4399db720e92e5be5335b0c7c343",
@@ -55,10 +69,13 @@ EXPECTED = {
 
 
 def ollama_json(path: str, payload: dict | None = None) -> dict:
+    """GET `path` from the local Ollama (POST with `payload` as JSON when one is given) and return the JSON reply."""
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
         OLLAMA + path, data=data, headers={"Content-Type": "application/json"}, method="POST" if data else "GET"
     )
+    # Socket-level backstop only. It is longer than TIMEOUT_S because unloading and listing models are not bounded
+    # by the per-call asyncio timeout used for generation.
     with urllib.request.urlopen(req, timeout=120) as r:
         return json.loads(r.read())
 
@@ -77,7 +94,10 @@ def unload_model() -> None:
 
 
 def _nvidia_smi(query: str) -> str | None:
-    """First line of an nvidia-smi query, or None when nvidia-smi is missing or fails."""
+    """First line of an nvidia-smi query, or None when nvidia-smi is missing or fails.
+
+    Only the first GPU is reported on a multi-GPU machine; the report labels the figure with that GPU's name.
+    """
     try:
         out = subprocess.run(
             ["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
@@ -89,7 +109,7 @@ def _nvidia_smi(query: str) -> str | None:
         if out.returncode != 0:
             return None
         return out.stdout.strip().splitlines()[0].strip()
-    except Exception:  # noqa: BLE001 - measurement only
+    except Exception:  # noqa: BLE001 - no driver, no GPU or a hung query all mean "not measured", never a crash
         return None
 
 
@@ -103,6 +123,7 @@ def vram_mb() -> int | None:
 
 
 def gpu_name() -> str | None:
+    """Name of the first GPU, or None when nvidia-smi is unavailable."""
     return _nvidia_smi("name")
 
 
@@ -113,6 +134,7 @@ class VramSampler:
         self.samples: list[int] = []
 
     async def during(self, awaitable):
+        """Await `awaitable` while a background task samples VRAM; return its result and stop sampling."""
         stop = asyncio.Event()
 
         async def sample() -> None:
@@ -120,6 +142,7 @@ class VramSampler:
                 value = await asyncio.to_thread(vram_mb)
                 if value is not None:
                     self.samples.append(value)
+                # Sleep until the next tick or until `stop` is set. The timeout firing is the normal tick, not an error.
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), VRAM_INTERVAL_S)
 
@@ -132,6 +155,13 @@ class VramSampler:
 
 
 async def run_probe(cases: list[dict]) -> dict:
+    """Run every measurement against the live model and return the raw data that render_report() formats.
+
+    Order matters: first-pass and repair calls over all cases (the first is the cold start), then three repeats
+    of five cases to test determinism, then a mid-generation cancel followed by a normal call to see whether the
+    model recovers promptly. Nothing is retried or tuned; failures are recorded as results, not raised.
+    """
+    # Imported here so the stdlib-only helpers above stay importable (and testable) without the probe's packages.
     import jsonschema
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_ollama import ChatOllama
@@ -142,6 +172,8 @@ async def run_probe(cases: list[dict]) -> dict:
     # AM-31: constrained output (Ollama `format` = the JSON schema) plus application-side validation.
     drafter = llm.with_structured_output(schema, method="json_schema", include_raw=True)
 
+    # The wrapper returns {"raw": AIMessage, "parsed": ..., "parsing_error": ...}; these helpers read the raw message
+    # because validity and thinking are judged on what the model actually emitted.
     def raw_text(out: dict) -> str:
         content = out["raw"].content
         return content if isinstance(content, str) else json.dumps(content)
@@ -156,12 +188,14 @@ async def run_probe(cases: list[dict]) -> dict:
     repair_system = PROMPT_REPAIR.read_text(encoding="utf-8")
     results: list[dict] = []
     vram = VramSampler()
+    # Unload first so the first call pays the full model-load cost; otherwise a model left warm by an earlier
+    # session would make the reported cold-start latency look far better than a real first request.
     unload_model()
     for i, c in enumerate(cases):
         user = json.dumps({"request": c["request_text"], "evidence": c["evidence"]}, ensure_ascii=False)
         t0 = time.perf_counter()
         text, err, meta_thinking = "", None, False
-        kind = "error"
+        kind = "error"  # stays "error" if the call raises or times out, so the result row is still written
         parsed: object = None
         try:
             out = await vram.during(
@@ -173,7 +207,7 @@ async def run_probe(cases: list[dict]) -> dict:
             meta_thinking = bool(raw_reasoning(out))
             parsed = out["parsed"]
             kind = classify_structured(text, parsed, out["parsing_error"])
-        except Exception as e:  # noqa: BLE001 - record, never hide
+        except Exception as e:  # noqa: BLE001 - a timeout or connection error is a measured outcome, so record it
             err = f"{type(e).__name__}: {e}"
         dt = time.perf_counter() - t0
         errors: list[str] = []
@@ -183,9 +217,13 @@ async def run_probe(cases: list[dict]) -> dict:
             schema_ok = not errors
         repaired_ok = schema_ok
         repair_called = repair_thinking = False
+        # One repair attempt per failed first pass (AM-31). A call that errored or timed out is not repaired: there
+        # is no output to repair, and retrying would hide the failure.
         if not schema_ok and err is None:
             repair_called = True
             repair_user = json.dumps(
+                # Cap at 10 messages to keep the repair prompt small; with no schema errors (unparseable or
+                # thinking output) the failure kind is the only reason there is to give.
                 {"invalid_output": text, "validation_errors": errors[:10] or [kind], "evidence": c["evidence"]},
                 ensure_ascii=False,
             )
@@ -200,7 +238,7 @@ async def run_probe(cases: list[dict]) -> dict:
                 repair_thinking = has_thinking(ftext, raw_reasoning(fix))
                 fkind = classify_structured(ftext, fix["parsed"], fix["parsing_error"])
                 repaired_ok = fkind == "json_valid" and not schema_errors(fix["parsed"])
-            except Exception:  # noqa: BLE001 - a failed repair is a measured failure
+            except Exception:  # noqa: BLE001 - a repair that errors or times out simply counts as not repaired
                 repaired_ok = False
         results.append(
             {
@@ -216,6 +254,9 @@ async def run_probe(cases: list[dict]) -> dict:
                 "error": err,
             }
         )
+    # Determinism check: with temperature=0 the same input should give byte-identical output. Five inputs times
+    # three calls is enough to expose nondeterminism without lengthening the run much. These calls also count
+    # toward the thinking totals, because thinking on any call breaks the no-thinking setting.
     repeats = []
     repeat_errors: list[str] = []
     extra_thinking = extra_calls = 0
@@ -235,9 +276,13 @@ async def run_probe(cases: list[dict]) -> dict:
                 extra_thinking += has_thinking(rtext, raw_reasoning(rep_out))
                 outs.append(rtext)
             repeats.append(len(set(outs)) == 1)
-        except Exception as e:  # noqa: BLE001 - record, never abort the run
+        except Exception as e:  # noqa: BLE001 - one failed repeat must not abort the remaining measurements
             repeats.append(False)
             repeat_errors.append(f"{c['probe_id']}: {type(e).__name__}: {e}")
+    # Cancellation check (feeds the model_permit release rule, AM-12): start a deliberately long generation, cancel
+    # it after 3 s (long enough for generation to be under way), then see how fast the next ordinary call is and
+    # whether Ollama still reports the model busy. The plain ChatOllama is used, not the structured wrapper, because
+    # the prompt asks for prose rather than a draft.
     cancel_error = None
     task = asyncio.create_task(
         llm.ainvoke(
@@ -249,6 +294,7 @@ async def run_probe(cases: list[dict]) -> dict:
     )
     await vram.during(asyncio.sleep(3))
     task.cancel()
+    # Wait for the cancelled task to unwind; the CancelledError (or any late error) is expected and not a failure.
     with contextlib.suppress(asyncio.CancelledError, Exception):
         await asyncio.wait_for(task, timeout=TIMEOUT_S)
     vram_after_cancel = vram_mb()
@@ -264,7 +310,7 @@ async def run_probe(cases: list[dict]) -> dict:
         extra_calls += 1
         extra_thinking += has_thinking(otext, ok.additional_kwargs.get("reasoning_content"))
         next_start = round(time.perf_counter() - t1, 2)
-    except Exception as e:  # noqa: BLE001 - record, still return
+    except Exception as e:  # noqa: BLE001 - report the failure in the cancel row instead of losing the other data
         cancel_error = f"{type(e).__name__}: {e}"
     return {
         "results": results,
@@ -282,6 +328,11 @@ async def run_probe(cases: list[dict]) -> dict:
 
 
 def render_report(data: dict, digest: str, version: str, probed_at: str) -> str:
+    """Format the measurements as the markdown report the owner reads to decide (R081).
+
+    The two bracketed "Owner decision" lines at the end are deliberately left unfilled: the probe measures, the
+    owner chooses whether to proceed and which permit release rule to adopt.
+    """
     s = summarize(data["results"])
     n = s["n"]
     lo1, hi1 = wilson(s["json_valid"], n)
@@ -319,6 +370,11 @@ model_permit release rule (AM-12, chosen from the cancel row above): [release on
 
 
 def main() -> int:
+    """Check the seal and prompts, run the probe and write the report, pins and freeze file; return an exit code.
+
+    Returns 2 without calling the model when a precondition fails (seal missing or malformed, prompt hash mismatch,
+    fewer than 30 inputs), so a sealing mistake can never produce a report that looks valid.
+    """
     if not SEAL.is_file():
         print(
             "evals/holdout.sha256 is missing: T03 must seal the holdout before the probe runs (AM-50)", file=sys.stderr
@@ -328,12 +384,15 @@ def main() -> int:
     if problem is not None:
         print(f"evals/holdout.sha256 is malformed: {problem}; refusing to run (AM-50)", file=sys.stderr)
         return 2
+    # The seal file only records hashes; this confirms the prompt files on disk still match them.
     for name, h in EXPECTED.items():
         actual = sha256_of(ROOT / "handoff/prompts" / name)
         if actual != h:
             print(f"prompt {name} hash {actual} != sealed/pinned {h}; refusing to run", file=sys.stderr)
             return 2
+    # TODO(T46): rename the comprehension variable `l` (easily misread as 1) to `line`.
     cases = [json.loads(l) for l in (ROOT / "evals/probe/inputs.jsonl").read_text(encoding="utf-8").splitlines()]
+    # AM-31 asks for at least 30 distinct inputs so the Wilson intervals in the report are meaningful.
     if len(cases) < 30:
         print("need >= 30 distinct inputs", file=sys.stderr)
         return 2
@@ -341,6 +400,8 @@ def main() -> int:
     version = ollama_json("/api/version").get("version", "unknown")
     probed_at = datetime.now(UTC).isoformat()
     data = asyncio.run(run_probe(cases))
+    # data/model-pins.json records which exact model build and Ollama version were measured, so a later model
+    # change is detectable.
     (ROOT / "reports/model-probe-qwen3-8b.md").write_text(
         render_report(data, digest, version, probed_at), encoding="utf-8", newline="\n"
     )
@@ -351,6 +412,7 @@ def main() -> int:
         encoding="utf-8",
         newline="\n",
     )
+    # A pip-freeze-style record of the isolated environment, since it is not covered by the workspace lockfile.
     freeze = [f"python=={sys.version.split()[0]}"] + sorted(
         f"{d.metadata['Name']}=={d.version}" for d in importlib.metadata.distributions()
     )

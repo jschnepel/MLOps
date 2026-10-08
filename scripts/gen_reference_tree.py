@@ -3,6 +3,9 @@
 Lists `git ls-files reference` minus the repository-owned reference/README.md, and refuses
 to write unless every listed file is byte-identical to zip member operations-copilot/<path>
 in provenance/handoff-1.0.zip.
+
+scripts/verify_handoff.py reads the result to enforce the whole reference/ tree (final review F1), not only the
+files that have an individual hash. Run it after any deliberate change to what is delivered under reference/.
 """
 
 from __future__ import annotations
@@ -14,19 +17,25 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# The delivered 1.0 package is the authority; the working tree is only what we are checking against it.
 ZIP = ROOT / "provenance/handoff-1.0.zip"
 OUT = ROOT / "provenance/reference-tree.json"
 ZIP_PREFIX = "operations-copilot/"
+# Files under reference/ that this repository wrote itself, so they have no zip counterpart.
 REPO_OWNED = {"README.md"}
 
 
 def build() -> dict[str, object]:
+    """Return the reference-tree document, exiting without a result if any tracked file differs from the zip."""
+    # `git ls-files` (NUL-separated, safe for any file name) lists only tracked files, so untracked caches and
+    # build output under reference/ never enter the list.
     out = subprocess.run(
         ["git", "ls-files", "-z", "reference"], cwd=ROOT, capture_output=True, check=True
     ).stdout.decode("utf-8")
     tracked = sorted(p[len("reference/") :] for p in out.split("\0") if p)
     files = [p for p in tracked if p not in REPO_OWNED]
     bad = []
+    # Compare bytes, not hashes, so a failure can say exactly which file differs.
     with zipfile.ZipFile(ZIP) as z:
         for rel in files:
             try:

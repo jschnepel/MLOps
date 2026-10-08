@@ -1,4 +1,9 @@
-"""Pure functions used by the probe and its tests. Stdlib only."""
+"""Pure functions used by the probe and its tests. Stdlib only.
+
+Everything that can be computed without a model lives here, away from scripts/probe.py, so it is unit-tested
+(tests/plan_a/test_probe_stats.py) without Ollama or a GPU. The recurring rule (AM-31): thinking output is a
+failure of the no-thinking setting; it is counted and reported, never stripped to make a result pass.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,14 @@ import re
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
-    """Wilson score interval for k successes in n trials."""
+    """Wilson score interval for k successes in n trials, at 95% confidence by default.
+
+    Wilson is used instead of the normal approximation because the probe has only 30-60 inputs and pass rates
+    near 0% or 100%, where the normal interval is too narrow and can leave [0, 1].
+
+    Raises:
+        ValueError: if n is not positive or k is outside 0..n.
+    """
     if n <= 0 or k < 0 or k > n:
         raise ValueError("need 0 <= k <= n and n > 0")
     p = k / n
@@ -19,7 +31,11 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def classify_output(text: str) -> str:
-    """Thinking content is a failure of the no-thinking setting, never stripped."""
+    """Classify raw model text as "thinking_present", "json_invalid" or "json_valid".
+
+    Thinking content is a failure of the no-thinking setting, never stripped: removing the tag and parsing the
+    rest would report a pass for output that violates the configuration under test.
+    """
     if "<think>" in text or "</think>" in text:
         return "thinking_present"
     try:
@@ -47,11 +63,14 @@ def has_thinking(text: str, reasoning_content: object) -> bool:
     return classify_output(text) == "thinking_present" or bool(reasoning_content)
 
 
+# Shown instead of a number whenever VRAM could not be read; reporting 0 MB would claim a measurement we did not make.
 NOT_MEASURED_VRAM = "not measured (nvidia-smi unavailable)"
+# Seconds between VRAM samples while a call is pending; short enough to catch a peak, long enough not to load the GPU.
 VRAM_INTERVAL_S = 0.5
 
 
 def mb_or_not_measured(mb: int | None) -> str:
+    """Format a megabyte reading, or the not-measured text for None."""
     return NOT_MEASURED_VRAM if mb is None else f"{mb} MB"
 
 
@@ -74,6 +93,11 @@ def p95_index(n: int) -> int:
 
 
 def summarize(results: list[dict]) -> dict:
+    """Aggregate per-input result rows into the counts and latencies the report shows.
+
+    Cold and errored calls are left out of the warm latency percentiles: the first call measures a model load,
+    and a timeout is a failure, not a latency.
+    """
     n = len(results)
     warm = sorted(r["seconds"] for r in results if not r["cold"] and r["error"] is None)
     cold_row = next((r for r in results if r["cold"]), None)
@@ -88,7 +112,7 @@ def summarize(results: list[dict]) -> dict:
         "errors": [r for r in results if r["error"]],
         "cold_seconds": cold_row["seconds"] if cold_row is not None and cold_row["error"] is None else None,
         "cold_error": cold_row["error"] if cold_row is not None else None,
-        "warm_p50": warm[len(warm) // 2] if warm else None,
+        "warm_p50": warm[len(warm) // 2] if warm else None,  # upper median when the count is even
         "warm_p95": warm[p95_index(len(warm))] if warm else None,
     }
 
@@ -102,6 +126,7 @@ def cold_cell(summary: dict) -> str:
     return "not measured (no cold call)"
 
 
+# One seal line in `sha256sum` text format: 64 lowercase hex digits, two spaces, then a file name.
 SEAL_LINE = re.compile(r"[0-9a-f]{64}  \S+")
 
 

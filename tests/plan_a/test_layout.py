@@ -1,8 +1,15 @@
+"""Protect the monorepo layout decided in ADR-0001 (T04): one top-level directory per deployable service.
+
+These tests catch a member that is not part of the uv workspace, a service that imports another service's
+internals (coupling that would stop them deploying independently), and a service missing its trust-boundary README.
+"""
+
 import ast
 import importlib
 import tomllib
 from pathlib import Path
 
+# top-level directory -> importable package name; the seven members of the workspace (core is shared code).
 MEMBERS = {
     "core": "ops_core",
     "api": "ops_api",
@@ -18,6 +25,7 @@ def test_root_is_a_uv_workspace_excluding_reference():
     root = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     ws = root["tool"]["uv"]["workspace"]
     assert set(ws["members"]) == set(MEMBERS)
+    # reference/ holds hash-pinned inherited code with its own pyproject files; uv must not treat it as a member.
     assert ws["exclude"] == ["reference"]
     assert Path(".python-version").read_text(encoding="utf-8").strip() == "3.13"
 
@@ -27,6 +35,7 @@ def test_each_member_imports_and_declares_only_core_as_internal_dependency():
         mod = importlib.import_module(name)
         assert mod.__version__ == "0.0.1"
         py = tomllib.loads(Path(directory, "pyproject.toml").read_text(encoding="utf-8"))
+        # Only core may be a declared internal dependency; services talk over the network, not by importing.
         internal = [d for d in py["project"].get("dependencies", []) if d.startswith("ops-")]
         assert internal in ([], ["ops-core"]), (directory, internal)
         assert py["project"]["requires-python"] == ">=3.13"
@@ -56,4 +65,6 @@ def test_each_member_has_a_trust_boundary_readme():
 
 
 def test_no_member_is_named_mcp():
+    # The read and write MCP servers are separate services (mcp-read, mcp-write); a single "mcp" package would let
+    # one process hold both read and write authority.
     assert "mcp" not in MEMBERS.values()
