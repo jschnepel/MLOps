@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Final
+from typing import Final, assert_never
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -114,10 +114,21 @@ class ActionOutcome(BaseModel):
             case ToolOutcome.FAILED_NO_COMMIT:
                 if self.tombstone is None or self.receipt is not None or self.reason not in FAILED_NO_COMMIT_REASONS:
                     raise ValueError("FAILED_NO_COMMIT carries a tombstone and a reason from the FAILED set")
-            case _:  # UNKNOWN, CONFLICT: nothing is proven either way
+                self._check_tombstone(self.tombstone, self.reason)
+            case ToolOutcome.UNKNOWN | ToolOutcome.CONFLICT:  # nothing is proven either way
                 if self.receipt is not None or self.tombstone is not None or self.reason is not None:
                     raise ValueError(f"{self.status} carries no receipt, tombstone or reason")
+            case _:
+                assert_never(self.status)
         return self
+
+    def _check_tombstone(self, tombstone: Tombstone, reason: Reason | None) -> None:
+        # The tombstone is the destination's proof; if it names another action or payload, or a state that the claimed
+        # reason contradicts, the outcome would assert something its own evidence does not support.
+        if tombstone.action_id != self.action_id or tombstone.payload_sha256 != self.payload_sha256:
+            raise ValueError("tombstone belongs to a different action or payload")
+        if (tombstone.state is DestinationState.REJECTED) != (reason is Reason.REJECTED):
+            raise ValueError("tombstone state and reason disagree (REJECTED if and only if reason rejected)")
 
 
 class EventSource(StrEnum):
@@ -171,41 +182,58 @@ class EventRuleViolation(ValueError):
     """The event asserts something its source may not assert (AM-14 'who may assert outcomes')."""
 
 
+def _validated(model: type[BaseModel], value: object, what: str) -> None:
+    """Require `value` to be a mapping that validates as `model`, else raise EventRuleViolation."""
+    if not isinstance(value, Mapping):
+        raise EventRuleViolation(f"{what} must be an object")
+    try:
+        model.model_validate_json(json.dumps(dict(value)))
+    except (ValidationError, TypeError) as exc:
+        raise EventRuleViolation(f"{what} is malformed") from exc
+
+
 def event_rules_ok(event_type: EventType, source: EventSource, payload: Mapping[str, object]) -> None:
-    """Raise EventRuleViolation unless (type, source, payload) obeys AM-14; the schema's if/then rules say the same."""
-    prefix = event_type.value.split(".", 1)[0]
+    """Raise EventRuleViolation unless (type, source, payload) obeys AM-14's authority rules.
+
+    Code enforces who may assert what and the evidence each outcome event must carry; the shape of every other payload
+    key is the JSON schema's job, so unknown keys are not rejected here (except for the closed model_summary payload).
+    """
     if source is EventSource.MODEL_SUMMARY:
         # The schema's closed summary_payload, mirrored: a non-empty message, optional evidence_refs, nothing else
         # (so no status, AM-14).
         message = payload.get("message")
+        refs = payload.get("evidence_refs", [])
         if (
             event_type is not EventType.EXPLANATION_READY
             or not set(payload) <= {"message", "evidence_refs"}
             or not isinstance(message, str)
             or not message
+            or not isinstance(refs, list)
+            or not all(isinstance(r, str) and r for r in refs)
         ):
             raise EventRuleViolation("model_summary may emit only explanation.ready with a message and evidence_refs")
         return
+    # The model_summary branch returned, so the source is application or destination from here on; the former
+    # action/run/review source check could never fire and is gone.
     if source is EventSource.DESTINATION and event_type not in DESTINATION_EVIDENCE:
         raise EventRuleViolation(f"source=destination may not emit {event_type}")
     # AM-20.3 record_outcome emits these four, always with source=destination; append_event refuses action.* from
     # application callers, so an application-sourced copy is a forgery.
     if event_type in DESTINATION_EVIDENCE and source is not EventSource.DESTINATION:
         raise EventRuleViolation(f"{event_type} comes only from record_outcome with source=destination")
-    if prefix in {"action", "run", "review"} and source not in {EventSource.APPLICATION, EventSource.DESTINATION}:
-        raise EventRuleViolation(f"{event_type} needs source application or destination")
     if event_type is EventType.ACTION_CONFIRMED:
-        receipt = payload.get("receipt")
-        if payload.get("status") != RunState.SUCCEEDED.value or not isinstance(receipt, Mapping):
+        if payload.get("status") != RunState.SUCCEEDED.value:
             raise EventRuleViolation("action.confirmed requires a receipt and status SUCCEEDED")
-        try:
-            Receipt.model_validate_json(json.dumps(dict(receipt)))
-        except ValidationError as exc:
-            raise EventRuleViolation("action.confirmed carries a malformed receipt") from exc
-    if event_type is EventType.ACTION_FAILED and payload.get("reason") not in {r.value for r in Reason}:
-        raise EventRuleViolation("action.failed requires a reason from the reason enum")  # AM-14 "(with reason)"
+        _validated(Receipt, payload.get("receipt"), "action.confirmed receipt")
+    failed_reasons = {r.value for r in FAILED_NO_COMMIT_REASONS}
+    if event_type is EventType.ACTION_FAILED and payload.get("reason") not in failed_reasons:
+        raise EventRuleViolation("action.failed requires a reason from the FAILED_NO_COMMIT set")  # AM-14
     if event_type is EventType.ACTION_LATE_EVIDENCE:
-        if payload.get("outcome") not in {"SUCCEEDED", "FAILED_NO_COMMIT"}:
+        # Late evidence arrives after the run gave up; the outcome picks which proof it must carry.
+        outcome = payload.get("outcome")
+        if outcome == "SUCCEEDED":
+            _validated(Receipt, payload.get("receipt"), "action.late_evidence receipt")
+        elif outcome == "FAILED_NO_COMMIT":
+            _validated(Tombstone, payload.get("tombstone"), "action.late_evidence tombstone")
+        else:
             raise EventRuleViolation("action.late_evidence requires outcome SUCCEEDED or FAILED_NO_COMMIT")
-        if not isinstance(payload.get("receipt"), Mapping) and not isinstance(payload.get("tombstone"), Mapping):
-            raise EventRuleViolation("action.late_evidence requires a receipt or a tombstone")

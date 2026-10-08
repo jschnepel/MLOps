@@ -241,3 +241,84 @@ def test_routes_and_manifest():
             corpus_version="c",
             retrieval_mode="lexical",
         )  # a real model needs its digest
+
+
+def test_dedup_rejects_newline_and_seconds_variants():
+    for trigger in ("timeout\n", "sweep:2026-10-08T01:05\n", "sweep:2026-10-08T01:05:33", "sweep:", "manual"):
+        with pytest.raises(ValueError, match="trigger"):
+            dedup_key(JobType.RECOVER, action_id=ACTION, trigger=trigger)
+    assert dedup_key(JobType.RECOVER, action_id=ACTION, trigger="sweep:2026-10-08T01:05").endswith("01:05")
+    with pytest.raises(ValueError, match="minute_bucket"):
+        dedup_key(JobType.DELIVER_OUTBOX, minute_bucket="2026-10-08T01:05\n")
+
+
+def test_dedup_validates_parts():
+    for kwargs in ({}, {"proposal_id": ""}, {"proposal_id": None}):
+        with pytest.raises(ValueError, match="proposal_id"):
+            dedup_key(JobType.EXECUTE, **kwargs)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="action_id"):
+        dedup_key(JobType.RECOVER, trigger="timeout")
+    with pytest.raises(ValueError, match="unexpected key"):
+        dedup_key(JobType.EXECUTE, proposal_id=ACTION, proposl=1)
+
+
+def test_action_outcome_tombstone_cross_checks():
+    other = uuid.UUID("00000000-0000-4000-8000-000000000011")
+    aborted = Tombstone(
+        action_id=ACTION, state=DestinationState.ABORTED, payload_sha256=SHA, reason="abort", decided_at=AT
+    )
+    ActionOutcome(
+        status=ToolOutcome.FAILED_NO_COMMIT,
+        action_id=ACTION,
+        payload_sha256=SHA,
+        receipt=None,
+        tombstone=aborted,
+        reason=Reason.EXPIRED,
+    )
+    wrong_action = aborted.model_copy(update={"action_id": other})
+    wrong_sha = aborted.model_copy(update={"payload_sha256": "0" * 64})
+    for tomb, reason in ((wrong_action, Reason.EXPIRED), (wrong_sha, Reason.EXPIRED), (aborted, Reason.REJECTED)):
+        with pytest.raises(ValidationError):
+            ActionOutcome(
+                status=ToolOutcome.FAILED_NO_COMMIT,
+                action_id=ACTION,
+                payload_sha256=SHA,
+                receipt=None,
+                tombstone=tomb,
+                reason=reason,
+            )
+
+
+def test_event_rules_late_evidence_failed_and_summary():
+    tomb = {
+        "action_id": str(ACTION),
+        "state": "ABORTED",
+        "payload_sha256": SHA,
+        "reason": "x",
+        "decided_at": "2026-10-08T00:00:00Z",
+    }
+    receipt = {"receipt_id": str(ACTION), "incident_id": "INC-1", "committed_at": "2026-10-08T00:00:00Z"}
+    late = EventType.ACTION_LATE_EVIDENCE
+    event_rules_ok(late, EventSource.DESTINATION, {"outcome": "FAILED_NO_COMMIT", "tombstone": tomb})
+    event_rules_ok(late, EventSource.DESTINATION, {"outcome": "SUCCEEDED", "receipt": receipt})
+    with pytest.raises(EventRuleViolation):  # SUCCEEDED must carry a receipt, not a tombstone
+        event_rules_ok(late, EventSource.DESTINATION, {"outcome": "SUCCEEDED", "tombstone": tomb})
+    with pytest.raises(EventRuleViolation):  # conflict is not a no-commit reason
+        event_rules_ok(EventType.ACTION_FAILED, EventSource.DESTINATION, {"reason": "conflict"})
+    with pytest.raises(EventRuleViolation):
+        event_rules_ok(EventType.EXPLANATION_READY, EventSource.MODEL_SUMMARY, {"message": ""})
+    with pytest.raises(EventRuleViolation):
+        event_rules_ok(EventType.EXPLANATION_READY, EventSource.MODEL_SUMMARY, {"message": "m", "evidence_refs": [""]})
+
+
+def test_strict_models_reject_loose_values():
+    naive = datetime(2026, 10, 8)  # noqa: DTZ001 - naive on purpose
+    with pytest.raises(ValidationError):
+        Receipt(receipt_id=ACTION, incident_id="INC-1", committed_at=naive)
+    common = {"run_id": ACTION, "prompt_version": "v1", "corpus_version": "c"}
+    ok = RunManifest(model_route=ModelRoute.FAKE, model_digest=None, retrieval_mode="vector_exact", **common)
+    assert ok.retrieval_mode == "vector_exact"
+    with pytest.raises(ValidationError):
+        RunManifest(model_route=ModelRoute.FAKE, model_digest=None, retrieval_mode="vector", **common)  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        RunManifest(model_route=ModelRoute.QWEN3_8B, model_digest=SHA.upper(), retrieval_mode="lexical", **common)  # type: ignore[arg-type]

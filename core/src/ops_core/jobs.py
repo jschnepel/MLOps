@@ -106,8 +106,19 @@ JOB_RULES: Final[dict[JobType, JobRule]] = {
 }
 
 RECOVER_CADENCE: Final = (300, 3600, 48)  # every 5 min for the first hour, then hourly, 48 attempts (AM-20.4)
-_TRIGGER: Final = re.compile(r"^(timeout|cancel|deadline|sweep:[0-9T:\-]+)$")  # AM-20.4 recover triggers
-_BUCKET: Final = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")  # one-minute bucket, UTC, no seconds
+# Both patterns are used with `fullmatch`: `$` also matches before a trailing newline, so `match` + `$` would accept
+# "timeout\n" as a second, distinct dedup key for the same trigger and defeat the uniqueness this module exists for.
+_BUCKET_RE: Final = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}"  # one-minute bucket, UTC, no seconds
+_BUCKET: Final = re.compile(_BUCKET_RE)
+# AM-20.4 recover triggers; a sweep trigger carries the same minute bucket as maintenance jobs, so one sweep tick
+# cannot mint several keys for one action.
+_TRIGGER: Final = re.compile(rf"timeout|cancel|deadline|sweep:{_BUCKET_RE}")
+_PARTS: Final = {
+    JobType.INVESTIGATE: ("run_id", "revision"),
+    JobType.RESUME_INPUT: ("run_id", "clarification_event_id"),
+    JobType.EXECUTE: ("proposal_id",),
+    JobType.RECOVER: ("action_id", "trigger"),
+}
 
 
 def server_for(job_type: JobType) -> Server | None:
@@ -116,27 +127,30 @@ def server_for(job_type: JobType) -> Server | None:
 
 
 def dedup_key(job_type: JobType, **ids: UUID | int | str) -> str:
-    """Build the AM-20.4 dedup key for a job; missing or malformed parts raise ValueError naming the part."""
+    """Build the AM-20.4 dedup key for a job; missing, empty, unknown or malformed parts raise ValueError."""
+    needed = _PARTS.get(job_type, ("minute_bucket",))
+    # A misspelt part (`proposal_ID=`) must fail loudly rather than be ignored next to a valid-looking key.
+    if extra := sorted(set(ids) - set(needed)):
+        raise ValueError(f"unexpected key(s): {', '.join(extra)}")
+    for part in needed:
+        value = ids.get(part)
+        # None or "" would format as "None"/"" and still look like a key; bool is an int subclass but never an id.
+        if not isinstance(value, UUID | int | str) or isinstance(value, bool) or value == "":
+            raise ValueError(f"{job_type.value} needs {part} as a non-empty str, int or UUID")
     match job_type:
         case JobType.INVESTIGATE:
-            if "run_id" not in ids or "revision" not in ids:
-                raise ValueError("investigate needs run_id and revision")
             return f"{ids['run_id']}:{ids['revision']}"
         case JobType.RESUME_INPUT:
-            if "run_id" not in ids or "clarification_event_id" not in ids:
-                raise ValueError("resume_input needs run_id and clarification_event_id")
             return f"{ids['run_id']}:{ids['clarification_event_id']}"
         case JobType.EXECUTE:
-            if "proposal_id" not in ids:
-                raise ValueError("execute needs proposal_id")
             return str(ids["proposal_id"])
         case JobType.RECOVER:
-            trigger = str(ids.get("trigger", ""))
-            if "action_id" not in ids or not _TRIGGER.match(trigger):
-                raise ValueError("recover needs action_id and a trigger in {timeout, cancel, deadline, sweep:<bucket>}")
+            trigger = str(ids["trigger"])
+            if not _TRIGGER.fullmatch(trigger):
+                raise ValueError("recover trigger must be one of timeout, cancel, deadline, sweep:<YYYY-MM-DDTHH:MM>")
             return f"{ids['action_id']}:{trigger}"
         case _:
-            bucket = str(ids.get("minute_bucket", ""))
-            if not _BUCKET.match(bucket):
+            bucket = str(ids["minute_bucket"])
+            if not _BUCKET.fullmatch(bucket):
                 raise ValueError("maintenance jobs need minute_bucket as YYYY-MM-DDTHH:MM")
             return f"{job_type.value}:{bucket}"
