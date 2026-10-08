@@ -1,4 +1,4 @@
-"""The run state machine is one table in core (AM-10, AM-20.3 performers, R082, R120, R114, R125).
+"""The run state machine is one table in core (AM-10, AM-20.3 performers, R082, R120, R114; R125 only as the asset-guard reasons, the supersede exception is T22's).
 
 Catches: a transition added or removed by accident, the wrong function performing a transition (the worker reaching a
 post-grant state), a reason enum drifting, a revision taken while another run holds the conversation slot, and a
@@ -46,8 +46,8 @@ ALLOWED: dict[tuple[RunState | None, RunState], set[Performer]] = {
     (S.DRAFTING, S.ANSWERED): {P.TRANSITION_RUN},
     (S.DRAFTING, S.INSUFFICIENT_EVIDENCE): {P.TRANSITION_RUN},
     (S.DRAFTING, S.FAILED): {P.TRANSITION_RUN},
-    (S.DRAFTING, S.AWAITING_APPROVAL): {P.FREEZE_PROPOSAL},
-    (S.DRAFTING, S.BLOCKED_REVIEW): {P.FREEZE_PROPOSAL},
+    (S.DRAFTING, S.AWAITING_APPROVAL): {P.FREEZE_PROPOSAL, P.CREATE_MANUAL_PROPOSAL},
+    (S.DRAFTING, S.BLOCKED_REVIEW): {P.FREEZE_PROPOSAL, P.CREATE_MANUAL_PROPOSAL},
     (S.DRAFTING, S.CANCELLED): {P.REQUEST_CANCEL},
     (S.AWAITING_APPROVAL, S.APPROVED): {P.RECORD_DECISION},
     (S.AWAITING_APPROVAL, S.REJECTED): {P.RECORD_DECISION},
@@ -71,6 +71,40 @@ ALLOWED: dict[tuple[RunState | None, RunState], set[Performer]] = {
     (S.ESCALATED, S.FAILED): {P.RECORD_OUTCOME},
     (S.ESCALATED, S.ABANDONED_UNVERIFIED): {P.RESOLVE_ESCALATION},
 }
+
+R = Reason
+_BLOCKED_FREEZE = frozenset({R.ASSET_ACTION_UNRESOLVED, R.ASSET_INCIDENT_EXISTS})
+_EXPIRED = frozenset({R.EXPIRED})
+_GRANT = frozenset(
+    {R.ASSET_ACTION_UNRESOLVED, R.ASSET_INCIDENT_EXISTS, R.STALE_EVIDENCE, R.AUTHORITY_REVOKED, R.EXPIRED}
+)
+_FAILED = frozenset({R.CANCELLED_BEFORE_SEND, R.ABORTED_NO_COMMIT, R.REJECTED, R.EXPIRED})
+_ESCALATE = frozenset({R.CONFLICT, R.ESCALATION_DEADLINE})
+_CONFLICT = frozenset({R.CONFLICT})
+_NO = frozenset[Reason]()
+
+# The reason set of every row (spec sets above); empty means no reason may be recorded.
+EXPECTED_REASONS: dict[tuple[RunState | None, RunState, Performer], frozenset[Reason]] = {
+    (key[0], key[1], p): _NO for key, ps in ALLOWED.items() for p in ps
+}
+EXPECTED_REASONS.update(
+    {
+        (S.DRAFTING, S.BLOCKED_REVIEW, P.FREEZE_PROPOSAL): _BLOCKED_FREEZE,
+        (S.DRAFTING, S.BLOCKED_REVIEW, P.CREATE_MANUAL_PROPOSAL): _BLOCKED_FREEZE,
+        (S.AWAITING_APPROVAL, S.REJECTED, P.RECORD_DECISION): frozenset({R.REJECTED}),
+        (S.AWAITING_APPROVAL, S.BLOCKED_REVIEW, P.RECORD_DECISION): _EXPIRED,
+        (S.AWAITING_APPROVAL, S.BLOCKED_REVIEW, P.EXPIRE_PROPOSAL): _EXPIRED,
+        (S.APPROVED, S.BLOCKED_REVIEW, P.EXPIRE_PROPOSAL): _EXPIRED,
+        (S.APPROVED, S.BLOCKED_REVIEW, P.GRANT_EXECUTION): _GRANT,
+        (S.EXECUTING, S.FAILED, P.RECORD_OUTCOME): _FAILED,
+        (S.OUTCOME_UNKNOWN, S.FAILED, P.RECORD_OUTCOME): _FAILED,
+        (S.ESCALATED, S.FAILED, P.RECORD_OUTCOME): _FAILED,
+        (S.EXECUTING, S.ESCALATED, P.ESCALATE_RUN): _ESCALATE,
+        (S.OUTCOME_UNKNOWN, S.ESCALATED, P.ESCALATE_RUN): _ESCALATE,
+        (S.EXECUTING, S.ESCALATED, P.RECORD_OUTCOME): _CONFLICT,
+        (S.OUTCOME_UNKNOWN, S.ESCALATED, P.RECORD_OUTCOME): _CONFLICT,
+    }
+)
 
 
 def test_vocabularies_are_exactly_the_spec():
@@ -110,11 +144,16 @@ def test_table_matches_the_allowed_set_exactly():
     for row in TRANSITIONS:
         table.setdefault((row.src, row.dst), set()).add(row.performer)
     assert table == ALLOWED
-    assert len(TRANSITIONS) == 42 and len(table) == 38
+    assert len(TRANSITIONS) == 44 and len(table) == 38
+
+
+def test_every_row_reason_set_is_pinned():
+    assert {(r.src, r.dst, r.performer): r.reasons for r in TRANSITIONS} == EXPECTED_REASONS
+    assert len(EXPECTED_REASONS) == 44
 
 
 def test_every_pair_is_decided_by_the_table():
-    """Exhaustive (R082): 18 sources (17 states + creation) x 17 targets x 12 performers.
+    """Exhaustive (R082): 18 sources (17 states + creation) x 17 targets x 13 performers.
 
     A move succeeds iff the table lists that performer for that pair; every other performer, and every performer on a
     pair the table does not list, is refused.
@@ -124,6 +163,15 @@ def test_every_pair_is_decided_by_the_table():
             row = next(r for r in TRANSITIONS if (r.src, r.dst, r.performer) == (src, dst, p))
             reason = min(row.reasons) if row.reasons else None  # rows that must say why get a reason
             assert require_transition(src, dst, p, reason).dst is dst
+            if row.reasons:
+                with pytest.raises(IllegalTransition, match="reason"):
+                    require_transition(src, dst, p, None)
+                outside = next(r for r in Reason if r not in row.reasons)
+                with pytest.raises(IllegalTransition, match="reason"):
+                    require_transition(src, dst, p, outside)
+            else:
+                with pytest.raises(IllegalTransition, match="reason"):
+                    require_transition(src, dst, p, Reason.CONFLICT)
         else:
             with pytest.raises(IllegalTransition):
                 require_transition(src, dst, p)

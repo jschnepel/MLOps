@@ -74,7 +74,11 @@ class Intent(StrEnum):
 
 
 class Performer(StrEnum):
-    """The definer function that owns a transition (AM-20.3 "who performs which transition")."""
+    """The definer function that owns a transition (AM-20.3 "who performs which transition").
+
+    Plan ruling 9: AM-20.3's performer table omits `create_manual_proposal`, but it is "otherwise identical to
+    `freeze_proposal`" and performs the same transitions, so it is listed here.
+    """
 
     CREATE_RUN = "create_run"
     TRANSITION_RUN = "transition_run"
@@ -88,6 +92,7 @@ class Performer(StrEnum):
     RECORD_OUTCOME = "record_outcome"
     ESCALATE_RUN = "escalate_run"
     RESOLVE_ESCALATION = "resolve_escalation"
+    CREATE_MANUAL_PROPOSAL = "create_manual_proposal"
 
 
 class IllegalTransition(ValueError):
@@ -113,81 +118,90 @@ class TransitionRow:
     note: str  # the spec section that justifies the row
 
 
-S = RunState
-P = Performer
-R = Reason
+_S = RunState
+_P = Performer
+_R = Reason
 # The asset guard is the only refusal at freeze (AM-10 table, DRAFTING row; AM-13 asset guard).
-_ASSET_GUARD = frozenset({R.ASSET_ACTION_UNRESOLVED, R.ASSET_INCIDENT_EXISTS})
+_ASSET_GUARD = frozenset({_R.ASSET_ACTION_UNRESOLVED, _R.ASSET_INCIDENT_EXISTS})
 # The final gate can refuse for any of these (AM-10 table, APPROVED row; AM-20.3 grant_execution).
 _GRANT_REFUSAL = frozenset(
-    {R.ASSET_ACTION_UNRESOLVED, R.ASSET_INCIDENT_EXISTS, R.STALE_EVIDENCE, R.AUTHORITY_REVOKED, R.EXPIRED}
+    {_R.ASSET_ACTION_UNRESOLVED, _R.ASSET_INCIDENT_EXISTS, _R.STALE_EVIDENCE, _R.AUTHORITY_REVOKED, _R.EXPIRED}
 )
-_EXPIRED = frozenset({R.EXPIRED})
-_FAILED = frozenset({R.CANCELLED_BEFORE_SEND, R.ABORTED_NO_COMMIT, R.REJECTED, R.EXPIRED})  # plan ruling 2
-_ESCALATED = frozenset({R.CONFLICT, R.ESCALATION_DEADLINE})
+_EXPIRED = frozenset({_R.EXPIRED})
+_FAILED = frozenset({_R.CANCELLED_BEFORE_SEND, _R.ABORTED_NO_COMMIT, _R.REJECTED, _R.EXPIRED})  # plan ruling 2
+_ESCALATED = frozenset({_R.CONFLICT, _R.ESCALATION_DEADLINE})
 _NONE: frozenset[Reason] = frozenset()
 
 
 def _rows() -> tuple[TransitionRow, ...]:
     rows: list[TransitionRow] = [
-        TransitionRow(None, S.QUEUED, P.CREATE_RUN, _NONE, "AM-10 table: creation only via create_run")
+        TransitionRow(None, _S.QUEUED, _P.CREATE_RUN, _NONE, "AM-10 table: creation only via create_run")
     ]
     # Worker progress: pre-grant states only, never SUCCEEDED (AM-20.3 transition_run; ruling 4 drops QUEUED →
     # AWAITING_INPUT).
     for src, dst in [
-        (S.QUEUED, S.RETRIEVING),
-        (S.AWAITING_INPUT, S.QUEUED),
-        (S.RETRIEVING, S.DRAFTING),
-        (S.RETRIEVING, S.AWAITING_INPUT),
-        (S.RETRIEVING, S.INSUFFICIENT_EVIDENCE),
-        (S.DRAFTING, S.AWAITING_INPUT),
-        (S.DRAFTING, S.ANSWERED),
-        (S.DRAFTING, S.INSUFFICIENT_EVIDENCE),
+        (_S.QUEUED, _S.RETRIEVING),
+        (_S.AWAITING_INPUT, _S.QUEUED),
+        (_S.RETRIEVING, _S.DRAFTING),
+        (_S.RETRIEVING, _S.AWAITING_INPUT),
+        (_S.RETRIEVING, _S.INSUFFICIENT_EVIDENCE),
+        (_S.DRAFTING, _S.AWAITING_INPUT),
+        (_S.DRAFTING, _S.ANSWERED),
+        (_S.DRAFTING, _S.INSUFFICIENT_EVIDENCE),
     ]:
-        rows.append(TransitionRow(src, dst, P.TRANSITION_RUN, _NONE, "AM-20.3 transition_run"))
+        rows.append(TransitionRow(src, dst, _P.TRANSITION_RUN, _NONE, "AM-20.3 transition_run"))
     # Ruling 8: FAILED on exhausted infrastructure policy carries no reason; no reason value fits it, and the
     # run.failed event's message says why.
-    for src in (S.RETRIEVING, S.DRAFTING):
-        rows.append(TransitionRow(src, S.FAILED, P.TRANSITION_RUN, _NONE, "BUILD_SPEC §8; AM-20.3 transition_run"))
-    rows.append(TransitionRow(S.DRAFTING, S.AWAITING_APPROVAL, P.FREEZE_PROPOSAL, _NONE, "AM-20.3 freeze_proposal"))
-    rows.append(TransitionRow(S.DRAFTING, S.BLOCKED_REVIEW, P.FREEZE_PROPOSAL, _ASSET_GUARD, "AM-10 asset guard"))
-    rows.append(TransitionRow(S.AWAITING_APPROVAL, S.APPROVED, P.RECORD_DECISION, _NONE, "AM-20.3 record_decision"))
+    for src in (_S.RETRIEVING, _S.DRAFTING):
+        rows.append(TransitionRow(src, _S.FAILED, _P.TRANSITION_RUN, _NONE, "BUILD_SPEC §8; AM-20.3 transition_run"))
+    rows.append(TransitionRow(_S.DRAFTING, _S.AWAITING_APPROVAL, _P.FREEZE_PROPOSAL, _NONE, "AM-20.3 freeze_proposal"))
+    rows.append(TransitionRow(_S.DRAFTING, _S.BLOCKED_REVIEW, _P.FREEZE_PROPOSAL, _ASSET_GUARD, "AM-10 asset guard"))
+    # Plan ruling 9: a manual proposal replaces the model's draft for a run waiting for one (AM-50 condition A), so
+    # it leaves the same source state through the same asset guard as freeze_proposal.
+    _manual = "plan ruling 9: performer table omits it; AM-20.3 create_manual_proposal"
+    rows.append(TransitionRow(_S.DRAFTING, _S.AWAITING_APPROVAL, _P.CREATE_MANUAL_PROPOSAL, _NONE, _manual))
+    rows.append(TransitionRow(_S.DRAFTING, _S.BLOCKED_REVIEW, _P.CREATE_MANUAL_PROPOSAL, _ASSET_GUARD, _manual))
+    rows.append(TransitionRow(_S.AWAITING_APPROVAL, _S.APPROVED, _P.RECORD_DECISION, _NONE, "AM-20.3 record_decision"))
     rows.append(
         TransitionRow(
-            S.AWAITING_APPROVAL, S.REJECTED, P.RECORD_DECISION, frozenset({R.REJECTED}), "AM-20.3 record_decision"
+            _S.AWAITING_APPROVAL, _S.REJECTED, _P.RECORD_DECISION, frozenset({_R.REJECTED}), "AM-20.3 record_decision"
         )
     )
     # record_decision's only blocking path is lazy expiry (AM-20.3 record_decision; AM-10 table).
-    rows.append(TransitionRow(S.AWAITING_APPROVAL, S.BLOCKED_REVIEW, P.RECORD_DECISION, _EXPIRED, "AM-10 lazy expiry"))
-    for src in (S.AWAITING_APPROVAL, S.APPROVED):
-        rows.append(TransitionRow(src, S.BLOCKED_REVIEW, P.EXPIRE_PROPOSAL, _EXPIRED, "AM-20.3 expire_proposal"))
+    rows.append(
+        TransitionRow(_S.AWAITING_APPROVAL, _S.BLOCKED_REVIEW, _P.RECORD_DECISION, _EXPIRED, "AM-10 lazy expiry")
+    )
+    for src in (_S.AWAITING_APPROVAL, _S.APPROVED):
+        rows.append(TransitionRow(src, _S.BLOCKED_REVIEW, _P.EXPIRE_PROPOSAL, _EXPIRED, "AM-20.3 expire_proposal"))
     # Revisions (AM-20.3 create_revision; ruling 1 includes AWAITING_APPROVAL); the slot rule is revision_allowed.
-    for src in (S.AWAITING_APPROVAL, S.APPROVED, S.BLOCKED_REVIEW):
-        rows.append(TransitionRow(src, S.QUEUED, P.CREATE_REVISION, _NONE, "AM-20.3 create_revision"))
-    rows.append(TransitionRow(S.APPROVED, S.EXECUTING, P.GRANT_EXECUTION, _NONE, "AM-20.3 grant_execution"))
-    rows.append(TransitionRow(S.APPROVED, S.BLOCKED_REVIEW, P.GRANT_EXECUTION, _GRANT_REFUSAL, "AM-10 table"))
+    for src in (_S.AWAITING_APPROVAL, _S.APPROVED, _S.BLOCKED_REVIEW):
+        rows.append(TransitionRow(src, _S.QUEUED, _P.CREATE_REVISION, _NONE, "AM-20.3 create_revision"))
+    rows.append(TransitionRow(_S.APPROVED, _S.EXECUTING, _P.GRANT_EXECUTION, _NONE, "AM-20.3 grant_execution"))
+    rows.append(TransitionRow(_S.APPROVED, _S.BLOCKED_REVIEW, _P.GRANT_EXECUTION, _GRANT_REFUSAL, "AM-10 table"))
     # Cancel from any pre-grant non-terminal state (AM-20.3 performers; ruling 5 includes BLOCKED_REVIEW).
     for src in (
-        S.QUEUED,
-        S.AWAITING_INPUT,
-        S.RETRIEVING,
-        S.DRAFTING,
-        S.AWAITING_APPROVAL,
-        S.APPROVED,
-        S.BLOCKED_REVIEW,
+        _S.QUEUED,
+        _S.AWAITING_INPUT,
+        _S.RETRIEVING,
+        _S.DRAFTING,
+        _S.AWAITING_APPROVAL,
+        _S.APPROVED,
+        _S.BLOCKED_REVIEW,
     ):
-        rows.append(TransitionRow(src, S.CANCELLED, P.REQUEST_CANCEL, _NONE, "AM-20.3 request_cancel"))
+        rows.append(TransitionRow(src, _S.CANCELLED, _P.REQUEST_CANCEL, _NONE, "AM-20.3 request_cancel"))
     # After the grant (AM-13 attempt protocol; AM-20.3 performers).
-    rows.append(TransitionRow(S.EXECUTING, S.OUTCOME_UNKNOWN, P.MARK_UNKNOWN, _NONE, "AM-20.3 mark_unknown"))
-    for src in (S.EXECUTING, S.OUTCOME_UNKNOWN, S.ESCALATED):
-        rows.append(TransitionRow(src, S.SUCCEEDED, P.RECORD_OUTCOME, _NONE, "AM-20.3 record_outcome: receipt"))
-        rows.append(TransitionRow(src, S.FAILED, P.RECORD_OUTCOME, _FAILED, "AM-20.3 record_outcome: tombstone"))
-    for src in (S.EXECUTING, S.OUTCOME_UNKNOWN):
-        rows.append(TransitionRow(src, S.ESCALATED, P.ESCALATE_RUN, _ESCALATED, "AM-20.3 escalate_run"))
+    rows.append(TransitionRow(_S.EXECUTING, _S.OUTCOME_UNKNOWN, _P.MARK_UNKNOWN, _NONE, "AM-20.3 mark_unknown"))
+    for src in (_S.EXECUTING, _S.OUTCOME_UNKNOWN, _S.ESCALATED):
+        rows.append(TransitionRow(src, _S.SUCCEEDED, _P.RECORD_OUTCOME, _NONE, "AM-20.3 record_outcome: receipt"))
+        rows.append(TransitionRow(src, _S.FAILED, _P.RECORD_OUTCOME, _FAILED, "AM-20.3 record_outcome: tombstone"))
+    for src in (_S.EXECUTING, _S.OUTCOME_UNKNOWN):
+        rows.append(TransitionRow(src, _S.ESCALATED, _P.ESCALATE_RUN, _ESCALATED, "AM-20.3 escalate_run"))
         rows.append(
-            TransitionRow(src, S.ESCALATED, P.RECORD_OUTCOME, frozenset({R.CONFLICT}), "AM-20.3 record_outcome")
+            TransitionRow(src, _S.ESCALATED, _P.RECORD_OUTCOME, frozenset({_R.CONFLICT}), "AM-20.3 record_outcome")
         )
-    rows.append(TransitionRow(S.ESCALATED, S.ABANDONED_UNVERIFIED, P.RESOLVE_ESCALATION, _NONE, "AM-10 operator CLI"))
+    rows.append(
+        TransitionRow(_S.ESCALATED, _S.ABANDONED_UNVERIFIED, _P.RESOLVE_ESCALATION, _NONE, "AM-10 operator CLI")
+    )
     return tuple(rows)
 
 
@@ -196,24 +210,25 @@ TRANSITIONS: Final[tuple[TransitionRow, ...]] = _rows()
 # AM-10 "Active states": the states that hold the conversation slot.
 ACTIVE_STATES: Final = frozenset(
     {
-        S.QUEUED,
-        S.AWAITING_INPUT,
-        S.RETRIEVING,
-        S.DRAFTING,
-        S.AWAITING_APPROVAL,
-        S.APPROVED,
-        S.EXECUTING,
-        S.OUTCOME_UNKNOWN,
+        _S.QUEUED,
+        _S.AWAITING_INPUT,
+        _S.RETRIEVING,
+        _S.DRAFTING,
+        _S.AWAITING_APPROVAL,
+        _S.APPROVED,
+        _S.EXECUTING,
+        _S.OUTCOME_UNKNOWN,
     }
 )
 TERMINAL_STATES: Final = frozenset(
-    {S.REJECTED, S.CANCELLED, S.ANSWERED, S.INSUFFICIENT_EVIDENCE, S.SUCCEEDED, S.FAILED, S.ABANDONED_UNVERIFIED}
+    {_S.REJECTED, _S.CANCELLED, _S.ANSWERED, _S.INSUFFICIENT_EVIDENCE, _S.SUCCEEDED, _S.FAILED, _S.ABANDONED_UNVERIFIED}
 )  # AM-10 table, last row
+# BLOCKED_REVIEW counts as pre-grant: AM-13 refusals never leave a grant behind.
 PRE_GRANT_STATES: Final = frozenset(
-    {S.QUEUED, S.AWAITING_INPUT, S.RETRIEVING, S.DRAFTING, S.AWAITING_APPROVAL, S.APPROVED, S.BLOCKED_REVIEW}
+    {_S.QUEUED, _S.AWAITING_INPUT, _S.RETRIEVING, _S.DRAFTING, _S.AWAITING_APPROVAL, _S.APPROVED, _S.BLOCKED_REVIEW}
 )
 WORKER_TRANSITION_TARGETS: Final = frozenset(
-    {S.RETRIEVING, S.DRAFTING, S.AWAITING_INPUT, S.INSUFFICIENT_EVIDENCE, S.FAILED, S.ANSWERED, S.QUEUED}
+    {_S.RETRIEVING, _S.DRAFTING, _S.AWAITING_INPUT, _S.INSUFFICIENT_EVIDENCE, _S.FAILED, _S.ANSWERED, _S.QUEUED}
 )  # AM-20.3 transition_run
 
 _INDEX: Final[dict[tuple[RunState | None, RunState, Performer], TransitionRow]] = {
@@ -254,7 +269,7 @@ def revision_allowed(src: RunState, *, conversation_has_other_active_run: bool) 
         IllegalTransition: `src` cannot be revised.
         SlotOccupied: another run in the conversation holds the slot.
     """
-    require_transition(src, S.QUEUED, P.CREATE_REVISION)
+    require_transition(src, _S.QUEUED, _P.CREATE_REVISION)
     if conversation_has_other_active_run:
         raise SlotOccupied(f"revision from {src} refused: the conversation already holds an active run")
 
