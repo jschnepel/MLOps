@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Final, assert_never
+from typing import Any, Final, assert_never
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -250,12 +250,46 @@ def event_rules_ok(event_type: EventType, source: EventSource, payload: Mapping[
             raise EventRuleViolation("action.failed requires a reason from the FAILED_NO_COMMIT set")  # AM-14
         if "receipt" in payload:  # a receipt proves a commit, which contradicts the failure
             raise EventRuleViolation("action.failed never carries a receipt")
+        if "tombstone" in payload:  # optional, but proof that is present must be well-formed
+            _validated(Tombstone, payload["tombstone"], "action.failed tombstone")
     if event_type is EventType.ACTION_LATE_EVIDENCE:
-        # Late evidence arrives after the run gave up; the outcome picks which proof it must carry.
+        # Late evidence arrives after the run gave up; the outcome picks which proof it carries, and the other kind
+        # of proof would contradict it (the schema's rule (6)).
         outcome = payload.get("outcome")
         if outcome == "SUCCEEDED":
+            if "tombstone" in payload:
+                raise EventRuleViolation("a SUCCEEDED action.late_evidence carries a receipt, never a tombstone")
             _validated(Receipt, payload.get("receipt"), "action.late_evidence receipt")
         elif outcome == "FAILED_NO_COMMIT":
+            if "receipt" in payload:
+                raise EventRuleViolation("a FAILED_NO_COMMIT action.late_evidence carries a tombstone, never a receipt")
             _validated(Tombstone, payload.get("tombstone"), "action.late_evidence tombstone")
         else:
             raise EventRuleViolation("action.late_evidence requires outcome SUCCEEDED or FAILED_NO_COMMIT")
+
+
+class Event(BaseModel):
+    """A run event (schemas/event.schema.json; BUILD_SPEC §15, AM-14): the envelope plus the authority rules.
+
+    The envelope fields are the ones every consumer orders and scopes by (tenant, conversation, run, sequence), so an
+    event missing one is refused here rather than at the first query that needs it. The payload's evidence and
+    source rules are `event_rules_ok`; the shape of the payload's other keys is the schema's.
+
+    TODO(T14): append_event and the event stream validate through this model; until then only the tests call it.
+    """
+
+    model_config = _Strict
+    event_id: UUID
+    tenant_id: UUID
+    conversation_id: UUID
+    run_id: UUID
+    sequence: int = Field(ge=1)
+    type: EventType
+    occurred_at: AwareDatetime
+    source: EventSource
+    payload: dict[str, Any]
+
+    @model_validator(mode="after")
+    def _authority(self) -> Event:
+        event_rules_ok(self.type, self.source, self.payload)  # EventRuleViolation is a ValueError: a ValidationError
+        return self

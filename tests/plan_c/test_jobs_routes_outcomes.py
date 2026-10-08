@@ -5,6 +5,7 @@ Catches: a tool allowed for the wrong job type (a read handle reaching create_in
 event that asserts an outcome from the wrong source (R083's model_summary probe, in code).
 """
 
+import json
 import uuid
 from datetime import UTC, datetime
 
@@ -13,6 +14,7 @@ from ops_core.jobs import JOB_RULES, RECOVER_CADENCE, DedupKeyError, JobType, Se
 from ops_core.outcomes import (
     ActionOutcome,
     DestinationState,
+    Event,
     EventRuleViolation,
     EventSource,
     EventType,
@@ -384,3 +386,44 @@ def test_event_rules_refuse_malformed_payloads_and_crossed_evidence():
     with pytest.raises(EventRuleViolation, match="never a tombstone"):
         event_rules_ok(EventType.ACTION_CONFIRMED, dest, {"status": "SUCCEEDED", "receipt": receipt, "tombstone": tomb})
     event_rules_ok(EventType.ACTION_FAILED, dest, {"reason": "expired", "tombstone": tomb})  # positive control
+
+
+def test_event_evidence_is_well_formed_and_never_paired_with_its_opposite():
+    # Found by the differential mutation test: the schema checks every tombstone's shape and the late-evidence pairing
+    # in both directions, so the code must too.
+    receipt = {"receipt_id": str(ACTION), "incident_id": "INC-1", "committed_at": "2026-10-08T00:00:00Z"}
+    tomb = {
+        "action_id": str(ACTION),
+        "state": "ABORTED",
+        "payload_sha256": SHA,
+        "reason": "x",
+        "decided_at": "2026-10-08T00:00:00Z",
+    }
+    dest, late = EventSource.DESTINATION, EventType.ACTION_LATE_EVIDENCE
+    with pytest.raises(EventRuleViolation, match="action.failed tombstone is malformed"):
+        event_rules_ok(EventType.ACTION_FAILED, dest, {"reason": "expired", "tombstone": {"state": "ABORTED"}})
+    with pytest.raises(EventRuleViolation, match="never a tombstone"):
+        event_rules_ok(late, dest, {"outcome": "SUCCEEDED", "receipt": receipt, "tombstone": tomb})
+    with pytest.raises(EventRuleViolation, match="never a receipt"):
+        event_rules_ok(late, dest, {"outcome": "FAILED_NO_COMMIT", "tombstone": tomb, "receipt": receipt})
+
+
+def test_event_model_requires_the_envelope_and_applies_the_authority_rules():
+    receipt = {"receipt_id": str(ACTION), "incident_id": "INC-1", "committed_at": "2026-10-08T00:00:00Z"}
+    event = {
+        "event_id": str(ACTION),
+        "tenant_id": str(ACTION),
+        "conversation_id": str(ACTION),
+        "run_id": str(ACTION),
+        "sequence": 1,
+        "type": "action.confirmed",
+        "occurred_at": "2026-10-08T00:00:00Z",
+        "source": "destination",
+        "payload": {"status": "SUCCEEDED", "receipt": receipt},
+    }
+    assert Event.model_validate_json(json.dumps(event)).type is EventType.ACTION_CONFIRMED
+    for key in ("event_id", "tenant_id", "conversation_id", "run_id", "sequence"):
+        with pytest.raises(ValidationError):  # every consumer scopes or orders by these
+            Event.model_validate_json(json.dumps({k: v for k, v in event.items() if k != key}))
+    with pytest.raises(ValidationError, match="model_summary"):  # the R083 probe, through the model
+        Event.model_validate_json(json.dumps({**event, "source": "model_summary"}))
