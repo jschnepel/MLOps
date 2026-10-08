@@ -1,0 +1,296 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operations-copilot:schema:job:1",
+  "title": "Operations Copilot target job v1",
+  "$comment": "Target contract. Declarative validation does not implement authentication, authorization, semantic support, atomicity, or runtime integrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "enum": [
+        "investigate",
+        "resume_input",
+        "execute",
+        "recover",
+        "expire_proposals",
+        "sync_memberships",
+        "sweep_wakeups",
+        "deliver_outbox"
+      ]
+    },
+    "allowed_tools": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "get_asset_status",
+          "get_recent_alerts",
+          "search_procedures",
+          "create_incident",
+          "get_incident_receipt",
+          "abort_incident"
+        ]
+      }
+    },
+    "run_states": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "QUEUED",
+          "AWAITING_INPUT",
+          "RETRIEVING",
+          "DRAFTING",
+          "AWAITING_APPROVAL",
+          "APPROVED",
+          "EXECUTING",
+          "OUTCOME_UNKNOWN",
+          "SUCCEEDED",
+          "ANSWERED",
+          "REJECTED",
+          "CANCELLED",
+          "INSUFFICIENT_EVIDENCE",
+          "FAILED",
+          "BLOCKED_REVIEW",
+          "ESCALATED",
+          "ABANDONED_UNVERIFIED"
+        ]
+      }
+    },
+    "created_by": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      }
+    },
+    "dedup_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "type",
+    "allowed_tools",
+    "run_states",
+    "created_by",
+    "dedup_key"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "investigate"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "allowed_tools": {
+            "items": {
+              "enum": [
+                "get_asset_status",
+                "get_recent_alerts",
+                "search_procedures"
+              ]
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "run_states": {
+            "items": {
+              "enum": [
+                "QUEUED",
+                "RETRIEVING",
+                "DRAFTING"
+              ]
+            },
+            "minItems": 3,
+            "maxItems": 3
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "resume_input"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "allowed_tools": {
+            "items": {
+              "enum": [
+                "get_asset_status",
+                "get_recent_alerts",
+                "search_procedures"
+              ]
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "run_states": {
+            "items": {
+              "enum": [
+                "QUEUED",
+                "AWAITING_INPUT"
+              ]
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "execute"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "allowed_tools": {
+            "items": {
+              "enum": [
+                "create_incident"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 1
+          },
+          "run_states": {
+            "items": {
+              "enum": [
+                "APPROVED",
+                "EXECUTING"
+              ]
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "recover"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "allowed_tools": {
+            "items": {
+              "enum": [
+                "create_incident",
+                "get_incident_receipt",
+                "abort_incident"
+              ]
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "run_states": {
+            "items": {
+              "enum": [
+                "EXECUTING",
+                "OUTCOME_UNKNOWN",
+                "ESCALATED",
+                "ABANDONED_UNVERIFIED"
+              ]
+            },
+            "minItems": 4,
+            "maxItems": 4
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "expire_proposals"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "allowed_tools": {
+            "maxItems": 0
+          },
+          "run_states": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "sync_memberships"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "allowed_tools": {
+            "maxItems": 0
+          },
+          "run_states": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "sweep_wakeups"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "allowed_tools": {
+            "maxItems": 0
+          },
+          "run_states": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "deliver_outbox"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "allowed_tools": {
+            "maxItems": 0
+          },
+          "run_states": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ]
+}

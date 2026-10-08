@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Validate this handoff package, not the target production application.
 
-Default checks need only Python's standard library (they import the stdlib-only scripts.gen_fixture_meta from this repository). --contracts requires the
-jsonschema package. Snapshot/reference hash checks are intended before edits.
+Default checks need only Python's standard library (they import the stdlib-only scripts.gen_fixture_meta from this
+repository). --contracts requires the jsonschema package, plus rfc3339-validator so that its FormatChecker checks
+`date-time`; `uv run` provides both from the dev group. Snapshot/reference hash checks are intended before edits.
 
 --reference-tree (implied by --reference-code) enforces the whole reference/ tree against
 provenance/reference-tree.json: every listed file must be byte-identical to its zip member in
@@ -201,7 +202,10 @@ def main() -> int:
     parser.add_argument(
         "--reference-tree",
         action="store_true",
-        help="Every file under reference/ byte-identical to the --zip package; no extra/missing files; remap under reference/",
+        help=(
+            "Every file under reference/ byte-identical to the --zip package; no extra/missing files; "
+            "remap under reference/"
+        ),
     )
     parser.add_argument(
         "--zip",
@@ -301,17 +305,24 @@ def main() -> int:
         proposal["payload"], sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     ).encode()
     check(hashlib.sha256(raw).hexdigest() == proposal["payload_sha256"], "Example proposal hash mismatch")
-    for name in ["decision-valid", "outcome-success-valid", "outcome-unknown-valid"]:
+    # AM-11 renamed the decision's field to expected_payload_sha256; the outcomes keep payload_sha256.
+    check(
+        load("schemas/examples/decision-valid.json")["expected_payload_sha256"] == proposal["payload_sha256"],
+        "Example hash not linked: decision-valid",
+    )
+    for name in ["outcome-success-valid", "outcome-unknown-valid"]:
         check(
             load(f"schemas/examples/{name}.json")["payload_sha256"] == proposal["payload_sha256"],
             f"Example hash not linked: {name}",
         )
 
     print(
-        f"PASS: package structure; {len(json_paths)} JSON files; {len(tasks)} acyclic tasks; {len(requirements)} covered requirements"
+        f"PASS: package structure; {len(json_paths)} JSON files; {len(tasks)} acyclic tasks; "
+        f"{len(requirements)} covered requirements"
     )
     print(
-        f"PASS: {len(catalog['documents'])} source hashes; {len(scenarios)} development scenario cards; {py_count} Python syntax checks; 6 SVG XML files; fixture meta.json current"
+        f"PASS: {len(catalog['documents'])} source hashes; {len(scenarios)} development scenario cards; "
+        f"{py_count} Python syntax checks; 6 SVG XML files; fixture meta.json current"
     )
     print("PASS: synthetic proposal/decision/outcome example hashes agree")
 
@@ -325,23 +336,66 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-        schema_paths = sorted((ROOT / "schemas").glob("*.schema.json"))
+        from jsonschema.exceptions import best_match
+
+        # Meta-validate every schema: the top-level contracts, the per-tool input schemas and the evals schemas
+        # (quality-gates arrives with T23 and may be absent; holdout-case is T03's).
+        schema_paths = sorted((ROOT / "schemas").rglob("*.schema.json")) + sorted(
+            (ROOT / "evals").glob("*.schema.json")
+        )
         for path in schema_paths:
             Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
+
+        # Governed text must be LF-only and BOM-free so hashes and examples match across platforms (AM-80 checker
+        # changes; tests/plan_b/test_text_hygiene.py applies the same rule to every tracked file).
+        governed = [
+            p
+            for d in ("schemas", "data/handoff-fixtures", "handoff/prompts", "evals")
+            for p in (ROOT / d).rglob("*")
+            if p.is_file() and p.suffix in {".json", ".md", ".jsonl", ".txt", ".sha256"}
+        ]
+        for path in governed:
+            raw = path.read_bytes()
+            check(b"\r" not in raw, f"carriage return in governed file: {path.relative_to(ROOT)}")
+            check(not raw.startswith(b"\xef\xbb\xbf"), f"byte-order mark in governed file: {path.relative_to(ROOT)}")
+
+        index = load("schemas/examples/index.json")
+        check(index.get("version") == "1.3.3", f"index.json version must be 1.3.3, got {index.get('version')!r}")
         positive = negative = 0
-        for item in examples:
+        for item in index["examples"]:
+            # FormatChecker validates `date-time` only because rfc3339-validator is installed (dev group, T45).
             validator = Draft202012Validator(load(item["schema"]), format_checker=FormatChecker())
             errors = list(validator.iter_errors(load(item["path"])))
-            check(
-                (len(errors) == 0) is item["valid"],
-                f"Unexpected validation for {item['path']}: {[e.message for e in errors]}",
-            )
             if item["valid"]:
+                check(not errors, f"Valid example {item['path']} failed: {[e.message for e in errors]}")
                 positive += 1
-            else:
-                negative += 1
+                continue
+            # A negative example must fail, and fail for the reason the index states (R104): a typo elsewhere must not
+            # masquerade as proof that the row's rule is enforced.
+            check(
+                "reason" in item and "reason_match" in item,
+                f"Negative example {item['path']} lacks reason/reason_match",
+            )
+            check(bool(errors), f"Negative example {item['path']} validated; it must fail: {item['reason']}")
+            top = best_match(errors)
+            where = "$" + "".join(f".{p}" if isinstance(p, str) else f"[{p}]" for p in top.absolute_path)
+            text = f"{where}: {top.message}"
+            check(
+                re.search(item["reason_match"], text) is not None,
+                f"Negative example {item['path']} failed, but not for its stated reason. "
+                f"Expected /{item['reason_match']}/, got: {text}",
+            )
+            negative += 1
+
+        # AM-80 row "draft/alerts consistency": the draft example's prose must agree with the alerts it summarises.
+        alerts = load("schemas/examples/tool-get_recent_alerts-valid.json")["data"]["alerts"]
+        check(
+            len(alerts) == 2 and "two" in load("schemas/examples/draft-valid.json")["summary"].lower(),
+            "draft-valid.json and tool-get_recent_alerts-valid.json disagree on the alert count",
+        )
         print(
-            f"PASS: {len(schema_paths)} JSON Schema documents; {positive} accepted examples; {negative} rejected negative examples"
+            f"PASS: {len(schema_paths)} JSON Schema documents; {positive} accepted examples; "
+            f"{negative} negative examples failed for their stated reason; governed files LF-only"
         )
 
     # Combine with `|=` so every requested check runs and prints its failures; stopping at the first would
@@ -355,7 +409,8 @@ def main() -> int:
         rc |= check_manifest(Path(args.zip))
     # Printed on every run so a green result is not mistaken for evidence the application itself works.
     print(
-        "LIMIT: These are handoff/contract checks, not real model, authorization, MCP network, browser, Docker, Kubernetes or production acceptance tests."
+        "LIMIT: These are handoff/contract checks, not real model, authorization, MCP network, browser, Docker, "
+        "Kubernetes or production acceptance tests."
     )
     return rc
 

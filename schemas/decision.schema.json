@@ -10,7 +10,7 @@
       "type": "integer",
       "minimum": 1
     },
-    "payload_sha256": {
+    "expected_payload_sha256": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
     },
@@ -28,7 +28,7 @@
   },
   "required": [
     "expected_revision",
-    "payload_sha256",
+    "expected_payload_sha256",
     "decision"
   ]
 }

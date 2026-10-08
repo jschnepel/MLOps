@@ -9,7 +9,9 @@
     "kind": {
       "enum": [
         "investigate",
-        "question"
+        "ask",
+        "status",
+        "clarification"
       ]
     },
     "text": {
@@ -32,6 +34,10 @@
         }
       },
       "required": []
+    },
+    "supersedes_run_id": {
+      "type": "string",
+      "format": "uuid"
     }
   },
   "required": [

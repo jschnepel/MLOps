@@ -41,6 +41,19 @@
         "run.cancelled",
         "notification.failed",
         "feedback.recorded",
+        "clarification.received",
+        "proposal.revised",
+        "review.blocked",
+        "run.answered",
+        "run.insufficient_evidence",
+        "run.rejected",
+        "action.granted",
+        "action.redispatched",
+        "action.failed",
+        "action.conflict",
+        "run.escalated",
+        "run.abandoned_unverified",
+        "action.late_evidence",
         "explanation.ready"
       ]
     },
@@ -80,7 +93,9 @@
             "CANCELLED",
             "INSUFFICIENT_EVIDENCE",
             "FAILED",
-            "BLOCKED_REVIEW"
+            "BLOCKED_REVIEW",
+            "ESCALATED",
+            "ABANDONED_UNVERIFIED"
           ]
         },
         "evidence_refs": {
@@ -102,19 +117,93 @@
           "type": "string",
           "format": "uuid"
         },
-        "incident_id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 100
-        },
-        "receipt_id": {
-          "type": "string",
-          "format": "uuid"
-        },
         "code": {
           "type": "string",
           "minLength": 1,
           "maxLength": 80
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "cancelled_before_send",
+            "aborted_no_commit",
+            "rejected",
+            "asset_action_unresolved",
+            "asset_incident_exists",
+            "expired",
+            "stale_evidence",
+            "authority_revoked",
+            "conflict",
+            "escalation_deadline"
+          ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "SUCCEEDED",
+            "FAILED_NO_COMMIT"
+          ]
+        },
+        "receipt": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "receipt_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "incident_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "committed_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "receipt_id",
+            "incident_id",
+            "committed_at"
+          ]
+        },
+        "tombstone": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "action_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "ABORTED",
+                "REJECTED"
+              ]
+            },
+            "payload_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "decided_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "action_id",
+            "state",
+            "payload_sha256",
+            "reason",
+            "decided_at"
+          ]
         }
       },
       "required": []
@@ -168,6 +257,139 @@
             },
             "required": [
               "message"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "destination"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "enum": [
+              "action.confirmed",
+              "action.failed",
+              "action.conflict",
+              "action.late_evidence"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "action.confirmed",
+              "action.failed",
+              "action.conflict",
+              "action.late_evidence"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "source": {
+            "const": "destination"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "pattern": "^(action|run|review)\\."
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "source": {
+            "enum": [
+              "application",
+              "destination"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "action.confirmed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "required": [
+              "status",
+              "receipt"
+            ],
+            "properties": {
+              "status": {
+                "const": "SUCCEEDED"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "action.late_evidence"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "required": [
+              "outcome"
+            ],
+            "anyOf": [
+              {
+                "required": [
+                  "receipt"
+                ]
+              },
+              {
+                "required": [
+                  "tombstone"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "action.failed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "required": [
+              "reason"
             ]
           }
         }

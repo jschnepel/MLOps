@@ -53,6 +53,11 @@
       },
       "minItems": 0,
       "maxItems": 8
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
     }
   },
   "required": [
@@ -80,6 +85,22 @@
           "evidence_refs": {
             "minItems": 1
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "abstain"
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "question"
+          ]
         }
       }
     }
