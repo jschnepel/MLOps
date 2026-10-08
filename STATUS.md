@@ -105,7 +105,7 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 ## Update — Plan D executed (2026-10-08, branch `plan-d`)
 
-- Plan D (T08, the walking skeleton) executed on branch `plan-d` (`8136ee6..89eb1e6`, on top of `plan-c`), each task by a fresh implementer and gated by a fresh reviewer; seven of the eight implementation tasks needed a fix round (only Task 1 did not; Task 7 had two).
+- Plan D (T08, the walking skeleton) executed on branch `plan-d` (`8136ee6..d7b6359`, on top of `plan-c`), each task by a fresh implementer and gated by a fresh reviewer; seven of the eight implementation tasks needed a fix round (only Task 1 did not; Task 7 had two).
 - `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `457 passed, 44 skipped` (the live tests run only with `OPS_LIVE=1`). The live suite `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e` passes `14 passed` against the running dev profile.
 - **Evidenced** (acceptance matrix `RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R105. One run crosses api, worker, mcp-read, mcp-write and incident-sim over real HTTP with real Keycloak tokens, ends `SUCCEEDED` with nine events, survives a replay that returns the same action id, and every wrong token is refused (`reports/skeleton/r105-walking-skeleton.txt`).
 - The five application processes (incident-sim :8090, mcp-read :8081, mcp-write :8082, api :8000, worker :8070 health only) are **host processes** started by `scripts/skeleton.py up` until T30 containerises them; every shortcut is a debt line in `SESSION_STATE.md` with its owning task.
