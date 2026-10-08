@@ -173,7 +173,8 @@ def test_server_code_may_build_contracts_from_aware_datetimes():
     body = {**body, "tenant_id": ALPHA, "run_id": RUN, "proposal_id": PROP}
     assert c.ProposalPayload.model_validate(body).start_at == datetime(2026, 10, 5, 12, tzinfo=UTC)
     with pytest.raises(ValidationError):
-        c.ProposalPayload.model_validate({**body, "start_at": datetime(2026, 10, 5, 12)})  # noqa: DTZ001 - the naive case is the point
+        # A naive datetime is the point of this case, so the DTZ001 lint rule does not apply here.
+        c.ProposalPayload.model_validate({**body, "start_at": datetime(2026, 10, 5, 12)})  # noqa: DTZ001
 
 
 def test_run_request_fields():
