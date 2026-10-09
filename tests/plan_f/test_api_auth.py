@@ -8,6 +8,7 @@ previous session alive (no rotation), a logout token replayed, a disabled user s
 outage read as "enabled".
 """
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -75,6 +76,7 @@ def test_callback_refuses_a_missing_login_cookie_and_a_foreign_state(world) -> N
     # The right browser with the wrong state: refused, and the login row is consumed (one shot).
     r = c.get("/auth/callback", params={"code": "good", "state": "x" * 43, "iss": ISSUER}, follow_redirects=False)
     assert r.status_code == 401 and not fake.logins and "good" in deps.oidc.codes
+    assert "ops_login" not in c.cookies  # cleared by the refusal
     r = c.get("/auth/callback", params={"code": "good", "state": state, "iss": ISSUER}, follow_redirects=False)
     assert r.status_code == 401  # no login in progress any more
     assert "ops_session" not in c.cookies
@@ -84,7 +86,7 @@ def test_callback_refuses_a_missing_login_cookie_and_a_foreign_state(world) -> N
     ("tamper", "status"),
     [
         ({"iss": "http://evil/realms/ops-dev"}, 401),
-        ({"error": "access_denied", "error_description": "x"}, 401),
+        ({"error": "access_denied", "error_description": "PROVIDER-TEXT-7f3a"}, 401),
         ({"code": "unknown"}, 401),
         ({"nonce": "wrong"}, 401),
         ({"unavailable": True}, 503),
@@ -92,7 +94,8 @@ def test_callback_refuses_a_missing_login_cookie_and_a_foreign_state(world) -> N
         ({"subject": "dual"}, 401),
     ],
 )
-def test_callback_negatives(world, tamper: dict[str, Any], status: int) -> None:
+def test_callback_negatives(world, caplog, tamper: dict[str, Any], status: int) -> None:
+    caplog.set_level(logging.INFO, logger="ops_api")
     c, fake, deps = world
     started = c.get("/auth/login", follow_redirects=False)
     state = started.headers["location"].split("state=")[1].split("&")[0]
@@ -109,7 +112,10 @@ def test_callback_negatives(world, tamper: dict[str, Any], status: int) -> None:
     assert "ops_session" not in c.cookies and not fake.sessions
     if status == 503:
         assert r.json()["retryable"] is True
-    assert "x" not in r.text or "error_description" not in r.text  # the provider's text is never echoed
+    assert "ops_login" not in c.cookies  # cleared by the refusal
+    assert "PROVIDER-TEXT-7f3a" not in r.text + caplog.text  # the provider's text is never echoed or logged
+    if "error" in tamper:
+        assert "access_denied" in caplog.text  # only the code is logged
 
 
 def test_browser_mutations_need_origin_and_csrf_token(world) -> None:

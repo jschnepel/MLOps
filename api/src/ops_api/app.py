@@ -11,6 +11,7 @@ debt (T12).
 # No `from __future__ import annotations` here: FastAPI resolves dependency annotations at import time, and a
 # string annotation naming a local alias becomes a query parameter (measured in the round-1 review).
 import logging
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -37,6 +38,7 @@ from ops_api import store as st
 from ops_api.auth import AuthDeps, ExchangeRefused, ExchangeUnavailable
 
 log = logging.getLogger("ops_api")
+ERROR_CODE = re.compile(r"[a-z_]{1,64}")  # an OAuth error code, matched whole below
 bearer = HTTPBearer(auto_error=False)  # the 401 body is ours (SafeError), not the SDK's
 
 
@@ -202,11 +204,12 @@ def create_app(
     @app.exception_handler(ApiError)
     async def _api_error(request: Request, exc: ApiError) -> Response:
         response = safe(exc.status, exc.code, exc.message)
-        cookies: au.CookiePolicy = request.app.state.auth.cookies
-        if exc.clear_session:
-            cookies.clear_session(response)
-        if exc.clear_login:
-            cookies.clear_login(response)
+        if exc.clear_session or exc.clear_login:  # the auth deps exist whenever a route that sets these flags runs
+            cookies: au.CookiePolicy = request.app.state.auth.cookies
+            if exc.clear_session:
+                cookies.clear_session(response)
+            if exc.clear_login:
+                cookies.clear_login(response)
         return response
 
     @app.exception_handler(persistence.AuthorityViolation)
@@ -300,7 +303,11 @@ def create_app(
         if pending is None:
             raise ApiError(401, ErrorCode.UNAUTHENTICATED, "login expired or unknown", clear_login=True)
         if "error" in q:
-            log.info("login refused by the identity provider: %s", q.get("error"))  # the code only, never the text
+            code_text = q.get("error", "")
+            # The code only, never the text; a value that is not a plain OAuth code could carry CR/LF into the log.
+            log.info(
+                "login refused by the identity provider: %s", code_text if ERROR_CODE.fullmatch(code_text) else "other"
+            )
             raise ApiError(401, ErrorCode.UNAUTHENTICATED, "login refused by the identity provider", clear_login=True)
         state, code = q.get("state"), q.get("code")
         if not state or not code or not au.matches(state, pending.state_sha256):
@@ -541,27 +548,35 @@ def production_app() -> FastAPI:
     async def make_auth() -> AuthDeps:
         # Discovery first (ruling 25): a realm that does not match the configuration refuses to start.
         http = httpx2.AsyncClient(timeout=httpx2.Timeout(10.0))
-        discovery = await au.fetch_discovery(kc, http)
-        admin = keycloak_admin.admin_users(
-            keycloak=kc,
-            client_secret=settings.read_secret("kc_client_secret_ops_view_users"),
-            timeout=settings.admin_check_timeout(),
-        )
-        oidc = au.AuthlibOidc(
-            discovery=discovery,
-            client_secret=settings.read_secret("kc_client_secret_ops_web"),
-            redirect_uri=sess.redirect_uri,
-            http=http,
-        )
-        return AuthDeps(
-            oidc=oidc,
-            id_tokens=au.IdTokenVerifier(issuer=kc.issuer, jwks_url=discovery.jwks_uri),
-            logout_tokens=au.LogoutTokenVerifier(issuer=kc.issuer, jwks_url=discovery.jwks_uri),
-            admin=admin,
-            box=au.TokenBox(settings.read_secret("api_session_key")),
-            sessions=sess,
-            cookies=au.CookiePolicy(secure=sess.cookie_secure, login_max_age=sess.login_seconds),
-            closers=(http.aclose, admin.aclose, oidc.aclose),
-        )
+        closers: list[au.Closer] = [http.aclose]
+        try:
+            discovery = await au.fetch_discovery(kc, http)
+            admin = keycloak_admin.admin_users(
+                keycloak=kc,
+                client_secret=settings.read_secret("kc_client_secret_ops_view_users"),
+                timeout=settings.admin_check_timeout(),
+            )
+            closers.append(admin.aclose)
+            oidc = au.AuthlibOidc(
+                discovery=discovery,
+                client_secret=settings.read_secret("kc_client_secret_ops_web"),
+                redirect_uri=sess.redirect_uri,
+                http=http,
+            )
+            closers.append(oidc.aclose)
+            return AuthDeps(
+                oidc=oidc,
+                id_tokens=au.IdTokenVerifier(issuer=kc.issuer, jwks_url=discovery.jwks_uri),
+                logout_tokens=au.LogoutTokenVerifier(issuer=kc.issuer, jwks_url=discovery.jwks_uri),
+                admin=admin,
+                box=au.TokenBox(settings.read_secret("api_session_key")),
+                sessions=sess,
+                cookies=au.CookiePolicy(secure=sess.cookie_secure, login_max_age=sess.login_seconds),
+                closers=tuple(closers),
+            )
+        except BaseException:  # close whatever was built, then let the startup failure through
+            for close in reversed(closers):
+                await close()
+            raise
 
     return create_app(verifier, make_store, make_auth)
