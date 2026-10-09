@@ -9,7 +9,7 @@ TODO(T12): Idempotency-Key, admission router.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -77,7 +77,7 @@ class LoginState:
 
     state_sha256: str
     nonce_sha256: str
-    code_verifier: str
+    code_verifier: str = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -90,8 +90,8 @@ class SessionRow:
     tenant_id: UUID
     sid: str
     username: str
-    csrf_secret_sha256: str
-    refresh_token_enc: bytes
+    csrf_secret_sha256: str = field(repr=False)
+    refresh_token_enc: bytes = field(repr=False)
 
 
 def resolve_interval(hours: int, now: datetime) -> tuple[datetime, datetime]:

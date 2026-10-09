@@ -234,6 +234,8 @@ class WorkloadTokenSource:
                 self.expires_at = time.time() + float(data.get("expires_in", 60))
             return self._token
 
-    def invalidate(self) -> None:
-        """Drop the cached token so the next `token()` fetches one (a 401 from the realm means it is stale)."""
-        self._token = None
+    def invalidate(self, stale: str | None = None) -> None:
+        """Drop the cached token so the next `token()` fetches one (a 401 from the realm means it is stale); given
+        the token that was refused, a sibling's fresher token is kept."""
+        if stale is None or stale == self._token:
+            self._token = None

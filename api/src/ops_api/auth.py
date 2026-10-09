@@ -66,8 +66,10 @@ def same_host(host_header: str, public_base_url: str) -> bool:
     so an explicit `:80`/`:443` in the base never loops `/auth/login` on itself."""
     public = urlsplit(public_base_url)
     default = 443 if public.scheme == "https" else 80
-    sent = urlsplit(f"//{host_header.strip()}")
+    if "@" in host_header or "/" in host_header:
+        return False
     try:
+        sent = urlsplit(f"//{host_header.strip()}")
         sent_port = sent.port or default
     except ValueError:
         return False
@@ -100,10 +102,16 @@ class Discovery:
         """Check the realm's metadata and build the endpoints; ValueError refuses the process start."""
         if doc.get("issuer") != keycloak.issuer:
             raise ValueError("discovery issuer differs from OPS_KC_ISSUER")
-        if not (doc.get("backchannel_logout_supported") and doc.get("backchannel_logout_session_supported")):
+        if not (
+            doc.get("backchannel_logout_supported") is True and doc.get("backchannel_logout_session_supported") is True
+        ):
             raise ValueError("the realm does not support session-scoped back-channel logout")
-        if "S256" not in (doc.get("code_challenge_methods_supported") or []):
+        methods = doc.get("code_challenge_methods_supported")
+        if not (isinstance(methods, list) and "S256" in methods):
             raise ValueError("the realm does not support PKCE S256")
+        for name in ("authorization_endpoint", "token_endpoint", "end_session_endpoint", "jwks_uri"):
+            if name in doc and not str(doc[name]).startswith(keycloak.base_url + "/"):
+                raise ValueError("discovery endpoint outside the configured base URL")
         try:
             return cls(
                 issuer=keycloak.issuer,
@@ -128,8 +136,8 @@ class Tokens:
     """What the exchange yields that the API keeps: the ID token for its claims, the refresh token for logout.
     The access token is dropped on purpose: nothing here acts at the provider on the user's behalf."""
 
-    id_token: str
-    refresh_token: str
+    id_token: str = field(repr=False)
+    refresh_token: str = field(repr=False)
 
 
 class ExchangeRefused(Exception):
@@ -278,6 +286,9 @@ class IdTokenVerifier:
         principal = await self.verifier.verify_async(id_token)
         claims = principal.claims
         nonce, sid = claims.get("nonce"), claims.get("sid")
+        username = claims.get("preferred_username", "")
+        if not isinstance(username, str):
+            raise TokenRejected("id token username is not a string")
         if not isinstance(nonce, str) or not matches(nonce, nonce_sha256):
             raise TokenRejected("id token nonce does not match this login")
         if claims.get("typ") != "ID":
@@ -288,7 +299,7 @@ class IdTokenVerifier:
             subject = UUID(principal.subject)
         except ValueError as exc:
             raise TokenRejected("id token subject is not an identity") from exc
-        return IdClaims(subject=subject, sid=sid, username=str(claims.get("preferred_username", "")))
+        return IdClaims(subject=subject, sid=sid, username=username)
 
 
 @dataclass(frozen=True)

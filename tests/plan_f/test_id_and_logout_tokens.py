@@ -17,7 +17,7 @@ import pytest
 from ops_api.auth import BACKCHANNEL_EVENT, IdTokenVerifier, LogoutTokenVerifier, digest
 from ops_core.tokens import TokenRejected
 
-from tests.plan_d.test_tokens import ISSUER, JWK1, JWK2, PEM1, PEM2
+from tests.plan_d.test_tokens import ISSUER, JWK1, PEM1, PEM2
 
 ALEX = "2fc05986-c7ec-544c-b628-fdb112bbf18a"
 NONCE = "n-123"
@@ -100,6 +100,7 @@ async def test_id_token_accepted_with_the_right_nonce(ids: IdTokenVerifier) -> N
         id_token(sid=""),
         id_token(typ="Bearer"),
         id_token(sub="not-a-uuid"),
+        id_token(preferred_username=123),
         id_token(pem=PEM2, kid="k1"),  # signed by another key under the known kid
         id_token(pem=PEM2, kid="k2"),  # unknown kid (no refresh in the unit test)
         jwt.encode(
@@ -160,7 +161,3 @@ async def test_logout_token_accepted(logouts: LogoutTokenVerifier) -> None:
 async def test_logout_token_negatives(logouts: LogoutTokenVerifier, token: str) -> None:
     with pytest.raises(TokenRejected):
         await logouts.verify(token)
-
-
-def test_second_key_is_never_consulted_without_a_refresh() -> None:
-    assert JWK2["kid"] == "k2"  # documents the fixture: k2 is unknown to both verifiers above

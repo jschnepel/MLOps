@@ -11,7 +11,6 @@ connection: on the dev machine a new connection through `localhost` costs about 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
 
@@ -58,20 +57,20 @@ class AdminUsers:
 
     async def _get(self, url: str, params: dict[str, str] | None = None) -> httpx2.Response:
         try:
-            response = await self._authorised_get(url, params)
+            token, response = await self._authorised_get(url, params)
             if response.status_code == 401:
                 # A cached token the realm no longer accepts (a re-import, a key rotation): fetch once, retry once,
                 # inside the same budget (round-1 finding M15).
-                self._tokens.invalidate()
-                response = await self._authorised_get(url, params)
+                self._tokens.invalidate(token)
+                _, response = await self._authorised_get(url, params)
             return response
         except (httpx2.HTTPError, OSError, TokenRejected, ValueError) as exc:
             # The message names the class of failure only: a token endpoint reply could carry the secret's error text.
             raise AdminUnavailable(f"admin API unreachable: {exc.__class__.__name__}") from exc
 
-    async def _authorised_get(self, url: str, params: dict[str, str] | None) -> httpx2.Response:
+    async def _authorised_get(self, url: str, params: dict[str, str] | None) -> tuple[str, httpx2.Response]:
         token = await self._tokens.token()
-        return await self._client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
+        return token, await self._client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
 
     async def _enabled(self, subject: UUID) -> bool:
         response = await self._get(f"{self._users_url}/{subject}")
@@ -118,9 +117,6 @@ def _json(response: httpx2.Response) -> Any:
         return response.json()
     except ValueError as exc:
         raise AdminUnavailable("admin API reply is not JSON") from exc
-
-
-Post = Callable[[str, dict[str, str]], Awaitable[dict[str, Any]]]
 
 
 def admin_users(*, keycloak: settings.Keycloak, client_secret: str, timeout: float) -> AdminUsers:

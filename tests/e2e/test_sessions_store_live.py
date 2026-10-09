@@ -31,19 +31,23 @@ async def test_revision_guard_names_the_missing_relation(role_conn) -> None:
 
 async def test_login_state_is_one_shot_and_expires(app_conn: persistence.Conn, role_conn) -> None:
     db = st.DbStore(await role_conn(Role.API))
-    key = uuid4().hex
-    await db.begin_login(login_sha256=key, state_sha256="s", nonce_sha256="n", code_verifier="v", ttl_seconds=600)
-    taken = await db.take_login(key)
-    assert taken == st.LoginState("s", "n", "v") and await db.take_login(key) is None
-    expired = uuid4().hex
-    await db.begin_login(login_sha256=expired, state_sha256="s", nonce_sha256="n", code_verifier="v", ttl_seconds=600)
-    await app_conn.execute(
-        "UPDATE app.login_state SET expires_at = app.current_time() - interval '1 second' WHERE login_sha256 = %s",
-        (expired,),
-    )
-    assert await db.take_login(expired) is None  # consumed and refused in one statement
-    cur = await app_conn.execute("SELECT count(*) AS n FROM app.login_state WHERE login_sha256 = %s", (expired,))
-    assert (await cur.fetchone())["n"] == 0
+    key, expired = uuid4().hex, uuid4().hex
+    try:
+        await db.begin_login(login_sha256=key, state_sha256="s", nonce_sha256="n", code_verifier="v", ttl_seconds=600)
+        taken = await db.take_login(key)
+        assert taken == st.LoginState("s", "n", "v") and await db.take_login(key) is None
+        await db.begin_login(
+            login_sha256=expired, state_sha256="s", nonce_sha256="n", code_verifier="v", ttl_seconds=600
+        )
+        await app_conn.execute(
+            "UPDATE app.login_state SET expires_at = app.current_time() - interval '1 second' WHERE login_sha256 = %s",
+            (expired,),
+        )
+        assert await db.take_login(expired) is None  # consumed and refused in one statement
+        cur = await app_conn.execute("SELECT count(*) AS n FROM app.login_state WHERE login_sha256 = %s", (expired,))
+        assert (await cur.fetchone())["n"] == 0
+    finally:
+        await app_conn.execute("DELETE FROM app.login_state WHERE login_sha256 = ANY(%s)", ([key, expired],))
 
 
 async def new_session(db: st.DbStore, sid: str = "sid-live") -> str:

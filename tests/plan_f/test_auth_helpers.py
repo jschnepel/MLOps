@@ -60,6 +60,8 @@ def test_same_origin_rule(headers: dict[str, str], ok: bool) -> None:
         ("ops.example.com:8443", "https://ops.example.com", False),
         ("", "http://localhost:8000", False),
         ("localhost:notaport", "http://localhost:8000", False),
+        ("[::1:8000", "http://localhost:8000", False),
+        ("user@localhost:8000", "http://localhost:8000", False),
     ],
 )
 def test_same_host_rule(host: str, base: str, ok: bool) -> None:
@@ -75,10 +77,17 @@ def test_discovery_is_checked_and_rewritten_for_server_use() -> None:
         {**DOC, "issuer": "http://evil/realms/ops-dev"},
         {**DOC, "backchannel_logout_session_supported": False},
         {**DOC, "code_challenge_methods_supported": ["plain"]},
+        {**DOC, "code_challenge_methods_supported": "S256x"},
+        {**DOC, "backchannel_logout_session_supported": "false"},
+        {**DOC, "token_endpoint": "http://evil.example/realms/ops-dev/protocol/openid-connect/token"},
         {k: v for k, v in DOC.items() if k != "end_session_endpoint"},
     ):
         with pytest.raises(ValueError):
             auth.Discovery.from_document(bad, KC)
+
+
+def test_tokens_hide_secrets_in_repr() -> None:
+    assert "refresh-token-value" not in repr(auth.Tokens("id", "refresh-token-value"))
 
 
 def test_token_box_round_trips_and_refuses_another_key() -> None:
