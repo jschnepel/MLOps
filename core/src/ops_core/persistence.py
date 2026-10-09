@@ -165,6 +165,14 @@ async def assert_clock_profile(conn: Conn, profile: Profile) -> None:
         raise PersistenceError(f"app.test_clock exists; the {profile.value} profile refuses to start")
 
 
+async def assert_relation(conn: Conn, name: str) -> None:
+    """Refuse to start when a relation a later revision adds is absent (`to_regclass` works for any role)."""
+    cur = await conn.execute("SELECT to_regclass(%s) IS NULL AS missing", (name,))
+    row = await cur.fetchone()
+    if row is not None and row["missing"]:
+        raise PersistenceError(f"{name} is missing; run scripts/skeleton.py migrate for this profile")
+
+
 async def tenants(conn: Conn) -> list[UUID]:
     """Every tenant id (no RLS on tenants, SA:523): the worker's claim loop and the sweeper iterate these."""
     cur = await conn.execute("SELECT tenant_id FROM app.tenants ORDER BY tenant_id")

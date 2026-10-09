@@ -233,3 +233,7 @@ class WorkloadTokenSource:
                 self._token = access
                 self.expires_at = time.time() + float(data.get("expires_in", 60))
             return self._token
+
+    def invalidate(self) -> None:
+        """Drop the cached token so the next `token()` fetches one (a 401 from the realm means it is stale)."""
+        self._token = None
