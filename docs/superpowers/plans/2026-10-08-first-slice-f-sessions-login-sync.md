@@ -24,7 +24,7 @@
 - **Tests:** unit tests in `tests/plan_f/` (DB-free; the API tests use `TestClient` with a fake store and a fake OIDC client; token tests sign with a throw-away RSA key), live tests in `tests/e2e/` gated by `OPS_LIVE=1`; `tests/plan_d/test_api.py` and `tests/plan_b/test_realm_template.py` are updated where an interface they pin changes, never deleted. No xfail or skip except the live gate (BS:597).
 - **Comments** per `docs/CODE_COMMENTS.md`; ≤120 characters per line (count characters, not bytes: `python -c "import sys;[print(p,i+1) for p in sys.argv[1:] for i,l in enumerate(open(p,encoding='utf-8')) if len(l.rstrip('\n'))>120]" <files>`); no `type: ignore`; ruff + mypy strict clean; UTF-8 without BOM, LF.
 - **Gates:** `uv run ruff format <files> && uv run ruff check --fix <files>` (then `uv run ruff check --select ISC004 --fix --unsafe-fixes <revision>` after writing a revision), `PYTHONUTF8=1 uv run python scripts/check.py` GREEN after every task, `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exit 0, and the live suite `PYTHONUTF8=1 uv run python scripts/check.py --profile test` after every task that changes a migration, a service, the realm or a live test. After a live run: `git checkout -- reports/bootstrap reports/skeleton` (both are rewritten by live runs; a task commits the R105 file only when it says so). `verify_handoff.py` runs in every task's gate step. mypy's incremental cache can report spurious errors after many edits; rerun with `--no-incremental` before treating one as real.
-- **No interim red across tasks.** Task 2 changes the realm export and the `sessions` table under Plan D's API, which gains its session code only in Task 4; nothing is red between tasks: the API keeps the bearer path, the autouse `fresh_memberships` fixture (function-scoped, so it runs after the module-scoped skeleton starts and before each test body) keeps every live test, R105 included, inside the 120 s window until Task 5 gives the skeleton a sweeper, and from Task 5 the two skeleton modules opt out of the stamp (`@pytest.mark.sweeper_stamps`) so R105 proves the sweeper's stamping rather than the fixture's. Inside Task 2 the newest-revision unit test is red between Step 1 and Step 3 only.
+- **No interim red across tasks.** Task 2 changes the realm export and the `sessions` table under Plan D's API, which gains its session code only in Task 4; nothing is red between tasks: the API keeps the bearer path, the autouse `fresh_memberships` fixture (function-scoped, so it runs after the module-scoped skeleton starts and before each test body) keeps every live test, R105 included, inside the 120 s window until Task 5 gives the skeleton a sweeper, and from Task 5 (R105) and Task 6 (the auth module) the skeleton modules opt out of the stamp (`@pytest.mark.sweeper_stamps`) and age the rows first, so they prove the sweeper's stamping rather than the fixture's. Inside Task 2 the newest-revision unit test is red between Step 1 and Step 3 only.
 - **Commits:** one logical group per step; messages free of any attribution trailer; never push; never `docker compose down -v`; never change system settings; never drop a role, database, persona or Keycloak object (the test databases excepted). `scripts/bootstrap_dev.py down` then `up` (a realm re-import that keeps the PostgreSQL volume) is allowed and required once, in Task 2.
 
 ## Review Focus
@@ -177,7 +177,7 @@ Then `uv lock` and `uv sync --locked`; record the locked `authlib` and `joserfc`
     file: ${OPS_SECRETS_DIR}/kc_client_secret_ops_test_admin
 ```
 
-and the keycloak service's `secrets:` list gains `- kc_client_secret_ops_test_admin` (the entrypoint exports every `/run/secrets/kc_*` as `OPS_KC_…`). Run `uv run python scripts/bootstrap_dev.py secrets` once: it creates the two new files and touches nothing else (existing files are never overwritten). `uv run python -m pytest tests/plan_b/test_bootstrap_dev.py tests/plan_b/test_compose_dev.py -q` → PASS.
+and the keycloak service's `secrets:` list gains `- kc_client_secret_ops_test_admin` (the entrypoint exports every `/run/secrets/kc_*` as `OPS_KC_…`). Run `uv run python scripts/bootstrap_dev.py secrets` once: it creates the two new files and rewrites `.env` with the same values; no existing secret is overwritten. `uv run python -m pytest tests/plan_b/test_bootstrap_dev.py tests/plan_b/test_compose_dev.py -q` → PASS.
 
 - [ ] **Step 3: Write the failing settings tests**
 
@@ -637,7 +637,7 @@ def test_subject_is_optional_only_when_not_required() -> None:
         verifier(require_azp=False).verify(mint(sub=None))
 ```
 
-Run: `uv run python -m pytest tests/plan_f/test_tokens_knobs.py -q` → FAIL (unexpected keyword arguments).
+Run: `uv run python -m pytest tests/plan_f/test_tokens_knobs.py -q` → FAIL (three of the four fail with unexpected keyword arguments; the defaults test passes already).
 
 - [ ] **Step 8: The verifier knobs**
 
@@ -766,18 +766,18 @@ In `core/src/ops_core/privileges.py`: `"sessions"` becomes
     "logout_jti": {"api": _INS, "sweeper": Grant(sel=True, dele=True)},
 ```
 
-`NO_RLS` becomes a multi-line tuple (one name per line, the two new names last). The module docstring's sentence that starts "Four departures from the printed table" is replaced by:
+`NO_RLS` becomes a multi-line tuple (one name per line, the two new names last). The module docstring's lines from "their rows." to the end are replaced by this wrapped text (every line under 120 characters):
 
 ```
-Six departures from the printed table, each a proposed erratum (Plan E rulings 6, 10, 17, 23; Plan F rulings 2, 3 and
-17 with erratum 25): the worker (not the sweeper) may UPDATE jobs.available_at (re-queue after a transport failure),
-app_definer may UPDATE runs.updated_at, the `transitions` table (the T07 table mirrored in SQL) is readable by
-app_definer only, no definer function takes a row lock on proposals, decisions, memberships or execution_grant (a lock
-needs UPDATE, which the matrix withholds), the sweeper holds SELECT beside its DELETE on sessions, login_state and
-logout_jti (a DELETE with a WHERE reads the row), and login_state and logout_jti are rows the printed table lacks.
-```
-
-(keep the sentence about `test_harness` that follows). Run `uv run python -m pytest tests/plan_f/test_privileges_f.py tests/plan_e/test_privileges.py -q` → PASS; `tests/plan_e/test_transitions_table.py::test_the_newest_revision_of_every_cell_equals_the_live_matrix` → FAIL until Step 3 (expected).
+their rows. Six departures from the printed table, each a proposed erratum (Plan E rulings 6, 10, 17, 23; Plan F
+rulings 2, 3 and 17 with erratum 25): the worker (not the sweeper) may UPDATE jobs.available_at (re-queue after a
+transport failure), app_definer may UPDATE runs.updated_at, the `transitions` table (the T07 table mirrored in SQL)
+is readable by app_definer only, no definer function takes a row lock on proposals, decisions, memberships or
+execution_grant (a lock needs UPDATE, which the matrix withholds), the sweeper holds SELECT beside its DELETE on
+sessions, login_state and logout_jti (a DELETE with a WHERE reads the row), and login_state and logout_jti are rows
+the printed table lacks. `test_harness` exists only in the test profile: the main-line revisions grant it nothing;
+the testclock branch grants it schema USAGE, EXECUTE on current_time() and its test_clock cells.
+``` Run `uv run python -m pytest tests/plan_f/test_privileges_f.py tests/plan_e/test_privileges.py -q` → PASS; `tests/plan_e/test_transitions_table.py::test_the_newest_revision_of_every_cell_equals_the_live_matrix` → FAIL until Step 3 (expected).
 
 - [ ] **Step 2: Write the failing live tests**
 
@@ -1158,7 +1158,7 @@ def test_test_admin_service_account_is_dev_only_and_manages_users_only():
     assert audiences(c) == set()
 ```
 
-`uv run python -m pytest tests/plan_b -q` → PASS. Then re-import the realm (keeps the PostgreSQL volume): `uv run python scripts/bootstrap_dev.py down` and `uv run python scripts/bootstrap_dev.py up`; then `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/plan_b/live -q` → PASS (`test_service_account.py` still proves `ops-view-users` cannot write). Prove the new client with a throw-away one-off under the scratch directory (never committed, no value printed; it needs the process environment the e2e fixtures build: start it with `from scripts.skeleton import export_environment, load_dotenv; export_environment(load_dotenv(".env"))` before any `settings` call, or export `OPS_SECRETS_DIR` and `OPS_PG_PORT` from `.env`): a client-credentials token for `ops-test-admin` can `GET /admin/realms/ops-dev/users/{lee}` (200), `PUT` the same user with `{"enabled": false}` (204), `GET` it again (`enabled` false, and `username`, `email`, `firstName`, `lastName` unchanged: a partial PUT keeps the other fields), then `PUT {"enabled": true}` and `GET` (`enabled` true). Record the status codes and the field comparison in the report; `lee` is a reader and no other test depends on it, and the probe ends with `lee` enabled. `git checkout -- reports/bootstrap`.
+`uv run python -m pytest tests/plan_b -q` → PASS. Then re-import the realm (keeps the PostgreSQL volume): `uv run python scripts/bootstrap_dev.py down` and `uv run python scripts/bootstrap_dev.py up`; then `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/plan_b/live -q` → PASS (`test_service_account.py` still proves `ops-view-users` cannot write). Prove the new client with a throw-away one-off under the scratch directory (never committed, no value printed; it needs the process environment the e2e fixtures build: start it with `from pathlib import Path; from scripts.skeleton import export_environment, load_dotenv; export_environment(load_dotenv(Path(".env")))` before any `settings` call (`load_dotenv` takes a `Path`), or export `OPS_SECRETS_DIR` and `OPS_PG_PORT` from `.env`): a client-credentials token for `ops-test-admin` can `GET /admin/realms/ops-dev/users/{lee}` (200), `PUT` the same user with `{"enabled": false}` (204), `GET` it again (`enabled` false, and `username`, `email`, `firstName`, `lastName` unchanged: a partial PUT keeps the other fields), then `PUT {"enabled": true}` and `GET` (`enabled` true). Record the status codes and the field comparison in the report; `lee` is a reader and no other test depends on it, and the probe ends with `lee` enabled. `git checkout -- reports/bootstrap`.
 
 - [ ] **Step 6: `GRANT_DEFERRED` in mcp-write and the worker's re-queue**
 
@@ -1200,7 +1200,7 @@ def refusal_error(code: str) -> dict[str, Any]:
 
 and the `except persistence.Refused as exc:` branch in `create_incident` becomes `return envelope("create_incident", error=refusal_error(exc.code))`.
 
-`worker/src/ops_worker/handlers.py`: add after `EXECUTE_RETRY_SECONDS`:
+`worker/src/ops_worker/handlers.py`: add after the module's constants (`EXECUTE_RETRY_SECONDS` and `QUERY_CHARS`):
 
 ```python
 def is_deferred(doc: dict[str, Any]) -> bool:
@@ -2490,7 +2490,7 @@ async def assert_relation(conn: Conn, name: str) -> None:
         raise PersistenceError(f"{name} is missing; run scripts/skeleton.py migrate for this profile")
 ```
 
-The module docstring's `TODO(T12)` line stays; add "T11: the session store (login_state, sessions, logout_jti)". `uv run mypy api/src core/src` clean; the Plan D API tests still pass because the `FakeStore` is not yet asked for the new methods (Task 4 adds them).
+`api/src/ops_api/store.py`'s module docstring: its `TODO(T12)` line stays; add "T11: the session store (login_state, sessions, logout_jti)". `uv run mypy api/src core/src` clean; the Plan D API tests still pass because the `FakeStore` is not yet asked for the new methods (Task 4 adds them).
 
 - [ ] **Step 6: The live store test**
 
@@ -2595,7 +2595,7 @@ async def test_record_logout_is_atomic_and_replay_safe(app_conn: persistence.Con
         assert await db.record_logout(jti, expires_at=until, sid=sid) == 2  # the rolled-back jti was not consumed
         assert await db.record_logout(jti, expires_at=until, sid=sid) is None  # replay
         assert await db.live_session(keys[2], idle_seconds=1800) is not None  # the other sid is untouched
-        assert all(await db.live_session(k, idle_seconds=1800) is None for k in keys[:2])
+        assert all([await db.live_session(k, idle_seconds=1800) is None for k in keys[:2]])  # a list: await in a genexp is a TypeError
     finally:
         await app_conn.execute("DELETE FROM app.sessions WHERE session_sha256 = ANY(%s)", (keys,))
         await app_conn.execute("DELETE FROM app.logout_jti WHERE jti = %s", (jti,))
@@ -2779,16 +2779,32 @@ def api() -> Iterator[tuple[TestClient, FakeStore]]:
         self.jtis: set[str] = set()
         self.clock = time.time  # tests replace it to age sessions
 
-    async def begin_login(self, *, login_sha256, state_sha256, nonce_sha256, code_verifier, ttl_seconds) -> None:
+    async def begin_login(
+        self, *, login_sha256: str, state_sha256: str, nonce_sha256: str, code_verifier: str, ttl_seconds: int
+    ) -> None:
         self.logins[login_sha256] = (LoginState(state_sha256, nonce_sha256, code_verifier), self.clock() + ttl_seconds)
 
     async def take_login(self, login_sha256: str) -> LoginState | None:
         entry = self.logins.pop(login_sha256, None)
         return None if entry is None or entry[1] <= self.clock() else entry[0]
 
-    async def create_session(self, *, session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256, refresh_token_enc, absolute_seconds) -> None:
+    async def create_session(
+        self,
+        *,
+        session_sha256: str,
+        issuer: str,
+        subject: UUID,
+        tenant_id: UUID,
+        sid: str,
+        username: str,
+        csrf_secret_sha256: str,
+        refresh_token_enc: bytes,
+        absolute_seconds: int,
+    ) -> None:
         self.sessions[session_sha256] = {
-            "row": SessionRow(session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256, refresh_token_enc),
+            "row": SessionRow(
+                session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256, refresh_token_enc
+            ),
             "last_seen": self.clock(),
             "expires": self.clock() + absolute_seconds,
             "revoked": False,
@@ -2821,7 +2837,7 @@ def api() -> Iterator[tuple[TestClient, FakeStore]]:
         return len(hit)
 ```
 
-(signatures spelled out with the annotations of the protocol). `test_multi_tenant_subject_cannot_act_and_roles_do_not_merge`: the `dual` call now expects **401** (ruling 21), with the comment "no single current membership is no application identity (BUILD_SPEC §7: 401 for missing identity; SA:549)". `test_identity_and_membership`'s expected `/api/v1/me` dict gains `"auth": "bearer"`. Run `uv run python -m pytest tests/plan_d/test_api.py -q` → FAIL on the `auth_factory` keyword (expected until Step 3).
+(the other signatures carry the protocol's annotations too). `test_multi_tenant_subject_cannot_act_and_roles_do_not_merge`: the `dual` call now expects **401** (ruling 21), with the comment "no single current membership is no application identity (BUILD_SPEC §7: 401 for missing identity; SA:549)". `test_identity_and_membership`'s expected `/api/v1/me` dict gains `"auth": "bearer"`. Run `uv run python -m pytest tests/plan_d/test_api.py -q` → FAIL on the `auth_factory` keyword (expected until Step 3).
 
 - [ ] **Step 2: Write the failing route tests**
 
@@ -3088,7 +3104,15 @@ Run: `uv run python -m pytest tests/plan_f/test_api_auth.py -q` → FAIL (`auth_
 
 - [ ] **Step 3: `app.py`**
 
-Rewrite `api/src/ops_api/app.py` as follows (the Plan D routes keep their bodies; what changes is marked). Module docstring: replace the last sentence with "Browser sessions (T11): server-side rows, the cookie path beside the bearer path, CSRF and origin on browser mutations, the admin-API enabled check on decision-class mutations, back-channel logout. Idempotency-Key stays declared debt (T12)." Imports gain `from datetime import UTC, datetime, timedelta` (already partly there), `import httpx2`, `from fastapi.responses import JSONResponse, RedirectResponse`, `from ops_core import keycloak_admin, persistence, settings`, `from ops_core.keycloak_admin import AdminUnavailable`, and `from ops_api import auth as au` plus `from ops_api.auth import AuthDeps, ExchangeRefused, ExchangeUnavailable`.
+Rewrite `api/src/ops_api/app.py` as follows (the Plan D routes keep their bodies; what changes is marked). Module docstring: replace the last sentence ("Browser sessions, CSRF and Idempotency-Key are declared debt (T11/T12).") with
+
+```
+Browser sessions (T11): server-side rows, the cookie path beside the bearer path, CSRF and origin checks on browser
+mutations, the admin-API enabled check on decision-class mutations, back-channel logout. Idempotency-Key stays declared
+debt (T12).
+```
+
+Imports gain `from datetime import UTC, datetime, timedelta` (already partly there), `import httpx2`, `from fastapi.responses import JSONResponse, RedirectResponse`, `from ops_core import keycloak_admin, persistence, settings`, `from ops_core.keycloak_admin import AdminUnavailable`, and `from ops_api import auth as au` plus `from ops_api.auth import AuthDeps, ExchangeRefused, ExchangeUnavailable`.
 
 ```python
 class ApiError(Exception):
@@ -3898,7 +3922,7 @@ def main() -> None:
         asyncio.run(_main())
 ```
 
-`scripts/skeleton.py`: `PROCESSES` gains `Process("sweeper", "ops_sweeper", 8071)` after the worker; `process_environment()` gains `env.setdefault("OPS_SWEEPER_HEALTH_PORT", "8071")`; the module docstring, the `Skeleton` class docstring and `up()`'s docstring say six processes (`grep -n "five" scripts/skeleton.py docs/runbooks/walking-skeleton.md` must find nothing afterwards; the runbook's step 4 says "its own six processes"). `tests/plan_e/test_skeleton_cli.py` gains:
+`scripts/skeleton.py`: `PROCESSES` gains `Process("sweeper", "ops_sweeper", 8071)` after the worker; `process_environment()` gains `env.setdefault("OPS_SWEEPER_HEALTH_PORT", "8071")`; the module docstring, the `Skeleton` class docstring and `up()`'s docstring say six processes (`grep -in "five" scripts/skeleton.py docs/runbooks/walking-skeleton.md` must find nothing afterwards; the runbook's first line says "Six host processes" and its step 4 "its own six processes"). `tests/plan_e/test_skeleton_cli.py` gains:
 
 ```python
 def test_six_processes_on_distinct_loopback_ports() -> None:
@@ -4016,14 +4040,36 @@ async def test_maintenance_job_is_recorded_once_per_minute(app_conn, role_conn) 
         await app_conn.execute("DELETE FROM app.jobs WHERE type = %s", (kind.value,))
 ```
 
-Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_sweeper_live.py -q` → PASS (three tests; `memberships` has five seeded rows: alex, sam, lee in alpha, riley and jordan in beta, so a listing that keeps only alex refuses). Then opt R105 out of the stamp so it proves the sweeper: register the marker in the root `pyproject.toml` (`[tool.pytest.ini_options] markers = ["sweeper_stamps: the module's skeleton sweeper stamps memberships.synced_at; the autouse fixture must not"]`), make the fixture in `tests/e2e/conftest.py` return early when `request.node.get_closest_marker("sweeper_stamps")` is set (it gains a `request: pytest.FixtureRequest` parameter), and add `pytestmark = pytest.mark.sweeper_stamps` to `tests/e2e/test_r105_walking_skeleton.py` (beside its existing marks). With the dev stack up and no skeleton running: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_r105_walking_skeleton.py -q` → PASS (six processes; the sweeper's first sync completes before readiness, so the seeded rows are fresh when the grant is asked for, and nothing else stamped them). Confirm in `runtime/skeleton/sweeper.log`: one "membership sync: 5 rows checked, 0 deactivated" line (and no secret-shaped text: `grep -cE "Bearer [^[]|password=[^[]" runtime/skeleton/*.log` → 0 on every file: a redacted line reads `Bearer [REDACTED]`). `docs/runbooks/walking-skeleton.md`: "Six host processes"; the list in step 3 gains `sweeper :8071 (health only; membership sync every 30 s, expiry purges)`; a paragraph: without the sweeper, grants refuse with `MEMBERSHIP_STALE` after 120 s and execute jobs wait (re-queued every 30 s) until it runs; the sync refuses (and stamps nothing) when three or more and more than half of the active subjects are missing from the realm's listing, which is what a listing from the wrong realm looks like (readiness turns 503 and grants refuse `MEMBERSHIP_STALE` after 120 s; a legitimate mass offboarding is accepted by starting the sweeper once with `OPS_SYNC_ALLOW_MASS_DEACTIVATION=1`); a back-channel logout Keycloak could not deliver is not retried, so the application session then ends at its own limits; the API and the sweeper refuse to start until the database carries revision 0005 (`skeleton.py migrate`).
+Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_sweeper_live.py -q` → PASS (three tests; `memberships` has five seeded rows: alex, sam, lee in alpha, riley and jordan in beta, so a listing that keeps only alex refuses). Then opt R105 out of the stamp so it proves the sweeper: register the marker in the root `pyproject.toml` (`[tool.pytest.ini_options] markers = ["sweeper_stamps: the module's skeleton sweeper stamps memberships.synced_at; the autouse fixture must not"]`), make the fixture in `tests/e2e/conftest.py` return early when `request.node.get_closest_marker("sweeper_stamps")` is set (it gains a `request: pytest.FixtureRequest` parameter), and add `pytestmark = pytest.mark.sweeper_stamps` to `tests/e2e/test_r105_walking_skeleton.py` after its `EXPECTED_EVENTS` constant (the module has no marks today). So that the proof holds in a full run too, where the previous module's autouse stamp is seconds old, the module's `skeleton` fixture ages the rows before the processes start and checks them after (`import psycopg` joins the imports):
+
+```python
+@pytest.fixture(scope="module")
+def skeleton(migrated: None) -> Iterator[Skeleton]:
+    """Module scope on purpose: the skeleton worker must be down before test_worker_live claims jobs itself. The
+    memberships are aged past the 120 s window first, so the grant inside the run passes only because the skeleton's
+    own sweeper re-stamped them (this module opts out of the autouse stamp)."""
+    with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+        conn.execute("UPDATE app.memberships SET synced_at = app.current_time() - interval '10 minutes'")
+    sk = Skeleton()
+    sk.start()
+    with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+        fresh = conn.execute(
+            "SELECT bool_and(synced_at > app.current_time() - interval '120 seconds') FROM app.memberships"
+        ).fetchone()[0]
+    assert fresh, "the sweeper did not stamp memberships.synced_at before reporting ready"
+    try:
+        yield sk
+    finally:
+        sk.stop()
+```
+ With the dev stack up and no skeleton running: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_r105_walking_skeleton.py -q` → PASS (six processes; the sweeper's first sync completes before readiness, so the seeded rows are fresh when the grant is asked for, and nothing else stamped them). Confirm in `runtime/skeleton/sweeper.log` (appended across runs): at least one "membership sync: 5 rows checked, 0 deactivated" line (and no secret-shaped text: `grep -cE "Bearer [^[]|password=[^[]" runtime/skeleton/*.log` → 0 on every file: a redacted line reads `Bearer [REDACTED]`). `docs/runbooks/walking-skeleton.md`: "Six host processes"; the list in step 3 gains `sweeper :8071 (health only; membership sync every 30 s, expiry purges)`; a paragraph after item 6: without the sweeper, grants refuse with `MEMBERSHIP_STALE` after 120 s and execute jobs wait (re-queued every 30 s) until it runs; the sync refuses (and stamps nothing) when three or more and more than half of the active subjects are missing from the realm's listing, which is what a listing from the wrong realm looks like (readiness turns 503 and grants refuse `MEMBERSHIP_STALE` after 120 s; a legitimate mass offboarding is accepted by starting the sweeper once with `OPS_SYNC_ALLOW_MASS_DEACTIVATION=1`); a back-channel logout Keycloak could not deliver is not retried, so the application session then ends at its own limits; the API and the sweeper refuse to start until the database carries revision 0005 (`skeleton.py migrate`).
 
 - [ ] **Step 5: Gates and commit**
 
 Format, lint, the character count; `PYTHONUTF8=1 uv run python scripts/check.py` → GREEN; `--profile test` → GREEN (every live test, R105 included); `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` → exit 0; `git checkout -- reports/bootstrap`; commit `reports/skeleton/r105-walking-skeleton.txt` (this task's six-process run is its new content).
 
 ```bash
-git add sweeper pyproject.toml uv.lock scripts/check.py scripts/skeleton.py tests/plan_e/test_skeleton_cli.py tests/plan_f/test_sweeper.py tests/e2e/test_sweeper_live.py tests/e2e/conftest.py tests/e2e/test_r105_walking_skeleton.py core/src/ops_core/persistence.py docs/runbooks/walking-skeleton.md reports/skeleton/r105-walking-skeleton.txt
+git add sweeper pyproject.toml uv.lock scripts/check.py scripts/skeleton.py tests/plan_a/test_layout.py tests/plan_e/test_skeleton_cli.py tests/plan_f/test_sweeper.py tests/e2e/test_sweeper_live.py tests/e2e/conftest.py tests/e2e/test_r105_walking_skeleton.py core/src/ops_core/persistence.py docs/runbooks/walking-skeleton.md reports/skeleton/r105-walking-skeleton.txt
 git commit -m "feat(sweeper): sixth process — membership sync as a maintenance job every minute, expiry purges, freshness readiness (T11)"
 ```
 
@@ -4421,7 +4467,7 @@ git commit -m "test(e2e): live login, CSRF, expiry, logout, back-channel logout,
 ### Task 7: Handoff records, errata, documentation, final gates
 
 **Files:**
-- Modify: `handoff/tasks.json` (T11 → `DONE` with a review note), `handoff/BUILD_BACKLOG.md` (T11 checked), `handoff/acceptance-matrix.json` (R011, R012, R013, R086), `SESSION_STATE.md` (Plan F executed; errata 26–34; dev database state; next task), `STATUS.md`, `README.md` (status line), `docs/ARCHITECTURE.md` (sweeper row, browser-user row), `docs/runbooks/dev-topology.md` (host processes table; the `ops-test-admin` warning), `docs/runbooks/walking-skeleton.md` (the dev database must be migrated to 0005 before `up`; the login walk-through), `core/src/ops_core/privileges.py` (the `resolve_identity` row's comment in `DEFINER_FUNCTIONS`: the sync needs no definer)
+- Modify: `handoff/tasks.json` (T11 → `DONE` with a review note), `handoff/BUILD_BACKLOG.md` (T11 checked), `handoff/acceptance-matrix.json` (R011, R012, R013, R086), `SESSION_STATE.md` (Plan F executed; errata 26–34; dev database state; next task), `STATUS.md`, `README.md` (status line), `docs/ARCHITECTURE.md` (sweeper row, browser-user row), `docs/runbooks/dev-topology.md` (host processes table; the `ops-test-admin` warning), `docs/runbooks/walking-skeleton.md` (one line under step 3: the dev database must carry revision 0005 before `up`, and the login walk-through lives in `dev-topology.md`), `core/src/ops_core/privileges.py` (the `resolve_identity` row's comment in `DEFINER_FUNCTIONS`: the sync needs no definer)
 
 - [ ] **Step 1: Handoff records**
 
