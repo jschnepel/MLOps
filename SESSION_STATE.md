@@ -265,6 +265,10 @@ Allowed shortcuts in T09/T10, each with its owning task:
 - Separate-services architecture.
 - MIT license; publish publicly to `jschnepel/MLOps` once logged in.
 
+## Dev database state (2026-10-08)
+
+The owner approved migrating the dev database: `skeleton.py migrate` (dev profile) applied revisions 0002–0004 to `ops` (`app@head`, no `app.test_clock`) and incident revision 0002 to `incident`; `skeleton.py up` then brought all five processes to ready under their own roles and `down` stopped them. Plan F (T11) research (fact sheet and spike) started the same day.
+
 ## Open owner inputs
 
 - Open and merge the stacked PRs for `plan-b` to `plan-e` (all four pushed on 2026-10-08; `main` and `plan-a` were pushed earlier) and record the first CI run URL.
