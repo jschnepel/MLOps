@@ -65,8 +65,8 @@ Each answers a fact-sheet §5 question (Qn), cites what the spike measured, and 
 24. **New settings (Q27).** `ops_core.settings`: `Keycloak.server_url` (`OPS_KC_SERVER_URL`, default `base_url` with `localhost` replaced by `127.0.0.1`), `discovery_url`, `admin_users_url`, `end_session_url` on `server_url`; `jwks_url` and `token_url` move to `server_url` (same `iss`, spike §3); `sessions()` → `SessionSettings(public_base_url, idle_seconds, absolute_seconds, login_seconds=600, cookie_secure)`; `admin_check_timeout()` (`OPS_ADMIN_CHECK_TIMEOUT_SECONDS`, 2.0); the sweeper's `OPS_SWEEPER_HEALTH_PORT` 8071 and `OPS_SYNC_TICK_SECONDS` 30. `skeleton.py` gains `Process("sweeper", "ops_sweeper", 8071)`.
 25. **Discovery is fetched at startup and checked, then the endpoints are built from it.** The API's lifespan fetches `{server_url}/realms/ops-dev/.well-known/openid-configuration`, refuses to start unless `issuer` equals the configured issuer and both back-channel flags are true, takes `authorization_endpoint` as published (browser-facing) and `token_endpoint`/`end_session_endpoint`/`jwks_uri` with their host rewritten to `server_url`. A start without Keycloak fails fast (the worker already behaves this way for its token source).
 26. **`TokenVerifier` grows three knobs, backwards compatible.** `required_claims` (default `("exp", "iss", "aud", "sub")`), `require_azp` (default `True`) and `typ` (header value to require, default `None`). The ID-token and logout-token verifiers are instances, not subclasses; every existing caller is unchanged.
-28. **The listing guard (round-1 review focus 3, round-2 finding N4).** A sync whose listing lacks three or more of the active subjects and more than half of them stamps nothing and raises `MassDeactivation`: absence is the ambiguous signal (a wrong realm, a partial page), an explicit `enabled: false` is affirmative and is always acted on. Readiness drops after 120 s and grants refuse, which is the fail-closed outcome the spec asks for; the owner's override is `OPS_SYNC_ALLOW_MASS_DEACTIVATION=1` for one sweeper start (the runbook says so). Cost if wrong: a large legitimate offboarding needs the override once.
-29. **Unit tests for Plan F live in `tests/plan_f/`**; live tests in `tests/e2e/`. `tests/plan_d/test_api.py` (401 for no membership; `FakeStore` gains the session methods), `tests/plan_b/test_realm_template.py` (back-channel attributes, the test-admin client), `tests/plan_e/test_transitions_table.py` (`REVISIONS` gains 0005) and `tests/plan_e/test_skeleton_cli.py` (six processes) are updated in the task that changes the interface.
+27. **The listing guard (round-1 review focus 3, round-2 finding N4).** A sync whose listing lacks three or more of the active subjects and more than half of them stamps nothing and raises `MassDeactivation`: absence is the ambiguous signal (a wrong realm, a partial page), an explicit `enabled: false` is affirmative and is always acted on. Readiness drops after 120 s and grants refuse, which is the fail-closed outcome the spec asks for; the owner's override is `OPS_SYNC_ALLOW_MASS_DEACTIVATION=1` for one sweeper start (the runbook says so). Cost if wrong: a large legitimate offboarding needs the override once.
+28. **Unit tests for Plan F live in `tests/plan_f/`**; live tests in `tests/e2e/`. `tests/plan_d/test_api.py` (401 for no membership; `FakeStore` gains the session methods), `tests/plan_b/test_realm_template.py` (back-channel attributes, the test-admin client), `tests/plan_e/test_transitions_table.py` (`REVISIONS` gains 0005) and `tests/plan_e/test_skeleton_cli.py` (six processes) are updated in the task that changes the interface.
 
 ## Debt-list additions (committed in Task 1, before coding)
 
@@ -398,7 +398,7 @@ import logging
 from ops_core import redaction
 from ops_core.redaction import REDACTED, RedactingFilter, redact
 
-CANARY = "CANARYc4f7e2"
+CANARY = "CANARYc4f7e2d81a9b03"  # 20 characters: the Authorization rule redacts 16+ (shorter words are prose)
 
 
 def capture() -> tuple[logging.Logger, io.StringIO]:
@@ -437,6 +437,7 @@ def test_every_secret_shape_is_redacted_in_messages_and_tracebacks() -> None:
         f"code_verifier={CANARY}&nonce={CANARY}",
         f"{{'password': '{CANARY}', 'logout_token': b'{CANARY}'}}",
         f"FormData([('logout_token', '{CANARY}')])",
+        f"KEYCLOAK_IDENTITY={CANARY}; AUTH_SESSION_ID={CANARY}",
     ]
     for shape in shapes:
         child.info("%s", shape)
@@ -456,7 +457,7 @@ def test_redact_is_a_pure_function_and_keeps_ordinary_text() -> None:
     assert redact("bearer token missing; Basic setup complete") == "bearer token missing; Basic setup complete"
     assert redact(f"Bearer {CANARY}") == f"Bearer {REDACTED}"
     assert redact(f"postgresql://api:{CANARY}@h/db") == f"postgresql://api:{REDACTED}@h/db"
-    assert redact("exit code=1") == f"exit code={REDACTED}"  # accepted over-redaction (see the module docstring)"
+    assert redact("exit code=1") == f"exit code={REDACTED}"  # accepted over-redaction (see the comment on _PATTERNS)
 
 
 def test_install_puts_the_filter_on_every_root_handler() -> None:
@@ -485,10 +486,12 @@ Create `core/src/ops_core/redaction.py`:
 """Logging for every service: one `basicConfig` and a redaction filter on the handlers (T11 review note 4).
 
 What the filter removes is every shape a credential takes on its way through this system: `Authorization: Bearer`
-values, JWT-shaped strings (ID, access, refresh and logout tokens), the `code`, `state`, `session_state`,
-`logout_token`, `id_token_hint`, `refresh_token`, `access_token` and `id_token` parameters of OIDC exchanges,
-`password=` and `postgresql://user:password@` connection strings, `X-Ops-Invocation` handles (SA:566: never
-logged), `Cookie` headers and the three session cookies' values. It sits on the handlers, not on a logger: a
+and `Basic` values, JWT-shaped strings (ID, access, refresh and logout tokens), the `code`, `state`, `session_state`,
+`nonce`, `code_verifier`, `logout_token`, `id_token_hint`, `refresh_token`, `access_token`, `id_token` and
+`client_secret` parameters of OIDC exchanges (as `key=value`, `'key': 'value'` or `('key', 'value')`), `password=` and
+`postgresql://user:password@` connection strings, `X-Ops-Invocation` handles (SA:566: never logged) and `X-CSRF-Token`
+values, `Cookie` headers, the three session cookies' values and Keycloak's own cookies (`KEYCLOAK_*`,
+`AUTH_SESSION_ID`). It sits on the handlers, not on a logger: a
 filter on a parent logger never sees a child's records (spike §6). It also rewrites the formatted traceback and
 clears `exc_info`, because an exception's text bypasses `msg` and uvicorn logs "Exception in ASGI application"
 with the full chain (spike §6). T28 extends the same patterns to telemetry.
@@ -522,6 +525,7 @@ _PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
     (re.compile(r"(?i)((?:x-ops-invocation|x-csrf-token)['\"]?\s*[:=]\s*['\"]?)[^\s'\",;}]+"), rf"\1{REDACTED}"),
     (re.compile(r"(?i)(\bcookie['\"]?\s*:\s*)[^\r\n]+"), rf"\1{REDACTED}"),
     (re.compile(r"(\bops_(?:session|csrf|login)=)[^;\s\"'<>]+"), rf"\1{REDACTED}"),
+    (re.compile(r"(\b(?:KEYCLOAK_[A-Z_]+|AUTH_SESSION_ID|KC_[A-Z_]+)=)[^;\s\"'<>]+"), rf"\1{REDACTED}"),
 )
 
 
@@ -558,7 +562,7 @@ def install(level: int = logging.INFO) -> None:
             handler.addFilter(RedactingFilter())
 ```
 
-Entrypoints: every `uvicorn.Config(...)` in `api/src/ops_api/__main__.py`, `worker/src/ops_worker/main.py`, `mcp-read/src/ops_mcp_read/server.py:258`, `mcp-write/src/ops_mcp_write/server.py:140` and `incident-sim/src/ops_incident_sim/__main__.py` gains `log_config=None` (uvicorn's own dictConfig would give its loggers private handlers without the filter; with `None` they propagate to the root handler, spike §6). Each entrypoint calls `redaction.install()` before building its app: the API's and incident-sim's `if __name__ == "__main__":` blocks, mcp-read's and mcp-write's `serve()`, and the worker's `_main()` where it replaces `logging.basicConfig(...)` (`import logging` stays if still used by `log`). Comment each with one line: "the redaction filter must be on the root handler before the first log line (T11 review note 4)".
+Entrypoints: every `uvicorn.Config(...)` in `api/src/ops_api/__main__.py`, `worker/src/ops_worker/main.py`, `mcp-read/src/ops_mcp_read/server.py:258`, `mcp-write/src/ops_mcp_write/server.py:140` and `incident-sim/src/ops_incident_sim/__main__.py` gains `log_config=None` (uvicorn's own dictConfig would give its loggers private handlers without the filter; with `None` they propagate to the root handler, spike §6). Each entrypoint calls `redaction.install()` before building its app: the API's and incident-sim's `if __name__ == "__main__":` blocks, mcp-read's and mcp-write's `serve()`, and the worker's `_main()` where it replaces `logging.basicConfig(...)` (`import logging` stays if still used by `log`). Above each call put one comment line: `# The redaction filter must sit on the root handler before the first log line (T11 note 4).`
 
 Run: `uv run python -m pytest tests/plan_f/test_redaction.py -q` → PASS.
 
@@ -777,7 +781,9 @@ execution_grant (a lock needs UPDATE, which the matrix withholds), the sweeper h
 sessions, login_state and logout_jti (a DELETE with a WHERE reads the row), and login_state and logout_jti are rows
 the printed table lacks. `test_harness` exists only in the test profile: the main-line revisions grant it nothing;
 the testclock branch grants it schema USAGE, EXECUTE on current_time() and its test_clock cells.
-``` Run `uv run python -m pytest tests/plan_f/test_privileges_f.py tests/plan_e/test_privileges.py -q` → PASS; `tests/plan_e/test_transitions_table.py::test_the_newest_revision_of_every_cell_equals_the_live_matrix` → FAIL until Step 3 (expected).
+```
+
+Run `uv run python -m pytest tests/plan_f/test_privileges_f.py tests/plan_e/test_privileges.py -q` → PASS; `tests/plan_e/test_transitions_table.py::test_the_newest_revision_of_every_cell_equals_the_live_matrix` → FAIL until Step 3 (expected).
 
 - [ ] **Step 2: Write the failing live tests**
 
@@ -799,7 +805,7 @@ In `tests/e2e/test_migrations_and_persistence.py::test_r006_fresh_database_upgra
     assert "MEMBERSHIP_STALE" not in (await cur.fetchone())["body"]
 ```
 
-(so the order is: assert the columns, `testclock@base`, `0004_write_path_functions` with the three assertions, `0001_walking_skeleton` with the existing ones, then `migrate`).
+(so the order is: `testclock@base` as today, then the block above (its first line asserts the columns are still there, then downgrades to `0004_write_path_functions` and asserts three things), then `0001_walking_skeleton` with the existing assertions, then `migrate`).
 
 Append to `tests/e2e/test_definers_write_path_live.py`:
 
@@ -1436,6 +1442,15 @@ async def test_concurrent_checks_share_one_token_fetch(admin: tuple[AdminUsers, 
 Run: `uv run python -m pytest tests/plan_f/test_admin_users.py -q` → FAIL (no module).
 
 - [ ] **Step 2: The admin client**
+
+First, in `core/src/ops_core/tokens.py`, give `WorkloadTokenSource` the one method the admin client needs on a 401:
+
+```python
+    def invalidate(self) -> None:
+        """Drop the cached token so the next `token()` fetches one (a 401 from the realm means it is stale)."""
+        self._token = None
+```
+
 
 Create `core/src/ops_core/keycloak_admin.py`:
 
@@ -2591,7 +2606,7 @@ async def test_record_logout_is_atomic_and_replay_safe(app_conn: persistence.Con
                 "INSERT INTO app.logout_jti (jti, expires_at) VALUES (%s, %s) ON CONFLICT DO NOTHING", (jti, until)
             )
             await api_conn.execute("UPDATE app.sessions SET revoked_at = app.current_time() WHERE sid = %s", (sid,))
-        assert all(await db.live_session(k, idle_seconds=1800) is not None for k in keys[:2])
+        assert all([await db.live_session(k, idle_seconds=1800) is not None for k in keys[:2]])  # a list, see below
         assert await db.record_logout(jti, expires_at=until, sid=sid) == 2  # the rolled-back jti was not consumed
         assert await db.record_logout(jti, expires_at=until, sid=sid) is None  # replay
         assert await db.live_session(keys[2], idle_seconds=1800) is not None  # the other sid is untouched
@@ -3105,7 +3120,7 @@ Run: `uv run python -m pytest tests/plan_f/test_api_auth.py -q` → FAIL (`auth_
 
 - [ ] **Step 3: `app.py`**
 
-Rewrite `api/src/ops_api/app.py` as follows (the Plan D routes keep their bodies; what changes is marked). Module docstring: replace the last sentence ("Browser sessions, CSRF and Idempotency-Key are declared debt (T11/T12).") with
+Rewrite `api/src/ops_api/app.py` as follows (the Plan D routes keep their bodies; what changes is marked). Module docstring: replace the last sentence ("Browser sessions, CSRF and Idempotency-Key are declared debt (T11/T12).", which starts mid-line after "runs.") with the following, starting on a new line
 
 ```
 Browser sessions (T11): server-side rows, the cookie path beside the bearer path, CSRF and origin checks on browser
@@ -3648,7 +3663,7 @@ MIN_ABSENT_TO_REFUSE = 3  # a floor, so a one- or two-user realm can still lose 
 
 
 class MassDeactivation(Exception):
-    """Too many active subjects are missing from the listing at once (ruling 28): refused, nothing stamped."""
+    """Too many active subjects are missing from the listing at once (ruling 27): refused, nothing stamped."""
 
 
 def refuse(active: Iterable[UUID], users: Mapping[UUID, bool]) -> bool:
@@ -3779,7 +3794,7 @@ class Deps:
     issuer: str
     tick_seconds: float
     worker_name: str
-    allow_mass: bool = False  # the owner's one-shot override of the listing guard (ruling 28)
+    allow_mass: bool = False  # the owner's one-shot override of the listing guard (ruling 27)
     last_sync_at: float | None = None  # monotonic time of the last successful sync
 
 
@@ -4107,8 +4122,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx2
 
-FORM_ACTION = re.compile(r'<form[^>]*id="kc-form-login"[^>]*action="([^"]+)"', re.S)
-HIDDEN = re.compile(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', re.S)
+FORM_ACTION = re.compile(r'<form[^>]*id="kc-form-login"[^>]*action="([^"]+)"', re.DOTALL)
+HIDDEN = re.compile(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', re.DOTALL)
 API = "http://127.0.0.1:8000"
 ORIGIN = "http://localhost:8000"
 PUBLIC_HOST = "localhost:8000"
@@ -4233,6 +4248,7 @@ from tests.e2e.kc_browser import API, ORIGIN, Browser, TestAdmin
 from tests.plan_b.live import kc
 from tests.plan_d.test_tokens import PEM1
 
+pytestmark = pytest.mark.sweeper_stamps  # this module's skeleton sweeper stamps synced_at; the autouse fixture must not
 EVIDENCE = Path("reports/auth/t11-sessions-revocation.txt")
 ALEX = "2fc05986-c7ec-544c-b628-fdb112bbf18a"
 SAM = "03f7eb09-e18d-5f33-bf75-12c57d5aaa54"
@@ -4452,11 +4468,11 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
         assert admin.set_enabled(SAM, True) == 204  # the row is restored by the module fixture, after the sweeper stops
 ```
 
-Notes for the implementer: (a) the second login in the back-channel test reuses the first browser's Keycloak client so the SSO cookies ride along; `keycloak_login` returns on the 302 without touching the form, so the empty credentials are never sent; (b) `admin.set_enabled` is a partial `PUT` (`{"enabled": false}`): Keycloak 26.8 applies it and leaves the other fields (if the live run shows otherwise, send the `GET` representation back with `enabled` changed, and say so in the report); (c) `tests/plan_b/test_evidence.py:15` becomes `EVIDENCE_ROOTS = (Path("reports/bootstrap"), Path("reports/skeleton"), Path("reports/auth"))` and its docstring names the third root.
+Notes for the implementer: (a) the second login in the back-channel test reuses the first browser's Keycloak client so the SSO cookies ride along; `keycloak_login` returns on the 302 without touching the form, so the empty credentials are never sent; (b) `admin.set_enabled` is a partial `PUT` (`{"enabled": false}`): Keycloak 26.8 applies it and leaves the other fields (if the live run shows otherwise, send the `GET` representation back with `enabled` changed, and say so in the report); (c) `tests/plan_b/test_evidence.py:15` becomes `EVIDENCE_ROOTS = (Path("reports/bootstrap"), Path("reports/skeleton"), Path("reports/auth"))` and its module docstring gains the sentence "`reports/auth` (T11's session and revocation evidence) is scanned the same way." 
 
 - [ ] **Step 3: Run, record, commit**
 
-`OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_auth_live.py -q` → PASS (record the evidence file's lines in the report, the header plus seven: they hold status codes and counts only). Add `pytestmark = pytest.mark.sweeper_stamps` beside the module's imports (its skeleton's sweeper stamps; the fixture must not; the `STAMP["t0"]` poll above is what proves it). Then the whole live suite: `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → GREEN (sam is re-enabled and active again before the later modules run; the autouse fixture stamps `synced_at` for them); `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` → exit 0. `git checkout -- reports/bootstrap`; the R105 and auth evidence files are committed below.
+Format, lint and the character count on the two new modules and `tests/plan_b/test_evidence.py` first (`ruff format`, `ruff check --fix`; ruff's FURB167 wants `re.DOTALL`, already written). Then `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_auth_live.py -q` → PASS (record the evidence file's lines in the report, the header plus seven: they hold status codes and counts only). (The module-level `pytestmark` opts it out of the autouse stamp from its first run, so the `STAMP["t0"]` poll proves the sweeper, never the fixture.) Then the whole live suite: `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → GREEN (sam is re-enabled and active again before the later modules run; the autouse fixture stamps `synced_at` for them); `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` → exit 0. `git checkout -- reports/bootstrap`; the R105 and auth evidence files are committed below.
 
 ```bash
 git add tests/e2e/kc_browser.py tests/e2e/test_auth_live.py tests/plan_b/test_evidence.py reports/auth/t11-sessions-revocation.txt reports/skeleton/r105-walking-skeleton.txt
@@ -4485,7 +4501,7 @@ git commit -m "test(e2e): live login, CSRF, expiry, logout, back-channel logout,
 - Open items parked by the task reviews (from the SDD ledger `.superpowers/sdd/<plan>/progress.md`; in a literal run with no ledger write "none recorded").
 - The "Plan F executed" section goes after "Plan E executed" and before the debt lists; `<first>..<last>` are the first and last execution commits on `plan-f`.
 
-`README.md` status line: "browser login with server-side sessions, revocation and the membership sync (T11)", and a sentence that the dev realm now carries the Plan F clients (re-import on `up`). `STATUS.md`: a `## Update — Plan F executed (2026-10-09)` section in the style of the Plan E one (what shipped, what is deferred). `docs/ARCHITECTURE.md`: the sweeper row gains "runs (T11)"; the Browser-user row says "opaque server-side session cookie; CSRF token; no provider token". `docs/runbooks/dev-topology.md`: the host-processes table gains the sweeper; a paragraph on the login flow (login → Keycloak form → callback → cookies; logout; what the back-channel URL is and why it names the Docker host alias) and the warning that `ops-test-admin` exists in the dev realm only. `core/src/ops_core/privileges.py`, the `resolve_identity` row of `DEFINER_FUNCTIONS`: replace its end-of-line comment with a comment line above the row, `# resolve_identity: api only; the sweeper's sync writes memberships directly (Plan F ruling 13).` (an end-of-line comment would push the row past 120 characters).
+`README.md` status line: "browser login with server-side sessions, revocation and the membership sync (T11)", and a sentence that the dev realm now carries the Plan F clients (re-import on `up`). `STATUS.md`: a `## Update — Plan F executed (2026-10-09)` section in the style of the Plan E one (what shipped, what is deferred). `docs/ARCHITECTURE.md`: the sweeper row gains "runs (T11)"; the Browser-user row says "opaque server-side session cookie; CSRF token; no provider token". `docs/runbooks/dev-topology.md`: the host-processes table gains the sweeper; the database-roles paragraph's "`sweeper` and `operator` are reserved for their later owners" becomes "`sweeper` is the sweeper process's role (T11); `operator` stays reserved for T22"; a paragraph on the login flow (login → Keycloak form → callback → cookies; logout; what the back-channel URL is and why it names the Docker host alias) and the warning that `ops-test-admin` exists in the dev realm only. `docs/runbooks/walking-skeleton.md`: one line under step 3: "The dev database must carry revision 0005 (`skeleton.py migrate`) before `up`: the API and the sweeper refuse to start otherwise. The browser login walk-through is in `dev-topology.md`." `core/src/ops_core/privileges.py`, the `resolve_identity` row of `DEFINER_FUNCTIONS`: replace its end-of-line comment with a comment line above the row, `# resolve_identity: api only; the sweeper's sync writes memberships directly (Plan F ruling 13).` (an end-of-line comment would push the row past 120 characters).
 
 - [ ] **Step 3: Final gates**
 
