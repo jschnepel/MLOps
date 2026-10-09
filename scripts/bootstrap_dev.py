@@ -25,6 +25,7 @@ from pathlib import Path
 # Must equal the top-level `secrets:` keys of compose.yaml; tests/plan_b/test_bootstrap_dev.py enforces it.
 SECRET_NAMES: tuple[str, ...] = (
     "postgres_password",
+    "postgres_incident_password",
     "kc_bootstrap_admin_password",
     "kc_client_secret_ops_web",
     "kc_client_secret_ops_worker",

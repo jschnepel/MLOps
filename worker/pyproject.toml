@@ -3,7 +3,7 @@ name = "ops-worker"
 version = "0.0.1"
 description = "Run-lease worker: LangGraph orchestrator, LangChain draft node, MCP client"
 requires-python = ">=3.13"
-dependencies = ["ops-core"]
+dependencies = ["ops-core", "mcp==2.3.0", "uvicorn>=0.54,<1"]
 
 [tool.uv.sources]
 ops-core = { workspace = true }
