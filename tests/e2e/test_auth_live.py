@@ -128,7 +128,12 @@ async def test_login_csrf_idle_expiry_and_logout(
     expired = session.api.get("/api/v1/me")
     names = {c.name for c in session.api.cookies.jar}
     assert expired.status_code == 401 and "ops_session" not in names
-    lines.append(f"idle expiry: me={expired.status_code}")
+    # The expiry ended the Keycloak session too (final review I1): the next login asks for the password again
+    # instead of riding the 8 h SSO session.
+    relogin = browser.kc.get(browser.start_login(), headers=browser.kc_cookies())
+    relogin_form = "kc-form-login" in relogin.text
+    assert relogin.status_code == 200 and relogin_form
+    lines.append(f"idle expiry: me={expired.status_code}; keycloak shows the login form again: {relogin_form}")
     # Logout ends the application session and the Keycloak session: the next login shows the form again.
     session = browser.login("alex", secret("kc_persona_alex_password"))
     out = session.api.post("/auth/logout", headers=session.mutation_headers())
@@ -217,15 +222,27 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
     kcs = settings.keycloak()
     sam_token = kc.token_password(kcs.base_url, "ops-dev-direct", "sam", secret("kc_persona_sam_password"))
     headers = {"Authorization": f"Bearer {sam_token['access_token']}"}
+    body = {"expected_revision": 1, "expected_payload_sha256": "0" * 64, "decision": "approve"}
+    decision_url = f"/api/v1/proposals/{UUID(int=1)}/decisions"
     try:
-        disabled = admin.set_enabled(SAM, False)
-        assert disabled == 204 and admin.enabled(SAM) is False
         with httpx2.Client(base_url=API, timeout=15.0) as c:
+            # Positive controls (final review I2): the bearer token works and the enabled check passes for an enabled
+            # sam, so the later 401s are the disable and the sync, not a token that never worked.
+            me_enabled = c.get("/api/v1/me", headers=headers).status_code
+            decided_enabled = c.post(decision_url, headers=headers, json=body).status_code
+            assert me_enabled == 200 and decided_enabled == 404, (me_enabled, decided_enabled)
+            disabled = admin.set_enabled(SAM, False)
+            # Before the sync: the membership is still active, so a read still works (R013 attribution below).
+            me_unsynced = c.get("/api/v1/me", headers=headers).status_code
+            assert disabled == 204 and admin.enabled(SAM) is False
+            assert me_unsynced == 200, me_unsynced
             # A decision on a random proposal: the enabled check runs before any lookup, so a disabled user is 401,
             # never 404 (the check is a dependency, T11 review note 2).
-            body = {"expected_revision": 1, "expected_payload_sha256": "0" * 64, "decision": "approve"}
-            decided = c.post(f"/api/v1/proposals/{UUID(int=1)}/decisions", headers=headers, json=body)
-            assert decided.status_code == 401, decided.status_code
+            decided = c.post(decision_url, headers=headers, json=body)
+            decided_code, decided_body = decided.status_code, decided.json()
+            assert decided_code == 401, decided_code
+            refusal = (decided_body["code"], decided_body["message"])
+            assert refusal == ("UNAUTHENTICATED", "identity disabled"), refusal
             started = time.monotonic()
             deadline = started + 75
             while time.monotonic() < deadline:
@@ -244,7 +261,8 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
             me = c.get("/api/v1/me", headers=headers)
             assert me.status_code == 401  # no active membership: the session/token is otherwise valid (R013)
             lines.append(
-                f"disabled user: decision={decided.status_code} synced_after={synced_after}s me={me.status_code}"
+                f"disabled user: before me={me_enabled} decision={decided_enabled}; after disable me={me_unsynced}"
+                f" decision={decided_code} ({refusal[1]}); synced_after={synced_after}s me={me.status_code}"
             )
     finally:
         # Re-enable unconditionally and record the status; an assert here would hide the original failure. The row is

@@ -1,9 +1,9 @@
-T11 sessions and revocation — 2026-10-09T11:45:35Z
+T11 sessions and revocation — 2026-10-09T12:22:32Z
 login: me=200 csrf_refusals=[403, 403, 403, 403] mutation_with_token=201
-idle expiry: me=401
+idle expiry: me=401; keycloak shows the login form again: True
 logout: 204; keycloak shows the login form again: True
 back-channel logout: sibling me=401, jti rows +1, sessions revoked 2
 sweeper re-stamped synced_at after 25.2s
 forged logout token: 400
-disabled user: decision=401 synced_after=23.2s me=401
+disabled user: before me=200 decision=404; after disable me=200 decision=401 (identity disabled); synced_after=23.2s me=401
 sam re-enabled at keycloak: 204

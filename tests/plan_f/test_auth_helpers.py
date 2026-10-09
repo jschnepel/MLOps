@@ -2,6 +2,9 @@
 (BUILD_SPEC §9 origin verification; spike §4 for what browsers and TestClient send), discovery checks (ruling 25),
 the sealed refresh token (BUILD_SPEC §9 provider tokens at rest) and the cookie attributes (ruling 6)."""
 
+from urllib.parse import parse_qs, urlsplit
+
+import httpx2
 import pytest
 from ops_api import auth
 from ops_core import settings
@@ -79,12 +82,37 @@ def test_discovery_is_checked_and_rewritten_for_server_use() -> None:
         {**DOC, "code_challenge_methods_supported": ["plain"]},
         {**DOC, "code_challenge_methods_supported": "S256x"},
         {**DOC, "backchannel_logout_session_supported": "false"},
-        {**DOC, "token_endpoint": "http://evil.example/realms/ops-dev/protocol/openid-connect/token"},
         {**DOC, "authorization_endpoint": "http://127.0.0.1:18080/realms/ops-dev/protocol/openid-connect/auth"},
         {k: v for k, v in DOC.items() if k != "end_session_endpoint"},
     ):
         with pytest.raises(ValueError):
             auth.Discovery.from_document(bad, KC)
+
+
+@pytest.mark.parametrize("name", ["authorization_endpoint", "token_endpoint", "end_session_endpoint", "jwks_uri"])
+def test_discovery_refuses_a_third_host_for_every_endpoint(name: str) -> None:
+    path = str(DOC[name]).removeprefix("http://localhost:18080")
+    with pytest.raises(ValueError):
+        auth.Discovery.from_document({**DOC, name: "http://evil.example" + path}, KC)
+
+
+@pytest.mark.asyncio
+async def test_the_authorization_url_asks_for_the_idle_limit_as_max_age() -> None:
+    """Final review I1: Keycloak re-prompts when its SSO authentication is older than `max_age`."""
+    async with httpx2.AsyncClient() as http:
+        oidc = auth.AuthlibOidc(
+            discovery=auth.Discovery.from_document(DOC, KC),
+            client_secret="unit-test-secret",
+            redirect_uri="http://localhost:8000/auth/callback",
+            http=http,
+            max_age=1800,
+        )
+        try:
+            url = oidc.authorization_url(state="s", nonce="n", code_verifier="v" * 43)
+        finally:
+            await oidc.aclose()
+    query = parse_qs(urlsplit(url).query)
+    assert query["max_age"] == ["1800"] and query["code_challenge_method"] == ["S256"] and query["nonce"] == ["n"]
 
 
 def test_tokens_hide_secrets_in_repr() -> None:

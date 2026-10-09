@@ -196,6 +196,17 @@ class FakeStore:
         row: SessionRow = entry["row"]
         return row
 
+    async def expire_session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
+        entry = self.sessions.get(session_sha256)
+        now = self.clock()
+        if entry is None or entry["revoked"]:
+            return None
+        if entry["expires"] > now and entry["last_seen"] > now - idle_seconds:
+            return None  # still live: not this method's to revoke
+        entry["revoked"] = True
+        row: SessionRow = entry["row"]
+        return row
+
     async def record_logout(self, jti: str, *, expires_at: datetime, sid: str) -> int | None:
         if jti in self.jtis:
             return None

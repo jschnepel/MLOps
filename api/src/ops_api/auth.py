@@ -15,6 +15,7 @@ import base64
 import hashlib
 import hmac
 import secrets
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -171,12 +172,15 @@ class OidcClient(Protocol):
 
 
 class AuthlibOidc:
-    """The production client: authlib for the flow, one plain httpx2 client for the end-session call."""
+    """The production client: authlib for the flow, one plain httpx2 client for the end-session call. `max_age` is
+    the idle limit in seconds: an SSO authentication older than that makes Keycloak ask for the password again
+    (final review I1), so the 8 h provider session cannot silently undo the 30-minute idle expiry."""
 
     def __init__(
-        self, *, discovery: Discovery, client_secret: str, redirect_uri: str, http: httpx2.AsyncClient
+        self, *, discovery: Discovery, client_secret: str, redirect_uri: str, http: httpx2.AsyncClient, max_age: int
     ) -> None:
         self._discovery = discovery
+        self._max_age = max_age
         self._secret = client_secret
         self._redirect_uri = redirect_uri
         self._http = http
@@ -190,9 +194,14 @@ class AuthlibOidc:
         )
 
     def authorization_url(self, *, state: str, nonce: str, code_verifier: str) -> str:
-        """The URL the browser is sent to (S256 challenge computed by authlib from the verifier)."""
+        """The URL the browser is sent to (S256 challenge computed by authlib from the verifier, `max_age` the idle
+        limit)."""
         url, _ = self._client.create_authorization_url(
-            self._discovery.authorization_endpoint, state=state, nonce=nonce, code_verifier=code_verifier
+            self._discovery.authorization_endpoint,
+            state=state,
+            nonce=nonce,
+            code_verifier=code_verifier,
+            max_age=self._max_age,
         )
         return str(url)
 
@@ -267,16 +276,18 @@ class IdTokens(Protocol):
 
 class IdTokenVerifier:
     """BUILD_SPEC §9's checks on the ID token: signature, RS256 only, iss, aud = ops-web, azp = ops-web, exp with
-    zero leeway, iat, nonce (hash-compared), sid present, claim typ ID, sub a UUID."""
+    zero leeway, iat, nonce (hash-compared), sid present, claim typ ID, sub a UUID, and an `auth_time` no older than
+    `max_age` seconds (the idle limit the authorization request asked for; final review I1)."""
 
-    def __init__(self, *, issuer: str, jwks_url: str) -> None:
+    def __init__(self, *, issuer: str, jwks_url: str, max_age: int) -> None:
         self.verifier = TokenVerifier(
             issuer=issuer,
             audience=CLIENT_ID,
             allowed_azp=frozenset({CLIENT_ID}),
             jwks_url=jwks_url,
-            required_claims=("exp", "iss", "aud", "sub", "iat", "nonce", "sid"),
+            required_claims=("exp", "iss", "aud", "sub", "iat", "nonce", "sid", "auth_time"),
         )
+        self._max_age = max_age
 
     @property
     def ready(self) -> bool:
@@ -301,6 +312,13 @@ class IdTokenVerifier:
             raise TokenRejected("not an ID token")
         if not isinstance(sid, str) or not sid:
             raise TokenRejected("id token has no session id")
+        # Keycloak honours max_age by asking for the password again, so an older auth_time means it did not; the
+        # comparison has zero leeway, like every other time check here.
+        auth_time = claims.get("auth_time")
+        if not isinstance(auth_time, int) or isinstance(auth_time, bool):
+            raise TokenRejected("id token auth_time is not a number")
+        if time.time() - auth_time > self._max_age:
+            raise TokenRejected("authentication is older than the idle limit")
         try:
             subject = UUID(principal.subject)
         except ValueError as exc:

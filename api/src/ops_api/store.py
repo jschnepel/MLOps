@@ -129,7 +129,7 @@ def map_refusal(exc: persistence.Refused) -> Exception:
 
 
 class Store(Protocol):
-    """The seven operations of T08 plus T11's six session operations; the unit tests fake it, `DbStore` implements
+    """The seven operations of T08 plus T11's seven session operations; the unit tests fake it, `DbStore` implements
     it."""
 
     async def membership(self, issuer: str, subject: UUID) -> Membership | None:
@@ -201,6 +201,10 @@ class Store(Protocol):
 
     async def revoke_session(self, session_sha256: str) -> SessionRow | None:
         """Revoke one session; the row it was (for the sealed refresh token), or None if none was live."""
+        ...
+
+    async def expire_session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
+        """Revoke a session that is past either limit; the row it was (for the sealed refresh token), or None."""
         ...
 
     async def record_logout(self, jti: str, *, expires_at: datetime, sid: str) -> int | None:
@@ -425,6 +429,21 @@ class DbStore:
                 " RETURNING session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256,"
                 " refresh_token_enc",
                 (session_sha256,),
+            )
+            row = await cur.fetchone()
+        return None if row is None else _session_row(row)
+
+    async def expire_session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
+        """Revoke a session the limits have ended (final review I1): the same clock as `live_session`, the inverse
+        of its limits, so the caller can end the provider session too. Only the first caller gets the row."""
+        async with self.session.unit() as conn:
+            cur = await conn.execute(
+                "UPDATE app.sessions SET revoked_at = app.current_time()"
+                " WHERE session_sha256 = %s AND revoked_at IS NULL AND (expires_at <= app.current_time()"
+                " OR last_seen_at <= app.current_time() - make_interval(secs => %s))"
+                " RETURNING session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256,"
+                " refresh_token_enc",
+                (session_sha256, idle_seconds),
             )
             row = await cur.fetchone()
         return None if row is None else _session_row(row)

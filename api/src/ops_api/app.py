@@ -30,7 +30,7 @@ from ops_core.keycloak_admin import AdminUnavailable
 from ops_core.outcomes import EventRuleViolation
 from ops_core.settings import Role
 from ops_core.states import IllegalTransition
-from ops_core.tokens import Principal, TokenRejected, TokenVerifier
+from ops_core.tokens import Principal, SigningKeysUnavailable, TokenRejected, TokenVerifier
 from pydantic import ValidationError
 
 from ops_api import auth as au
@@ -166,6 +166,14 @@ def create_app(
             raise ApiError(401, ErrorCode.UNAUTHENTICATED, "a session or bearer token is required")
         row = await store.live_session(au.digest(raw), idle_seconds=deps.sessions.idle_seconds)
         if row is None:
+            # A session the limits ended also ends the provider session (final review I1): otherwise the next login
+            # rides Keycloak's 8 h SSO session without a password. Only the request that revokes it gets the row.
+            expired = await store.expire_session(au.digest(raw), idle_seconds=deps.sessions.idle_seconds)
+            if expired is not None:
+                try:
+                    await deps.oidc.end_session(deps.box.open(expired.refresh_token_enc))
+                except (ValueError, ExchangeUnavailable) as exc:
+                    log.info("provider session not ended (%s); the local session is expired", exc.__class__.__name__)
             raise ApiError(401, ErrorCode.UNAUTHENTICATED, "session expired or unknown", clear_session=True)
         # Current membership on every request (BUILD_SPEC §9, R013): the session carries no authority of its own.
         membership = await store.membership(row.issuer, row.subject)
@@ -323,6 +331,9 @@ def create_app(
             raise ApiError(503, ErrorCode.UNAVAILABLE, "identity provider unavailable", clear_login=True) from exc
         try:
             claims = await deps.id_tokens.verify(tokens.id_token, nonce_sha256=pending.nonce_sha256)
+        except SigningKeysUnavailable as exc:  # the provider is down, not the token at fault (final review M5)
+            log.warning("signing keys unavailable at the callback")
+            raise ApiError(503, ErrorCode.UNAVAILABLE, "identity provider unavailable", clear_login=True) from exc
         except TokenRejected as exc:
             raise ApiError(401, ErrorCode.UNAUTHENTICATED, "id token rejected", clear_login=True) from exc
         membership = await store.membership(issuer, claims.subject)
@@ -368,8 +379,9 @@ def create_app(
 
     @app.post("/auth/backchannel-logout")
     async def backchannel_logout(request: Request) -> Response:
-        """OIDC Back-Channel Logout 1.0 receiver (SA:541): validate, record the jti, revoke by sid; 400 on any
-        failure. Exempt from CSRF and Idempotency-Key (no session, no caller to replay for; T11 review note 3)."""
+        """OIDC Back-Channel Logout 1.0 receiver (SA:541): validate, record the jti, revoke by sid; 400 for a bad or
+        replayed token, a retryable 503 when the keys or the store are unavailable (erratum 34). Exempt from CSRF and
+        Idempotency-Key (no session, no caller to replay for; T11 review note 3)."""
         store: st.Store = request.app.state.store
         deps: AuthDeps = request.app.state.auth
         try:
@@ -381,11 +393,20 @@ def create_app(
             raise ApiError(400, ErrorCode.INVALID_INPUT, "logout_token is required")
         try:
             claims = await deps.logout_tokens.verify(token)
+        except SigningKeysUnavailable as exc:
+            log.warning("back-channel logout not applied: signing keys unavailable")
+            raise ApiError(503, ErrorCode.UNAVAILABLE, "identity provider unavailable") from exc
         except TokenRejected as exc:
             log.info("back-channel logout token rejected: %s", exc)
             raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token rejected") from exc
         keep_until = datetime.fromtimestamp(claims.expires_at, UTC) + timedelta(days=1)
-        revoked = await store.record_logout(claims.jti, expires_at=keep_until, sid=claims.sid)
+        try:
+            revoked = await store.record_logout(claims.jti, expires_at=keep_until, sid=claims.sid)
+        except psycopg.Error as exc:
+            # Keycloak never retries, so this line is the operator's only trace of a logout that did not take effect
+            # (final review M4); the class name only, never the token. The 503 handler answers.
+            log.warning("back-channel logout not applied: %s", exc.__class__.__name__)
+            raise
         if revoked is None:
             raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token replayed")
         log.info("back-channel logout revoked %d session(s)", revoked)
@@ -562,11 +583,12 @@ def production_app() -> FastAPI:
                 client_secret=settings.read_secret("kc_client_secret_ops_web"),
                 redirect_uri=sess.redirect_uri,
                 http=http,
+                max_age=sess.idle_seconds,
             )
             closers.append(oidc.aclose)
             return AuthDeps(
                 oidc=oidc,
-                id_tokens=au.IdTokenVerifier(issuer=kc.issuer, jwks_url=discovery.jwks_uri),
+                id_tokens=au.IdTokenVerifier(issuer=kc.issuer, jwks_url=discovery.jwks_uri, max_age=sess.idle_seconds),
                 logout_tokens=au.LogoutTokenVerifier(issuer=kc.issuer, jwks_url=discovery.jwks_uri),
                 admin=admin,
                 box=au.TokenBox(settings.read_secret("api_session_key")),

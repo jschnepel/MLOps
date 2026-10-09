@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 from ops_api.app import create_app
 from ops_api.auth import IdClaims, LogoutClaims, Tokens
+from ops_core.tokens import SigningKeysUnavailable
 
 from tests.plan_d.test_api import ALEX, ALPHA, BETA, DUAL, SAM, SHA, FakeStore, StubVerifier, auth, seed_proposal
 from tests.plan_f.auth_fakes import ISSUER, ORIGIN, fake_auth, login_as
@@ -43,6 +44,7 @@ def test_login_redirect_shape(world) -> None:
     assert not fake.logins and "ops_login" not in c.cookies  # nothing started on the wrong host
     r = c.get("/auth/login", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"].startswith("https://idp.test/auth?")
+    assert "max_age=1800" in r.headers["location"]  # the idle limit reaches the provider (final review I1)
     assert r.headers["cache-control"] == "no-store"
     cookie = next(v for k, v in r.headers.multi_items() if k == "set-cookie" and v.startswith("ops_login="))
     assert "HttpOnly" in cookie and "Max-Age=600" in cookie
@@ -151,10 +153,36 @@ def test_session_expiry_revocation_and_logout(world) -> None:
     csrf = login_as(c, deps, ALEX)
     assert c.post("/auth/logout").status_code == 403  # a mutation: CSRF and Origin apply
     out = c.post("/auth/logout", headers=browser(csrf))
-    assert out.status_code == 204 and deps.oidc.ended == ["refresh-code-3"]  # the sealed refresh token was opened once
+    # The idle- and absolute-expired sessions ended their provider sessions too (final review I1); the logout
+    # opened the third session's sealed refresh token once.
+    assert out.status_code == 204 and deps.oidc.ended == ["refresh-code-1", "refresh-code-2", "refresh-code-3"]
     assert c.get("/api/v1/me").status_code == 401 and "ops_session" not in c.cookies
     assert c.post("/auth/logout", headers=browser(csrf)).status_code == 401  # idempotent: nothing to log out
     assert c.post("/auth/logout", headers=auth("alex")).status_code == 403  # a bearer caller has no session
+
+
+def test_an_idle_expired_session_ends_the_provider_session_once(world) -> None:
+    """Final review I1: otherwise the next /auth/login rides Keycloak's 8 h SSO session without a password."""
+    c, fake, deps = world
+    login_as(c, deps, ALEX)
+    key = next(iter(fake.sessions))
+    fake.sessions[key]["last_seen"] -= 1801
+    cookie = c.cookies.get("ops_session")
+    first = c.get("/api/v1/me")
+    assert first.status_code == 401 and deps.oidc.ended == ["refresh-code-1"]
+    assert fake.sessions[key]["revoked"] is True
+    c.cookies.set("ops_session", cookie)  # the old cookie presented once more
+    again = c.get("/api/v1/me")
+    assert again.status_code == 401 and deps.oidc.ended == ["refresh-code-1"]  # not ended a second time
+
+
+def test_an_expired_session_still_401s_when_the_provider_is_down(world, caplog) -> None:
+    caplog.set_level(logging.INFO, logger="ops_api")
+    c, fake, deps = world
+    login_as(c, deps, ALEX)
+    fake.sessions[next(iter(fake.sessions))]["last_seen"] -= 1801
+    deps.oidc.unavailable = True
+    assert c.get("/api/v1/me").status_code == 401 and "ExchangeUnavailable" in caplog.text
 
 
 def test_logout_survives_a_provider_outage(world) -> None:
@@ -222,6 +250,41 @@ def test_backchannel_logout_store_failure_is_a_503_and_the_session_survives(worl
     # Keycloak never retries (spike §2): the 503 is honest, the session lives on until its own limits (ruling 16).
     assert r.status_code == 503 and r.json()["retryable"] is True
     assert c.get("/api/v1/me").status_code == 200 and "j-2" not in fake.jtis
+
+
+def test_backchannel_logout_store_failure_is_logged_without_the_token(world, monkeypatch, caplog) -> None:
+    caplog.set_level(logging.INFO, logger="ops_api")
+    c, fake, deps = world
+    exp = int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())
+    deps.logout_tokens.tokens["lt-secret-9c1e"] = LogoutClaims(sid="s", subject=ALEX, jti="j-3", expires_at=exp)
+
+    async def broken(jti: str, *, expires_at: datetime, sid: str) -> int | None:
+        raise psycopg.OperationalError("connection lost")
+
+    monkeypatch.setattr(fake, "record_logout", broken)
+    assert c.post("/auth/backchannel-logout", data={"logout_token": "lt-secret-9c1e"}).status_code == 503
+    warned = [r for r in caplog.records if r.levelno == logging.WARNING and "back-channel" in r.getMessage()]
+    assert len(warned) == 1 and "OperationalError" in warned[0].getMessage()
+    assert "lt-secret-9c1e" not in caplog.text
+
+
+def test_a_jwks_outage_is_a_503_at_the_callback_and_the_backchannel(world, monkeypatch) -> None:
+    """Final review M5: an unreachable JWKS is the provider's outage, not a bad token."""
+    c, fake, deps = world
+
+    async def no_keys(*_: Any, **__: Any) -> Any:
+        raise SigningKeysUnavailable("signing keys unavailable")
+
+    started = c.get("/auth/login", follow_redirects=False)
+    state = started.headers["location"].split("state=")[1].split("&")[0]
+    deps.oidc.codes["good"] = Tokens("id-good", "refresh-good")
+    monkeypatch.setattr(deps.id_tokens, "verify", no_keys)
+    r = c.get("/auth/callback", params={"code": "good", "state": state, "iss": ISSUER}, follow_redirects=False)
+    assert r.status_code == 503 and r.json()["code"] == "UNAVAILABLE" and r.json()["retryable"] is True
+    assert "ops_login" not in c.cookies and not fake.sessions
+    monkeypatch.setattr(deps.logout_tokens, "verify", no_keys)
+    r = c.post("/auth/backchannel-logout", data={"logout_token": "lt"})
+    assert r.status_code == 503 and r.json()["retryable"] is True and not fake.jtis
 
 
 def test_disabled_user_is_401_and_the_session_is_revoked(world) -> None:

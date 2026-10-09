@@ -34,6 +34,12 @@ class UnknownSigningKey(TokenRejected):
     """The token names a `kid` this server has no key for; the only rejection a JWKS refresh can cure."""
 
 
+class SigningKeysUnavailable(TokenRejected):
+    """The realm's JWKS could not be fetched: the provider is down, not the token at fault. A TokenRejected so a
+    caller that answers 401 for every rejection keeps doing so; the browser callback and the back-channel endpoint
+    catch it first and answer a retryable 503 (final review M5)."""
+
+
 class WrongAudience(TokenRejected):
     """Signature, issuer and expiry passed; the token is simply another server's (aud or azp). Servers that answer
     401 for every TokenRejected keep doing so; incident-sim turns this one into 403 (T10 DoD 2)."""
@@ -125,7 +131,7 @@ class TokenVerifier:
         try:
             document = await (fetch or self.fetch)(self._jwks_url)
         except (OSError, httpx2.HTTPError, ValueError) as exc:
-            raise TokenRejected("signing keys unavailable") from exc
+            raise SigningKeysUnavailable("signing keys unavailable") from exc
         self.install_keys(document)
 
     def verify(self, token: str) -> Principal:

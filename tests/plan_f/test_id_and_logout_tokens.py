@@ -21,6 +21,7 @@ from tests.plan_d.test_tokens import ISSUER, JWK1, PEM1, PEM2
 
 ALEX = "2fc05986-c7ec-544c-b628-fdb112bbf18a"
 NONCE = "n-123"
+MAX_AGE = 1800  # the idle limit (BUILD_SPEC §9)
 HS_KEY = "k" * 32  # a full-length HMAC key: the test proves the algorithm pin, not a weak key
 
 
@@ -66,7 +67,7 @@ def logout_token(pem: bytes = PEM1, kid: str = "k1", headers: dict[str, Any] | N
 
 @pytest.fixture
 def ids() -> IdTokenVerifier:
-    v = IdTokenVerifier(issuer=ISSUER, jwks_url="unused")
+    v = IdTokenVerifier(issuer=ISSUER, jwks_url="unused", max_age=MAX_AGE)
     v.verifier.install_keys({"keys": [JWK1]})
     return v
 
@@ -114,6 +115,20 @@ async def test_id_token_accepted_with_the_right_nonce(ids: IdTokenVerifier) -> N
 async def test_id_token_negatives(ids: IdTokenVerifier, token: str) -> None:
     with pytest.raises(TokenRejected):
         await ids.verify(token, nonce_sha256=digest(NONCE))
+
+
+@pytest.mark.asyncio
+async def test_id_token_auth_time_is_bounded_by_the_idle_limit(ids: IdTokenVerifier) -> None:
+    """Final review I1: a token minted from an SSO authentication older than max_age is refused (zero leeway)."""
+    now = int(time.time())
+    with pytest.raises(TokenRejected):
+        await ids.verify(id_token(auth_time=None), nonce_sha256=digest(NONCE))
+    with pytest.raises(TokenRejected):
+        await ids.verify(id_token(auth_time=str(now)), nonce_sha256=digest(NONCE))
+    with pytest.raises(TokenRejected, match="older than the idle limit"):
+        await ids.verify(id_token(auth_time=now - MAX_AGE - 1), nonce_sha256=digest(NONCE))
+    claims = await ids.verify(id_token(auth_time=now - 10), nonce_sha256=digest(NONCE))
+    assert claims.subject == UUID(ALEX)
 
 
 @pytest.mark.asyncio
