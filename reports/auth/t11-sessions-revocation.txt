@@ -1,0 +1,8 @@
+T11 sessions and revocation — 2026-10-09T11:39:34Z
+login: me=200 csrf_refusals=[403, 403, 403, 403] mutation_with_token=201
+idle expiry: me=401
+logout: 204; keycloak shows the login form again: True
+back-channel logout: sibling me=401, jti rows +1, sessions revoked 2
+sweeper re-stamped synced_at after 25.2s
+forged logout token: 400
+disabled user: decision=401 synced_after=24.2s me=401

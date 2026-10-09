@@ -2,6 +2,7 @@
 
 Locally the generated secret values are read from the secrets directory (`.env`'s OPS_SECRETS_DIR, else the default)
 and must not appear in any evidence file; in CI no secrets exist, so only the JWT-shape check applies.
+`reports/auth` (T11's session and revocation evidence) is scanned the same way.
 """
 
 import re
@@ -12,7 +13,7 @@ import pytest
 
 from scripts.bootstrap_dev import secrets_dir
 
-EVIDENCE_ROOTS = (Path("reports/bootstrap"), Path("reports/skeleton"))
+EVIDENCE_ROOTS = (Path("reports/bootstrap"), Path("reports/skeleton"), Path("reports/auth"))
 JWT = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
 
 
