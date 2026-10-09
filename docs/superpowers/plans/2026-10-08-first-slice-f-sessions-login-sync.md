@@ -4,7 +4,7 @@
 
 **Goal:** A browser logs in through Keycloak with the authorization-code flow and PKCE, gets an opaque server-side session in PostgreSQL (hashed ID, HttpOnly cookie, CSRF token, origin check, 30-minute idle and 8-hour absolute limits, rotation at login), loses it on logout, on idle expiry, on a Keycloak back-channel logout (hand-written endpoint with a durable `jti` replay store) and on membership loss; every decision-class mutation first asks Keycloak's admin API whether the user is still enabled (2 s budget, cached service-account token, fail closed with a retryable 503); a sixth process, the sweeper, deactivates the memberships of disabled or deleted users every minute and grants refuse when the sync is older than 120 s; and a logging redaction filter keeps codes, tokens, cookies, handles and connection strings out of every service's log (T11; R011, R012, R013, R086; T11 review note 4).
 
-**Architecture:** Revision `0005_sessions_login_logout` on the `app` main line completes the `sessions` table (Keycloak `sid`, an encrypted provider refresh token, the username), adds the two RLS-free tables the login and the back-channel endpoint need (`login_state` for the pre-login OIDC state, `logout_jti` for replay), gives the sweeper SELECT on the rows it must delete (erratum 25), and re-creates `grant_execution` with the staleness check. The API gains four routes (`GET /auth/login`, `GET /auth/callback`, `POST /auth/logout`, `POST /auth/backchannel-logout`), an identity dependency that accepts either the existing bearer path or the new cookie path, a CSRF-and-origin dependency on every browser mutation, and an admin-API enabled check on the decision route. authlib's httpx client builds the authorization URL and exchanges the code (`code_challenge_method=S256`, our own `state`, `nonce` and `code_verifier` stored hashed or sealed in `login_state`); the ID token and the logout token are verified by `ops_core.tokens.TokenVerifier`, which already pins RS256, requires `aud` and uses zero leeway, extended with the claims each token type requires. `ops_core.keycloak_admin.AdminUsers` is the one client for the admin API (keep-alive, `127.0.0.1`, `asyncio.wait_for` budget), shared by the API's enabled check and the sweeper's sync. The sweeper (`sweeper/`, role `sweeper`) runs the `sync_memberships` maintenance job every minute as direct column updates under `sweeper_all` (the definer shape in SA:470 cannot write under SA:412, spike §5), purges expired sessions, login state and `jti` rows, and reports ready only while its last sync is fresh. `ops_core.logging.install()` configures every service's logging with a handler-level redaction filter.
+**Architecture:** Revision `0005_sessions_login_logout` on the `app` main line completes the `sessions` table (Keycloak `sid`, an encrypted provider refresh token, the username), adds the two RLS-free tables the login and the back-channel endpoint need (`login_state` for the pre-login OIDC state, `logout_jti` for replay), gives the sweeper SELECT on the rows it must delete (erratum 25), and re-creates `grant_execution` with the staleness check. The API gains four routes (`GET /auth/login`, `GET /auth/callback`, `POST /auth/logout`, `POST /auth/backchannel-logout`), an identity dependency that accepts either the existing bearer path or the new cookie path, a CSRF-and-origin dependency on every browser mutation, and an admin-API enabled check on the decision route. authlib's httpx client builds the authorization URL and exchanges the code (`code_challenge_method=S256`, our own `state` and `nonce` stored hashed and the `code_verifier` stored as is in `login_state`); the ID token and the logout token are verified by `ops_core.tokens.TokenVerifier`, which already pins RS256, requires `aud` and uses zero leeway, extended with the claims each token type requires. `ops_core.keycloak_admin.AdminUsers` is the one client for the admin API (keep-alive, `127.0.0.1`, `asyncio.wait_for` budget), shared by the API's enabled check and the sweeper's sync. The sweeper (`sweeper/`, role `sweeper`) runs the `sync_memberships` maintenance job every minute as direct column updates under `sweeper_all` (the definer shape in SA:470 cannot write under SA:412, spike §5), purges expired sessions, login state and `jti` rows, and reports ready only while its last sync is fresh. `ops_core.redaction.install()` configures every service's logging with a handler-level redaction filter.
 
 **Tech Stack:** as Plan E plus `authlib` (AM-30 lists 1.8.0; the exact pin lands in `uv.lock`; it brings `joserfc`) and an explicit `cryptography` dependency for the API (already locked through `pyjwt[crypto]`; Fernet seals the refresh token). Keycloak 26.8.0 and PostgreSQL 17.11 from the Plan B dev stack; the realm export gains the back-channel logout attributes of `ops-web` and one dev/test-only admin client.
 
@@ -17,14 +17,14 @@
 - **Secrets** live only as files under `OPS_SECRETS_DIR` (`kc_client_secret_ops_web`, `kc_client_secret_ops_view_users`, the new `kc_client_secret_ops_test_admin` and `api_session_key`), declared in `SECRET_NAMES` and in compose's top-level `secrets:`. No secret, token, authorization code, session ID, CSRF token, cookie value, refresh token or logout token in an environment variable, URL the API builds, log line, exception message, assertion operand, evidence file, migration string, report or review. Live tests bind responses before asserting and never put a header or cookie in an assert operand (Plan B's lesson).
 - **Every redirect target is exact.** The only redirect URI is `{OPS_PUBLIC_BASE_URL}/auth/callback` with the base `http://localhost:8000` in dev (`127.0.0.1` is refused by Keycloak, spike §1); the only post-logout target is `{OPS_PUBLIC_BASE_URL}/`; the API never redirects to a URL taken from a request parameter.
 - **Server-to-server calls to Keycloak use `settings.keycloak().server_url`** (`127.0.0.1`, keep-alive): `localhost` resolves to `::1` first on this machine and costs about 2 s per new connection, which alone would exhaust the admin check's 2 s budget (spike §3). Browser-facing URLs (the authorization endpoint) keep `localhost`, the registered host. `iss` is identical either way (`KC_HOSTNAME`).
-- **Clock.** Every session, login-state and `jti` comparison in SQL uses `app.current_time()` (SA:157, R126); column defaults stay `now()`. Python compares nothing about expiry itself: a session is live only if the one `UPDATE … RETURNING` in `DbStore.session` returned a row.
+- **Clock.** Every session, login-state and `jti` comparison in SQL uses `app.current_time()` (SA:157, R126); column defaults stay `now()`. Python compares nothing about expiry itself: a session is live only if the one `UPDATE … RETURNING` in `DbStore.live_session` returned a row.
 - **One string per function**, binds and the ISC004 rule exactly as in Plan E (a colon after a quote is a bind; `tests/plan_e/test_transitions_table.py` scans every revision, including 0005).
 - **Loopback only, async only, autocommit connections with explicit units** (Plan D rulings 15, 23, 24): unchanged. The sweeper follows the worker's process shape (one loop connection, one probe connection, uvicorn health server on a selector loop).
 - **Live tests never touch the dev databases**, run against `ops_test`/`incident_test` under `PROFILE=test`, and restore every Keycloak user they disable (`finally`); they never delete a realm object. The Keycloak container reaches the host API at `host.docker.internal:8000` (spike §2); nothing on the host routes through that name (T05 review note).
 - **Tests:** unit tests in `tests/plan_f/` (DB-free; the API tests use `TestClient` with a fake store and a fake OIDC client; token tests sign with a throw-away RSA key), live tests in `tests/e2e/` gated by `OPS_LIVE=1`; `tests/plan_d/test_api.py` and `tests/plan_b/test_realm_template.py` are updated where an interface they pin changes, never deleted. No xfail or skip except the live gate (BS:597).
 - **Comments** per `docs/CODE_COMMENTS.md`; ≤120 characters per line (count characters, not bytes: `python -c "import sys;[print(p,i+1) for p in sys.argv[1:] for i,l in enumerate(open(p,encoding='utf-8')) if len(l.rstrip('\n'))>120]" <files>`); no `type: ignore`; ruff + mypy strict clean; UTF-8 without BOM, LF.
 - **Gates:** `uv run ruff format <files> && uv run ruff check --fix <files>` (then `uv run ruff check --select ISC004 --fix --unsafe-fixes <revision>` after writing a revision), `PYTHONUTF8=1 uv run python scripts/check.py` GREEN after every task, `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exit 0, and the live suite `PYTHONUTF8=1 uv run python scripts/check.py --profile test` after every task that changes a migration, a service, the realm or a live test. After a live run: `git checkout -- reports/bootstrap`. mypy's incremental cache can report spurious errors after many edits; rerun with `--no-incremental` before treating one as real.
-- **Interim red (declared).** Task 2 changes the realm export and the `sessions` table under Plan D's API, which gains its session code only in Task 4: from Task 2 to Task 4 nothing is red (the API still uses the bearer path and never reads `sessions`), but `tests/e2e/test_r105_walking_skeleton.py` is red from Task 2 until Task 5 adds the sweeper, because `grant_execution` refuses with `MEMBERSHIP_STALE` when no sweeper has stamped `synced_at` (the autouse fixture of Task 2 keeps every other live test green). Each task's gate step lists exactly what may be red; anything else must be green.
+- **No interim red across tasks.** Task 2 changes the realm export and the `sessions` table under Plan D's API, which gains its session code only in Task 4; nothing is red between tasks: the API keeps the bearer path, the autouse `fresh_memberships` fixture (function-scoped, so it runs after the module-scoped skeleton starts and before each test body) keeps every live test, R105 included, inside the 120 s window until Task 5 gives the skeleton a sweeper, and from Task 5 the two skeleton modules opt out of the stamp (`@pytest.mark.sweeper_stamps`) so R105 proves the sweeper's stamping rather than the fixture's. Inside Task 2 the newest-revision unit test is red between Step 1 and Step 3 only.
 - **Commits:** one logical group per step; messages free of any attribution trailer; never push; never `docker compose down -v`; never change system settings; never drop a role, database, persona or Keycloak object (the test databases excepted). `scripts/bootstrap_dev.py down` then `up` (a realm re-import that keeps the PostgreSQL volume) is allowed and required once, in Task 2.
 
 ## Review Focus
@@ -41,8 +41,8 @@ Each answers a fact-sheet §5 question (Qn), cites what the spike measured, and 
 
 1. **authlib for the flow, our verifier for the tokens (Q1, Q2).** authlib's `AsyncOAuth2Client` (httpx2 backend, spike §1) builds the authorization URL (`code_challenge_method="S256"`, our `state`, `nonce` and `code_verifier`) and exchanges the code (`fetch_token(token_endpoint, code=…, code_verifier=…)`). The Starlette app class is not used: it needs `request.session`, which SA:565 forbids and `itsdangerous` (not locked) would require. The ID token is verified by `ops_core.tokens.TokenVerifier` with `audience="ops-web"`, `allowed_azp={"ops-web"}`, RS256 only, zero leeway and the required claims `exp, iss, aud, sub, iat, nonce, sid` plus `typ == "ID"`; the `nonce` is compared as a hash with `hmac.compare_digest`; the callback's `iss` parameter must equal the configured issuer (RFC 9207, Keycloak sends it). authlib's own `parse_id_token` accepts a wrong `aud`, a missing nonce and a token expired 60 s ago (spike §1), so it is not used for validation. Cost if wrong: two verifiers to keep in step; the unit tests pin both.
 2. **Pre-login state lives in a new RLS-free table `app.login_state`, not in `sessions` (Q1, Q3).** `sessions.subject` and `tenant_id` are `NOT NULL` (spike §4 measured 23502 for a pre-login row) and a row without an identity must never be mistaken for a session. `login_state(login_sha256 PK, state_sha256 UNIQUE, nonce_sha256, code_verifier, created_at, expires_at)`: the `ops_login` cookie's hash keys the row (the browser binding, review focus 1), `state` and `nonce` are stored hashed, the PKCE verifier is stored as is (it is useless without the matching code, the row lives 10 minutes and is deleted on first use). Grants: `api` sel/ins/del, `sweeper` sel/del (proposed erratum against SA:408's "only these grants exist").
-3. **`sessions` gains `sid`, `username` and a sealed refresh token; the lifetimes come from the columns 0002 already has (Q3, Q7).** Revision 0005 truncates the (empty) table and adds `sid text NOT NULL`, `username text NOT NULL DEFAULT ''`, `refresh_token_enc bytea NOT NULL`, plus indexes on `sid` and `(issuer, subject)`. `expires_at` is the absolute limit (`created_at + 8 h`), and idle expiry is `last_seen_at + 30 min`, so the `api` grant (`upd(last_seen_at, revoked_at)`) suffices: no sliding `expires_at` update, which the grant refuses (spike §4). Defaults from BS:352: `OPS_SESSION_IDLE_SECONDS=1800`, `OPS_SESSION_ABSOLUTE_SECONDS=28800`. The realm's lifetimes are not changed. Cost if wrong: a second revision.
-4. **Provider tokens: the refresh token is sealed with Fernet and used exactly once, at logout; the access and ID tokens are discarded (Q3, Q21).** BS:350 wants provider tokens "encrypted or otherwise protected through the deployment secret mechanism": the key is derived (SHA-256) from the new secret file `api_session_key`, held by the API alone. Logout is `POST /auth/logout` → revoke the row → `POST {end_session}` on the server side with client credentials and the refresh token (204, idempotent, ends the Keycloak SSO session and triggers the back-channel logout to every client, spike §2) → clear cookies → 204. The alternative (a browser redirect with `id_token_hint`) would put an identity token in a URL and browser history; the server-side form sends nothing through the browser. If the refresh token has expired (30 min idle at Keycloak, the same window as the application idle limit) the end-session call fails and is logged at INFO: the Keycloak session is already gone. Cost if wrong: one column and one call.
+3. **`sessions` gains `sid`, `username` and a sealed refresh token; the lifetimes come from the columns 0002 already has (Q3, Q7).** Revision 0005 truncates the (empty) table and adds `sid text NOT NULL`, `username text NOT NULL DEFAULT ''`, `refresh_token_enc bytea NOT NULL`, plus indexes on `sid` and `(issuer, subject)`. `expires_at` is the absolute limit (`created_at + 8 h`), and idle expiry is `last_seen_at + 30 min`, so the `api` grant (`upd(last_seen_at, revoked_at)`) suffices: no sliding `expires_at` update, which the grant refuses (spike §4). Defaults from BS:352: `OPS_SESSION_IDLE_SECONDS=1800`, `OPS_SESSION_ABSOLUTE_SECONDS=28800`. The realm's SSO idle and maximum lifetimes are raised to 8 h (`ssoSessionIdleTimeout`, `ssoSessionMaxLifespan`) so the provider session outlives the application session: Keycloak's idle timer does not reset on application requests, and a provider session that ends first leaves nothing for logout to end and no back-channel logout to send (round-1 finding I2). Cost if wrong: a second revision.
+4. **Provider tokens: the refresh token is sealed with Fernet and used exactly once, at logout; the access and ID tokens are discarded (Q3, Q21).** BS:350 wants provider tokens "encrypted or otherwise protected through the deployment secret mechanism": the key is derived (SHA-256) from the new secret file `api_session_key`, held by the API alone. Logout is `POST /auth/logout` → revoke the row → `POST {end_session}` on the server side with client credentials and the refresh token (204, idempotent, ends the Keycloak SSO session and triggers the back-channel logout to every client, spike §2) → clear cookies → 204. The alternative (a browser redirect with `id_token_hint`) would put an identity token in a URL and browser history; the server-side form sends nothing through the browser. If the refresh token has expired (the provider session ended first, which the 8 h realm lifetimes make rare) the end-session call fails and is logged at INFO: the Keycloak session is already gone. Cost if wrong: one column and one call.
 5. **CSRF: Origin check plus a double-submit token bound to the session row (Q4).** Every browser mutation (`POST` under `/api/` and `/auth/logout`, when the identity came from the cookie) requires `Origin` equal to the public origin (`http://localhost:8000` in dev; `Referer`'s origin as the fallback when `Origin` is absent; `null` or anything else → 403 `FORBIDDEN`) **and** the header `X-CSRF-Token` whose SHA-256 equals `sessions.csrf_secret_sha256` (`hmac.compare_digest`). The token is handed to the browser once, at login, in the readable cookie `ops_csrf` (not HttpOnly, so the SPA can echo it; the HttpOnly `ops_session` cookie is what authenticates). Bearer requests carry no cookie and are exempt (BS:264: "in cookie mode"). No new error code: CSRF failures are 403 `FORBIDDEN` with the message "cross-origin request refused" or "missing or invalid CSRF token". Cost if wrong: T26 adapts the header name.
 6. **Cookies (Q5).** `ops_session`: `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Max-Age` (a session cookie; the server enforces the real limits), `Secure` exactly when `OPS_PUBLIC_BASE_URL` is `https`. `ops_csrf`: the same without `HttpOnly`. `ops_login`: `HttpOnly`, `Lax`, `Max-Age=600`. `Lax` is required: the callback is a top-level navigation back from Keycloak and `Strict` would drop the cookie on it outside the localhost special case. The `http` scheme is accepted only for a `localhost` or `127.0.0.1` host (BS:350's localhost-only exception); any other `http` base refuses to start.
 7. **The bearer path stays; cookie and bearer never mix (Q6).** `Authorization: Bearer` (dev-only direct grant, `aud ops-api`, `azp ops-dev-direct`) is checked first; without it the `ops_session` cookie is used; a request carrying both is served by the bearer and the cookie is ignored. Plan D ruling 3's promise to "widen `azp` to `ops-web`" is withdrawn: the `ops-web` access token has no `aud` (spike §1) and never reaches the API, because the browser never holds it. The enabled check applies to both paths (SA:542 says every decision-class mutation); session semantics (idle, absolute, revocation, CSRF) apply to the cookie path only.
@@ -50,17 +50,17 @@ Each answers a fact-sheet §5 question (Qn), cites what the spike measured, and 
 9. **Tenant selection (Q9): one tenant or refuse, stored in the session.** `single_tenant` stays; a subject with memberships in two tenants cannot log in (401 at the callback) or act with a bearer token. `resolve_identity` runs on every request (R013); the session's `tenant_id` must still be the single active tenant.
 10. **Decision-class routes (Q10): the one that exists, through a reusable dependency.** `enabled_identity` = `identity` + the admin-API check, applied to `POST /api/v1/proposals/{id}/decisions` (and by T21 to revisions, cancel and manual proposals). As a dependency it runs before the handler's first store call, so before any transaction (T11 note 2). Admission, conversations and reads are not decision-class (SA:542) and do not call the admin API.
 11. **Enabled-check client (Q11): `ops_core.keycloak_admin.AdminUsers`, shared with the sweeper.** One keep-alive `httpx2.AsyncClient` to `server_url`, a `WorkloadTokenSource` for `ops-view-users` that posts through the same client (so a token refresh costs milliseconds, not the 2 s a cold `localhost` connect costs, spike §3), and `asyncio.wait_for(…, 2.0)` around every check. `enabled(subject)`: 200 → the `enabled` flag; 404 → `False` (deleted, spike §3); a timeout, a transport error, any other status (401 from a stale token, 403 from a misconfigured role, 5xx) or an unusable body → `AdminUnavailable`. The API maps `False` to 401 `UNAUTHENTICATED` ("identity disabled") and revokes the session, `AdminUnavailable` to 503 `UNAVAILABLE` `retryable: true` ("identity provider unavailable"). Nothing is cached per user.
-12. **The sweeper is a sixth process (Q12).** `sweeper/` (package `ops_sweeper`, role `sweeper`, health on `127.0.0.1:8071`), the shape of the worker: a loop task beside a health server. Every 30 s it inserts the maintenance job `sync_memberships` with the dedup key `sync_memberships:<minute bucket>` (SA:504; `tenant_id` NULL, visible to the sweeper alone through `sweeper_all`), claims one unclaimed sweeper job with `FOR UPDATE SKIP LOCKED`, runs it and finishes it; a 30 s tick with a per-minute key yields one sync per minute with no skipped minute (a 60 s tick with jitter can skip a bucket and trip the 120 s rule). The same tick deletes expired `sessions`, `login_state` and `logout_jti` rows (no job: SA:346 lists four job types and expiry is the sweeper's by AM-20.1). ADR-0001 wants one directory per process; AM-01's table is amended (erratum). Readiness is 200 only while the last successful sync is younger than 120 s, so `skeleton.py up` waits for the first sync.
+12. **The sweeper is a sixth process (Q12).** `sweeper/` (package `ops_sweeper`, role `sweeper`, health on `127.0.0.1:8071`), the shape of the worker: a loop task beside a health server. Every 30 s it runs the sync, then records it as the maintenance job `sync_memberships` with the dedup key `sync_memberships:<minute bucket>` (SA:504; `tenant_id` NULL, visible to the sweeper alone through `sweeper_all`), inserted, claimed with `FOR UPDATE SKIP LOCKED` and finished in one transaction: the job row is the audit record of each minute, not the trigger (a per-minute trigger with a 30 s tick measures 60 s plus two tick durations between syncs, which breaks SA:547's "every 60 s" and the R086 live assertion a few runs in a hundred; round-1 finding I1). The first tick syncs immediately, so readiness follows within seconds. The same tick deletes expired `sessions`, `login_state` and `logout_jti` rows (no job: SA:346 lists four job types and expiry is the sweeper's by AM-20.1). ADR-0001 wants one directory per process; AM-01's table is amended (erratum). Readiness is 200 only while the last successful sync is younger than 120 s, so `skeleton.py up` waits for the first sync.
 13. **`sync_memberships` is direct column updates by the sweeper, not a definer function (Q13, Q14).** SA:470's definer row cannot write under SA:412 (spike §5: 42501; with an added grant it also has to loop tenants, since `sweeper_all` is `TO sweeper`), while the sweeper's own cells (`upd(active, permission_version, synced_at)` plus `sweeper_all`) are exactly what the write needs. Proposed erratum: SA:470's row becomes "the sweeper's sync routine". The payload is the admin API's user list (`briefRepresentation=true`, paged by 100) as `{user id: enabled}`; a membership subject absent from the list is deleted, one with `enabled=false` is disabled; both get `active=false, permission_version+1`; **every** row of the configured issuer gets `synced_at = app.current_time()` in the same transaction; rows of another issuer are untouched. A listing that fails or returns no users is a failed sync: nothing is stamped (fail closed through ruling 14). Nothing reactivates.
 14. **The 120 s rule lives in `grant_execution`, per row (Q15).** Revision 0005 re-creates `grant_execution` (frozen body, same signature and caller) with one added check after `MEMBERSHIP_INACTIVE`: the requester's and the reviewer's rows must have `synced_at >= app.current_time() - interval '120 seconds'`, else `OC005 MEMBERSHIP_STALE`. mcp-write maps that code to the tool error `GRANT_DEFERRED` (every other refusal stays `GRANT_REFUSED`) and the worker re-queues a `GRANT_DEFERRED` execute job the way it re-queues a transport failure (30 s, handles revoked), so a sweeper outage delays execution instead of failing the run. Live tests that call the gate directly get the autouse fixture `fresh_memberships` (superuser `UPDATE app.memberships SET synced_at = app.current_time()` before each test); the skeleton's own sweeper keeps R105 fresh. Cost if wrong: one `CREATE OR REPLACE` in a later revision.
 15. **The sync race (Q16): accepted, bounded.** The gates read `memberships` without a row lock (Plan E ruling 23); a deactivation that commits between the read and the grant is caught by the next request's `resolve_identity` and by the sync's next pass. The window is one request; no lock path is added (a lock needs UPDATE, which AM-20.2 withholds from `app_definer`).
-16. **Back-channel logout endpoint (Q17): `POST /auth/backchannel-logout`, form field `logout_token`, verified by `TokenVerifier` configured for logout tokens.** Keycloak 26.8 sends header `typ: logout+jwt`, RS256, claims `aud, events, exp, iat, iss, jti, sid, sub, typ=Logout`, no `nonce`, 120 s validity, once, synchronously, with no retry (spike §2). The verifier requires `exp, iss, aud, iat, jti, events, sid, sub`, header `typ == "logout+jwt"`, no `azp` check (the token has none), `events` carrying the key `http://schemas.openid.net/event/backchannel-logout`, and refuses a token that carries `nonce` (SA:541). The endpoint inserts the `jti` (replay → 400), revokes every session with that `sid` (and, as belt and braces, every session of that `sub` whose `sid` is empty — none exist today), answers 200 `Cache-Control: no-store`, and 400 for any failure. Exempt from CSRF (no cookie) and from Idempotency-Key (T11 note 3). Not an identity: a logout token never authenticates anything.
+16. **Back-channel logout endpoint (Q17): `POST /auth/backchannel-logout`, form field `logout_token`, verified by `TokenVerifier` configured for logout tokens.** Keycloak 26.8 sends header `typ: logout+jwt`, RS256, claims `aud, events, exp, iat, iss, jti, sid, sub, typ=Logout`, no `nonce`, 120 s validity, once, synchronously, with no retry (spike §2). The verifier requires `exp, iss, aud, iat, jti, events, sid, sub`, header `typ == "logout+jwt"`, no `azp` check (the token has none), `events` carrying the key `http://schemas.openid.net/event/backchannel-logout`, and refuses a token that carries `nonce` (SA:541). The endpoint inserts the `jti` and revokes every session with that `sid` in one transaction (replay → 400; `sid` is `NOT NULL`, so revocation by `sub` is not needed), answers 200 `Cache-Control: no-store`, and 400 for any failure. Exempt from CSRF (no cookie) and from Idempotency-Key (T11 note 3). Not an identity: a logout token never authenticates anything. Keycloak sends the token once and never retries (spike §2): if the API is down or the row update fails, the application session lives on until its idle or absolute limit; nothing compensates in v1 (the runbook says so), and the admin check still ends authority for decisions.
 17. **`jti` store (Q18): `app.logout_jti(jti PK, received_at, expires_at)`**, RLS-free, `api` ins only (a target-less `INSERT … ON CONFLICT DO NOTHING` with the rowcount as the verdict needs no SELECT, spike §5), `sweeper` sel/del; rows kept until `expires_at` = the token's `exp` + 24 h. Proposed erratum (AM-20.2 row).
 18. **Realm changes (Q19, Q26).** `ops-web` gains `"backchannel.logout.url": "http://host.docker.internal:8000/auth/backchannel-logout"`, `"backchannel.logout.session.required": "true"`, `"backchannel.logout.revoke.offline.tokens": "false"` and `"frontchannelLogout": false` (the container reaches a loopback-bound host listener through that name, spike §2; T30 moves the URL with the containers). A dev/test-only confidential service-account client `ops-test-admin` with the realm-management roles `manage-users` and `view-users` lets the live suite disable a persona, re-enable it and end its sessions; its secret file is `kc_client_secret_ops_test_admin`; its description says `dev/test-only`; `ops-view-users` keeps exactly `view-users` (T43). Proposed erratum (a new Keycloak object; the owner may strike it, at the cost of R086's live evidence for the disable path). Both apply at the next `bootstrap_dev.py down`/`up`, which Task 2 runs once.
 19. **Public base URL and landing (Q20).** `OPS_PUBLIC_BASE_URL` (default `http://localhost:8000`) is the origin for the redirect URI, the Origin check and the post-logout target. `GET /` answers `{"status": "ok", "login_url": "/auth/login"}` so a browser lands on something after the callback's 303; T26 replaces it with the web app.
 20. **Idempotency-Key (Q22): none in T11**, declared debt → T12. Logout is naturally idempotent (a second POST has no session → 401).
 21. **No active membership is 401 on both paths (Q23, Q24).** BS:301 reserves 403 for "a known permitted resource with a disallowed operation"; a subject without a current membership has no application identity, and SA:549's 401 for a disabled user must not depend on whether the admin check or the sync fired first. `app.py` changes its 403 to 401 for "no active membership" (and for a two-tenant subject), `tests/plan_d/test_api.py` follows. A cookie session whose membership is gone is revoked in the same request. `map_refusal` keeps 403 for `NOT_REVIEWER`, `SELF_REVIEW` and `MEMBERSHIP_INACTIVE` (a role refusal inside `record_decision` after identity was established). T27's stream recheck will read the same dependency.
-22. **Redaction filter (Q25): `ops_core.logging`, installed by every entrypoint, on the handlers.** `install(level)` calls `logging.basicConfig` and adds `RedactingFilter` to every root handler; the filter formats the record once, applies the patterns (`Authorization: Bearer …`, JWT-shaped strings, `code=`/`state=`/`session_state=`/`logout_token=`/`id_token_hint=`/`refresh_token=`/`access_token=` values, `password=`, `postgresql://user:…@`, `X-Ops-Invocation` values, `Cookie:` headers and `ops_session=`/`ops_csrf=`/`ops_login=` values), rewrites `exc_text` and clears `exc_info` so tracebacks are redacted too (spike §6: a filter on a logger never sees child records; `exc_info` bypasses `msg`). Every uvicorn server is built with `log_config=None` so its loggers propagate to the root handler. The canary test logs each shape, with and without an exception, and asserts the canary is gone.
+22. **Redaction filter (Q25): `ops_core.redaction`, installed by every entrypoint, on the handlers.** `install(level)` calls `logging.basicConfig` and adds `RedactingFilter` to every root handler; the filter formats the record once, applies the patterns (`Authorization: Bearer …`, JWT-shaped strings, `code=`/`state=`/`session_state=`/`logout_token=`/`id_token_hint=`/`refresh_token=`/`access_token=` values, `password=`, `postgresql://user:…@`, `X-Ops-Invocation` values, `Cookie:` headers and `ops_session=`/`ops_csrf=`/`ops_login=` values), rewrites `exc_text` and clears `exc_info` so tracebacks are redacted too (spike §6: a filter on a logger never sees child records; `exc_info` bypasses `msg`). Every uvicorn server is built with `log_config=None` so its loggers propagate to the root handler. The canary test logs each shape, with and without an exception, and asserts the canary is gone.
 23. **Live tests (Q26).** `tests/e2e/test_auth_live.py` drives the real form login through the skeleton's API with httpx2 (cookies forwarded by hand, spike §1), proves CSRF, idle expiry (the superuser ages `last_seen_at`), logout (the next `/auth/login` shows Keycloak's form again), the back-channel logout through two application sessions on one Keycloak session (login, then a second `/auth/login` with the SSO cookies yields a second session with the same `sid`; logging the second out ends the SSO session and Keycloak's back-channel POST revokes the first), a forged logout token, and the disable path (disable `sam` through `ops-test-admin`, bearer decision → 401, sync → `active=false` within 60 s, `me` → 401; `finally` re-enables `sam` and restores the row). The skeleton gains the sweeper; R105 is re-run with six processes.
 24. **New settings (Q27).** `ops_core.settings`: `Keycloak.server_url` (`OPS_KC_SERVER_URL`, default `base_url` with `localhost` replaced by `127.0.0.1`), `discovery_url`, `admin_users_url`, `end_session_url` on `server_url`; `jwks_url` and `token_url` move to `server_url` (same `iss`, spike §3); `sessions()` → `SessionSettings(public_base_url, idle_seconds, absolute_seconds, login_seconds=600, cookie_secure)`; `admin_check_timeout()` (`OPS_ADMIN_CHECK_TIMEOUT_SECONDS`, 2.0); the sweeper's `OPS_SWEEPER_HEALTH_PORT` 8071 and `OPS_SYNC_TICK_SECONDS` 30. `skeleton.py` gains `Process("sweeper", "ops_sweeper", 8071)`.
 25. **Discovery is fetched at startup and checked, then the endpoints are built from it.** The API's lifespan fetches `{server_url}/realms/ops-dev/.well-known/openid-configuration`, refuses to start unless `issuer` equals the configured issuer and both back-channel flags are true, takes `authorization_endpoint` as published (browser-facing) and `token_endpoint`/`end_session_endpoint`/`jwks_uri` with their host rewritten to `server_url`. A start without Keycloak fails fast (the worker already behaves this way for its token source).
@@ -82,7 +82,8 @@ Allowed shortcuts in T11, each with its owning task:
 - the back-channel logout URL in the realm export names `host.docker.internal:8000` (the host API from the Keycloak container); the containerised URL → T30;
 - the telemetry side of redaction (traces, metrics labels) → T28;
 - a two-tenant subject is refused rather than offered a tenant switch (SA:107: no tenant administration in v1); a switch, if ever, needs a new row and rotation → v2;
-- the dev-only clients `ops-dev-direct` and `ops-test-admin` exist in the dev realm only; the demo profile's realm must omit both → T30.
+- the dev-only clients `ops-dev-direct` and `ops-test-admin` exist in the dev realm only; the demo profile's realm must omit both → T30;
+- the sweeper inserts one `sync_memberships` job row per minute and holds no DELETE on `jobs`, so done maintenance rows accumulate; the sweeper's purge of finished jobs (an AM-20.2 cell for `sweeper` `del` on `jobs`, or a definer) → T14.
 ```
 
 ## Role and process map (delta over Plan E)
@@ -99,13 +100,13 @@ Environment every process reads (defaults in `ops_core.settings`): as Plan E plu
 
 | Task | Delivers | Tests |
 |---|---|---|
-| 1 | Debt list; research files committed; `authlib` and `cryptography` dependencies locked; secrets (`api_session_key`, `kc_client_secret_ops_test_admin`) in `bootstrap_dev.py` and `compose.yaml`; `ops_core.settings` (`server_url`, discovery/admin/end-session URLs, `sessions()`, `admin_check_timeout()`); `ops_core.privileges` rows (`login_state`, `logout_jti`, sweeper `sel` on `sessions`); `ops_core.logging` redaction filter installed by every entrypoint; `TokenVerifier` knobs | `tests/plan_f/test_settings_auth.py`, `test_logging_redaction.py`, `test_privileges_f.py`, `test_tokens_knobs.py`; `tests/plan_b/test_bootstrap_dev.py` (unchanged, now covers the new names) |
-| 2 | Revision `0005_sessions_login_logout` (sessions columns, `login_state`, `logout_jti`, sweeper grants, `grant_execution` with `MEMBERSHIP_STALE`); realm export (`ops-web` back-channel attributes, `ops-test-admin`); realm re-import; mcp-write `GRANT_DEFERRED`; worker re-queue on it; e2e `fresh_memberships` fixture; live R124/R006/R106 and the stale-grant test | `tests/plan_b/test_realm_template.py`, `tests/plan_e/test_transitions_table.py` (0005 in `REVISIONS`), `tests/plan_f/test_grant_deferred.py`; `tests/e2e/test_roles_live.py`, `test_migrations_and_persistence.py`, `test_definers_write_path_live.py` (stale grant) |
-| 3 | `ops_core.keycloak_admin.AdminUsers`; `ops_api.auth` (`Oidc`, `IdTokenVerifier`, `LogoutTokenVerifier`, `TokenBox`, cookie and CSRF helpers); `ops_api.store` session methods (`begin_login`, `take_login`, `create_session`, `session`, `revoke_session`, `revoke_sessions_by_sid`, `record_logout_jti`) | `tests/plan_f/test_admin_users.py`, `test_auth_helpers.py`, `test_id_and_logout_tokens.py` |
+| 1 | Debt list; `authlib`, `cryptography` and `python-multipart` dependencies locked (mypy override for authlib); secrets (`api_session_key`, `kc_client_secret_ops_test_admin`) in `bootstrap_dev.py` and `compose.yaml`; `ops_core.settings` (`server_url`, discovery/admin/end-session URLs, `sessions()`, `admin_check_timeout()`); `ops_core.redaction` filter installed by every entrypoint; `TokenVerifier` knobs | `tests/plan_f/test_settings_auth.py`, `test_redaction.py`, `test_tokens_knobs.py`; `tests/plan_b/test_bootstrap_dev.py` (unchanged, now covers the new names) |
+| 2 | `ops_core.privileges` rows (`login_state`, `logout_jti`, sweeper `sel` on `sessions`); revision `0005_sessions_login_logout` (sessions columns, `login_state`, `logout_jti`, sweeper grants, `grant_execution` with `MEMBERSHIP_STALE`); realm export (SSO lifetimes, `ops-web` back-channel attributes, `ops-test-admin`); realm re-import; mcp-write `GRANT_DEFERRED`; worker re-queue on it; e2e `fresh_memberships` fixture; live R124/R006/R106 and the stale-grant test | `tests/plan_f/test_privileges_f.py`, `tests/plan_b/test_realm_template.py`, `tests/plan_e/test_transitions_table.py` (0005 in `REVISIONS`), `tests/plan_f/test_grant_deferred.py`; `tests/e2e/test_roles_live.py`, `test_migrations_and_persistence.py`, `test_definers_write_path_live.py` (stale grant) |
+| 3 | `ops_core.keycloak_admin.AdminUsers`; `ops_api.auth` (`AuthlibOidc`, `IdTokenVerifier`, `LogoutTokenVerifier`, `TokenBox`, cookies/CSRF helpers); `persistence.assert_relation`; `ops_api.store` session methods (`begin_login`, `take_login`, `create_session`, `live_session`, `revoke_session`, `record_logout`) | `tests/plan_f/test_admin_users.py`, `test_auth_helpers.py`, `test_id_and_logout_tokens.py`; `tests/e2e/test_sessions_store_live.py` |
 | 4 | API routes (`/`, `/auth/login`, `/auth/callback`, `/auth/logout`, `/auth/backchannel-logout`), `identity` (bearer or cookie), `browser_mutation` (CSRF + Origin), `enabled_identity` (admin check), 401 for no membership, discovery at startup; `tests/plan_d/test_api.py` updated | `tests/plan_f/test_api_auth.py` (R011/R012/R013/R086 unit negatives) |
 | 5 | `sweeper/` service (`ops_sweeper`: loop, maintenance jobs, sync, purges, health), `skeleton.py` sixth process, `check.py` member, workspace member; runbooks | `tests/plan_f/test_sweeper.py`; `tests/plan_e/test_skeleton_cli.py` (six processes) |
 | 6 | `tests/e2e/test_auth_live.py` (form login, CSRF, idle expiry, logout, back-channel via two sessions, forged token, disable-and-sync) with evidence `reports/auth/t11-sessions-revocation.txt`; R105 re-run with six processes | live |
-| 7 | Handoff records (T11 DONE; R011/R012/R013/R086 rows), `SESSION_STATE.md` (errata 26–31, open items), `STATUS.md`, `README.md`, `docs/ARCHITECTURE.md` sweeper row, runbooks, final gates | docs; `verify_handoff.py`; full live suite |
+| 7 | Handoff records (T11 DONE; R011/R012/R013/R086 rows), `SESSION_STATE.md` (errata 26–34, open items), `STATUS.md`, `README.md`, `docs/ARCHITECTURE.md` sweeper row, runbooks, final gates | docs; `verify_handoff.py`; full live suite |
 
 ---
 ### Task 1: Debt before code — dependencies, secrets, settings, redaction, verifier knobs
@@ -116,7 +117,7 @@ Environment every process reads (defaults in `ops_core.settings`): as Plan E plu
 
 **Interfaces:**
 - Produces: `ops_core.settings.Keycloak(base_url, issuer, server_url)` with `jwks_url`, `token_url`, `discovery_url`, `end_session_url`, `admin_users_url` (all on `server_url`) and `server_side(url) -> str`; `settings.keycloak()` reads `OPS_KC_SERVER_URL` (default: `base_url` with `localhost` swapped for `127.0.0.1`); `settings.SessionSettings(public_base_url, idle_seconds, absolute_seconds, login_seconds)` with `origin`, `redirect_uri`, `cookie_secure`; `settings.sessions()`; `settings.admin_check_timeout() -> float`.
-- Produces: `ops_core.redaction.redact(text) -> str`, `RedactingFilter`, `install(level=logging.INFO) -> None`.
+- Produces: `ops_core.redaction.redact(text) -> str`, `RedactingFilter`, `install(level=logging.INFO) -> None` (patterns: Bearer and Basic authorization values, JWT-shaped strings, `key=value` and `'key': 'value'` forms of `code`, `state`, `session_state`, `logout_token`, `id_token_hint`, `refresh_token`, `access_token`, `id_token`, `client_secret` and the three cookie names, `password=`, conninfo passwords, `X-Ops-Invocation` and `X-CSRF-Token` values, `Cookie:` headers; `state=` over-redacts "run state=X" lines on purpose).
 - Produces: `TokenVerifier(..., required_claims=("exp", "iss", "aud", "sub"), require_azp=True, typ=None)`; `Principal.azp` is `""` when `require_azp=False` and the token has none.
 - Produces: the secret names `api_session_key` and `kc_client_secret_ops_test_admin`; `tests/plan_f` on `testpaths`.
 
@@ -131,7 +132,16 @@ git commit -m "docs: declare Plan F's shortcuts before coding (T11 debt list)"
 
 - [ ] **Step 2: Lock the dependencies and declare the secrets**
 
-`api/pyproject.toml`: `dependencies = ["ops-core", "fastapi>=0.142,<1", "uvicorn>=0.54,<1", "authlib>=1.8,<2", "cryptography>=45,<51"]`. Then `uv lock` and `uv sync --locked`; record the locked `authlib` and `joserfc` versions in the report (AM-30 observed 1.8.0; if the lock picks a later 1.x, say so in Task 7's SESSION_STATE note).
+`api/pyproject.toml`: `dependencies = ["ops-core", "fastapi>=0.142,<1", "uvicorn>=0.54,<1", "authlib>=1.8,<2", "cryptography>=45,<51", "python-multipart>=0.0.20,<1"]` (`request.form()` needs `python-multipart`, which today arrives only through `mcp`; a containerised API must declare it). authlib ships no `py.typed`, so the root `pyproject.toml` gains, after `[tool.mypy]`:
+
+```toml
+# authlib 1.8 ships no py.typed (measured in the Plan F review); its stubs package targets httpx, not httpx2.
+[[tool.mypy.overrides]]
+module = ["authlib.*"]
+ignore_missing_imports = true
+```
+
+Then `uv lock` and `uv sync --locked`; record the locked `authlib` and `joserfc` versions in the report (AM-30 observed 1.8.0; if the lock picks a later 1.x, say so in Task 7's SESSION_STATE note).
 
 `scripts/bootstrap_dev.py` `SECRET_NAMES`: append, after `postgres_test_harness_password`:
 
@@ -235,16 +245,17 @@ def test_admin_check_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.admin_check_timeout() == 2.0
     monkeypatch.setenv("OPS_ADMIN_CHECK_TIMEOUT_SECONDS", "0.5")
     assert settings.admin_check_timeout() == 0.5
-    monkeypatch.setenv("OPS_ADMIN_CHECK_TIMEOUT_SECONDS", "0")
-    with pytest.raises(SettingsError):
-        settings.admin_check_timeout()
+    for bad in ("0", "nan", "inf", "soon"):
+        monkeypatch.setenv("OPS_ADMIN_CHECK_TIMEOUT_SECONDS", bad)
+        with pytest.raises(SettingsError):
+            settings.admin_check_timeout()
 ```
 
 Run: `uv run python -m pytest tests/plan_f/test_settings_auth.py -q` → FAIL (`server_url`, `sessions`, `admin_check_timeout` missing).
 
 - [ ] **Step 4: Settings**
 
-In `core/src/ops_core/settings.py` add `from urllib.parse import urlsplit` and replace the `Keycloak` class and `keycloak()` with:
+In `core/src/ops_core/settings.py` add `import math` and `from urllib.parse import urlsplit` and replace the `Keycloak` class and `keycloak()` with:
 
 ```python
 @dataclass(frozen=True)
@@ -260,22 +271,27 @@ class Keycloak:
 
     @property
     def jwks_url(self) -> str:
+        """The realm's signing keys (server side)."""
         return f"{self.server_url}/realms/{REALM}/protocol/openid-connect/certs"
 
     @property
     def token_url(self) -> str:
+        """The token endpoint (server side)."""
         return f"{self.server_url}/realms/{REALM}/protocol/openid-connect/token"
 
     @property
     def discovery_url(self) -> str:
+        """The OIDC metadata document (server side)."""
         return f"{self.server_url}/realms/{REALM}/.well-known/openid-configuration"
 
     @property
     def end_session_url(self) -> str:
+        """The RP-initiated logout endpoint (server side)."""
         return f"{self.server_url}/realms/{REALM}/protocol/openid-connect/logout"
 
     @property
     def admin_users_url(self) -> str:
+        """The admin API's users collection (server side; `view-users` reads it)."""
         return f"{self.server_url}/admin/realms/{REALM}/users"
 
     def server_side(self, url: str) -> str:
@@ -304,19 +320,22 @@ class SessionSettings:
 
     @property
     def origin(self) -> str:
+        """The one `Origin` a browser mutation may carry."""
         return self.public_base_url
 
     @property
     def redirect_uri(self) -> str:
+        """The registered callback (exact match at Keycloak)."""
         return f"{self.public_base_url}/auth/callback"
 
     @property
     def cookie_secure(self) -> bool:
+        """Secure cookies iff the public base is https (BUILD_SPEC §9)."""
         return self.public_base_url.startswith("https://")
 
 
 def sessions() -> SessionSettings:
-    """`OPS_PUBLIC_BASE_URL` must be a bare origin; `http` is accepted for localhost only (BUILD_SPEC §9's exception)."""
+    """`OPS_PUBLIC_BASE_URL` must be a bare origin; `http` is for localhost only (BUILD_SPEC §9's exception)."""
     base = env("OPS_PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
     parts = urlsplit(base)
     if parts.scheme not in ("http", "https") or not parts.netloc or parts.path or parts.query or parts.fragment:
@@ -338,8 +357,8 @@ def admin_check_timeout() -> float:
         value = float(raw)
     except ValueError as exc:
         raise SettingsError("OPS_ADMIN_CHECK_TIMEOUT_SECONDS must be a number of seconds") from exc
-    if value <= 0:
-        raise SettingsError("OPS_ADMIN_CHECK_TIMEOUT_SECONDS must be positive")
+    if not math.isfinite(value) or value <= 0:
+        raise SettingsError("OPS_ADMIN_CHECK_TIMEOUT_SECONDS must be a positive finite number")
     return value
 ```
 
@@ -394,6 +413,12 @@ def test_every_secret_shape_is_redacted_in_messages_and_tracebacks() -> None:
         f"Cookie: ops_session={CANARY}; ops_csrf={CANARY}",
         f"set-cookie ops_login={CANARY}; Path=/",
         f"logout_token={CANARY}&id_token_hint={CANARY}&refresh_token={CANARY}",
+        f"Authorization: Basic {CANARY}",  # authlib's client_secret_basic and the end-session call
+        f"client_secret={CANARY}&grant_type=client_credentials",
+        f"X-CSRF-Token: {CANARY}",
+        f"params={{'code': '{CANARY}', 'state': '{CANARY}'}}",
+        f"cookies={{'ops_session': '{CANARY}'}}",
+        f"OAuth2Token({{'access_token': '{CANARY}', 'expires_in': 300}})",
     ]
     for shape in shapes:
         child.info("%s", shape)
@@ -415,14 +440,19 @@ def test_redact_is_a_pure_function_and_keeps_ordinary_text() -> None:
 
 
 def test_install_puts_the_filter_on_every_root_handler() -> None:
-    redaction.install()
     root = logging.getLogger()
-    assert root.handlers, "basicConfig must have installed a handler"
-    for handler in root.handlers:
-        assert any(isinstance(f, RedactingFilter) for f in handler.filters), handler
-    redaction.install()  # idempotent: one filter per handler
-    for handler in root.handlers:
-        assert sum(isinstance(f, RedactingFilter) for f in handler.filters) == 1
+    before = {id(h): list(h.filters) for h in root.handlers}  # pytest's capture handlers live for the session
+    try:
+        redaction.install()
+        assert root.handlers, "basicConfig must have installed a handler"
+        for handler in root.handlers:
+            assert any(isinstance(f, RedactingFilter) for f in handler.filters), handler
+        redaction.install()  # idempotent: one filter per handler
+        for handler in root.handlers:
+            assert sum(isinstance(f, RedactingFilter) for f in handler.filters) == 1
+    finally:
+        for handler in root.handlers:  # leave pytest's handlers as they were (other tests inspect record.args)
+            handler.filters[:] = before.get(id(handler), [])
 ```
 
 Run: `uv run python -m pytest tests/plan_f/test_redaction.py -q` → FAIL (no module `ops_core.redaction`).
@@ -454,19 +484,20 @@ REDACTED: Final = "[REDACTED]"
 # Order matters only where patterns overlap (the Bearer rule runs before the bare-JWT rule so a redacted bearer is not
 # rewritten twice); each pattern keeps the key and replaces the value.
 _PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
-    (re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+"), rf"\1{REDACTED}"),
+_SECRET_KEYS = (
+    "code|state|session_state|logout_token|id_token_hint|refresh_token|access_token|id_token|client_secret"
+    "|ops_session|ops_csrf|ops_login"
+)
+_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
+    (re.compile(r"(?i)(\b(?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+"), rf"\1{REDACTED}"),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"), REDACTED),
-    (
-        re.compile(
-            r"(?i)((?:^|[?&;,\s'\"])"
-            r"(?:code|state|session_state|logout_token|id_token_hint|refresh_token|access_token|id_token)=)"
-            r"[^&\s\"'<>;]+"
-        ),
-        rf"\1{REDACTED}",
-    ),
+    # key=value in a query string, a form body or a log line; `state=` also catches "run state=X", accepted on purpose.
+    (re.compile(rf"(?i)((?:^|[?&;,\s'\"])(?:{_SECRET_KEYS})=)[^&\s\"'<>;]+"), rf"\1{REDACTED}"),
+    # 'key': 'value' in a repr of query params, cookies, a token response or headers.
+    (re.compile(rf"(?i)(['\"](?:{_SECRET_KEYS})['\"]\s*:\s*['\"])[^'\"]+"), rf"\1{REDACTED}"),
     (re.compile(r"(?i)(\bpassword=)[^\s&'\"]+"), rf"\1{REDACTED}"),
     (re.compile(r"(postgres(?:ql)?://[^:/\s@]+:)[^@\s]+@"), rf"\1{REDACTED}@"),
-    (re.compile(r"(?i)(x-ops-invocation['\"]?\s*[:=]\s*['\"]?)[^\s'\",;}]+"), rf"\1{REDACTED}"),
+    (re.compile(r"(?i)((?:x-ops-invocation|x-csrf-token)['\"]?\s*[:=]\s*['\"]?)[^\s'\",;}]+"), rf"\1{REDACTED}"),
     (re.compile(r"(?i)(\bcookie['\"]?\s*:\s*)[^\r\n]+"), rf"\1{REDACTED}"),
     (re.compile(r"(\bops_(?:session|csrf|login)=)[^;\s\"'<>]+"), rf"\1{REDACTED}"),
 )
@@ -709,16 +740,25 @@ In `core/src/ops_core/privileges.py`: `"sessions"` becomes
 
 - [ ] **Step 2: Write the failing live tests**
 
-In `tests/e2e/test_migrations_and_persistence.py::test_r006_fresh_database_upgrades_downgrades_and_upgrades_again`, the relation list becomes `("app.test_clock", "app.run_directory", "app.transitions", "app.login_state", "app.logout_jti")` and, before the downgrade, add
+In `tests/e2e/test_migrations_and_persistence.py::test_r006_fresh_database_upgrades_downgrades_and_upgrades_again`, the relation list becomes `("app.test_clock", "app.run_directory", "app.transitions", "app.login_state", "app.logout_jti")` and, before the first downgrade, add a downgrade to 0004 with its own assertions (at `0001_walking_skeleton` the `sessions` table itself is gone, so an "absent columns" check there proves nothing):
 
 ```python
-    cur = await app_conn.execute(
-        "SELECT column_name FROM information_schema.columns WHERE table_schema = 'app' AND table_name = 'sessions'"
-    )
-    assert {"sid", "username", "refresh_token_enc"} <= {r["column_name"] for r in await cur.fetchall()}
+    async def session_columns() -> set[str]:
+        cur = await app_conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'app' AND table_name = 'sessions'"
+        )
+        return {str(r["column_name"]) for r in await cur.fetchall()}
+
+    assert {"sid", "username", "refresh_token_enc"} <= await session_columns()
+    downgrade("app", superuser, "0004_write_path_functions")
+    assert not {"sid", "username", "refresh_token_enc"} & await session_columns()
+    cur = await app_conn.execute("SELECT has_table_privilege('sweeper', 'app.sessions', 'SELECT') AS sel")
+    assert not (await cur.fetchone())["sel"]  # 0002's DELETE-only cell is back
+    cur = await app_conn.execute("SELECT pg_get_functiondef('app.grant_execution(text, uuid)'::regprocedure) AS body")
+    assert "MEMBERSHIP_STALE" not in (await cur.fetchone())["body"]
 ```
 
-and after the downgrade assert the same set is absent (the columns 0005 added come off with it).
+(the `testclock@base` downgrade stays first, as today, since the branch depends on the main head).
 
 Append to `tests/e2e/test_definers_write_path_live.py`:
 
@@ -815,8 +855,9 @@ GRANTS_0005: dict[str, dict[str, privileges.Grant]] = {
     },
     "logout_jti": {"api": privileges.Grant(ins=True), "sweeper": privileges.Grant(sel=True, dele=True)},
 }
-# What 0002 granted on sessions, for the downgrade.
-GRANTS_0002_SESSIONS: dict[str, dict[str, privileges.Grant]] = {
+# What 0002 granted on sessions, for the downgrade (not named GRANTS_*: the newest-revision test folds every
+# GRANTS_* attribute into the live matrix check).
+SESSIONS_CELLS_0002: dict[str, dict[str, privileges.Grant]] = {
     "sessions": {
         "api": privileges.Grant(sel=True, ins=True, upd=("last_seen_at", "revoked_at"), dele=True),
         "sweeper": privileges.Grant(dele=True),
@@ -980,7 +1021,7 @@ def downgrade() -> None:
         op.execute(statement)
     for statement in DOWNGRADE:
         op.execute(statement)
-    for statement in privileges.grant_statements(("sessions",), GRANTS_0002_SESSIONS, revokees=MAIN_GRANTEES_0005):
+    for statement in privileges.grant_statements(("sessions",), SESSIONS_CELLS_0002, revokees=MAIN_GRANTEES_0005):
         op.execute(statement)
 ```
 
@@ -998,10 +1039,8 @@ def test_revision_0005_bodies_differ_only_by_the_stale_rule() -> None:
     spec.loader.exec_module(module)
     assert "MEMBERSHIP_STALE" in module.GRANT_EXECUTION and "MEMBERSHIP_STALE" not in module.GRANT_EXECUTION_0004
     assert module.GRANT_EXECUTION.count("interval '120 seconds'") == 2
-    assert module.GRANTS_0005 == {t: privileges.GRANTS[t] for t in module.TABLES}
-```
-
-(`from ops_core import privileges` is already imported as `p`; use `p.GRANTS`.) Run `uv run ruff check --select ISC004 --fix --unsafe-fixes migrations/app/versions/0005_sessions_login_logout.py`, then `uv run python -m pytest tests/plan_e/test_transitions_table.py tests/plan_f -q` → PASS (bind scan, newest-revision cells and callers, the 0005 shape).
+    assert module.GRANTS_0005 == {t: p.GRANTS[t] for t in module.TABLES}
+``` Run `uv run ruff check --select ISC004 --fix --unsafe-fixes migrations/app/versions/0005_sessions_login_logout.py`, then `uv run python -m pytest tests/plan_e/test_transitions_table.py tests/plan_f -q` → PASS (bind scan, newest-revision cells and callers, the 0005 shape).
 
 - [ ] **Step 4: Migrate the test databases and run the live schema tests**
 
@@ -1009,7 +1048,7 @@ def test_revision_0005_bodies_differ_only_by_the_stale_rule() -> None:
 
 - [ ] **Step 5: The realm export, its tests, and the re-import**
 
-`deploy/dev/keycloak/realm-ops-dev.json`, client `ops-web`: add `"frontchannelLogout": false,` after `"serviceAccountsEnabled": false,` and make `attributes`
+`deploy/dev/keycloak/realm-ops-dev.json`: at the realm level, after `"accessTokenLifespan": 300,` add `"ssoSessionIdleTimeout": 28800,` and `"ssoSessionMaxLifespan": 28800,` (the Keycloak session must outlive the application session, whose idle timer resets on every request while Keycloak's does not; with the 30-minute default a user active for an hour has no provider session left to end at logout and no back-channel logout can reach the API, round-1 finding I2; the application's own 30-minute idle and 8-hour absolute limits stay the stricter ones). Client `ops-web`: add `"frontchannelLogout": false,` after `"serviceAccountsEnabled": false,` and make `attributes`
 
 ```json
       "attributes": {
@@ -1060,7 +1099,7 @@ and after the `service-account-ops-view-users` user:
     assert web["attributes"]["backchannel.logout.revoke.offline.tokens"] == "false"
 ```
 
-and a new test:
+`test_realm_name_and_roles` gains `assert doc["ssoSessionIdleTimeout"] == 28800 and doc["ssoSessionMaxLifespan"] == 28800` with the comment "the provider session outlives the 8 h application session (Plan F ruling 3)". And a new test:
 
 ```python
 def test_test_admin_service_account_is_dev_only_and_manages_users_only():
@@ -1076,7 +1115,7 @@ def test_test_admin_service_account_is_dev_only_and_manages_users_only():
     assert audiences(c) == set()
 ```
 
-`uv run python -m pytest tests/plan_b -q` → PASS. Then re-import the realm (keeps the PostgreSQL volume): `uv run python scripts/bootstrap_dev.py down` and `uv run python scripts/bootstrap_dev.py up`; then `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/plan_b/live -q` → PASS (`test_service_account.py` still proves `ops-view-users` cannot write). Prove the new client with a throw-away one-off (never committed, no value printed): a client-credentials token for `ops-test-admin` can `GET /admin/realms/ops-dev/users/{alex}` (200) and `PUT` the same user with `{"enabled": true}` (204, a no-op value). Record the two status codes in the report. `git checkout -- reports/bootstrap`.
+`uv run python -m pytest tests/plan_b -q` → PASS. Then re-import the realm (keeps the PostgreSQL volume): `uv run python scripts/bootstrap_dev.py down` and `uv run python scripts/bootstrap_dev.py up`; then `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/plan_b/live -q` → PASS (`test_service_account.py` still proves `ops-view-users` cannot write). Prove the new client with a throw-away one-off (never committed, no value printed): a client-credentials token for `ops-test-admin` can `GET /admin/realms/ops-dev/users/{lee}` (200), `PUT` the same user with `{"enabled": false}` (204), `GET` it again (`enabled` false, and `username`, `email`, `firstName`, `lastName` unchanged: a partial PUT keeps the other fields), then `PUT {"enabled": true}` and `GET` (`enabled` true). Record the status codes and the field comparison in the report; `lee` is a reader and no other test depends on it, and the probe ends with `lee` enabled. `git checkout -- reports/bootstrap`.
 
 - [ ] **Step 6: `GRANT_DEFERRED` in mcp-write and the worker's re-queue**
 
@@ -1168,10 +1207,10 @@ git commit -m "feat(db): revision 0005 — sessions columns, login_state, logout
 - Modify: `api/src/ops_api/store.py` (`LoginState`, `SessionRow`, seven `Store` methods, their `DbStore` SQL)
 
 **Interfaces:**
-- Consumes: `TokenVerifier(required_claims=, require_azp=, typ=)`, `WorkloadTokenSource(post=)`, `settings.Keycloak`, `settings.SessionSettings`, `ops_core.canonical.sha256_hex`.
+- Consumes: `TokenVerifier(required_claims=, require_azp=, typ=)`, `WorkloadTokenSource(post=)` plus its new `invalidate()` (added in this task: `self._token = None` so the next `token()` fetches; one line with a docstring), `settings.Keycloak`, `settings.SessionSettings`, `ops_core.canonical.sha256_hex`.
 - Produces (`ops_core.keycloak_admin`): `AdminUnavailable(Exception)`; `AdminUsers(users_url=, tokens=, client=, timeout=)` with `async enabled(subject: UUID) -> bool`, `async list_enabled() -> dict[UUID, bool]`, `async aclose()`; `admin_users(keycloak=, client_secret=, timeout=) -> AdminUsers` (the shared keep-alive client and token source).
 - Produces (`ops_api.auth`): constants `SESSION_COOKIE = "ops_session"`, `CSRF_COOKIE = "ops_csrf"`, `LOGIN_COOKIE = "ops_login"`, `CSRF_HEADER = "X-CSRF-Token"`, `BACKCHANNEL_EVENT`; `digest(value) -> str`, `new_token() -> str`, `matches(value, expected_sha256) -> bool`, `origin_of(url) -> str | None`, `same_origin(headers, origin) -> bool`; `Discovery` (+ `from_document(doc, keycloak)`), `async fetch_discovery(keycloak, client) -> Discovery`; `Tokens(id_token, refresh_token)`; `ExchangeRefused`, `ExchangeUnavailable`; `OidcClient` protocol (`authorization_url(*, state, nonce, code_verifier) -> str`, `async exchange(*, code, code_verifier) -> Tokens`, `async end_session(refresh_token) -> None`) and `AuthlibOidc`; `IdClaims(subject: UUID, sid, username)`, `IdTokens` protocol (`ready`, `async load_keys()`, `async verify(id_token, *, nonce_sha256) -> IdClaims`) and `IdTokenVerifier`; `LogoutClaims(sid, subject: UUID, jti, expires_at: int)`, `LogoutTokens` protocol and `LogoutTokenVerifier`; `EnabledCheck` protocol (`async enabled(subject) -> bool`); `TokenBox(key_material)` with `seal(str) -> bytes`, `open(bytes) -> str`; `CookiePolicy(secure, login_max_age)` with `set_session(response, session, csrf)`, `set_login(response, login)`, `clear_session(response)`, `clear_login(response)`.
-- Produces (`ops_api.store`): `LoginState(state_sha256, nonce_sha256, code_verifier)`, `SessionRow(session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256, refresh_token_enc)`; `Store.begin_login(*, login_sha256, state_sha256, nonce_sha256, code_verifier, ttl_seconds)`, `take_login(login_sha256) -> LoginState | None` (one shot), `create_session(*, session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256, refresh_token_enc, absolute_seconds)`, `session(session_sha256, *, idle_seconds) -> SessionRow | None` (touches `last_seen_at`), `revoke_session(session_sha256) -> SessionRow | None`, `record_logout(jti, *, expires_at, sid) -> int | None` (None on replay, else sessions revoked, one transaction).
+- Produces (`ops_api.store`): `LoginState(state_sha256, nonce_sha256, code_verifier)`, `SessionRow(session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256, refresh_token_enc)`; `Store.begin_login(*, login_sha256, state_sha256, nonce_sha256, code_verifier, ttl_seconds)`, `take_login(login_sha256) -> LoginState | None` (one shot), `create_session(*, session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256, refresh_token_enc, absolute_seconds)`, `live_session(session_sha256, *, idle_seconds) -> SessionRow | None` (touches `last_seen_at`; the name avoids `DbStore.session`, the `persistence.Session` attribute every method uses), `revoke_session(session_sha256) -> SessionRow | None`, `record_logout(jti, *, expires_at, sid) -> int | None` (None on replay, else sessions revoked, one transaction).
 
 - [ ] **Step 1: Write the failing admin-client test**
 
@@ -1293,6 +1332,17 @@ async def test_any_other_status_is_unavailable(admin: tuple[AdminUsers, FakeKeyc
     fake.status = status
     with pytest.raises(AdminUnavailable):
         await users.enabled(ALEX)
+    if status == 401:
+        assert fake.token_calls == 2  # one fresh token and one retry, then fail closed
+
+
+@pytest.mark.asyncio
+async def test_a_stale_token_is_replaced_once(admin: tuple[AdminUsers, FakeKeycloak]) -> None:
+    users, fake = admin
+    assert await users.enabled(ALEX) is True
+    fake.token_calls += 1  # the realm now expects a newer token than the cached one (a re-import)
+    assert await users.enabled(ALEX) is True
+    assert fake.token_calls == 3  # the cached t1 was refused, t3 was fetched and accepted
 
 
 @pytest.mark.asyncio
@@ -1406,11 +1456,20 @@ class AdminUsers:
 
     async def _get(self, url: str, params: dict[str, str] | None = None) -> httpx2.Response:
         try:
-            token = await self._tokens.token()
-            return await self._client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
+            response = await self._authorised_get(url, params)
+            if response.status_code == 401:
+                # A cached token the realm no longer accepts (a re-import, a key rotation): fetch once, retry once,
+                # inside the same budget (round-1 finding M15).
+                self._tokens.invalidate()
+                response = await self._authorised_get(url, params)
+            return response
         except (httpx2.HTTPError, OSError, TokenRejected, ValueError) as exc:
             # The message names the class of failure only: a token endpoint reply could carry the secret's error text.
             raise AdminUnavailable(f"admin API unreachable: {exc.__class__.__name__}") from exc
+
+    async def _authorised_get(self, url: str, params: dict[str, str] | None) -> httpx2.Response:
+        token = await self._tokens.token()
+        return await self._client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
 
     async def _enabled(self, subject: UUID) -> bool:
         response = await self._get(f"{self._users_url}/{subject}")
@@ -1419,7 +1478,8 @@ class AdminUsers:
         if response.status_code != 200:
             raise AdminUnavailable(f"admin API answered {response.status_code}")
         body = _json(response)
-        if not isinstance(body, dict) or str(body.get("id")) != str(subject) or not isinstance(body.get("enabled"), bool):
+        usable = isinstance(body, dict) and str(body.get("id")) == str(subject) and isinstance(body.get("enabled"), bool)
+        if not usable:
             raise AdminUnavailable("admin API reply is unusable")
         return bool(body["enabled"])
 
@@ -1607,6 +1667,7 @@ from tests.plan_d.test_tokens import ISSUER, JWK1, JWK2, PEM1, PEM2
 
 ALEX = "2fc05986-c7ec-544c-b628-fdb112bbf18a"
 NONCE = "n-123"
+HS_KEY = "k" * 32  # a full-length HMAC key: the test proves the algorithm pin, not a weak key
 
 
 def id_token(pem: bytes = PEM1, kid: str = "k1", headers: dict[str, Any] | None = None, **over: Any) -> str:
@@ -1687,7 +1748,7 @@ async def test_id_token_accepted_with_the_right_nonce(ids: IdTokenVerifier) -> N
         id_token(sub="not-a-uuid"),
         id_token(pem=PEM2, kid="k1"),  # signed by another key under the known kid
         id_token(pem=PEM2, kid="k2"),  # unknown kid (no refresh in the unit test)
-        jwt.encode({"iss": ISSUER, "sub": ALEX, "aud": "ops-web", "exp": int(time.time()) + 60, "nonce": NONCE}, "x", algorithm="HS256", headers={"kid": "k1"}),
+        jwt.encode({"iss": ISSUER, "sub": ALEX, "aud": "ops-web", "exp": int(time.time()) + 60, "nonce": NONCE}, HS_KEY, algorithm="HS256", headers={"kid": "k1"}),
     ],
 )
 async def test_id_token_negatives(ids: IdTokenVerifier, token: str) -> None:
@@ -1720,7 +1781,7 @@ async def test_logout_token_accepted(logouts: LogoutTokenVerifier) -> None:
         logout_token(sub=None),
         logout_token(headers={"typ": "JWT"}),
         logout_token(pem=PEM2, kid="k1"),
-        jwt.encode({"iss": ISSUER, "aud": "ops-web", "exp": int(time.time()) + 60, "iat": int(time.time()), "jti": "j", "sid": "s", "sub": ALEX, "events": {BACKCHANNEL_EVENT: {}}}, "x", algorithm="HS256", headers={"kid": "k1", "typ": "logout+jwt"}),
+        jwt.encode({"iss": ISSUER, "aud": "ops-web", "exp": int(time.time()) + 60, "iat": int(time.time()), "jti": "j", "sid": "s", "sub": ALEX, "events": {BACKCHANNEL_EVENT: {}}}, HS_KEY, algorithm="HS256", headers={"kid": "k1", "typ": "logout+jwt"}),
     ],
 )
 async def test_logout_token_negatives(logouts: LogoutTokenVerifier, token: str) -> None:
@@ -1825,6 +1886,7 @@ class Discovery:
 
     @classmethod
     def from_document(cls, doc: Mapping[str, Any], keycloak: settings.Keycloak) -> Discovery:
+        """Check the realm's metadata and build the endpoints; ValueError refuses the process start."""
         if doc.get("issuer") != keycloak.issuer:
             raise ValueError("discovery issuer differs from OPS_KC_ISSUER")
         if not (doc.get("backchannel_logout_supported") and doc.get("backchannel_logout_session_supported")):
@@ -1903,12 +1965,14 @@ class AuthlibOidc:
         )
 
     def authorization_url(self, *, state: str, nonce: str, code_verifier: str) -> str:
+        """The URL the browser is sent to (S256 challenge computed by authlib from the verifier)."""
         url, _ = self._client.create_authorization_url(
             self._discovery.authorization_endpoint, state=state, nonce=nonce, code_verifier=code_verifier
         )
         return str(url)
 
     async def exchange(self, *, code: str, code_verifier: str) -> Tokens:
+        """Trade the code for tokens; the shared client keeps none of them afterwards."""
         try:
             token = await self._client.fetch_token(
                 self._discovery.token_endpoint,
@@ -1918,16 +1982,25 @@ class AuthlibOidc:
                 redirect_uri=self._redirect_uri,
             )
         except OAuthError as exc:
-            # `error` is the OAuth error code (invalid_grant); the description could echo request values, so it stays out.
+            # `error` is the OAuth error code (invalid_grant); the description could echo request values: left out.
             raise ExchangeRefused(str(exc.error or "exchange refused")) from exc
         except (httpx2.HTTPError, OSError, ValueError) as exc:
             raise ExchangeUnavailable(f"token endpoint unreachable: {exc.__class__.__name__}") from exc
+        finally:
+            # authlib keeps the last token response on the client (shared by every login); nothing here acts at the
+            # provider on the user's behalf, so it is dropped at once (round-1 finding M14).
+            self._client.token = None
         id_token, refresh = token.get("id_token"), token.get("refresh_token")
         if not isinstance(id_token, str) or not id_token or not isinstance(refresh, str) or not refresh:
             raise ExchangeRefused("token reply lacks id_token or refresh_token")
         return Tokens(id_token=id_token, refresh_token=refresh)
 
+    async def aclose(self) -> None:
+        """Close authlib's own connection pool (process shutdown)."""
+        await self._client.aclose()
+
     async def end_session(self, refresh_token: str) -> None:
+        """End the provider session with the refresh token (RP logout, server side)."""
         # The form the spike measured (§2): client credentials as basic auth, the refresh token in the body, 204.
         try:
             response = await self._http.post(
@@ -1941,18 +2014,28 @@ class AuthlibOidc:
 
 @dataclass(frozen=True)
 class IdClaims:
+    """What the API keeps from a verified ID token."""
+
     subject: UUID
     sid: str
     username: str
 
 
 class IdTokens(Protocol):
+    """What the callback needs from the ID-token verifier; the unit tests fake it."""
+
     @property
-    def ready(self) -> bool: ...
+    def ready(self) -> bool:
+        """Whether the signing keys are loaded."""
+        ...
 
-    async def load_keys(self) -> None: ...
+    async def load_keys(self) -> None:
+        """Fetch the signing keys."""
+        ...
 
-    async def verify(self, id_token: str, *, nonce_sha256: str) -> IdClaims: ...
+    async def verify(self, id_token: str, *, nonce_sha256: str) -> IdClaims:
+        """Verify the token against the stored nonce hash or raise TokenRejected."""
+        ...
 
 
 class IdTokenVerifier:
@@ -1970,12 +2053,15 @@ class IdTokenVerifier:
 
     @property
     def ready(self) -> bool:
+        """Whether the signing keys are loaded."""
         return self.verifier.ready
 
     async def load_keys(self) -> None:
+        """Fetch the signing keys."""
         await self.verifier.load_keys()
 
     async def verify(self, id_token: str, *, nonce_sha256: str) -> IdClaims:
+        """The claims the API keeps, or TokenRejected."""
         principal = await self.verifier.verify_async(id_token)
         claims = principal.claims
         nonce, sid = claims.get("nonce"), claims.get("sid")
@@ -1994,6 +2080,8 @@ class IdTokenVerifier:
 
 @dataclass(frozen=True)
 class LogoutClaims:
+    """What the back-channel endpoint acts on from a verified logout token."""
+
     sid: str
     subject: UUID
     jti: str
@@ -2001,12 +2089,20 @@ class LogoutClaims:
 
 
 class LogoutTokens(Protocol):
+    """What the back-channel endpoint needs from the logout-token verifier; the unit tests fake it."""
+
     @property
-    def ready(self) -> bool: ...
+    def ready(self) -> bool:
+        """Whether the signing keys are loaded."""
+        ...
 
-    async def load_keys(self) -> None: ...
+    async def load_keys(self) -> None:
+        """Fetch the signing keys."""
+        ...
 
-    async def verify(self, token: str) -> LogoutClaims: ...
+    async def verify(self, token: str) -> LogoutClaims:
+        """Verify a logout token or raise TokenRejected."""
+        ...
 
 
 class LogoutTokenVerifier:
@@ -2026,12 +2122,15 @@ class LogoutTokenVerifier:
 
     @property
     def ready(self) -> bool:
+        """Whether the signing keys are loaded."""
         return self.verifier.ready
 
     async def load_keys(self) -> None:
+        """Fetch the signing keys."""
         await self.verifier.load_keys()
 
     async def verify(self, token: str) -> LogoutClaims:
+        """The claims the endpoint acts on, or TokenRejected."""
         principal = await self.verifier.verify_async(token)
         claims = principal.claims
         if "nonce" in claims:
@@ -2052,7 +2151,9 @@ class LogoutTokenVerifier:
 class EnabledCheck(Protocol):
     """The admin-API question the decision route asks (ops_core.keycloak_admin.AdminUsers in production)."""
 
-    async def enabled(self, subject: UUID) -> bool: ...
+    async def enabled(self, subject: UUID) -> bool:
+        """True only when the provider says the user exists and is enabled; raises AdminUnavailable."""
+        ...
 
 
 class TokenBox:
@@ -2063,9 +2164,11 @@ class TokenBox:
         self._fernet = Fernet(base64.urlsafe_b64encode(hashlib.sha256(key_material.encode("utf-8")).digest()))
 
     def seal(self, value: str) -> bytes:
+        """Encrypt a provider token for storage."""
         return self._fernet.encrypt(value.encode("utf-8"))
 
     def open(self, sealed: bytes) -> str:
+        """Decrypt a stored token; ValueError when it was not sealed by this key."""
         try:
             return self._fernet.decrypt(sealed).decode("utf-8")
         except (InvalidToken, TypeError) as exc:
@@ -2177,7 +2280,7 @@ Extend the `Store` protocol (docstring: "The seven operations of T08 plus T11's 
         """Insert a session row with its absolute expiry."""
         ...
 
-    async def session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
+    async def live_session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
         """The row if live (not revoked, inside both limits), touching `last_seen_at`; else None."""
         ...
 
@@ -2241,7 +2344,7 @@ and the `DbStore` implementations (each a unit without a tenant: the three table
                  absolute_seconds),
             )
 
-    async def session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
+    async def live_session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
         """The row if live, touching `last_seen_at` in the same statement: one UPDATE … RETURNING decides liveness
         (BUILD_SPEC §9 idle and absolute limits), so Python compares no clocks."""
         async with self.session.unit() as conn:
@@ -2298,14 +2401,118 @@ def _session_row(row: Any) -> SessionRow:
     )
 ```
 
-(`_session_row` is a module-level helper below the class; `from datetime import datetime` is already imported.) The module docstring's `TODO(T12)` line stays; add "T11: the session store (login_state, sessions, logout_jti)". `uv run mypy api/src core/src` clean; the Plan D API tests still pass because the `FakeStore` is not yet asked for the new methods (Task 4 adds them).
+(`_session_row` is a module-level helper below the class; `from datetime import datetime` is already imported.) In `core/src/ops_core/persistence.py`, after `assert_clock_profile`, add the guard the API and the sweeper use at start (review focus: a process started against a database the owner has not migrated must say so once, not fail on every request or tick):
 
-- [ ] **Step 6: Gates and commit**
+```python
+async def assert_relation(conn: Conn, name: str) -> None:
+    """Refuse to start when a relation a later revision adds is absent (`to_regclass` works for any role)."""
+    cur = await conn.execute("SELECT to_regclass(%s) IS NULL AS missing", (name,))
+    row = await cur.fetchone()
+    if row is not None and row["missing"]:
+        raise PersistenceError(f"{name} is missing; run scripts/skeleton.py migrate for this profile")
+``` The module docstring's `TODO(T12)` line stays; add "T11: the session store (login_state, sessions, logout_jti)". `uv run mypy api/src core/src` clean; the Plan D API tests still pass because the `FakeStore` is not yet asked for the new methods (Task 4 adds them).
 
-Format, lint, the character count; `PYTHONUTF8=1 uv run python scripts/check.py` → GREEN (R105 live remains declared red until Task 5; this task touches no live test, so the live suite need not run).
+- [ ] **Step 6: The live store test**
+
+Create `tests/e2e/test_sessions_store_live.py`:
+
+```python
+"""The session store under the api role's real grants (OPS_LIVE=1): the login one-shot and its expiry, liveness
+decided by the one UPDATE … RETURNING (idle and absolute), revocation, and the atomic jti-plus-revoke of the
+back-channel logout (a rolled-back revocation does not consume the token, spike §5).
+
+Catches: a statement the api cells do not cover (42501 would surface here, not in Task 6), a session that stays live
+past a limit, a replayed jti that revokes again.
+"""
+
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
+
+import pytest
+from ops_api import store as st
+from ops_core import persistence
+from ops_core.settings import Role
+
+pytestmark = pytest.mark.asyncio
+
+ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")
+ALEX = UUID("2fc05986-c7ec-544c-b628-fdb112bbf18a")
+ISSUER = "http://localhost:18080/realms/ops-dev"
+
+
+async def test_login_state_is_one_shot_and_expires(app_conn: persistence.Conn, role_conn) -> None:
+    db = st.DbStore(await role_conn(Role.API))
+    key = uuid4().hex
+    await db.begin_login(login_sha256=key, state_sha256="s", nonce_sha256="n", code_verifier="v", ttl_seconds=600)
+    taken = await db.take_login(key)
+    assert taken == st.LoginState("s", "n", "v") and await db.take_login(key) is None
+    expired = uuid4().hex
+    await db.begin_login(login_sha256=expired, state_sha256="s", nonce_sha256="n", code_verifier="v", ttl_seconds=600)
+    await app_conn.execute("UPDATE app.login_state SET expires_at = app.current_time() - interval '1 second'"
+                           " WHERE login_sha256 = %s", (expired,))
+    assert await db.take_login(expired) is None  # consumed and refused in one statement
+    cur = await app_conn.execute("SELECT count(*) AS n FROM app.login_state WHERE login_sha256 = %s", (expired,))
+    assert (await cur.fetchone())["n"] == 0
+
+
+async def new_session(db: st.DbStore, sid: str = "sid-live") -> str:
+    key = uuid4().hex
+    await db.create_session(
+        session_sha256=key, issuer=ISSUER, subject=ALEX, tenant_id=ALPHA, sid=sid, username="alex",
+        csrf_secret_sha256="c", refresh_token_enc=b"sealed", absolute_seconds=28800,
+    )
+    return key
+
+
+async def test_liveness_is_decided_by_the_update(app_conn: persistence.Conn, role_conn) -> None:
+    db = st.DbStore(await role_conn(Role.API))
+    key = await new_session(db)
+    try:
+        row = await db.live_session(key, idle_seconds=1800)
+        assert row is not None and row.subject == ALEX and row.sid == "sid-live" and row.refresh_token_enc == b"sealed"
+        await app_conn.execute("UPDATE app.sessions SET last_seen_at = last_seen_at - interval '31 minutes'"
+                               " WHERE session_sha256 = %s", (key,))
+        assert await db.live_session(key, idle_seconds=1800) is None  # idle
+        await app_conn.execute(
+            "UPDATE app.sessions SET last_seen_at = app.current_time(),"
+            " expires_at = app.current_time() - interval '1 second' WHERE session_sha256 = %s",
+            (key,),
+        )
+        assert await db.live_session(key, idle_seconds=1800) is None  # absolute, despite the fresh touch
+        await app_conn.execute("UPDATE app.sessions SET expires_at = app.current_time() + interval '1 hour'"
+                               " WHERE session_sha256 = %s", (key,))
+        assert await db.live_session(key, idle_seconds=1800) is not None
+        revoked = await db.revoke_session(key)
+        assert revoked is not None and await db.revoke_session(key) is None
+        assert await db.live_session(key, idle_seconds=1800) is None
+    finally:
+        await app_conn.execute("DELETE FROM app.sessions WHERE session_sha256 = %s", (key,))
+
+
+async def test_record_logout_is_atomic_and_replay_safe(app_conn: persistence.Conn, role_conn) -> None:
+    db = st.DbStore(await role_conn(Role.API))
+    sid = f"sid-{uuid4().hex[:8]}"
+    keys = [await new_session(db, sid), await new_session(db, sid), await new_session(db, "other")]
+    jti = f"jti-{uuid4().hex}"
+    until = datetime.now(UTC) + timedelta(days=1)
+    try:
+        assert await db.record_logout(jti, expires_at=until, sid=sid) == 2
+        assert await db.record_logout(jti, expires_at=until, sid=sid) is None  # replay
+        assert await db.live_session(keys[2], idle_seconds=1800) is not None  # the other sid is untouched
+        assert all(await db.live_session(k, idle_seconds=1800) is None for k in keys[:2])
+    finally:
+        await app_conn.execute("DELETE FROM app.sessions WHERE session_sha256 = ANY(%s)", (keys,))
+        await app_conn.execute("DELETE FROM app.logout_jti WHERE jti = %s", (jti,))
+```
+
+Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_sessions_store_live.py -q` → PASS (three tests, as role `api`).
+
+- [ ] **Step 7: Gates and commit**
+
+Format, lint, the character count; `PYTHONUTF8=1 uv run python scripts/check.py` → GREEN; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → GREEN (this task changes a service module, so the live suite runs); `git checkout -- reports/bootstrap`.
 
 ```bash
-git add core/src/ops_core/keycloak_admin.py api/src/ops_api/auth.py api/src/ops_api/store.py tests/plan_f
+git add core/src/ops_core/keycloak_admin.py api/src/ops_api/auth.py api/src/ops_api/store.py tests/plan_f tests/e2e/test_sessions_store_live.py
 git commit -m "feat(api,core): admin-API enabled check client, OIDC client and token verifiers, sealed refresh token, session store (T11)"
 ```
 
@@ -2319,6 +2526,7 @@ git commit -m "feat(api,core): admin-API enabled check client, OIDC client and t
 
 **Interfaces:**
 - Consumes: everything Task 3 produced; `settings.sessions()`, `settings.admin_check_timeout()`, `keycloak_admin.admin_users`.
+- Consumes: `persistence.assert_relation(conn, name)` (added in Task 3 beside `assert_clock_profile`: `to_regclass(name) IS NULL` → `PersistenceError("<name> is missing; migrate the database")`).
 - Produces: `create_app(verifier, store_factory, auth_factory)` where `auth_factory() -> AuthDeps | Awaitable[AuthDeps]`; `Identity(subject, username, membership, session)` with `.auth` (`"session"` | `"bearer"`); dependencies `identity`, `browser_mutation`, `enabled_identity`; routes `GET /`, `GET /auth/login`, `GET /auth/callback`, `POST /auth/logout` (204), `POST /auth/backchannel-logout` (200/400); `GET /api/v1/me` gains `"auth"`; `ApiError(status, code, message, *, clear_session=False, clear_login=False)`.
 - Produces (`tests/plan_f/auth_fakes.py`): `FakeOidc`, `FakeIdTokens`, `FakeLogoutTokens`, `FakeAdmin`, `fake_auth(**over) -> AuthDeps`, `login_as(client, auth, subject, *, sid, username) -> str` (returns the CSRF token).
 
@@ -2490,7 +2698,7 @@ def api() -> Iterator[tuple[TestClient, FakeStore]]:
             "revoked": False,
         }
 
-    async def session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
+    async def live_session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
         entry = self.sessions.get(session_sha256)
         now = self.clock()
         if entry is None or entry["revoked"] or entry["expires"] <= now or entry["last_seen"] <= now - idle_seconds:
@@ -2517,7 +2725,7 @@ def api() -> Iterator[tuple[TestClient, FakeStore]]:
         return len(hit)
 ```
 
-(signatures spelled out with the annotations of the protocol). `test_multi_tenant_subject_cannot_act_and_roles_do_not_merge`: the `dual` call now expects **401** (ruling 21), with the comment "no single current membership is no application identity (BUILD_SPEC §7: 401 for missing identity; SA:549)". Run `uv run python -m pytest tests/plan_d/test_api.py -q` → FAIL on the `auth_factory` keyword (expected until Step 3).
+(signatures spelled out with the annotations of the protocol). `test_multi_tenant_subject_cannot_act_and_roles_do_not_merge`: the `dual` call now expects **401** (ruling 21), with the comment "no single current membership is no application identity (BUILD_SPEC §7: 401 for missing identity; SA:549)". `test_identity_and_membership`'s expected `/api/v1/me` dict gains `"auth": "bearer"`. Run `uv run python -m pytest tests/plan_d/test_api.py -q` → FAIL on the `auth_factory` keyword (expected until Step 3).
 
 - [ ] **Step 2: Write the failing route tests**
 
@@ -2553,7 +2761,7 @@ def world():
     deps = fake_auth()
     fake = FakeStore()
     app = create_app(StubVerifier(), store_factory=lambda: fake, auth_factory=lambda: deps)
-    with TestClient(app, base_url="http://testserver") as c:
+    with TestClient(app, base_url="http://localhost:8000") as c:  # the public host: /auth/login redirects any other
         yield c, fake, deps
 
 
@@ -2563,6 +2771,9 @@ def browser(csrf: str, **extra: str) -> dict[str, str]:
 
 def test_login_redirect_shape(world) -> None:
     c, fake, deps = world
+    elsewhere = c.get("/auth/login", follow_redirects=False, headers={"Host": "127.0.0.1:8000"})
+    assert elsewhere.status_code == 303 and elsewhere.headers["location"] == "http://localhost:8000/auth/login"
+    assert not fake.logins and "ops_login" not in c.cookies  # nothing started on the wrong host
     r = c.get("/auth/login", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"].startswith("https://idp.test/auth?")
     assert r.headers["cache-control"] == "no-store"
@@ -2595,7 +2806,7 @@ def test_callback_refuses_a_missing_login_cookie_and_a_foreign_state(world) -> N
         deps.oidc.started[-1]["nonce"],
     )
     # Another browser (no login cookie) presents the victim's callback URL: refused before any exchange.
-    other = TestClient(c.app)
+    other = TestClient(c.app, base_url="http://localhost:8000")
     r = other.get("/auth/callback", params={"code": "good", "state": state, "iss": ISSUER}, follow_redirects=False)
     assert r.status_code == 401 and "good" in deps.oidc.codes  # the code was not spent
     # The right browser with the wrong state: refused, and the login row is consumed (one shot).
@@ -2665,8 +2876,9 @@ def test_session_expiry_revocation_and_logout(world) -> None:
     r = c.get("/api/v1/me")
     assert r.status_code == 401 and r.json()["code"] == "UNAUTHENTICATED"
     assert "ops_session" not in c.cookies and "ops_csrf" not in c.cookies  # cleared by the response
+    before = set(fake.sessions)
     login_as(c, deps, ALEX)
-    key = next(k for k, e in fake.sessions.items() if not e["revoked"])
+    key = next(k for k in fake.sessions if k not in before)  # the new row, not the idle-expired one
     fake.sessions[key]["expires"] -= 28801  # absolute (8 h) even with recent activity
     assert c.get("/api/v1/me").status_code == 401
     csrf = login_as(c, deps, ALEX)
@@ -2711,9 +2923,9 @@ def test_revoked_membership_ends_the_session_and_the_bearer(world) -> None:
 def test_backchannel_logout_revokes_by_sid_once(world) -> None:
     c, fake, deps = world
     login_as(c, deps, ALEX, sid="kc-sid")
-    other = TestClient(c.app)
+    other = TestClient(c.app, base_url="http://localhost:8000")
     login_as(other, deps, SAM, sid="kc-sid", username="sam")  # same Keycloak session, second browser tab/app session
-    third = TestClient(c.app)
+    third = TestClient(c.app, base_url="http://localhost:8000")
     login_as(third, deps, ALEX, sid="another-sid")
     exp = int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())
     deps.logout_tokens.tokens["lt-1"] = LogoutClaims(sid="kc-sid", subject=ALEX, jti="j-1", expires_at=exp)
@@ -2769,7 +2981,7 @@ Run: `uv run python -m pytest tests/plan_f/test_api_auth.py -q` → FAIL (`auth_
 
 - [ ] **Step 3: `app.py`**
 
-Rewrite `api/src/ops_api/app.py` as follows (the Plan D routes keep their bodies; what changes is marked). Module docstring: replace the last sentence with "Browser sessions (T11): server-side rows, the cookie path beside the bearer path, CSRF and origin on browser mutations, the admin-API enabled check on decision-class mutations, back-channel logout. Idempotency-Key stays declared debt (T12)." Imports gain `from datetime import UTC, datetime, timedelta` (already partly there), `import httpx2`, `from fastapi.responses import JSONResponse, RedirectResponse`, `from ops_core import keycloak_admin, persistence, settings`, `from ops_core.keycloak_admin import AdminUnavailable`, and `from ops_api import auth as au` plus `from ops_api.auth import AuthDeps, ExchangeRefused, ExchangeUnavailable`.
+Rewrite `api/src/ops_api/app.py` as follows (the Plan D routes keep their bodies; what changes is marked). Module docstring: replace the last sentence with "Browser sessions (T11): server-side rows, the cookie path beside the bearer path, CSRF and origin on browser mutations, the admin-API enabled check on decision-class mutations, back-channel logout. Idempotency-Key stays declared debt (T12)." Imports gain `from datetime import UTC, datetime, timedelta` (already partly there), `from urllib.parse import urlsplit`, `import httpx2`, `from fastapi.responses import JSONResponse, RedirectResponse`, `from ops_core import keycloak_admin, persistence, settings`, `from ops_core.keycloak_admin import AdminUnavailable`, and `from ops_api import auth as au` plus `from ops_api.auth import AuthDeps, ExchangeRefused, ExchangeUnavailable`.
 
 ```python
 class ApiError(Exception):
@@ -2819,6 +3031,7 @@ def create_app(
         try:
             if isinstance(app.state.store, st.DbStore):
                 await persistence.assert_clock_profile(app.state.store.session.conn, settings.profile())
+                await persistence.assert_relation(app.state.store.session.conn, "app.login_state")  # revision 0005
             if not verifier.ready:
                 await verifier.load_keys()
             deps = auth_factory()
@@ -2861,7 +3074,7 @@ def create_app(
         raw = request.cookies.get(au.SESSION_COOKIE)
         if raw is None:
             raise ApiError(401, ErrorCode.UNAUTHENTICATED, "a session or bearer token is required")
-        row = await store.session(au.digest(raw), idle_seconds=deps.sessions.idle_seconds)
+        row = await store.live_session(au.digest(raw), idle_seconds=deps.sessions.idle_seconds)
         if row is None:
             raise ApiError(401, ErrorCode.UNAUTHENTICATED, "session expired or unknown", clear_session=True)
         # Current membership on every request (BUILD_SPEC §9, R013): the session carries no authority of its own.
@@ -2927,6 +3140,11 @@ The other exception handlers, `body`, `/health/*` are unchanged. `me` adds `"aut
         under the login cookie's hash (SA:565), never in a signed cookie."""
         store: st.Store = request.app.state.store
         deps: AuthDeps = request.app.state.auth
+        public_host = urlsplit(deps.sessions.public_base_url).netloc
+        if request.headers.get("host", "") != public_host:
+            # A browser at 127.0.0.1:8000 would get its login cookie on a host Keycloak never redirects back to (the
+            # registered callback is exact), so it is sent to the public host first (round-1 review focus).
+            return no_store(RedirectResponse(f"{deps.sessions.public_base_url}/auth/login", status_code=303))
         login_token, state, nonce, verifier_value = au.new_token(), au.new_token(), au.new_token(), au.new_token()
         await store.begin_login(
             login_sha256=au.digest(login_token),
@@ -3066,20 +3284,21 @@ def production_app() -> FastAPI:
             client_secret=settings.read_secret("kc_client_secret_ops_view_users"),
             timeout=settings.admin_check_timeout(),
         )
+        oidc = au.AuthlibOidc(
+            discovery=discovery,
+            client_secret=settings.read_secret("kc_client_secret_ops_web"),
+            redirect_uri=sess.redirect_uri,
+            http=http,
+        )
         return AuthDeps(
-            oidc=au.AuthlibOidc(
-                discovery=discovery,
-                client_secret=settings.read_secret("kc_client_secret_ops_web"),
-                redirect_uri=sess.redirect_uri,
-                http=http,
-            ),
+            oidc=oidc,
             id_tokens=au.IdTokenVerifier(issuer=kc.issuer, jwks_url=discovery.jwks_uri),
             logout_tokens=au.LogoutTokenVerifier(issuer=kc.issuer, jwks_url=discovery.jwks_uri),
             admin=admin,
             box=au.TokenBox(settings.read_secret("api_session_key")),
             sessions=sess,
             cookies=au.CookiePolicy(secure=sess.cookie_secure, login_max_age=sess.login_seconds),
-            closers=(http.aclose, admin.aclose),
+            closers=(http.aclose, admin.aclose, oidc.aclose),
         )
 
     return create_app(verifier, make_store, make_auth)
@@ -3089,7 +3308,7 @@ Run: `uv run python -m pytest tests/plan_f/test_api_auth.py tests/plan_d/test_ap
 
 - [ ] **Step 4: Gates and commit**
 
-Format, lint (`BLE001` has a `noqa` with its reason), the character count; `uv run mypy api/src core/src --no-incremental` clean; `PYTHONUTF8=1 uv run python scripts/check.py` → GREEN. Start the API by hand against the dev stack to prove the lifespan (discovery, JWKS, admin token) completes: `PYTHONUTF8=1 uv run python -m ops_api` in one shell, `curl -s http://127.0.0.1:8000/health/ready` and `curl -sI http://127.0.0.1:8000/auth/login | head -5` (a 303 to `http://localhost:18080/realms/ops-dev/protocol/openid-connect/auth?…code_challenge_method=S256…`; do not paste the Location into the report beyond its path and the parameter names), then stop it. The dev database was not migrated to 0005 yet: `GET /auth/login` writes `login_state` and will answer 503 "database unavailable" — expected; the manual probe only proves startup, and the live proof is Task 6's.
+Format, lint (`BLE001` has a `noqa` with its reason), the character count; `uv run mypy api/src core/src --no-incremental` clean; `PYTHONUTF8=1 uv run python scripts/check.py` → GREEN; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → GREEN (R105 exercises the rewritten `identity` and the decision route's enabled check on the bearer path against the real admin API; `git checkout -- reports/bootstrap` afterwards). The dev database is still at 0004, so the API refuses to start there (the lifespan's revision guard, Step 3) until the owner migrates it (Task 7); do not start it by hand against the dev database.
 
 ```bash
 git add api/src/ops_api/app.py tests/plan_d/test_api.py tests/plan_f/auth_fakes.py tests/plan_f/test_api_auth.py
@@ -3100,12 +3319,12 @@ git commit -m "feat(api): browser login, server-side sessions, CSRF/origin, enab
 ### Task 5: The sweeper
 
 **Files:**
-- Create: `sweeper/pyproject.toml`, `sweeper/src/ops_sweeper/__init__.py`, `sweeper/src/ops_sweeper/__main__.py`, `sweeper/src/ops_sweeper/main.py`, `sweeper/src/ops_sweeper/sync.py`, `tests/plan_f/test_sweeper.py`
+- Create: `sweeper/pyproject.toml`, `sweeper/README.md`, `sweeper/src/ops_sweeper/__init__.py`, `sweeper/src/ops_sweeper/__main__.py`, `sweeper/src/ops_sweeper/main.py`, `sweeper/src/ops_sweeper/sync.py`, `tests/plan_f/test_sweeper.py`
 - Modify: `pyproject.toml` (workspace member, root dependency, `tool.uv.sources`), `uv.lock` (`uv lock`), `scripts/check.py` (`MEMBER_SRC`), `scripts/skeleton.py` (`PROCESSES`, `process_environment`, docstring), `tests/plan_e/test_skeleton_cli.py` (six processes), `core/src/ops_core/persistence.py` (`insert_maintenance_job`, `claim_maintenance_job`), `docs/runbooks/walking-skeleton.md`
 
 **Interfaces:**
 - Consumes: `keycloak_admin.admin_users(...)`, `AdminUsers.list_enabled()`, `persistence.connect`, `finish_job`, `tenants`, `settings.app_postgres(Role.SWEEPER)`, `redaction.install()`.
-- Produces: `ops_sweeper.sync.plan(memberships: Iterable[UUID], users: Mapping[UUID, bool]) -> frozenset[UUID]` (the subjects to deactivate), `async sync_memberships(conn, *, issuer, users) -> SyncResult(checked, deactivated)`, `async purge_expired(conn) -> dict[str, int]`; `ops_sweeper.main.run_forever(deps, stop)`, `health_app(probe, fresh)`, `Deps`; `persistence.insert_maintenance_job(conn, job_type, bucket) -> UUID | None`, `claim_maintenance_job(conn, *, job_type, worker_name) -> DictRow | None`; `scripts/skeleton.py` `Process("sweeper", "ops_sweeper", 8071)`.
+- Produces: `ops_sweeper.sync.plan(memberships: Iterable[UUID], users: Mapping[UUID, bool]) -> frozenset[UUID]` (the subjects to deactivate), `MAX_DEACTIVATION_FRACTION`, `MassDeactivation`, `async sync_memberships(conn, *, issuer, users) -> SyncResult(checked, deactivated)` (raises `MassDeactivation`, stamping nothing), `async purge_expired(conn) -> dict[str, int]`; `ops_sweeper.main.run_forever(deps, stop)`, `health_app(probe, is_fresh)`, `Deps`, `minute_bucket(at) -> str` (`YYYY-MM-DDTHH:MM`), `fresh(last_sync_at, now)`; `persistence.insert_maintenance_job(conn, job_type, minute_bucket) -> UUID | None`, `claim_maintenance_job(conn, *, job_type, worker_name) -> DictRow | None`; `scripts/skeleton.py` `Process("sweeper", "ops_sweeper", 8071)`.
 
 - [ ] **Step 1: Write the failing sync tests**
 
@@ -3122,6 +3341,7 @@ subject of another issuer touched, a readiness that reports ready before the fir
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from ops_core.jobs import JobType, dedup_key
 from ops_sweeper import sync
 from ops_sweeper.main import fresh, minute_bucket
 
@@ -3137,10 +3357,16 @@ def test_plan_deactivates_disabled_and_deleted_subjects_only() -> None:
     assert sync.plan([], users) == frozenset()
 
 
-def test_minute_bucket_is_the_dedup_key_of_sa_504() -> None:
+def test_minute_bucket_feeds_the_dedup_key_of_sa_504() -> None:
     at = datetime(2026, 10, 9, 8, 30, 59, tzinfo=UTC)
-    assert minute_bucket(at) == "sync_memberships:2026-10-09T08:30"
-    assert minute_bucket(datetime(2026, 10, 9, 8, 31, 0, tzinfo=UTC)) == "sync_memberships:2026-10-09T08:31"
+    assert minute_bucket(at) == "2026-10-09T08:30"
+    assert dedup_key(JobType.SYNC_MEMBERSHIPS, minute_bucket=minute_bucket(at)) == "sync_memberships:2026-10-09T08:30"
+    assert minute_bucket(datetime(2026, 10, 9, 8, 31, 0, tzinfo=UTC)) == "2026-10-09T08:31"
+
+
+def test_mass_deactivation_is_refused() -> None:
+    assert sync.MAX_DEACTIVATION_FRACTION == 0.5
+    assert sync.plan([ALEX, SAM, LEE], {}) == frozenset({ALEX, SAM, LEE})  # plan is pure; the refusal is the writer's
 
 
 def test_fresh_rule() -> None:
@@ -3179,18 +3405,20 @@ Root `pyproject.toml`: `"ops-sweeper"` in `dependencies`, `ops-sweeper = { works
 `core/src/ops_core/persistence.py`, after `requeue_job`:
 
 ```python
-async def insert_maintenance_job(conn: Conn, job_type: JobType, bucket: str) -> UUID | None:
-    """A tenant-less sweeper job keyed by its minute bucket (SA:504); None when that bucket already exists.
+async def insert_maintenance_job(conn: Conn, job_type: JobType, minute_bucket: str) -> UUID | None:
+    """A tenant-less sweeper job keyed by `<type>:<minute bucket>` (SA:504); None when that minute already exists.
 
     `jobs_tenant_iff_run_check` allows a NULL tenant exactly for these, and the sweeper's `sweeper_all` policy
-    admits the row without a tenant setting; a target-less ON CONFLICT DO NOTHING needs INSERT only (spike §5),
-    and the sweeper's SELECT serves the RETURNING.
+    admits the row without a tenant setting. ON CONFLICT with a target and RETURNING both need SELECT, which the
+    sweeper holds on `jobs` (unlike the api role on `logout_jti`, where the insert is target-less).
     """
     if JOB_RULES[job_type].run_states:
         raise ValueError(f"{job_type.value} is not a maintenance job")
+    key = dedup_key(job_type, minute_bucket=minute_bucket)  # validates the bucket's shape
     cur = await conn.execute(
-        "INSERT INTO app.jobs (id, type, dedup_key) VALUES (%s, %s, %s) ON CONFLICT (dedup_key) DO NOTHING RETURNING id",
-        (uuid4(), job_type.value, bucket),
+        "INSERT INTO app.jobs (id, type, dedup_key) VALUES (%s, %s, %s)"
+        " ON CONFLICT (dedup_key) DO NOTHING RETURNING id",
+        (uuid4(), job_type.value, key),
     )
     row = await cur.fetchone()
     return None if row is None else UUID(str(row["id"]))
@@ -3208,11 +3436,24 @@ async def claim_maintenance_job(conn: Conn, *, job_type: JobType, worker_name: s
     return await cur.fetchone()
 ```
 
-(`JOB_RULES` is importable from `ops_core.jobs`; check the existing import line.) Note: `ON CONFLICT (dedup_key)` with a target needs SELECT, which the sweeper has on `jobs`; the comment must say so (the spike's "target-less" finding was about the jti table where `api` has INSERT only).
+(`JOB_RULES` and `dedup_key` are importable from `ops_core.jobs`; extend the existing import line.) Note: `ON CONFLICT (dedup_key)` with a target needs SELECT, which the sweeper has on `jobs`; the comment must say so (the spike's "target-less" finding was about the jti table where `api` has INSERT only).
 
 - [ ] **Step 3: `ops_sweeper`**
 
-Create `sweeper/src/ops_sweeper/__init__.py` (empty, one-line docstring "The sweeper: AM-20.1's scheduler process."), `sweeper/src/ops_sweeper/__main__.py`:
+Create `sweeper/README.md` (ADR-0001: every deployable directory states its ownership and trust):
+
+```markdown
+# sweeper
+
+The scheduler process of AM-20.1: PostgreSQL role `sweeper`, Keycloak service account `ops-view-users` (read-only).
+Every 30 s it syncs memberships against the realm (deactivates disabled or deleted users, stamps `synced_at`; it never
+reactivates), records the sync as the `sync_memberships` maintenance job of the minute, and purges expired sessions,
+login state and logout-token ids. It holds no decision authority: it cannot grant, decide, transition a run or write an
+event (`append_event` for its own maintenance events only). Leases, wake-ups, the outbox and proposal expiry arrive with
+T13/T14/T21. Health: `127.0.0.1:8071/health/ready` is 200 only while the last successful sync is younger than 120 s.
+```
+
+Create `sweeper/src/ops_sweeper/__init__.py` (one line: `"""The sweeper: AM-20.1's scheduler process (membership sync, expiry purges)."""`), `sweeper/src/ops_sweeper/__main__.py`:
 
 ```python
 """`python -m ops_sweeper`: the scheduler process with its health server on 127.0.0.1:OPS_SWEEPER_HEALTH_PORT."""
@@ -3242,8 +3483,17 @@ from uuid import UUID
 from ops_core import persistence
 
 
+MAX_DEACTIVATION_FRACTION = 0.5  # more than half of the active subjects gone at once is a broken listing
+
+
+class MassDeactivation(Exception):
+    """More than MAX_DEACTIVATION_FRACTION of the active subjects would go: refused, nothing stamped."""
+
+
 @dataclass(frozen=True)
 class SyncResult:
+    """What one sync did: rows stamped and rows deactivated."""
+
     checked: int
     deactivated: int
 
@@ -3256,11 +3506,16 @@ def plan(memberships: Iterable[UUID], users: Mapping[UUID, bool]) -> frozenset[U
 async def sync_memberships(conn: persistence.Conn, *, issuer: str, users: Mapping[UUID, bool]) -> SyncResult:
     """Apply `plan` to every active membership of `issuer`, then stamp all of the issuer's rows, in one transaction."""
     async with conn.transaction():
+        # No DISTINCT: PostgreSQL refuses FOR UPDATE with it (0A000, round-1 finding B2); `plan` dedups anyway.
         cur = await conn.execute(
-            "SELECT DISTINCT subject FROM app.memberships WHERE issuer = %s AND active FOR UPDATE", (issuer,)
+            "SELECT subject FROM app.memberships WHERE issuer = %s AND active FOR UPDATE", (issuer,)
         )
-        active = [UUID(str(r["subject"])) for r in await cur.fetchall()]
+        active = {UUID(str(r["subject"])) for r in await cur.fetchall()}
         gone = plan(active, users)
+        if active and len(gone) > len(active) * MAX_DEACTIVATION_FRACTION:
+            # A listing from the wrong realm, or a partial one, would deactivate most of the tenant base at once,
+            # and nothing reactivates (SA:107). Refuse, stamp nothing: the gate fails closed after 120 s instead.
+            raise MassDeactivation(f"{len(gone)} of {len(active)} active subjects would be deactivated")
         deactivated = 0
         if gone:
             cur = await conn.execute(
@@ -3299,9 +3554,11 @@ async def purge_expired(conn: persistence.Conn) -> dict[str, int]:
 """The sweeper process (AM-20.1 scheduler): a tick loop beside a health server, the worker's shape (one loop
 connection as role `sweeper`, one probe connection, a SelectorEventLoop on Windows).
 
-Every tick (30 s) inserts the `sync_memberships` maintenance job for the current minute bucket (SA:504), claims one
-unclaimed sweeper job, runs it and finishes it; a 30 s tick with a per-minute key yields one sync per minute and
-never skips a bucket (ruling 12). The same tick purges expired rows. Readiness is 200 only while the last successful
+Every tick (30 s) syncs, then records the sync as this minute's `sync_memberships` maintenance job (SA:504's dedup
+key; inserted, claimed and finished by the same tick, so the `jobs` table is the audit trail of every minute and a
+second sweeper instance never records the same minute twice); the first tick syncs at once, so readiness arrives
+within seconds of start, and two syncs are never more than 30 s plus one sync's duration apart (ruling 12; SA:547's
+60 s holds with margin). The same tick purges expired rows. Readiness is 200 only while the last successful
 sync is younger than 120 s, the window after which `grant_execution` refuses (T11 review note 2), so
 `scripts/skeleton.py up` waits for the first sync. TODO(T13/T14/T21): leases, wake-ups, outbox, proposal expiry.
 """
@@ -3337,6 +3594,8 @@ log = logging.getLogger("ops_sweeper")
 
 @dataclass
 class Deps:
+    """What the loop needs: its connection, the admin client, the issuer whose rows it owns, the cadence."""
+
     conn: persistence.Conn
     admin: keycloak_admin.AdminUsers
     issuer: str
@@ -3346,8 +3605,8 @@ class Deps:
 
 
 def minute_bucket(at: datetime) -> str:
-    """The dedup key of the sync job: `sync_memberships:<minute bucket>` (SA:504)."""
-    return f"{JobType.SYNC_MEMBERSHIPS.value}:{at.astimezone(UTC).strftime('%Y-%m-%dT%H:%M')}"
+    """The minute bucket of the sync job's dedup key (`ops_core.jobs.dedup_key` builds `sync_memberships:<bucket>`)."""
+    return at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M")
 
 
 def fresh(last_sync_at: float | None, now: float) -> bool:
@@ -3362,22 +3621,25 @@ async def run_sync(deps: Deps) -> None:
     except AdminUnavailable as exc:
         log.warning("membership sync skipped: %s", exc)
         return
-    result = await sync.sync_memberships(deps.conn, issuer=deps.issuer, users=users)
+    try:
+        result = await sync.sync_memberships(deps.conn, issuer=deps.issuer, users=users)
+    except sync.MassDeactivation as exc:
+        log.error("membership sync refused: %s", exc)
+        return
     deps.last_sync_at = time.monotonic()
     log.info("membership sync: %d rows checked, %d deactivated", result.checked, result.deactivated)
 
 
 async def tick(deps: Deps) -> None:
-    """Enqueue this minute's sync job, run one claimable sweeper job, purge expired rows."""
+    """Sync, record this minute's maintenance job (insert, claim, finish), purge expired rows."""
+    await run_sync(deps)
     async with deps.conn.transaction():
         await persistence.insert_maintenance_job(deps.conn, JobType.SYNC_MEMBERSHIPS, minute_bucket(datetime.now(UTC)))
-    async with deps.conn.transaction():
         job = await persistence.claim_maintenance_job(
             deps.conn, job_type=JobType.SYNC_MEMBERSHIPS, worker_name=deps.worker_name
         )
-    if job is not None:
-        await run_sync(deps)
-        await persistence.finish_job(deps.conn, job["id"])
+        if job is not None:
+            await persistence.finish_job(deps.conn, job["id"])
     counts = await sync.purge_expired(deps.conn)
     if any(counts.values()):
         log.info("purged expired rows: %s", counts)
@@ -3405,9 +3667,11 @@ def health_app(probe: persistence.Conn, is_fresh: Callable[[], bool]) -> Starlet
     """Readiness: the database answers and the last sync is fresh (so a sweeper whose Keycloak is gone says so)."""
 
     async def live(_: Request) -> JSONResponse:
+        """The process is up."""
         return JSONResponse({"status": "live"})
 
     async def ready(_: Request) -> JSONResponse:
+        """The database answers and the last sync is fresh."""
         try:
             await probe.execute("SELECT 1")
         except (psycopg.Error, OSError):
@@ -3428,6 +3692,7 @@ async def _main() -> None:
     conn = await persistence.connect(settings.app_postgres(Role.SWEEPER))
     probe = await persistence.connect(settings.app_postgres(Role.SWEEPER))
     await persistence.assert_clock_profile(probe, settings.profile())
+    await persistence.assert_relation(probe, "app.logout_jti")  # revision 0005 (the purge touches all three tables)
     deps = Deps(
         conn=conn,
         admin=admin,
@@ -3476,21 +3741,122 @@ def test_six_processes_on_distinct_loopback_ports() -> None:
     from scripts.skeleton import PROCESSES
 
     assert [p.name for p in PROCESSES] == ["incident-sim", "mcp-read", "mcp-write", "api", "worker", "sweeper"]
-    assert len({p.port for p in PROCESSES}) == 6 and all(p.health_url.startswith("http://127.0.0.1:") for p in PROCESSES)
+    assert len({p.port for p in PROCESSES}) == 6
+    assert all(p.health_url.startswith("http://127.0.0.1:") for p in PROCESSES)
 ```
 
 Run: `uv run python -m pytest tests/plan_f/test_sweeper.py tests/plan_e/test_skeleton_cli.py -q` → PASS.
 
-- [ ] **Step 4: Live proof and the runbook**
+- [ ] **Step 4: The live sync test, the live proof and the runbook**
 
-With the dev stack up and no skeleton running: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_r105_walking_skeleton.py -q` → PASS (six processes; the sweeper's first sync completes before readiness, so the seeded rows are fresh when the grant is asked for). Confirm in `runtime/skeleton/sweeper.log`: one "membership sync: 5 rows checked, 0 deactivated" line (and no secret-shaped text: `grep -c "Bearer \|password=" runtime/skeleton/*.log` → 0). `docs/runbooks/walking-skeleton.md`: "Six host processes"; the list in step 3 gains `sweeper :8071 (health only; membership sync every minute, expiry purges)`; a paragraph: without the sweeper, grants refuse with `MEMBERSHIP_STALE` after 120 s and execute jobs wait (re-queued every 30 s) until it runs.
+Create `tests/e2e/test_sweeper_live.py` (the sync's SQL under the real `sweeper` grants, with a users mapping the test supplies, so no Keycloak user is touched):
+
+```python
+"""The membership sync as role sweeper on ops_test (OPS_LIVE=1): deactivation of a disabled and of a deleted subject,
+every row of the issuer stamped, another issuer untouched, the mass-deactivation refusal stamping nothing, and the
+maintenance job recorded once per minute. The users mapping is supplied by the test; the admin API is Task 6's."""
+
+from datetime import UTC, datetime
+from uuid import UUID, uuid4
+
+import pytest
+from ops_core import persistence
+from ops_core.jobs import JobType
+from ops_core.settings import Role
+from ops_sweeper import sync
+
+pytestmark = pytest.mark.asyncio
+
+ISSUER = "http://localhost:18080/realms/ops-dev"
+ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")
+ALEX = UUID("2fc05986-c7ec-544c-b628-fdb112bbf18a")
+SAM = UUID("03f7eb09-e18d-5f33-bf75-12c57d5aaa54")
+LEE = UUID("abcc1200-6791-57ab-87b5-9392d356b512")
+
+
+async def seeded(app_conn: persistence.Conn) -> dict[UUID, bool]:
+    cur = await app_conn.execute("SELECT DISTINCT subject FROM app.memberships WHERE issuer = %s", (ISSUER,))
+    return {UUID(str(r["subject"])): True for r in await cur.fetchall()}
+
+
+async def restore(app_conn: persistence.Conn) -> None:
+    await app_conn.execute(
+        "UPDATE app.memberships SET active = true, permission_version = 1, synced_at = app.current_time()"
+    )
+
+
+async def test_sync_deactivates_disabled_and_deleted_and_stamps_the_issuer(app_conn, role_conn) -> None:
+    sweeper = await role_conn(Role.SWEEPER)
+    foreign = uuid4()
+    await app_conn.execute(
+        "INSERT INTO app.memberships (tenant_id, issuer, subject, role)"
+        " VALUES (%s, 'http://other/realms/x', %s, 'reader')",
+        (ALPHA, foreign),
+    )
+    await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time() - interval '1 hour'")
+    try:
+        users = await seeded(app_conn)
+        users[SAM] = False  # disabled
+        del users[LEE]  # deleted
+        result = await sync.sync_memberships(sweeper, issuer=ISSUER, users=users)
+        assert result.deactivated == 2 and result.checked == 5
+        cur = await app_conn.execute(
+            "SELECT subject, active, permission_version,"
+            " synced_at > app.current_time() - interval '5 seconds' AS fresh FROM app.memberships ORDER BY subject"
+        )
+        rows = {UUID(str(r["subject"])): r for r in await cur.fetchall()}
+        assert not rows[SAM]["active"] and rows[SAM]["permission_version"] == 2 and rows[SAM]["fresh"]
+        assert not rows[LEE]["active"] and rows[LEE]["permission_version"] == 2
+        assert rows[ALEX]["active"] and rows[ALEX]["permission_version"] == 1 and rows[ALEX]["fresh"]
+        assert rows[foreign]["active"] and not rows[foreign]["fresh"]  # another issuer: not ours to judge
+        again = await sync.sync_memberships(sweeper, issuer=ISSUER, users=users)
+        assert again.deactivated == 0 and again.checked == 5  # idempotent
+    finally:
+        await app_conn.execute("DELETE FROM app.memberships WHERE subject = %s", (foreign,))
+        await restore(app_conn)
+
+
+async def test_mass_deactivation_is_refused_and_stamps_nothing(app_conn, role_conn) -> None:
+    sweeper = await role_conn(Role.SWEEPER)
+    await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time() - interval '1 hour'")
+    try:
+        with pytest.raises(sync.MassDeactivation):
+            await sync.sync_memberships(sweeper, issuer=ISSUER, users={ALEX: True})  # four of five would go
+        cur = await app_conn.execute(
+            "SELECT count(*) AS n FROM app.memberships"
+            " WHERE NOT active OR synced_at > app.current_time() - interval '5 seconds'"
+        )
+        assert (await cur.fetchone())["n"] == 0
+    finally:
+        await restore(app_conn)
+
+
+async def test_maintenance_job_is_recorded_once_per_minute(app_conn, role_conn) -> None:
+    sweeper = await role_conn(Role.SWEEPER)
+    bucket = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M")
+    kind = JobType.SYNC_MEMBERSHIPS
+    await app_conn.execute("DELETE FROM app.jobs WHERE type = %s", (kind.value,))
+    try:
+        async with sweeper.transaction():
+            first = await persistence.insert_maintenance_job(sweeper, kind, bucket)
+            second = await persistence.insert_maintenance_job(sweeper, kind, bucket)
+            job = await persistence.claim_maintenance_job(sweeper, job_type=kind, worker_name="t")
+            assert first is not None and second is None and job is not None and job["id"] == first
+            assert job["tenant_id"] is None and job["run_id"] is None
+            await persistence.finish_job(sweeper, job["id"])
+            assert await persistence.claim_maintenance_job(sweeper, job_type=kind, worker_name="t") is None
+    finally:
+        await app_conn.execute("DELETE FROM app.jobs WHERE type = %s", (kind.value,))
+```
+
+Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_sweeper_live.py -q` → PASS (three tests; `memberships` has five seeded rows: alex, sam, lee in alpha, riley and jordan in beta, so a listing that keeps only alex refuses). Then opt R105 out of the stamp so it proves the sweeper: register the marker in the root `pyproject.toml` (`[tool.pytest.ini_options] markers = ["sweeper_stamps: the module's skeleton sweeper stamps memberships.synced_at; the autouse fixture must not"]`), make the fixture in `tests/e2e/conftest.py` return early when `request.node.get_closest_marker("sweeper_stamps")` is set (it gains a `request: pytest.FixtureRequest` parameter), and add `pytestmark = pytest.mark.sweeper_stamps` to `tests/e2e/test_r105_walking_skeleton.py` (beside its existing marks). With the dev stack up and no skeleton running: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_r105_walking_skeleton.py -q` → PASS (six processes; the sweeper's first sync completes before readiness, so the seeded rows are fresh when the grant is asked for, and nothing else stamped them). Confirm in `runtime/skeleton/sweeper.log`: one "membership sync: 5 rows checked, 0 deactivated" line (and no secret-shaped text: `grep -cE "Bearer [^[]|password=[^[]" runtime/skeleton/*.log` → 0 on every file: a redacted line reads `Bearer [REDACTED]`). `docs/runbooks/walking-skeleton.md`: "Six host processes"; the list in step 3 gains `sweeper :8071 (health only; membership sync every 30 s, expiry purges)`; a paragraph: without the sweeper, grants refuse with `MEMBERSHIP_STALE` after 120 s and execute jobs wait (re-queued every 30 s) until it runs; the sync refuses (and stamps nothing) when more than half of the active subjects would be deactivated at once, which is what a listing from the wrong realm looks like; a back-channel logout Keycloak could not deliver is not retried, so the application session then ends at its own limits; the API and the sweeper refuse to start until the database carries revision 0005 (`skeleton.py migrate`).
 
 - [ ] **Step 5: Gates and commit**
 
 Format, lint, the character count; `PYTHONUTF8=1 uv run python scripts/check.py` → GREEN; `--profile test` → GREEN (every live test, R105 included); `git checkout -- reports/bootstrap`; commit `reports/skeleton/r105-walking-skeleton.txt` if it changed.
 
 ```bash
-git add sweeper pyproject.toml uv.lock scripts/check.py scripts/skeleton.py tests/plan_e/test_skeleton_cli.py tests/plan_f/test_sweeper.py core/src/ops_core/persistence.py docs/runbooks/walking-skeleton.md reports/skeleton/r105-walking-skeleton.txt
+git add sweeper pyproject.toml uv.lock scripts/check.py scripts/skeleton.py tests/plan_e/test_skeleton_cli.py tests/plan_f/test_sweeper.py tests/e2e/test_sweeper_live.py tests/e2e/conftest.py tests/e2e/test_r105_walking_skeleton.py core/src/ops_core/persistence.py docs/runbooks/walking-skeleton.md reports/skeleton/r105-walking-skeleton.txt
 git commit -m "feat(sweeper): sixth process — membership sync as a maintenance job every minute, expiry purges, freshness readiness (T11)"
 ```
 
@@ -3637,6 +4003,7 @@ from uuid import UUID
 
 import httpx2
 import jwt
+import psycopg
 import pytest
 from ops_core import persistence, settings
 
@@ -3652,12 +4019,19 @@ SAM = "03f7eb09-e18d-5f33-bf75-12c57d5aaa54"
 
 @pytest.fixture(scope="module")
 def skeleton(migrated: None) -> Iterator[Skeleton]:
+    """Six processes for the module; after they stop, sam's membership is restored with no sweeper left to race the
+    restore (a sync that listed sam as disabled could otherwise commit after the test's own restore)."""
     sk = Skeleton()
     sk.start()
     try:
         yield sk
     finally:
         sk.stop()
+        with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+            conn.execute(
+                "UPDATE app.memberships SET active = true, synced_at = app.current_time() WHERE subject = %s",
+                (UUID(SAM),),
+            )
 
 
 @pytest.fixture(scope="module")
@@ -3802,7 +4176,7 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
 ) -> None:
     """R086: disable sam in Keycloak; sam's next decision-class mutation is 401 at once (admin-API check), the sync
     deactivates sam's membership within 60 s, and sam's still-valid bearer token then fails every protected read.
-    The finally block re-enables sam and restores the row for the rest of the session."""
+    The finally block re-enables sam at Keycloak; the module fixture restores the row once the sweeper is gone."""
     kcs = settings.keycloak()
     sam_token = kc.token_password(kcs.base_url, "ops-dev-direct", "sam", secret("kc_persona_sam_password"))
     headers = {"Authorization": f"Bearer {sam_token['access_token']}"}
@@ -3835,17 +4209,14 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
                 f"disabled user: decision={decided.status_code} synced_after={synced_after}s me={me.status_code}"
             )
     finally:
-        assert admin.set_enabled(SAM, True) == 204
-        await app_conn.execute(
-            "UPDATE app.memberships SET active = true, synced_at = app.current_time() WHERE subject = %s", (UUID(SAM),)
-        )
+        assert admin.set_enabled(SAM, True) == 204  # the row is restored by the module fixture, after the sweeper stops
 ```
 
 Notes for the implementer: (a) the second login in the back-channel test reuses the first browser's Keycloak client so the SSO cookies ride along; `keycloak_login` returns on the 302 without touching the form, so the empty credentials are never sent; (b) `admin.set_enabled` is a partial `PUT` (`{"enabled": false}`): Keycloak 26.8 applies it and leaves the other fields (if the live run shows otherwise, send the `GET` representation back with `enabled` changed, and say so in the report); (c) `tests/plan_b/test_evidence.py`'s token-shape scan is extended to `reports/auth/*.txt`.
 
 - [ ] **Step 3: Run, record, commit**
 
-`OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_auth_live.py -q` → PASS (record the four `lines` in the report: they hold status codes and counts only). Then the whole live suite: `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → GREEN (sam is re-enabled and active again before the later modules run; the autouse fixture stamps `synced_at`). `git checkout -- reports/bootstrap`.
+`OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_auth_live.py -q` → PASS (record the four `lines` in the report: they hold status codes and counts only). Add `pytestmark = pytest.mark.sweeper_stamps` to the module (its skeleton's sweeper stamps; the fixture must not), and in the back-channel test assert that `min(synced_at)` over the seeded rows advanced within 75 s of the module's start (a `SELECT min(synced_at) FROM app.memberships` at the start of the first test and again before the back-channel assertions). Then the whole live suite: `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → GREEN (sam is re-enabled and active again before the later modules run; the autouse fixture stamps `synced_at` for them). `git checkout -- reports/bootstrap`.
 
 ```bash
 git add tests/e2e/kc_browser.py tests/e2e/test_auth_live.py tests/plan_b/test_evidence.py reports/auth/t11-sessions-revocation.txt reports/skeleton/r105-walking-skeleton.txt
@@ -3869,8 +4240,8 @@ git commit -m "test(e2e): live login, CSRF, expiry, logout, back-channel logout,
 
 `SESSION_STATE.md`:
 - The "Next task" line: Plan F executed on `plan-f` (`<first>..<last>`); owner inputs unchanged plus two new ones: migrate the dev database to 0005 (`skeleton.py migrate`, no owner data at risk: `sessions` is empty) and decide errata 26–31; next is Plan G (T12 admission router and Idempotency-Key, or T13 leases, whichever the backlog's dependency graph puts first).
-- A "Plan F executed" paragraph: the rulings file; the proposed errata, numbered 26–31: (26) `sync_memberships` is the sweeper's routine, not a definer (SA:470 vs SA:412); (27) AM-20.2 rows for `login_state` and `logout_jti`, and `sweeper` SELECT on `sessions` (with 25); (28) AM-01's directory table gains `sweeper/`; (29) a disabled or membership-less user is 401, not 403, on every path (BS:301 reading); (30) the dev realm carries a dev/test-only `ops-test-admin` client with `manage-users` (strike it and lose R086's live disable path); (31) the provider refresh token is stored sealed and spent at logout; the ID and access tokens are not stored. Plus the authlib/joserfc versions the lock chose if they differ from AM-30.
-- "Dev database state": still at 0004 until the owner runs `migrate`; `skeleton.py up` will fail at the API's first `login_state` write until then (reads and the bearer path work).
+- A "Plan F executed" paragraph: the rulings file; the proposed errata, numbered 26–34: (26) `sync_memberships` is the sweeper's routine, not a definer (SA:470 vs SA:412); (27) AM-20.2 rows for `login_state` and `logout_jti`, and `sweeper` SELECT on `sessions` (with 25); (28) AM-01's directory table gains `sweeper/`; (29) a disabled or membership-less user is 401, not 403, on every path (BS:301 reading); (30) the dev realm carries a dev/test-only `ops-test-admin` client with `manage-users` (strike it and lose R086's live disable path); (31) the provider refresh token is stored sealed and spent at logout; the ID and access tokens are not stored; (32) BS:352's "tenant switching" is not in v1: a subject with two memberships is refused at login and with a bearer token (SA:107 has no tenant administration; a switch needs a new session row and rotation); (33) SA:565's "authlib's OIDC state lives in that store" is read as "the authorization request's state, nonce and verifier live in PostgreSQL" (`app.login_state`, keyed by the login cookie's hash) rather than in authlib's own session-dict machinery, which needs Starlette's `SessionMiddleware`; (34) BS:268's route table gains `POST /auth/backchannel-logout` (SA:541 requires the endpoint) and `GET /` (a landing page until T26), and the realm's SSO lifetimes are 8 h so the provider session outlives the application session. Plus the authlib/joserfc versions the lock chose if they differ from AM-30.
+- "Dev database state": still at 0004 until the owner runs `migrate`; until then the API and the sweeper refuse to start (`app.login_state` / `app.logout_jti` missing, the lifespan guard of Task 3), so `skeleton.py up` fails fast with that message rather than serving a half-migrated schema.
 - Open items parked by the task reviews (from the ledger).
 
 `README.md` status line: "browser login with server-side sessions, revocation and the membership sync (T11)". `STATUS.md`: a row for T11. `docs/ARCHITECTURE.md`: the sweeper row gains "runs (T11)"; the Browser-user row says "opaque server-side session cookie; CSRF token; no provider token". `docs/runbooks/dev-topology.md`: the host-processes table gains the sweeper; a paragraph on the login flow (login → Keycloak form → callback → cookies; logout; what the back-channel URL is and why it names the Docker host alias) and the warning that `ops-test-admin` exists in the dev realm only. `core/src/ops_core/privileges.py:150`: the comment becomes `# the sweeper's sync writes directly (Plan F ruling 13); no further caller`.
@@ -3889,7 +4260,7 @@ All GREEN / exit 0; record the counts. `git checkout -- reports/bootstrap`; comm
 
 ```bash
 git add handoff SESSION_STATE.md STATUS.md README.md docs/ARCHITECTURE.md docs/runbooks core/src/ops_core/privileges.py reports/auth reports/skeleton
-git commit -m "docs: close T11 — handoff records, acceptance rows, errata 26-31, runbooks (Plan F)"
+git commit -m "docs: close T11 — handoff records, acceptance rows, errata 26-34, runbooks (Plan F)"
 ```
 
 ---
@@ -3898,5 +4269,5 @@ git commit -m "docs: close T11 — handoff records, acceptance rows, errata 26-3
 
 1. **Spec coverage.** T11 instructions: authlib code+PKCE with state in the server-side store → Tasks 3–4 (ruling 1, 2); opaque hashed session IDs → Task 3 (`digest`, `session_sha256`); CSRF and origin checks → Task 4 (`browser_mutation`); hand-written back-channel logout endpoint → Task 4 with the verifier of Task 3; admin-API enabled check on decision-class mutations → Tasks 3–4; 60 s membership sync → Task 5. DoD 1 (negative tests for state/nonce/iss/aud, CSRF, revoked membership) → Task 4's unit tests and Task 6; DoD 2 (disabled user 401; grants blocked within 60 s) → Task 6 for the 401 and the sync, Task 2 for the gate rule, T21 for the grant-side live evidence (T11 note 1); DoD 3 (logout token validation incl. jti replay) → Tasks 3, 4, 6. Review notes 1–4 → rulings 11, 14, 16, 22. R011 → Task 3/4/6; R012 → Task 4/6; R013 → Task 4/6 (per-request `resolve_identity`, 401, session revoked); R086 → Task 4/5/6. SA:565 (no SessionMiddleware) → ruling 1; BS:350 (cookie attributes, provider tokens, rotation, expiry) → rulings 3, 4, 6, 8; BS:264 (CSRF in cookie mode) → ruling 5, 7; BS:301 (401/403/503) → rulings 11, 21.
 2. **Placeholder scan.** No TBD/"similar to Task N"; the `TODO(Txx)` strings inside code blocks are ownership markers required by `docs/CODE_COMMENTS.md`.
-3. **Type consistency.** `Store.session(session_sha256, *, idle_seconds) -> SessionRow | None` is what `identity` calls; `record_logout(jti, *, expires_at, sid) -> int | None` is what the endpoint and the fake implement; `AdminUsers.enabled` and `FakeAdmin.enabled` share the `EnabledCheck` protocol; `IdTokens.verify(id_token, *, nonce_sha256)` is called with the stored hash; `AuthDeps` fields are the same in `fake_auth` and `production_app`; `create_app(verifier, store_factory, auth_factory)` is called with three positionals in production and keywords in tests; `Identity(subject=, username=, membership=, session=)` is built in two places with the same keywords; `TokenVerifier(required_claims=, require_azp=, typ=)` is used by both verifiers; `persistence.insert_maintenance_job(conn, job_type, bucket)` and `claim_maintenance_job(conn, *, job_type, worker_name)` match `tick`.
+3. **Type consistency.** `Store.live_session(session_sha256, *, idle_seconds) -> SessionRow | None` is what `identity` calls (not `session`: `DbStore.session` is the `persistence.Session` attribute, round-1 finding B1); `record_logout(jti, *, expires_at, sid) -> int | None` is what the endpoint and the fake implement; `AdminUsers.enabled` and `FakeAdmin.enabled` share the `EnabledCheck` protocol; `IdTokens.verify(id_token, *, nonce_sha256)` is called with the stored hash; `AuthDeps` fields are the same in `fake_auth` and `production_app`; `create_app(verifier, store_factory, auth_factory)` is called with three positionals in production and keywords in tests; `Identity(subject=, username=, membership=, session=)` is built in two places with the same keywords; `TokenVerifier(required_claims=, require_azp=, typ=)` is used by both verifiers; `persistence.insert_maintenance_job(conn, job_type, bucket)` and `claim_maintenance_job(conn, *, job_type, worker_name)` match `tick`.
 4. **Review Focus.** Login CSRF (review focus 1) → Task 4 `test_callback_refuses_a_missing_login_cookie_and_a_foreign_state` and Task 6's replayed callback; cross-site POST (2) → Task 4 `test_browser_mutations_need_origin_and_csrf_token` and Task 6; logout token negatives and replay (3) → Task 3 `test_logout_token_negatives`, Task 4 `test_backchannel_logout_revokes_by_sid_once`, Task 6's forged token; Keycloak down (4) → Task 3 `test_a_slow_answer_is_unavailable_within_the_budget`, Task 4 `test_decision_is_503_retryable_when_keycloak_is_unavailable`; disabled/deactivated/stale (5) → Task 4 `test_disabled_user_is_401_and_the_session_is_revoked`, Task 2 `test_grant_execution_refuses_a_stale_sync`, Task 6 `test_disabled_user_is_refused_and_synced_within_60s`.
