@@ -13,7 +13,7 @@ from uuid import UUID
 
 import psycopg
 import uvicorn
-from ops_core import persistence, settings
+from ops_core import persistence, redaction, settings
 from ops_core.settings import Role
 from ops_core.tokens import WorkloadTokenSource
 from starlette.applications import Starlette
@@ -83,7 +83,8 @@ def health_app(probe: persistence.Conn, polling_alive: Callable[[], bool]) -> St
 
 
 async def _main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # The redaction filter must sit on the root handler before the first log line (T11 note 4).
+    redaction.install()
     generator = make_generator(settings.env("MODEL_MODE"))  # unset or any other route: refuse to start (R130)
     kc = settings.keycloak()
     tokens = WorkloadTokenSource(
@@ -110,6 +111,7 @@ async def _main() -> None:
             host="127.0.0.1",
             port=settings.env_int("OPS_WORKER_HEALTH_PORT", 8070),
             log_level="warning",
+            log_config=None,
         )
     )
     serving = asyncio.create_task(server.serve(), name="health-server")

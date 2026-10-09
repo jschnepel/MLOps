@@ -22,7 +22,7 @@ from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.tools.base import Tool
-from ops_core import persistence, settings
+from ops_core import persistence, redaction, settings
 from ops_core.jobs import Tool as ToolName
 from ops_core.outcomes import ActionOutcome, ToolOutcome
 from ops_core.settings import Role
@@ -137,7 +137,7 @@ def strict_tool(fn: Any) -> Tool:
 def serve_app(app: ASGIApp, port: int) -> None:
     """Serve with uvicorn programmatically on a selector loop (ruling 23: `uvicorn.run` picks the Proactor loop on
     Windows and psycopg async refuses it)."""
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", log_config=None))
     if sys.platform == "win32":
         asyncio.run(server.serve(), loop_factory=asyncio.SelectorEventLoop)
     else:
@@ -270,4 +270,6 @@ def production_app() -> Starlette:
 
 def serve() -> None:
     """Entry point: serve the production app on OPS_MCP_WRITE_PORT (default 8082)."""
+    # The redaction filter must sit on the root handler before the first log line (T11 note 4).
+    redaction.install()
     serve_app(production_app(), settings.env_int("OPS_MCP_WRITE_PORT", 8082))

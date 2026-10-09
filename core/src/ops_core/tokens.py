@@ -77,12 +77,21 @@ class TokenVerifier:
         allowed_azp: frozenset[str],
         jwks_url: str,
         algorithms: tuple[str, ...] = ("RS256",),
+        required_claims: tuple[str, ...] = ("exp", "iss", "aud", "sub"),
+        require_azp: bool = True,
+        typ: str | None = None,
     ) -> None:
+        """Pin the server's issuer, audience, allowed azp and key source; `required_claims`, `require_azp` and `typ`
+        let one class verify ID tokens (nonce, sid) and logout tokens (jti, events, typ logout+jwt, no azp),
+        ruling 26."""
         self._issuer = issuer
         self._audience = audience
         self._allowed_azp = allowed_azp
         self._jwks_url = jwks_url
         self._algorithms = list(algorithms)
+        self._required_claims = tuple(required_claims)
+        self._require_azp = require_azp
+        self._typ = typ
         self._keys: PyJWKSet | None = None
         self._refreshed_at = 0.0
         self._refresh_lock = asyncio.Lock()  # single-flight: concurrent unknown-kid requests share one fetch
@@ -122,12 +131,14 @@ class TokenVerifier:
         if self._keys is None:
             raise TokenRejected("signing keys are not loaded")
         try:
-            kid = jwt.get_unverified_header(token).get("kid")
+            header = jwt.get_unverified_header(token)
+            kid = header.get("kid")
             key = self._keys[kid] if isinstance(kid, str) else None
         except (InvalidTokenError, KeyError, PyJWKClientError, PyJWKSetError):
-            key = None
+            header, key = {}, None
         if key is None:
             raise UnknownSigningKey("unknown signing key")
+        # The header is unverified until the signature passes below, so `typ` is only compared afterwards.
         try:
             claims = jwt.decode(
                 token,
@@ -135,22 +146,28 @@ class TokenVerifier:
                 algorithms=self._algorithms,
                 audience=self._audience,
                 issuer=self._issuer,
-                options={"require": ["exp", "iss", "aud", "sub"]},
+                options={"require": list(self._required_claims)},
             )
         except InvalidAudienceError as exc:
             raise WrongAudience("token is for another audience") from exc
         except InvalidTokenError as exc:
             # PyJWT's message names the failed check (expired, audience, issuer, signature) and never the token.
             raise TokenRejected(f"token rejected: {exc.__class__.__name__}") from exc
-        if not isinstance(claims["sub"], str) or not claims["sub"]:
+        if self._typ is not None and header.get("typ") != self._typ:
+            raise TokenRejected("token type is not accepted here")
+        subject = claims.get("sub", "")
+        if "sub" in self._required_claims and (not isinstance(subject, str) or not subject):
             raise TokenRejected("token has no subject")
         azp = claims.get("azp")
-        if not isinstance(azp, str) or azp not in self._allowed_azp:
-            raise WrongAudience("token was issued to a client this server does not accept")
+        if self._require_azp:
+            if not isinstance(azp, str) or azp not in self._allowed_azp:
+                raise WrongAudience("token was issued to a client this server does not accept")
+        elif not isinstance(azp, str):
+            azp = ""
         aud = claims["aud"]
         audiences = (aud,) if isinstance(aud, str) else tuple(aud)
         return Principal(
-            subject=claims["sub"],
+            subject=subject if isinstance(subject, str) else "",
             azp=azp,
             audiences=audiences,
             expires_at=int(claims["exp"]),

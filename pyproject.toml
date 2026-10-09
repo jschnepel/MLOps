@@ -43,7 +43,10 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/plan_a", "tests/plan_b", "tests/plan_c", "tests/plan_d", "tests/plan_e", "tests/e2e"]
+testpaths = [
+  "tests/plan_a", "tests/plan_b", "tests/plan_c", "tests/plan_d", "tests/plan_e", "tests/plan_f",
+  "tests/e2e",
+]
 asyncio_default_fixture_loop_scope = "function"
 # Setting this replaces pytest's defaults (which include ".*"), so ".*" is restated: otherwise pytest walks .hypothesis/.
 norecursedirs = ["reference", ".venv", "node_modules", "build", ".*"]
@@ -57,3 +60,8 @@ extend-exclude = ["reference", "docs"]
 python_version = "3.13"
 strict = true
 exclude = ["^reference/"]
+
+# authlib 1.8 ships no py.typed (measured in the Plan F review); its stubs package targets httpx, not httpx2.
+[[tool.mypy.overrides]]
+module = ["authlib.*"]
+ignore_missing_imports = true
