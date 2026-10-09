@@ -80,6 +80,7 @@ def test_discovery_is_checked_and_rewritten_for_server_use() -> None:
         {**DOC, "code_challenge_methods_supported": "S256x"},
         {**DOC, "backchannel_logout_session_supported": "false"},
         {**DOC, "token_endpoint": "http://evil.example/realms/ops-dev/protocol/openid-connect/token"},
+        {**DOC, "authorization_endpoint": "http://127.0.0.1:18080/realms/ops-dev/protocol/openid-connect/auth"},
         {k: v for k, v in DOC.items() if k != "end_session_endpoint"},
     ):
         with pytest.raises(ValueError):

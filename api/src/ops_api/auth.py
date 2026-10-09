@@ -109,8 +109,14 @@ class Discovery:
         methods = doc.get("code_challenge_methods_supported")
         if not (isinstance(methods, list) and "S256" in methods):
             raise ValueError("the realm does not support PKCE S256")
+        # Keycloak spells the back-channel endpoints with the host the document was fetched from (`server_url`) and the
+        # browser-facing ones with the public host (`KC_HOSTNAME`); the browser's endpoint must be the public one.
         for name in ("authorization_endpoint", "token_endpoint", "end_session_endpoint", "jwks_uri"):
-            if name in doc and not str(doc[name]).startswith(keycloak.base_url + "/"):
+            hosts = (
+                (keycloak.base_url,) if name == "authorization_endpoint" else (keycloak.base_url, keycloak.server_url)
+            )
+            allowed = tuple(host + "/" for host in hosts)
+            if name in doc and not str(doc[name]).startswith(allowed):
                 raise ValueError("discovery endpoint outside the configured base URL")
         try:
             return cls(

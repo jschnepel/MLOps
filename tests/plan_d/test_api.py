@@ -6,6 +6,7 @@ tenant seeing or deciding a proposal (404, not 403: existence is not disclosed),
 a second decision overwriting the first, and a run in another tenant readable by id.
 """
 
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -16,9 +17,12 @@ import pytest
 from fastapi.testclient import TestClient
 from ops_api import store
 from ops_api.app import create_app
+from ops_api.store import LoginState, SessionRow
 from ops_core import persistence
 from ops_core.contracts import DecisionRequest, MessageRequest
 from ops_core.tokens import Principal, TokenRejected
+
+from tests.plan_f.auth_fakes import fake_auth
 
 ISSUER = "http://localhost:18080/realms/ops-dev"
 ALPHA, BETA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7"), UUID("5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201")
@@ -73,6 +77,10 @@ class FakeStore:
         self.proposals: dict[UUID, dict[str, Any]] = {}
         self.decided: set[UUID] = set()
         self.slot_occupied = False
+        self.logins: dict[str, tuple[LoginState, float]] = {}  # login hash -> (state, expiry)
+        self.sessions: dict[str, dict[str, Any]] = {}  # session hash -> row fields + last_seen, expires, revoked
+        self.jtis: set[str] = set()
+        self.clock = time.time  # tests replace it to age sessions
 
     async def membership(self, issuer: str, subject: UUID) -> store.Membership | None:
         return store.single_tenant(ROWS.get(subject, [])) if issuer == ISSUER else None
@@ -140,11 +148,68 @@ class FakeStore:
     async def events(self, tenant_id: UUID, run_id: UUID, *, after: int, limit: int) -> list[dict[str, Any]]:
         return [] if await self.run(tenant_id, run_id) is None else [{"sequence": 1, "type": "run.accepted"}]
 
+    async def begin_login(
+        self, *, login_sha256: str, state_sha256: str, nonce_sha256: str, code_verifier: str, ttl_seconds: int
+    ) -> None:
+        self.logins[login_sha256] = (LoginState(state_sha256, nonce_sha256, code_verifier), self.clock() + ttl_seconds)
+
+    async def take_login(self, login_sha256: str) -> LoginState | None:
+        entry = self.logins.pop(login_sha256, None)
+        return None if entry is None or entry[1] <= self.clock() else entry[0]
+
+    async def create_session(
+        self,
+        *,
+        session_sha256: str,
+        issuer: str,
+        subject: UUID,
+        tenant_id: UUID,
+        sid: str,
+        username: str,
+        csrf_secret_sha256: str,
+        refresh_token_enc: bytes,
+        absolute_seconds: int,
+    ) -> None:
+        self.sessions[session_sha256] = {
+            "row": SessionRow(
+                session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256, refresh_token_enc
+            ),
+            "last_seen": self.clock(),
+            "expires": self.clock() + absolute_seconds,
+            "revoked": False,
+        }
+
+    async def live_session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
+        entry = self.sessions.get(session_sha256)
+        now = self.clock()
+        if entry is None or entry["revoked"] or entry["expires"] <= now or entry["last_seen"] <= now - idle_seconds:
+            return None
+        entry["last_seen"] = now
+        row: SessionRow = entry["row"]
+        return row
+
+    async def revoke_session(self, session_sha256: str) -> SessionRow | None:
+        entry = self.sessions.get(session_sha256)
+        if entry is None or entry["revoked"]:
+            return None
+        entry["revoked"] = True
+        row: SessionRow = entry["row"]
+        return row
+
+    async def record_logout(self, jti: str, *, expires_at: datetime, sid: str) -> int | None:
+        if jti in self.jtis:
+            return None
+        self.jtis.add(jti)
+        hit = [e for e in self.sessions.values() if e["row"].sid == sid and not e["revoked"]]
+        for entry in hit:
+            entry["revoked"] = True
+        return len(hit)
+
 
 @pytest.fixture
 def api() -> Iterator[tuple[TestClient, FakeStore]]:
     fake = FakeStore()
-    app = create_app(StubVerifier(), store_factory=lambda: fake)
+    app = create_app(StubVerifier(), store_factory=lambda: fake, auth_factory=fake_auth)
     with TestClient(app) as c:  # the context manager runs the lifespan, which installs the store
         yield c, fake
 
@@ -158,7 +223,13 @@ def test_identity_and_membership(api):
     assert c.get("/api/v1/me").status_code == 401
     assert c.get("/api/v1/me", headers=auth("nobody")).status_code == 401
     me = c.get("/api/v1/me", headers=auth("alex")).json()
-    assert me == {"subject": str(ALEX), "tenant_id": str(ALPHA), "roles": ["requester"], "username": "alex"}
+    assert me == {
+        "subject": str(ALEX),
+        "tenant_id": str(ALPHA),
+        "roles": ["requester"],
+        "username": "alex",
+        "auth": "bearer",
+    }
 
 
 def test_a_subject_that_is_not_a_uuid_is_a_safe_401(api):
@@ -169,7 +240,8 @@ def test_a_subject_that_is_not_a_uuid_is_a_safe_401(api):
 
 def test_multi_tenant_subject_cannot_act_and_roles_do_not_merge(api):
     c, _ = api
-    assert c.get("/api/v1/me", headers=auth("dual")).status_code == 403
+    # no single current membership is no application identity (BUILD_SPEC §7: 401 for missing identity; SA:549)
+    assert c.get("/api/v1/me", headers=auth("dual")).status_code == 401
     assert c.get("/api/v1/me", headers=auth("alex")).json()["roles"] == ["requester"]
     assert store.single_tenant([]) is None
 
@@ -309,7 +381,7 @@ class BrokenStore(FakeStore):
 
 
 def test_database_failure_is_a_safe_503() -> None:
-    app = create_app(StubVerifier(), store_factory=lambda: BrokenStore())
+    app = create_app(StubVerifier(), store_factory=lambda: BrokenStore(), auth_factory=fake_auth)
     with TestClient(app) as c:
         response = c.get(f"/api/v1/runs/{uuid4()}", headers=auth("alex"))
     assert response.status_code == 503
