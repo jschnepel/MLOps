@@ -57,9 +57,16 @@ def stamp(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def tool_error(code: str, message: str) -> dict[str, Any]:
-    """The `error` object of an envelope; never retryable in T08."""
-    return {"code": code, "message": message, "retryable": False}
+def tool_error(code: str, message: str, *, retryable: bool = False) -> dict[str, Any]:
+    """The `error` object of an envelope; retryable only for GRANT_DEFERRED (T11)."""
+    return {"code": code, "message": message, "retryable": retryable}
+
+
+def refusal_error(code: str) -> dict[str, Any]:
+    """The tool error for a grant refusal: MEMBERSHIP_STALE is the one the worker retries (Plan F ruling 14)."""
+    if code == "MEMBERSHIP_STALE":
+        return tool_error("GRANT_DEFERRED", f"grant deferred: {code}", retryable=True)
+    return tool_error("GRANT_REFUSED", f"grant refused: {code}")
 
 
 def envelope(tool_name: str, *, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None) -> ToolResult:
@@ -180,7 +187,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         except persistence.HandleRejected as exc:
             return envelope("create_incident", error=tool_error("INVALID_HANDLE", str(exc)))
         except persistence.Refused as exc:
-            return envelope("create_incident", error=tool_error("GRANT_REFUSED", f"grant refused: {exc.code}"))
+            return envelope("create_incident", error=refusal_error(exc.code))
         except persistence.NotFound:
             return envelope("create_incident", error=tool_error("NOT_FOUND", "run not found"))
         except persistence.VersionConflict:

@@ -32,11 +32,12 @@ Profile `dev` of `compose.yaml` (project `ops-copilot`, network `ops-dev-net`). 
 
 | Client | Kind | Token audience(s) | Used by |
 |---|---|---|---|
-| `ops-web` | confidential, authorization code + PKCE S256, exact redirect `http://localhost:8000/auth/callback` | — | the API's browser login (T10 registers no wildcard) |
+| `ops-web` | confidential, authorization code + PKCE S256, exact redirect `http://localhost:8000/auth/callback` | — | the API's browser login (T10 registers no wildcard); back-channel logout URL `http://host.docker.internal:8000/auth/backchannel-logout` (reached from the container; T30 moves it) |
 | `ops-worker` | service account | `${MCP_READ_RESOURCE_URL}`, `${MCP_WRITE_RESOURCE_URL}` | worker → mcp-read / mcp-write |
 | `ops-mcp-read` | service account | `asset-sim` | mcp-read → asset-sim |
 | `ops-mcp-write` | service account | `incident-sim` | mcp-write → incident-sim |
 | `ops-dev-direct` | public, direct grant, **dev-only** | — | persona login in tests |
+| `ops-test-admin` | service account, `manage-users` + `view-users`, **dev/test-only** | — | the live suite's persona switch |
 
 Secrets and persona passwords are `${OPS_KC_*}` placeholders in the file, resolved at import from the environment the entrypoint exports. Persona user IDs are fixed to `data/seed-ids.json`, so a token's `sub` equals the seeded ID (asserted by `tests/plan_b/live/test_keycloak_tokens.py`). Realm roles are informational and Keycloak users carry no tenant attribute: memberships are seeded in PostgreSQL by a `migrator` migration (T08/T09), and Keycloak is not the application role database.
 

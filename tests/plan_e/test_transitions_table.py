@@ -83,7 +83,13 @@ def test_the_newest_revision_of_every_cell_equals_the_live_matrix() -> None:
 VERSIONS = ROOT / "migrations" / "app" / "versions"
 # This plan's revisions in Alembic order. Named, not filtered by existence: a renamed or deleted revision must fail
 # loudly rather than drop its cases (final review M4).
-REVISIONS = ("0002_roles_grants_rls", "0003_run_path_functions", "0004_write_path_functions", "tc_0001_test_clock")
+REVISIONS = (
+    "0002_roles_grants_rls",
+    "0003_run_path_functions",
+    "0004_write_path_functions",
+    "0005_sessions_login_logout",
+    "tc_0001_test_clock",
+)
 assert all((VERSIONS / f"{n}.py").exists() for n in REVISIONS), REVISIONS
 
 

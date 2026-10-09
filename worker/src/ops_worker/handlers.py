@@ -31,6 +31,13 @@ EXECUTE_RETRY_SECONDS = 30  # how long an execute job waits after mcp-write coul
 QUERY_CHARS = 500  # schemas/tools/search_procedures.input.schema.json maxLength
 
 
+def is_deferred(doc: dict[str, Any]) -> bool:
+    """An `error` envelope whose code is GRANT_DEFERRED: the gate found the membership sync stale (T11), so the job
+    is retried rather than closed."""
+    error = doc.get("error") or {}
+    return doc.get("status") == "error" and error.get("code") == "GRANT_DEFERRED"
+
+
 @dataclass
 class Deps:
     """What a handler needs: the loop's connection, the MCP client, the model route and the server URLs."""
@@ -159,6 +166,14 @@ async def _draft_and_freeze(
         )
 
 
+async def _requeue(deps: Deps, job: dict[str, Any], run_id: UUID) -> None:
+    """Release the job for a later attempt; the handle may already have reached mcp-write, so it is revoked first."""
+    async with deps.conn.transaction():
+        await persistence.set_tenant(deps.conn, job["tenant_id"])  # RLS: without it the UPDATE touches no row
+        await persistence.revoke_handles(deps.conn, run_id)
+        await persistence.requeue_job(deps.conn, job["id"], EXECUTE_RETRY_SECONDS)
+
+
 async def execute(deps: Deps, job: dict[str, Any]) -> bool:
     """Call `create_incident` on mcp-write for an approved run; True when the job is finished, False when re-queued."""
     async with deps.conn.transaction():
@@ -183,14 +198,17 @@ async def execute(deps: Deps, job: dict[str, Any]) -> bool:
         # records nothing it did not observe (BUILD_SPEC §1).
         # TODO(T13): bounded retries; TODO(T22): reconciliation.
         log.warning("execute job %s: %s; re-queued in %s s", job["id"], exc, EXECUTE_RETRY_SECONDS)
-        async with deps.conn.transaction():
-            await persistence.set_tenant(deps.conn, job["tenant_id"])  # RLS: without it the UPDATE touches no row
-            # The handle may already have reached mcp-write; without this it stays usable for its 60 s TTL while the
-            # retry mints a new one.
-            await persistence.revoke_handles(deps.conn, run["run_id"])
-            await persistence.requeue_job(deps.conn, job["id"], EXECUTE_RETRY_SECONDS)
+        await _requeue(deps, job, run["run_id"])
         return False
     data = doc.get("data") or {}
+    if is_deferred(doc):
+        log.warning(
+            "execute job %s: grant deferred (stale membership sync); re-queued in %s s",
+            job["id"],
+            EXECUTE_RETRY_SECONDS,
+        )
+        await _requeue(deps, job, run["run_id"])
+        return False
     log.info("execute job %s: %s %s", job["id"], doc.get("status"), data.get("status"))
     if doc.get("status") == "outcome" and data.get("status") == "UNKNOWN":  # an `error` envelope is never UNKNOWN
         # mcp-write reports uncertainty after SENT but may not record it (SA:467: mark_unknown is the worker's).

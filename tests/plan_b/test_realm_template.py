@@ -47,6 +47,8 @@ def test_realm_name_and_roles():
     doc = load()
     assert doc["realm"] == "ops-dev" and doc["enabled"] is True
     assert {r["name"] for r in doc["roles"]["realm"]} >= {"requester", "reviewer", "reader"}
+    # the provider session outlives the 8 h application session (Plan F ruling 3)
+    assert doc["ssoSessionIdleTimeout"] == 28800 and doc["ssoSessionMaxLifespan"] == 28800
 
 
 def test_every_secret_and_password_is_a_placeholder():
@@ -103,6 +105,25 @@ def test_browser_client_uses_code_flow_with_pkce():
     # Exact allowlist (BUILD_SPEC §9), no wildcard.
     assert web["redirectUris"] == ["http://localhost:8000/auth/callback"]
     assert web["attributes"]["post.logout.redirect.uris"] == "http://localhost:8000/"
+    # T11: Keycloak posts the logout token to the host API through the Docker host alias (spike §2); session-scoped
+    # tokens carry `sid`, which is what the endpoint revokes by; no front-channel iframe.
+    assert web["frontchannelLogout"] is False
+    assert web["attributes"]["backchannel.logout.url"] == "http://host.docker.internal:8000/auth/backchannel-logout"
+    assert web["attributes"]["backchannel.logout.session.required"] == "true"
+    assert web["attributes"]["backchannel.logout.revoke.offline.tokens"] == "false"
+
+
+def test_test_admin_service_account_is_dev_only_and_manages_users_only():
+    # The live suite's only way to disable a persona (R086) without a realm admin; the description is the warning.
+    c = clients()["ops-test-admin"]
+    assert c["serviceAccountsEnabled"] is True and c["publicClient"] is False
+    assert c["standardFlowEnabled"] is False and c["directAccessGrantsEnabled"] is False
+    assert "dev/test-only" in c["description"]
+    sa = users()["service-account-ops-test-admin"]
+    assert sa["serviceAccountClientId"] == "ops-test-admin"
+    assert sa["clientRoles"] == {"realm-management": ["manage-users", "view-users"]}
+    assert "realmRoles" not in sa or sa["realmRoles"] == []
+    assert audiences(c) == set()
 
 
 def test_direct_grant_client_is_public_and_dev_only():

@@ -199,8 +199,22 @@ async def test_r006_fresh_database_upgrades_downgrades_and_upgrades_again(migrat
     # With `depends_on` pointing at the main head, Alembic stores one row until a later main revision exists (round 1).
     assert "tc_0001_test_clock" in versions, versions
     downgrade("app", superuser, "testclock@base")
+
+    async def session_columns() -> set[str]:
+        cur = await app_conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'app' AND table_name = 'sessions'"
+        )
+        return {str(r["column_name"]) for r in await cur.fetchall()}
+
+    assert {"sid", "username", "refresh_token_enc"} <= await session_columns()
+    downgrade("app", superuser, "0004_write_path_functions")
+    assert not {"sid", "username", "refresh_token_enc"} & await session_columns()
+    cur = await app_conn.execute("SELECT has_table_privilege('sweeper', 'app.sessions', 'SELECT') AS sel")
+    assert not (await cur.fetchone())["sel"]  # 0002's DELETE-only cell is back
+    cur = await app_conn.execute("SELECT pg_get_functiondef('app.grant_execution(text, uuid)'::regprocedure) AS body")
+    assert "MEMBERSHIP_STALE" not in (await cur.fetchone())["body"]
     downgrade("app", superuser, "0001_walking_skeleton")
-    for relation in ("app.test_clock", "app.run_directory", "app.transitions"):
+    for relation in ("app.test_clock", "app.run_directory", "app.transitions", "app.login_state", "app.logout_jti"):
         cur = await app_conn.execute("SELECT to_regclass(%s) IS NULL AS gone", (relation,))
         assert (await cur.fetchone())["gone"], relation
     cur = await app_conn.execute("SELECT count(*) AS n FROM pg_policies WHERE schemaname = 'app'")

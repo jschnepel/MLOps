@@ -4,6 +4,8 @@
   "displayName": "Operations Copilot (dev)",
   "sslRequired": "none",
   "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 28800,
+  "ssoSessionMaxLifespan": 28800,
   "roles": {
     "realm": [
       {"name": "requester", "description": "request investigations, clarify, revise or cancel own uncommitted work"},
@@ -22,9 +24,16 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
       "redirectUris": ["http://localhost:8000/auth/callback"],
       "webOrigins": ["http://localhost:8000"],
-      "attributes": {"pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "http://localhost:8000/"}
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8000/",
+        "backchannel.logout.url": "http://host.docker.internal:8000/auth/backchannel-logout",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "false"
+      }
     },
     {
       "clientId": "ops-worker",
@@ -124,6 +133,18 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true
+    },
+    {
+      "clientId": "ops-test-admin",
+      "name": "Live-test admin (dev/test only)",
+      "description": "dev/test-only: lets the live suite disable, re-enable and log out a persona (R086); never deployed outside the dev profile",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${OPS_KC_CLIENT_SECRET_OPS_TEST_ADMIN}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
     }
   ],
   "users": [
@@ -187,6 +208,12 @@
       "enabled": true,
       "serviceAccountClientId": "ops-view-users",
       "clientRoles": {"realm-management": ["view-users"]}
+    },
+    {
+      "username": "service-account-ops-test-admin",
+      "enabled": true,
+      "serviceAccountClientId": "ops-test-admin",
+      "clientRoles": {"realm-management": ["manage-users", "view-users"]}
     }
   ]
 }
