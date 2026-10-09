@@ -2595,7 +2595,8 @@ async def test_record_logout_is_atomic_and_replay_safe(app_conn: persistence.Con
         assert await db.record_logout(jti, expires_at=until, sid=sid) == 2  # the rolled-back jti was not consumed
         assert await db.record_logout(jti, expires_at=until, sid=sid) is None  # replay
         assert await db.live_session(keys[2], idle_seconds=1800) is not None  # the other sid is untouched
-        assert all([await db.live_session(k, idle_seconds=1800) is None for k in keys[:2]])  # a list: await in a genexp is a TypeError
+        # A list, not a generator: `await` inside a genexp handed to all() is a TypeError.
+        assert all([await db.live_session(k, idle_seconds=1800) is None for k in keys[:2]])
     finally:
         await app_conn.execute("DELETE FROM app.sessions WHERE session_sha256 = ANY(%s)", (keys,))
         await app_conn.execute("DELETE FROM app.logout_jti WHERE jti = %s", (jti,))
