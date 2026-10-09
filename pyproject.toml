@@ -11,6 +11,7 @@ dependencies = [
   "ops-mcp-write",
   "ops-asset-sim",
   "ops-incident-sim",
+  "ops-sweeper",
 ]
 
 [tool.uv]
@@ -24,9 +25,10 @@ ops-mcp-read = { workspace = true }
 ops-mcp-write = { workspace = true }
 ops-asset-sim = { workspace = true }
 ops-incident-sim = { workspace = true }
+ops-sweeper = { workspace = true }
 
 [tool.uv.workspace]
-members = ["core", "api", "worker", "mcp-read", "mcp-write", "asset-sim", "incident-sim"]
+members = ["core", "api", "worker", "mcp-read", "mcp-write", "asset-sim", "incident-sim", "sweeper"]
 exclude = ["reference"]
 
 [dependency-groups]
@@ -51,6 +53,9 @@ asyncio_default_fixture_loop_scope = "function"
 # Setting this replaces pytest's defaults (which include ".*"), so ".*" is restated: otherwise pytest walks .hypothesis/.
 norecursedirs = ["reference", ".venv", "node_modules", "build", ".*"]
 addopts = "-ra"
+markers = [
+  "sweeper_stamps: the module's skeleton sweeper stamps memberships.synced_at; the autouse fixture must not",
+]
 
 [tool.ruff]
 line-length = 120

@@ -16,6 +16,7 @@ members = [
     "ops-incident-sim",
     "ops-mcp-read",
     "ops-mcp-write",
+    "ops-sweeper",
     "ops-worker",
 ]
 
@@ -732,6 +733,7 @@ dependencies = [
     { name = "ops-incident-sim" },
     { name = "ops-mcp-read" },
     { name = "ops-mcp-write" },
+    { name = "ops-sweeper" },
     { name = "ops-worker" },
 ]
 
@@ -755,6 +757,7 @@ requires-dist = [
     { name = "ops-incident-sim", editable = "incident-sim" },
     { name = "ops-mcp-read", editable = "mcp-read" },
     { name = "ops-mcp-write", editable = "mcp-write" },
+    { name = "ops-sweeper", editable = "sweeper" },
     { name = "ops-worker", editable = "worker" },
 ]
 
@@ -875,6 +878,23 @@ dependencies = [
 requires-dist = [
     { name = "mcp", specifier = "==2.3.0" },
     { name = "ops-core", editable = "core" },
+    { name = "uvicorn", specifier = ">=0.54,<1" },
+]
+
+[[package]]
+name = "ops-sweeper"
+version = "0.0.1"
+source = { editable = "sweeper" }
+dependencies = [
+    { name = "ops-core" },
+    { name = "starlette" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ops-core", editable = "core" },
+    { name = "starlette", specifier = ">=1.7,<2" },
     { name = "uvicorn", specifier = ">=0.54,<1" },
 ]
 
