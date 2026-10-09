@@ -39,9 +39,9 @@ def skeleton(migrated: None) -> Iterator[Skeleton]:
     the modules that run later in the session."""
     sk = Skeleton()
     sk.start()
-    with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
-        STAMP["t0"] = conn.execute("SELECT min(synced_at) FROM app.memberships").fetchone()[0]
     try:
+        with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+            STAMP["t0"] = conn.execute("SELECT min(synced_at) FROM app.memberships").fetchone()[0]
         yield sk
     finally:
         sk.stop()
@@ -82,6 +82,7 @@ def admin(secret) -> Iterator[TestAdmin]:
 
 
 async def count_sessions(app_conn: persistence.Conn, where: str = "revoked_at IS NULL") -> int:
+    """How many app.sessions rows match the (test-authored) WHERE clause."""
     cur = await app_conn.execute(f"SELECT count(*) AS n FROM app.sessions WHERE {where}")
     return int((await cur.fetchone())["n"])
 
@@ -92,10 +93,14 @@ async def test_login_csrf_idle_expiry_and_logout(
 ) -> None:
     kcs = settings.keycloak()
     location = browser.start_login()
-    assert location.startswith(kcs.base_url + "/realms/ops-dev/protocol/openid-connect/auth?")
-    assert "code_challenge_method=S256" in location and "ops_login" in browser.api.cookies
+    at_keycloak = location.startswith(kcs.base_url + "/realms/ops-dev/protocol/openid-connect/auth?")
+    assert at_keycloak
+    pkce = "code_challenge_method=S256" in location
+    login_cookie = "ops_login" in {c.name for c in browser.api.cookies.jar}
+    assert pkce and login_cookie
     session = browser.finish_login(browser.keycloak_login(location, "alex", secret("kc_persona_alex_password")))
-    assert "ops_login" not in browser.api.cookies and "ops_session" in browser.api.cookies
+    names = {c.name for c in browser.api.cookies.jar}  # names only: a jar's repr would print the values
+    assert "ops_login" not in names and "ops_session" in names
     me = session.api.get("/api/v1/me")
     assert me.status_code == 200 and me.json()["auth"] == "session" and me.json()["username"] == "alex"
     # CSRF and origin (R012): nothing, Origin only, wrong token, wrong origin, then the real thing.
@@ -121,14 +126,16 @@ async def test_login_csrf_idle_expiry_and_logout(
     # Idle expiry: age the row with the superuser; the next request is 401 and the cookies are cleared.
     await app_conn.execute("UPDATE app.sessions SET last_seen_at = last_seen_at - interval '31 minutes'")
     expired = session.api.get("/api/v1/me")
-    assert expired.status_code == 401 and "ops_session" not in session.api.cookies
+    names = {c.name for c in session.api.cookies.jar}
+    assert expired.status_code == 401 and "ops_session" not in names
     lines.append(f"idle expiry: me={expired.status_code}")
     # Logout ends the application session and the Keycloak session: the next login shows the form again.
     session = browser.login("alex", secret("kc_persona_alex_password"))
     out = session.api.post("/auth/logout", headers=session.mutation_headers())
     assert out.status_code == 204 and session.api.get("/api/v1/me").status_code == 401
     again = browser.kc.get(browser.start_login(), headers=browser.kc_cookies())
-    assert again.status_code == 200 and "kc-form-login" in again.text  # no SSO ride: the form is back
+    form_back = "kc-form-login" in again.text  # no SSO ride: the form is back
+    assert again.status_code == 200 and form_back
     lines.append(f"logout: {out.status_code}; keycloak shows the login form again: {again.status_code == 200}")
 
 
@@ -210,14 +217,15 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
     kcs = settings.keycloak()
     sam_token = kc.token_password(kcs.base_url, "ops-dev-direct", "sam", secret("kc_persona_sam_password"))
     headers = {"Authorization": f"Bearer {sam_token['access_token']}"}
-    assert admin.set_enabled(SAM, False) == 204 and admin.enabled(SAM) is False
     try:
+        disabled = admin.set_enabled(SAM, False)
+        assert disabled == 204 and admin.enabled(SAM) is False
         with httpx2.Client(base_url=API, timeout=15.0) as c:
             # A decision on a random proposal: the enabled check runs before any lookup, so a disabled user is 401,
             # never 404 (the check is a dependency, T11 review note 2).
             body = {"expected_revision": 1, "expected_payload_sha256": "0" * 64, "decision": "approve"}
             decided = c.post(f"/api/v1/proposals/{UUID(int=1)}/decisions", headers=headers, json=body)
-            assert decided.status_code == 401, decided.text
+            assert decided.status_code == 401, decided.status_code
             started = time.monotonic()
             deadline = started + 75
             while time.monotonic() < deadline:
@@ -239,4 +247,6 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
                 f"disabled user: decision={decided.status_code} synced_after={synced_after}s me={me.status_code}"
             )
     finally:
-        assert admin.set_enabled(SAM, True) == 204  # the row is restored by the module fixture, after the sweeper stops
+        # Re-enable unconditionally and record the status; an assert here would hide the original failure. The row is
+        # restored by the module fixture, after the sweeper stops.
+        lines.append(f"sam re-enabled at keycloak: {admin.set_enabled(SAM, True)}")

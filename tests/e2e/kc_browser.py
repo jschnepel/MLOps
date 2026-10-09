@@ -22,6 +22,7 @@ PUBLIC_HOST = "localhost:8000"
 
 
 def cookie_header(client: httpx2.Client) -> str:
+    """The Cookie header value for every cookie in the client's jar."""
     return "; ".join(f"{c.name}={c.value}" for c in client.cookies.jar)
 
 
@@ -33,6 +34,7 @@ class Session:
     csrf: str
 
     def mutation_headers(self) -> dict[str, str]:
+        """The Origin and CSRF headers a state-changing request must carry."""
         return {"Origin": ORIGIN, "X-CSRF-Token": self.csrf}
 
 
@@ -46,6 +48,7 @@ class Browser:
         self.kc = httpx2.Client(timeout=15.0, follow_redirects=False)
 
     def close(self) -> None:
+        """Close both clients."""
         self.api.close()
         self.kc.close()
 
@@ -88,6 +91,7 @@ class Browser:
         return Session(self.api, csrf)
 
     def login(self, username: str, password: str) -> Session:
+        """The whole flow: start, Keycloak form (or SSO), callback."""
         return self.finish_login(self.keycloak_login(self.start_login(), username, password))
 
 
@@ -101,11 +105,14 @@ class TestAdmin:
         self._client.headers["Authorization"] = f"Bearer {token}"
 
     def close(self) -> None:
+        """Close the admin client."""
         self._client.close()
 
     def set_enabled(self, user_id: str, enabled: bool) -> int:
+        """Enable or disable the user; the HTTP status."""
         return self._client.put(f"/users/{user_id}", json={"enabled": enabled}).status_code
 
     def enabled(self, user_id: str) -> bool:
+        """Whether Keycloak currently has the user enabled."""
         body = self._client.get(f"/users/{user_id}").json()
         return bool(body["enabled"])
