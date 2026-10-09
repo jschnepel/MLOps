@@ -12,6 +12,7 @@ from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
 from ops_core import persistence, settings
 from ops_core.jobs import Server
+from ops_core.settings import Role
 from ops_core.tokens import WorkloadTokenSource
 from ops_mcp_read.server import production_app
 
@@ -22,7 +23,7 @@ from tests.plan_b.live import kc
 pytestmark = pytest.mark.asyncio
 
 
-async def test_search_over_http(app_conn: persistence.Conn, secret) -> None:
+async def test_search_over_http(app_conn: persistence.Conn, role_conn, secret) -> None:
     kcs = settings.keycloak()
     # Port 18081: the skeleton's own mcp-read may be up on 8081 in the same session (Task 9's fixture).
     server = uvicorn.Server(uvicorn.Config(production_app(), host="127.0.0.1", port=18081, log_level="warning"))
@@ -32,13 +33,18 @@ async def test_search_over_http(app_conn: persistence.Conn, secret) -> None:
     try:
         while not server.started:
             await asyncio.sleep(0.05)
-        async with app_conn.transaction():  # committed: the server reads the handle on its own connection
-            # The seeded alpha tenant: only seeded tenants have a fixture corpus (W11 in the round-1 dry run).
-            _, _, run = await new_run(app_conn, UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7"))
-            cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s", (run,))
-            job = (await cur.fetchone())["id"]
+        # No outer transaction: the api role's connection could not see an uncommitted conversation, and the server
+        # reads the handle on its own connection. The seeded alpha tenant: only seeded tenants have a fixture corpus
+        # (W11 in the round-1 dry run).
+        alpha = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")
+        _, _, run = await new_run(app_conn, alpha, api=await role_conn(Role.API))
+        cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s", (run,))
+        job = (await cur.fetchone())["id"]
+        worker_conn = await role_conn(Role.WORKER)
+        async with worker_conn.transaction():  # set_tenant is transaction-local and the INSERT meets RLS
+            await persistence.set_tenant(worker_conn, alpha)
             handle = await persistence.mint_handle(
-                app_conn, run_id=run, job_id=job, server=Server.READ, azp="ops-worker"
+                worker_conn, run_id=run, job_id=job, server=Server.READ, azp="ops-worker"
             )
         worker = WorkloadTokenSource(
             token_url=kcs.token_url, client_id="ops-worker", client_secret=secret("kc_client_secret_ops_worker")

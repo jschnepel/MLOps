@@ -8,6 +8,7 @@ sessions, CSRF and Idempotency-Key are declared debt (T11/T12).
 
 # No `from __future__ import annotations` here: FastAPI resolves dependency annotations at import time, and a
 # string annotation naming a local alias becomes a query parameter (measured in the round-1 review).
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -21,11 +22,15 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from ops_core import persistence, settings
 from ops_core.contracts import DecisionRequest, DuplicateKey, ErrorCode, MessageKind, MessageRequest, SafeError, load
+from ops_core.outcomes import EventRuleViolation
+from ops_core.settings import Role
+from ops_core.states import IllegalTransition
 from ops_core.tokens import Principal, TokenRejected, TokenVerifier
 from pydantic import ValidationError
 
 from ops_api import store as st
 
+log = logging.getLogger("ops_api")
 bearer = HTTPBearer(auto_error=False)  # the 401 body is ours (SafeError), not the SDK's
 
 
@@ -89,6 +94,8 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
         made = store_factory()
         app.state.store = await made if isinstance(made, Awaitable) else made
         try:
+            if isinstance(app.state.store, st.DbStore):
+                await persistence.assert_clock_profile(app.state.store.session.conn, settings.profile())
             if not verifier.ready:
                 await verifier.load_keys()
             yield
@@ -121,6 +128,21 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
     async def _api_error(_: Request, exc: ApiError) -> Response:
         return safe(exc.status, exc.code, exc.message)
 
+    @app.exception_handler(persistence.AuthorityViolation)
+    async def _authority(_: Request, exc: persistence.AuthorityViolation) -> Response:
+        log.error("deployment error: %s", exc)  # the API is connected as a role a function does not accept
+        return safe(503, ErrorCode.UNAVAILABLE, "service misconfigured")
+
+    @app.exception_handler(st.Internal)
+    @app.exception_handler(persistence.PersistenceError)
+    @app.exception_handler(IllegalTransition)
+    @app.exception_handler(EventRuleViolation)
+    async def _server_defect(_: Request, exc: Exception) -> Response:
+        # Messages carry no handle or secret. FastAPI picks the most specific class, so AuthorityViolation keeps
+        # its own handler.
+        log.error("service error: %r", exc)
+        return safe(503, ErrorCode.UNAVAILABLE, "service error")
+
     @app.exception_handler(psycopg.Error)
     async def _database(_: Request, __: psycopg.Error) -> Response:
         return safe(503, ErrorCode.UNAVAILABLE, "database unavailable")
@@ -144,7 +166,7 @@ def create_app(verifier: Verifier, store_factory: Callable[[], st.Store | Awaita
         store: st.Store = request.app.state.store
         if isinstance(store, st.DbStore):
             try:
-                await store.session.read("SELECT 1", ())
+                await store.session.ping()
             except (psycopg.Error, OSError):  # readiness reports a database failure as not ready
                 return safe(503, ErrorCode.UNAVAILABLE, "database not reachable")
         return JSONResponse({"status": "ready"})
@@ -297,6 +319,6 @@ def production_app() -> FastAPI:
     )
 
     async def make_store() -> st.Store:
-        return st.DbStore(await persistence.connect(settings.app_postgres()))
+        return st.DbStore(await persistence.connect(settings.app_postgres(Role.API)))
 
     return create_app(verifier, make_store)

@@ -2,9 +2,9 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan D (T08, the walking skeleton) is executed on branch `plan-d` (`8136ee6..d7b6359`). Owner inputs still pending: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) push `plan-b`, `plan-c` and `plan-d` and open/merge the PRs, record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata below. Then write Plan E = T09 (migrations, roles, RLS, definer functions) and T10 (incident-sim `action_key` hardening) from revision 1 and the skeleton's persistence seams (`TODO(T09)` in `ops_core.persistence`), and dry-run it on scratch copies before executing.
+**Next task:** Plan E (T09, T10) is executed on branch `plan-e` (`3fb9645..5fbb272`, on top of `plan-d`). Owner inputs still pending, unchanged: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) `plan-b` to `plan-e` were pushed on 2026-10-08; open/merge the stacked PRs (plan-b -> main, plan-c -> plan-b, plan-d -> plan-c, plan-e -> plan-d) and record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata of Plan C and the errata of Plan E below. Then write Plan F: T11 (sessions and membership sync; it depends on T09 and T43, both DONE, so it is the earliest dependency-satisfied task) or T13 (leases), whichever the backlog's dependency graph puts first, and dry-run it on scratch copies before executing.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-d` (Plan D work on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b`, `plan-c` and `plan-d` are local only and await the owner's push and PRs.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-e` (Plan E work on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` are local only and await the owner's push and PRs.
 
 ## Done in the planning session (2026-10-06)
 
@@ -165,6 +165,38 @@
   - the token verifier propagates a non-transport exception from an injected fetch (test code only; T13);
   - Task 8 M3 (worker health-probe note) and the Task 1 cosmetics: duplicated old persona lines in `reports/bootstrap/keycloak-claims.txt`, no unit assertion on timezone UTC. The ledger (`.superpowers/sdd/2026-10-08-first-slice-d-walking-skeleton/progress.md`) has the detail.
 
+## Plan E executed (2026-10-08, branch `plan-e`)
+
+- T09 and T10 = `3fb9645..5fbb272`. The plan (`docs/superpowers/plans/2026-10-08-first-slice-e-roles-rls-definers.md`) holds the rulings; `docs/reviews/plan-review-e-2026-10-08.md` keeps the review record. Evidence: the live modules `tests/e2e/test_roles_live.py`, `test_clock_live.py`, `test_definers_run_path_live.py`, `test_definers_write_path_live.py`, `test_incident_sim_live.py` and `test_migrations_and_persistence.py`, the unit half in `tests/plan_e/`, and `reports/skeleton/r105-walking-skeleton.txt` (R105 under the new roles: `destination_refusals=persona:403,worker:403`, `keys=consistent`).
+- Gates (after the final-review fix wave `e8e71a7`): `check.py` ends `530 passed, 82 skipped`; `check.py --profile test` (the live suite included) ends `591 passed, 21 skipped`; `verify_handoff.py --reference-code --manifest --contracts` exits 0. `check.py --profile test` is this repository's reading of SA:529 and needs the dev stack up.
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan C's nine:
+  10. AM-20.5: the policy text (SA:512's bare cast) should read SA:446's `NULLIF(current_setting('app.tenant_id', true), '')::uuid` form, because `''` raises 22P02 (measured in the spike); an empty setting then sees no rows.
+  11. AM-20.2: the worker also needs `jobs.available_at` and `app_definer` needs `runs.updated_at` (UPDATE on those columns).
+  12. AM-20.3: there is a 24th definer function, `resolve_identity`, for the session-to-membership lookup.
+  13. AM-20.3 signature deviations: `create_run` takes the request and returns `(run_id, state_version)`; `transition_run` takes a detail `jsonb`; `freeze_proposal` takes the stored bytes and verifies a requester-asserted `supersedes_run_id` instead of having it injected; `record_decision` takes the tenant and the reviewer; `append_event` takes a source and refuses a wider list of reserved event types.
+  14. AM-20.3: `mark_unknown` is worker-only; mcp-write reports UNKNOWN to the worker, which dispatches an `execute` job for runs left in EXECUTING.
+  15. AM-20.6: `app.current_time()` is a definer function callable by every runtime role.
+  16. SA:529: `check.py --profile test` runs the live suite against `ops_test` and `incident_test`.
+  17. AM-20.3: the definer functions take no row lock on `proposals`, `decisions`, `memberships` or `execution_grant`, because a lock needs UPDATE on the table (plan ruling 23).
+  18. AM-20: the `OC001` authority check is reachable only past the EXECUTE ACL, so a role without EXECUTE never sees it.
+  19. AM-20.3 `resolve_invocation` returns `job_type`, `job_id` and `conversation_id` instead of SA:459's `allowed_tools` (plan ruling 21).
+  20. `app.transitions` is a table outside AM-20.2's list (plan ruling 10).
+  21. A CONFLICT on a terminal run is `action.conflict`, not late evidence.
+  22. `mark_sent` and `record_outcome` carry state guards, and an outcome before SENT is refused (Task 4).
+  23. The event-type allowlist and `create_run` parsing happen after `_authority` (Task 3).
+  24. CONNECT is granted exactly per role and `test_harness` exists only in the test profile (Task 2).
+  25. The sweeper's `del` without `sel` on `sessions` and `idempotency_request` cannot run a `DELETE ... WHERE expires_at < ...` (spike section 3); flagged for T11/T12.
+- **Open items for Plan F and later**, parked by the task reviews (ledger: `.superpowers/sdd/2026-10-08-first-slice-e-roles-rls-definers/`):
+  - the eleven definer functions without a caller arrive with T11, T13, T15-T17, T21 and T22 (the Plan E debt list below names each);
+  - R122 (checkpoint tables reachable only by the worker) -> T20: `langgraph-checkpoint-postgres` is not locked;
+  - the `migrator` login -> T30; the expiry and asset guard -> T21;
+  - the lease fence (binding the raw handle for `mark_sent` and `record_outcome`) -> T13/T22;
+  - untested branches -> T13/T22: FAILED_NO_COMMIT from SENT, CONFLICT on EXECUTING, redispatch, `mark_sent` on a cancelled run, `freeze_proposal` ANSWER_ONLY / SUPERSEDES_MISMATCH / revision, `grant_execution` NO_APPROVAL / CANCELLED / MEMBERSHIP_INACTIVE, a write handle at mcp_read;
+  - the abort client and the `abort_incident` tool -> T47/T22; the six remaining BS:405 faults -> T13; a schedule for the detective check (`skeleton.py keys`) -> T32;
+  - the pre-SENT `STALE_RUN` / `HASH_MISMATCH` envelopes and the expired-handle read-back have no dedicated test -> T13/T47;
+  - `transition_run` called with a NULL `expected_version` relies on the from-state under `FOR UPDATE` rather than a version check (by design, Task 3 review M3)
+  - a zero-orphan case for `skeleton.py keys` needs a clean database pair -> T32/T13; a shared connect-and-assert helper for the three servers (the MCP lifespans duplicate it and incident-sim never closes its connection) -> T13/T30; the `testclock` branch revision still renders its grantee tuples from the live matrix (freeze them in the next migration task).
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -193,6 +225,22 @@ Allowed shortcuts in T08, each with its owning task:
 
 Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss checks in mcp-read, mcp-write and incident-sim; `action_key` ON CONFLICT; a decision step by a second persona; every transition routed through T07's table.
 
+## Plan E debt list (T09, T10; committed before coding) [R6-B7]
+
+Allowed shortcuts in T09/T10, each with its owning task:
+- the definer functions without a caller today arrive with their owners: `create_revision`, `create_manual_proposal`, `expire_proposal`, `request_cancel` → T21; `asset_scope`, `search_procedures_scoped` → T15/T16/T17; `request_abort`, `escalate_run`, `resolve_escalation` → T22; `sync_memberships` → T11; `reclaim_leases` → T13;
+- `run_lease` exists with no lease taken; `resolve_invocation`, `grant_execution`, `mark_sent` and `record_outcome` check no fence; `mark_unknown` and `revoke_handles` accept `fence` and ignore it; no asset-guard advisory lock → T13/T21;
+- the worker polls per tenant (one claim attempt per tenant per poll) → T13 wake-ups;
+- `migrator` holds no login: Alembic runs as the Compose superuser and transfers ownership explicitly → T30;
+- schema `checkpoints` and R122 are deferred: `langgraph-checkpoint-postgres` is not locked → T20;
+- `record_decision` and `grant_execution` do not enforce proposal expiry or asset freshness → T21;
+- the `recover` job `mark_unknown` enqueues is claimed and finished unhandled by the worker → T22;
+- `sessions` has the BUILD_SPEC §6 shape and no reader or writer → T11;
+- `check.py --profile test` runs the live suite against per-session databases rather than a Compose test profile → T30;
+- the fault factory implements `reject_next`, `drop_before_commit` and `lose_after_commit`; the other six BS:405 faults → T13;
+- `outbox`, `feedback`, `idempotency_request`, `operator_resolutions`, `documents`/`chunks`/`embeddings`, `model_permit` are absent, so their AM-20.2 rows are not yet in the grant matrix → T14/T12/T22/T17/T13;
+- the definer functions take no row lock on `proposals`, `decisions`, `memberships` or `execution_grant` (AM-20.3's lock column asks for `FOR SHARE`; a lock needs UPDATE, which AM-20.2 withholds); `runs FOR UPDATE` serialises the writers, and the `memberships` race against the sync → T11.
+
 ## Environment (observed)
 
 | Item | Observed |
@@ -217,9 +265,13 @@ Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss 
 - Separate-services architecture.
 - MIT license; publish publicly to `jschnepel/MLOps` once logged in.
 
+## Dev database state (2026-10-08)
+
+The owner approved migrating the dev database: `skeleton.py migrate` (dev profile) applied revisions 0002–0004 to `ops` (`app@head`, no `app.test_clock`) and incident revision 0002 to `incident`; `skeleton.py up` then brought all five processes to ready under their own roles and `down` stopped them. Plan F (T11) research (fact sheet and spike) started the same day.
+
 ## Open owner inputs
 
-- Approval to push `plan-b` and `plan-c` and open the PRs (the remote exists; `main` and `plan-a` are already pushed).
+- Open and merge the stacked PRs for `plan-b` to `plan-e` (all four pushed on 2026-10-08; `main` and `plan-a` were pushed earlier) and record the first CI run URL.
 - Decide on the nine proposed contract errata (see "Plan C executed").
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
 - T06: decide whether to publish early (public repo at M01) or start private and make it public at T34. (The repo `jschnepel/MLOps` exists and `main`/`plan-a` were pushed on 2026-10-07; `plan-b` is local.)
@@ -251,6 +303,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan E (T09, T10) as described in the Next task line.
+Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan F as described in the Next task line.
 
 Do not store secrets or private reasoning in this file.

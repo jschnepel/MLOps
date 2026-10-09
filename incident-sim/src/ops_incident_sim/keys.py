@@ -4,19 +4,23 @@
 which is the whole idempotency mechanism: a retry with the same key and hash gets the same receipt; a different hash
 under an existing key is a CONFLICT the caller must escalate, and never a second incident. The destination recomputes
 nothing here — app.py already proved the presented hash over the received bytes — but it stores only its own view.
-TODO(T10): abort (`ABORTED`), `REJECTED` via the fault factory, and the detective check against grant hashes.
+`abort` and `reject` write the two tombstone states the same way (first writer wins); nothing here can UPDATE or
+DELETE a row, and the role cannot either (revision 0002).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 from ops_core.persistence import Conn
 from psycopg.rows import DictRow
 from psycopg.types.json import Jsonb
+
+REJECTION_REASONS: Final = ("invalid_payload", "hash_mismatch", "policy")
+ABORT_REASONS: Final = ("cancelled_before_send", "expired", "deadline")
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,36 @@ async def lookup(conn: Conn, action_id: UUID) -> KeyRow | None:
     cur = await conn.execute("SELECT * FROM incident.action_key WHERE action_id = %s", (action_id,))
     record = await cur.fetchone()
     return None if record is None else _row(record)
+
+
+async def _tombstone(conn: Conn, *, action_id: UUID, payload_sha256: str, state: str, reason: str) -> KeyRow:
+    """INSERT … ON CONFLICT DO NOTHING then read: an existing key of any state stands (SA:263, SA:267)."""
+    cur = await conn.execute(
+        "INSERT INTO incident.action_key (action_id, payload_sha256, state, reason) VALUES (%s, %s, %s, %s)"
+        " ON CONFLICT (action_id) DO NOTHING RETURNING *",
+        (action_id, payload_sha256, state, reason),
+    )
+    inserted = await cur.fetchone()
+    if inserted is not None:
+        return _row(inserted)
+    existing = await lookup(conn, action_id)
+    if existing is None:
+        raise RuntimeError("action_key row vanished after a conflict; rows are never deleted (SA:265)")
+    return existing
+
+
+async def abort(conn: Conn, *, action_id: UUID, payload_sha256: str, reason: str) -> KeyRow:
+    """The abort tombstone carries the grant's hash (SA:266); a committed key answers with its receipt instead."""
+    if reason not in ABORT_REASONS:
+        raise ValueError("abort reason")
+    return await _tombstone(conn, action_id=action_id, payload_sha256=payload_sha256, state="ABORTED", reason=reason)
+
+
+async def reject(conn: Conn, *, action_id: UUID, payload_sha256: str, reason: str) -> KeyRow:
+    """A permanent rejection (SA:261): a lost response to a rejected POST is recoverable by lookup."""
+    if reason not in REJECTION_REASONS:
+        raise ValueError("rejection reason")
+    return await _tombstone(conn, action_id=action_id, payload_sha256=payload_sha256, state="REJECTED", reason=reason)
 
 
 def _stamp(value: datetime) -> str:

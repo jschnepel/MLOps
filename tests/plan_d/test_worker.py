@@ -62,6 +62,7 @@ async def test_build_proposal_binds_hash_to_canonical_bytes():
         evidence=EV,
         corpus_version="handoff-1",
         now=NOW,
+        supersedes_run_id=None,
     )
     assert frozen.canonical == canonical_json(frozen.payload.canonical_dict())
     assert frozen.sha256 == canonical_sha256(frozen.payload.canonical_dict())

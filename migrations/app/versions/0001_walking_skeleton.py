@@ -8,6 +8,8 @@ AM-20.4 so T09's revision alters rather than renames; the one deliberate excepti
 (raw, debt → T09/T15 replaces it by `handle_sha256`). Audit tables are append-only by shape: `run_state_history`,
 `action_attempt_state` and `events` have no updatable business columns (AM-20 principle 2). Seed rows: the two tenants
 and five persona memberships from data/seed-ids.json, written here because no runtime role may insert them (SA:440).
+Carries the `app` branch label so `migrate` can name the main line (`app@head`) while the `testclock` branch stays
+test-only (spike §4).
 """
 
 import json
@@ -19,7 +21,7 @@ from alembic import op
 
 revision = "0001_walking_skeleton"
 down_revision = None
-branch_labels = None
+branch_labels = ("app",)
 depends_on = None
 
 # AM-10 active states, for the one-active-run-per-conversation rule (BUILD_SPEC §7; T12 owns the admission test).

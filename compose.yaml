@@ -99,6 +99,20 @@ secrets:
     file: ${OPS_SECRETS_DIR}/kc_persona_riley_password
   kc_persona_jordan_password:
     file: ${OPS_SECRETS_DIR}/kc_persona_jordan_password
+  postgres_api_password:
+    file: ${OPS_SECRETS_DIR}/postgres_api_password
+  postgres_worker_password:
+    file: ${OPS_SECRETS_DIR}/postgres_worker_password
+  postgres_sweeper_password:
+    file: ${OPS_SECRETS_DIR}/postgres_sweeper_password
+  postgres_mcp_read_password:
+    file: ${OPS_SECRETS_DIR}/postgres_mcp_read_password
+  postgres_mcp_exec_password:
+    file: ${OPS_SECRETS_DIR}/postgres_mcp_exec_password
+  postgres_operator_password:
+    file: ${OPS_SECRETS_DIR}/postgres_operator_password
+  postgres_test_harness_password:
+    file: ${OPS_SECRETS_DIR}/postgres_test_harness_password
 
 volumes:
   pg-data:

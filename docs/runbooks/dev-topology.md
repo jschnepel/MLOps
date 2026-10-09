@@ -65,6 +65,10 @@ All five personas (`alex`, `sam`, `lee` in tenant alpha; `riley`, `jordan` in te
 
 `tests/plan_b/live/test_ollama_bridge.py` proves both routes answer the same version. Because Docker Desktop delivers container traffic to the host from `127.0.0.1` (measured 2026-10-08), the owner removes LAN exposure by binding Ollama to loopback — `docs/runbooks/ollama-network.md`; no firewall rule is needed on this machine. The worker's digest check reads `data/model-pins.json` through `ops_core.model_pins.load_model_pins` (T19).
 
+## Database roles (T09)
+
+Each process connects as its own AM-20.1 login role and never as the owner: api as `api`, the worker as `worker`, mcp-read as `mcp_read`, mcp-write as `mcp_exec`, incident-sim as `incident` (its own database). `sweeper` and `operator` are reserved for their later owners, and `test_harness` exists only in the test profile. Each role's password is one file `postgres_<role>_password` under `OPS_SECRETS_DIR` (`scripts/bootstrap_dev.py secrets` generates them; none is ever printed), and `scripts/skeleton.py migrate` creates or re-keys the roles from those files before Alembic runs. The Compose superuser `ops` is for migrations, role bootstrap and test fixtures only. The dev database never carries `app.test_clock`: the `testclock` Alembic branch is applied only under `PROFILE=test`, and `skeleton.py up` refuses to start when the table exists outside that profile.
+
 ## Host processes (T08)
 
 The five application processes run on the host until T30 containerises them (`docs/runbooks/walking-skeleton.md`). Every listener binds `127.0.0.1`.
