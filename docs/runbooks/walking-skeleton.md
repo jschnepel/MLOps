@@ -35,10 +35,12 @@ files), so nothing is throwaway.
 Without the sweeper, grants refuse with `MEMBERSHIP_STALE` after 120 s and execute jobs wait (re-queued every 30 s)
 until it runs. The sync refuses (and stamps nothing) when three or more and more than half of the active subjects are
 missing from the realm's listing, which is what a listing from the wrong realm looks like (readiness turns 503 and
-grants refuse `MEMBERSHIP_STALE` after 120 s; a legitimate mass offboarding is accepted by starting the sweeper once
-with `OPS_SYNC_ALLOW_MASS_DEACTIVATION=1`). A back-channel logout Keycloak could not deliver is not retried, so the
-application session then ends at its own limits. The API and the sweeper refuse to start until the database carries
-revision 0005 (`skeleton.py migrate`).
+grants refuse `MEMBERSHIP_STALE` after 120 s; a legitimate mass offboarding is accepted with
+`OPS_SYNC_ALLOW_MASS_DEACTIVATION=1 uv run python scripts/skeleton.py up`, which restarts all six processes, and the
+override applies to the sweeper's first successful sync only). A subject missing from the listing is deactivated only
+after a per-user lookup confirms it is gone or disabled. A back-channel logout Keycloak could not deliver is not
+retried, so the application session then ends at its own limits. The API and the sweeper refuse to start until the
+database carries revision 0005 (`skeleton.py migrate`).
 
 The destination (incident-sim, T10): the schema belongs to `incident_owner` and the runtime role `incident` can only
 SELECT and INSERT, so a key is never deleted or rewritten. `POST /internal/actions/{action_id}/abort` takes

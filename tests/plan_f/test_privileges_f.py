@@ -2,6 +2,10 @@
 deletes on `sessions`, the pre-login state and the logout jti store exist as RLS-free tables with the narrowest cells
 that work (spike §5: an insert-only role can run a target-less ON CONFLICT DO NOTHING and nothing else)."""
 
+import importlib.util
+from pathlib import Path
+from typing import Any
+
 from ops_core import privileges as p
 
 
@@ -15,15 +19,21 @@ def test_session_tables_are_rls_free_and_narrow() -> None:
     assert p.GRANTS["logout_jti"]["api"] == p.Grant(ins=True)  # replay is detected by rowcount, never by a read
 
 
-def test_revision_0005_bodies_differ_only_by_the_stale_rule() -> None:
-    import importlib.util
-    from pathlib import Path
-
-    path = Path(__file__).resolve().parents[2] / "migrations" / "app" / "versions" / "0005_sessions_login_logout.py"
-    spec = importlib.util.spec_from_file_location("rev0005", path)
+def _revision(name: str) -> Any:
+    """Load a migration revision by path (the versions directory is not a package)."""
+    path = Path(__file__).resolve().parents[2] / "migrations" / "app" / "versions" / name
+    spec = importlib.util.spec_from_file_location(path.stem, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def test_revision_0005_bodies_differ_only_by_the_stale_rule() -> None:
+    module = _revision("0005_sessions_login_logout.py")
+    rev0004 = _revision("0004_write_path_functions.py")
     assert "MEMBERSHIP_STALE" in module.GRANT_EXECUTION and "MEMBERSHIP_STALE" not in module.GRANT_EXECUTION_0004
+    # The downgrade restores exactly what 0004 installs (final review M3).
+    assert module.GRANT_EXECUTION_0004 == rev0004.GRANT_EXECUTION
     assert module.GRANT_EXECUTION.count("interval '120 seconds'") == 2
     assert module.GRANTS_0005 == {t: p.GRANTS[t] for t in module.TABLES}

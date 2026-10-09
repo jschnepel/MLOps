@@ -96,6 +96,29 @@ def test_a_record_that_cannot_be_formatted_is_still_emitted_and_redacted() -> No
     assert "ValueError" in out  # the traceback module guards str() itself; our fallback covers anything else
 
 
+class _HostileError(Exception):
+    """An exception object that cannot be rendered: its `__str__` raises, and so does its `__cause__`, because the
+    traceback module already guards `str()` alone (it prints `<exception str() failed>`)."""
+
+    def __str__(self) -> str:
+        raise RuntimeError("no string for you")
+
+    @property
+    def __cause__(self) -> BaseException | None:
+        raise RuntimeError("no cause for you")
+
+
+def test_an_exception_that_cannot_be_rendered_falls_back_and_is_still_redacted() -> None:
+    logger, stream = capture()
+    try:
+        raise _HostileError
+    except _HostileError:
+        logger.exception("exchange failed for code=%s", CANARY)
+    out = stream.getvalue()
+    assert "traceback unavailable" in out and "ERROR" in out  # the fallback line is emitted
+    assert CANARY not in out and f"code={REDACTED}" in out  # and the message is still redacted
+
+
 def test_install_puts_the_filter_on_every_root_handler() -> None:
     root = logging.getLogger()
     before = {id(h): list(h.filters) for h in root.handlers}  # pytest's capture handlers live for the session

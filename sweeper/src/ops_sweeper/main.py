@@ -21,6 +21,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from uuid import UUID
 
 import psycopg
 import uvicorn
@@ -48,7 +49,7 @@ class Deps:
     issuer: str
     tick_seconds: float
     worker_name: str
-    allow_mass: bool = False  # the owner's one-shot override of the listing guard (ruling 27)
+    allow_mass: bool = False  # the owner's override of the listing guard, cleared by the first good sync (ruling 27)
     last_sync_at: float | None = None  # monotonic time of the last successful sync
 
 
@@ -62,11 +63,37 @@ def fresh(last_sync_at: float | None, now: float) -> bool:
     return last_sync_at is not None and now - last_sync_at < FRESH_SECONDS
 
 
+def consume_override(deps: Deps) -> None:
+    """The mass-deactivation override covers the first successful sync only (final review M1): a later broken
+    listing in the same process is refused again."""
+    if deps.allow_mass:
+        deps.allow_mass = False
+        log.info("mass-deactivation override consumed")
+
+
+async def confirm_absences(deps: Deps, users: dict[UUID, bool]) -> dict[UUID, bool]:
+    """The listing plus every active subject it lacks, asked one by one (final review M2): offset paging can skip a
+    user when another is deleted between pages, and nothing reactivates a deactivated membership. False (a 404 or
+    disabled) confirms the absence; True is the paging race, so the subject is kept this round. A listing the guard
+    refuses is returned as it is, so a wrong realm (where every lookup 404s) still trips the guard, not the users.
+
+    Raises:
+        AdminUnavailable: a lookup failed; the caller stamps nothing.
+    """
+    active = await sync.active_subjects(deps.conn, deps.issuer)
+    if not deps.allow_mass and sync.refuse(active, users):
+        return users
+    confirmed = dict(users)
+    for subject in sorted(s for s in active if s not in users):
+        confirmed[subject] = await deps.admin.enabled(subject)
+    return confirmed
+
+
 async def run_sync(deps: Deps) -> bool:
-    """One sync: list the realm, apply the plan, stamp. False (and a log line) when the listing failed or the plan
-    was refused; then nothing is stamped and no job row is recorded for the minute."""
+    """One sync: list the realm, confirm the absences, apply the plan, stamp. False (and a log line) when the
+    listing or a confirmation failed or the plan was refused; then nothing is stamped and no job row is recorded."""
     try:
-        users = await deps.admin.list_enabled()
+        users = await confirm_absences(deps, await deps.admin.list_enabled())
     except AdminUnavailable as exc:
         log.warning("membership sync skipped: %s", exc)
         return False
@@ -77,6 +104,7 @@ async def run_sync(deps: Deps) -> bool:
         return False
     deps.last_sync_at = time.monotonic()
     log.info("membership sync: %d rows checked, %d deactivated", result.checked, result.deactivated)
+    consume_override(deps)
     return True
 
 
@@ -100,8 +128,11 @@ async def record_sync(deps: Deps) -> None:
         job = await persistence.claim_maintenance_job(
             deps.conn, job_type=JobType.SYNC_MEMBERSHIPS, worker_name=deps.worker_name, job_id=job_id
         )
-        if job is not None:
-            await persistence.finish_job(deps.conn, job["id"])
+        if job is None:
+            # Unreachable with today's own-row claim; if it ever happens the row would sit unclaimed (final review M6).
+            log.warning("the sync job row just inserted could not be claimed; it is left for inspection")
+            return
+        await persistence.finish_job(deps.conn, job["id"])
 
 
 async def run_forever(deps: Deps, stop: asyncio.Event) -> None:

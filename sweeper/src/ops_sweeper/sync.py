@@ -42,11 +42,19 @@ def plan(memberships: Iterable[UUID], users: Mapping[UUID, bool]) -> frozenset[U
     return frozenset(subject for subject in memberships if not users.get(subject, False))
 
 
+async def active_subjects(conn: persistence.Conn, issuer: str) -> frozenset[UUID]:
+    """The issuer's subjects with an active membership, read before the sync to confirm the listing's absences (the
+    sync's own locked read stays authoritative)."""
+    cur = await conn.execute("SELECT subject FROM app.memberships WHERE issuer = %s AND active", (issuer,))
+    return frozenset(UUID(str(r["subject"])) for r in await cur.fetchall())
+
+
 async def sync_memberships(
     conn: persistence.Conn, *, issuer: str, users: Mapping[UUID, bool], allow_mass: bool = False
 ) -> SyncResult:
     """Apply `plan` to every active membership of `issuer`, then stamp all of the issuer's rows, in one transaction.
-    `allow_mass` is the owner's one-shot override of the listing guard (OPS_SYNC_ALLOW_MASS_DEACTIVATION=1).
+    `allow_mass` is the owner's override of the listing guard: `OPS_SYNC_ALLOW_MASS_DEACTIVATION=1 uv run python
+    scripts/skeleton.py up` restarts all six processes, and the sweeper clears it after its first successful sync.
 
     Raises:
         MassDeactivation: the listing misses too many active subjects; nothing is written or stamped.

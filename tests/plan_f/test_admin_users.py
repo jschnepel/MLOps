@@ -136,6 +136,8 @@ async def test_a_slow_answer_is_unavailable_within_the_budget(admin: tuple[Admin
     with pytest.raises(AdminUnavailable):
         await users.enabled(ALEX)
     assert time.monotonic() - started < 1.0  # the 0.3 s budget, not the 2 s the server took
+    fake.delay = 0.0
+    assert await users.enabled(ALEX) is True  # the shared client survives the cancelled call (final review M7)
 
 
 @pytest.mark.asyncio

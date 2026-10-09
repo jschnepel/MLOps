@@ -190,7 +190,8 @@ async def test_handles_bind_to_one_server(app_conn: persistence.Conn, role_conn:
 
 
 async def test_r006_fresh_database_upgrades_downgrades_and_upgrades_again(migrated: None, app_conn: persistence.Conn):
-    """R006: both heads apply to an empty database, 0002 and the testclock branch come off cleanly, and come back."""
+    """R006: both heads apply to an empty database, the testclock branch, 0005 (back to 0004: the session columns,
+    0002's sweeper cell and a `grant_execution` without the stale rule) and 0002 come off cleanly, and come back."""
     from scripts.skeleton import downgrade, migrate
 
     superuser = settings.superuser_postgres()

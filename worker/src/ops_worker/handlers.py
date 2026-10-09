@@ -202,6 +202,7 @@ async def execute(deps: Deps, job: dict[str, Any]) -> bool:
         return False
     data = doc.get("data") or {}
     if is_deferred(doc):
+        # TODO(T13): bounded retries (a sweeper that never returns re-queues this job every 30 s for ever).
         log.warning(
             "execute job %s: grant deferred (stale membership sync); re-queued in %s s",
             job["id"],
