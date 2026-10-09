@@ -21,14 +21,14 @@ LEE = UUID("abcc1200-6791-57ab-87b5-9392d356b512")
 
 
 async def seeded(app_conn: persistence.Conn) -> dict[UUID, bool]:
+    """Every subject the migration seeded for the dev issuer, all reported enabled."""
     cur = await app_conn.execute("SELECT DISTINCT subject FROM app.memberships WHERE issuer = %s", (ISSUER,))
     return {UUID(str(r["subject"])): True for r in await cur.fetchall()}
 
 
 async def restore(app_conn: persistence.Conn) -> None:
-    await app_conn.execute(
-        "UPDATE app.memberships SET active = true, permission_version = 1, synced_at = app.current_time()"
-    )
+    """Undo a test's deactivations and stamps; permission_version only ever moves forward, so it is left alone."""
+    await app_conn.execute("UPDATE app.memberships SET active = true, synced_at = app.current_time()")
 
 
 async def test_sync_deactivates_disabled_and_deleted_and_stamps_the_issuer(app_conn, role_conn) -> None:
@@ -91,8 +91,46 @@ async def test_maintenance_job_is_recorded_once_per_minute(app_conn, role_conn) 
             second = await persistence.insert_maintenance_job(sweeper, kind, bucket)
             job = await persistence.claim_maintenance_job(sweeper, job_type=kind, worker_name="t")
             assert first is not None and second is None and job is not None and job["id"] == first
+            cur = await sweeper.execute(
+                "SELECT abs(extract(epoch FROM available_at - app.current_time())) AS skew FROM app.jobs WHERE id = %s",
+                (first,),
+            )
+            assert (await cur.fetchone())["skew"] < 5  # the application clock, not the column default
             assert job["tenant_id"] is None and job["run_id"] is None
             await persistence.finish_job(sweeper, job["id"])
             assert await persistence.claim_maintenance_job(sweeper, job_type=kind, worker_name="t") is None
     finally:
         await app_conn.execute("DELETE FROM app.jobs WHERE type = %s", (kind.value,))
+
+
+async def test_purge_expired_deletes_only_what_is_past(app_conn, role_conn) -> None:
+    sweeper = await role_conn(Role.SWEEPER)
+    tag = uuid4().hex
+    past, future = "app.current_time() - interval '2 days'", "app.current_time() + interval '1 day'"
+    # A session is purged a day after its end or its revocation; the other two tables as soon as they expire.
+    session = (
+        "INSERT INTO app.sessions (session_sha256, issuer, subject, tenant_id, csrf_secret_sha256, expires_at,"
+        " revoked_at, sid, refresh_token_enc)"
+        " VALUES (%s, %s, %s, %s, 'c', {expires}, {revoked}, 's', decode('00', 'hex'))"
+    )
+    try:
+        for name, expires, revoked in (("expired", past, "NULL"), ("revoked", future, past), ("live", future, "NULL")):
+            await app_conn.execute(
+                session.format(expires=expires, revoked=revoked), (f"{tag}-{name}", ISSUER, ALEX, ALPHA)
+            )
+        for table, key in (("login_state", "login_sha256"), ("logout_jti", "jti")):
+            for name, when in (("expired", past), ("live", future)):
+                extra = ", %s, 'n', 'v'" if table == "login_state" else ""
+                cols = ", state_sha256, nonce_sha256, code_verifier" if table == "login_state" else ""
+                await app_conn.execute(
+                    f"INSERT INTO app.{table} ({key}, expires_at{cols}) VALUES (%s, {when}{extra})",
+                    (f"{tag}-{name}",) * (2 if table == "login_state" else 1),
+                )
+        counts = await sync.purge_expired(sweeper)
+        assert counts == {"sessions": 2, "login_state": 1, "logout_jti": 1}
+        for table, key in (("sessions", "session_sha256"), ("login_state", "login_sha256"), ("logout_jti", "jti")):
+            cur = await app_conn.execute(f"SELECT {key} AS k FROM app.{table} WHERE {key} LIKE %s", (f"{tag}-%",))
+            assert [r["k"] for r in await cur.fetchall()] == [f"{tag}-live"]
+    finally:
+        for table, key in (("sessions", "session_sha256"), ("login_state", "login_sha256"), ("logout_jti", "jti")):
+            await app_conn.execute(f"DELETE FROM app.{table} WHERE {key} LIKE %s", (f"{tag}-%",))

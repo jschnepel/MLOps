@@ -46,7 +46,11 @@ async def sync_memberships(
     conn: persistence.Conn, *, issuer: str, users: Mapping[UUID, bool], allow_mass: bool = False
 ) -> SyncResult:
     """Apply `plan` to every active membership of `issuer`, then stamp all of the issuer's rows, in one transaction.
-    `allow_mass` is the owner's one-shot override of the listing guard (OPS_SYNC_ALLOW_MASS_DEACTIVATION=1)."""
+    `allow_mass` is the owner's one-shot override of the listing guard (OPS_SYNC_ALLOW_MASS_DEACTIVATION=1).
+
+    Raises:
+        MassDeactivation: the listing misses too many active subjects; nothing is written or stamped.
+    """
     async with conn.transaction():
         # No DISTINCT: PostgreSQL refuses FOR UPDATE with it (0A000, round-1 finding B2); `plan` dedups anyway.
         cur = await conn.execute(
@@ -74,7 +78,7 @@ async def sync_memberships(
 
 
 async def purge_expired(conn: persistence.Conn) -> dict[str, int]:
-    """Delete what nothing can use any more: sessions a day past their end, consumed or expired login state, old jti
+    """Delete what nothing can use any more: sessions a day past their end, expired login state, old jti
     rows (erratum 25: the sweeper holds SELECT with its DELETE on all three)."""
     counts: dict[str, int] = {}
     async with conn.transaction():

@@ -50,12 +50,12 @@ def skeleton(migrated: None) -> Iterator[Skeleton]:
         conn.execute("UPDATE app.memberships SET synced_at = app.current_time() - interval '10 minutes'")
     sk = Skeleton()
     sk.start()
-    with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
-        fresh = conn.execute(
-            "SELECT bool_and(synced_at > app.current_time() - interval '120 seconds') FROM app.memberships"
-        ).fetchone()[0]
-    assert fresh, "the sweeper did not stamp memberships.synced_at before reporting ready"
     try:
+        with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+            fresh = conn.execute(
+                "SELECT bool_and(synced_at > app.current_time() - interval '120 seconds') FROM app.memberships"
+            ).fetchone()[0]
+        assert fresh, "the sweeper did not stamp memberships.synced_at before reporting ready"
         yield sk
     finally:
         sk.stop()

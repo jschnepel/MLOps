@@ -92,9 +92,13 @@ async def tick(deps: Deps) -> None:
 async def record_sync(deps: Deps) -> None:
     """The minute's `sync_memberships` row, done in the same transaction: an audit record, never a trigger."""
     async with deps.conn.transaction():
-        await persistence.insert_maintenance_job(deps.conn, JobType.SYNC_MEMBERSHIPS, minute_bucket(datetime.now(UTC)))
+        # The bucket is a wall-clock label (the audit key); `available_at` and the claim use the application clock.
+        bucket = minute_bucket(datetime.now(UTC))
+        job_id = await persistence.insert_maintenance_job(deps.conn, JobType.SYNC_MEMBERSHIPS, bucket)
+        if job_id is None:
+            return  # another sweeper instance already recorded this minute
         job = await persistence.claim_maintenance_job(
-            deps.conn, job_type=JobType.SYNC_MEMBERSHIPS, worker_name=deps.worker_name
+            deps.conn, job_type=JobType.SYNC_MEMBERSHIPS, worker_name=deps.worker_name, job_id=job_id
         )
         if job is not None:
             await persistence.finish_job(deps.conn, job["id"])
@@ -144,10 +148,19 @@ async def _main() -> None:
     admin = keycloak_admin.admin_users(
         keycloak=kc, client_secret=settings.read_secret("kc_client_secret_ops_view_users"), timeout=20.0
     )
-    conn = await persistence.connect(settings.app_postgres(Role.SWEEPER))
-    probe = await persistence.connect(settings.app_postgres(Role.SWEEPER))
-    await persistence.assert_clock_profile(probe, settings.profile())
-    await persistence.assert_relation(probe, "app.logout_jti")  # revision 0005 (the purge touches all three tables)
+    opened: list[persistence.Conn] = []
+    try:
+        conn = await persistence.connect(settings.app_postgres(Role.SWEEPER))
+        opened.append(conn)
+        probe = await persistence.connect(settings.app_postgres(Role.SWEEPER))
+        opened.append(probe)
+        await persistence.assert_clock_profile(probe, settings.profile())
+        await persistence.assert_relation(probe, "app.logout_jti")  # revision 0005 (the purge touches all 3 tables)
+    except BaseException:  # close what was built before the tasks exist (a refused start must not leak sockets)
+        await admin.aclose()
+        for opened_conn in opened:
+            await opened_conn.close()
+        raise
     deps = Deps(
         conn=conn,
         admin=admin,
