@@ -1,0 +1,9 @@
+{
+  "os": "Windows-11-10.0.26200-SP0",
+  "python_host": "3.13.7",
+  "venv_python": "Python 3.13.13",
+  "uv": "uv 0.11.8 (0e961dd9a 2026-04-27 x86_64-pc-windows-msvc)",
+  "docker": "Docker version 29.6.2, build dfc4efb",
+  "ollama": "ollama version is 0.33.3",
+  "pytest": "pytest 9.0.2"
+}

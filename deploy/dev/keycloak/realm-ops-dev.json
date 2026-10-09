@@ -1,0 +1,183 @@
+{
+  "realm": "ops-dev",
+  "enabled": true,
+  "displayName": "Operations Copilot (dev)",
+  "sslRequired": "none",
+  "accessTokenLifespan": 300,
+  "roles": {
+    "realm": [
+      {"name": "requester", "description": "request investigations, clarify, revise or cancel own uncommitted work"},
+      {"name": "reviewer", "description": "approve or reject another person's proposal"},
+      {"name": "reader", "description": "read permitted team results and evidence only"}
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "ops-web",
+      "name": "Browser session (API-side OIDC code flow)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${OPS_KC_CLIENT_SECRET_OPS_WEB}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:8000/auth/callback"],
+      "webOrigins": ["http://localhost:8000"],
+      "attributes": {"pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "http://localhost:8000/"}
+    },
+    {
+      "clientId": "ops-worker",
+      "name": "Workflow worker (workload)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${OPS_KC_CLIENT_SECRET_OPS_WORKER}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "aud mcp-read resource",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {"included.custom.audience": "${MCP_READ_RESOURCE_URL}", "access.token.claim": "true", "id.token.claim": "false", "introspection.token.claim": "true"}
+        },
+        {
+          "name": "aud mcp-write resource",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {"included.custom.audience": "${MCP_WRITE_RESOURCE_URL}", "access.token.claim": "true", "id.token.claim": "false", "introspection.token.claim": "true"}
+        }
+      ]
+    },
+    {
+      "clientId": "ops-mcp-read",
+      "name": "mcp-read (workload; calls asset-sim)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${OPS_KC_CLIENT_SECRET_OPS_MCP_READ}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "aud asset-sim",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {"included.custom.audience": "asset-sim", "access.token.claim": "true", "id.token.claim": "false", "introspection.token.claim": "true"}
+        }
+      ]
+    },
+    {
+      "clientId": "ops-mcp-write",
+      "name": "mcp-write (workload; calls incident-sim)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${OPS_KC_CLIENT_SECRET_OPS_MCP_WRITE}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "aud incident-sim",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {"included.custom.audience": "incident-sim", "access.token.claim": "true", "id.token.claim": "false", "introspection.token.claim": "true"}
+        }
+      ]
+    },
+    {
+      "clientId": "ops-dev-direct",
+      "name": "Direct-grant test client",
+      "description": "dev-only: password grant for persona tests; never deployed outside the dev profile",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "ops-view-users",
+      "name": "Admin-API reader (enabled-status checks and membership sync)",
+      "description": "Service account limited to realm-management/view-users; used by the API's fail-closed enabled check and the sweeper's membership sync (AM-20.7)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${OPS_KC_CLIENT_SECRET_OPS_VIEW_USERS}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
+    }
+  ],
+  "users": [
+    {
+      "id": "2fc05986-c7ec-544c-b628-fdb112bbf18a",
+      "username": "alex",
+      "email": "alex@alpha.example",
+      "firstName": "Alex",
+      "lastName": "Alpha",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["requester"],
+      "credentials": [{"type": "password", "value": "${OPS_KC_PERSONA_ALEX_PASSWORD}", "temporary": false}]
+    },
+    {
+      "id": "03f7eb09-e18d-5f33-bf75-12c57d5aaa54",
+      "username": "sam",
+      "email": "sam@alpha.example",
+      "firstName": "Sam",
+      "lastName": "Alpha",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["reviewer"],
+      "credentials": [{"type": "password", "value": "${OPS_KC_PERSONA_SAM_PASSWORD}", "temporary": false}]
+    },
+    {
+      "id": "abcc1200-6791-57ab-87b5-9392d356b512",
+      "username": "lee",
+      "email": "lee@alpha.example",
+      "firstName": "Lee",
+      "lastName": "Alpha",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["reader"],
+      "credentials": [{"type": "password", "value": "${OPS_KC_PERSONA_LEE_PASSWORD}", "temporary": false}]
+    },
+    {
+      "id": "2f73af91-4906-5b79-9144-22c0df4e2316",
+      "username": "riley",
+      "email": "riley@beta.example",
+      "firstName": "Riley",
+      "lastName": "Beta",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["requester"],
+      "credentials": [{"type": "password", "value": "${OPS_KC_PERSONA_RILEY_PASSWORD}", "temporary": false}]
+    },
+    {
+      "id": "cb551e64-83ec-582b-9047-8dadf20e151a",
+      "username": "jordan",
+      "email": "jordan@beta.example",
+      "firstName": "Jordan",
+      "lastName": "Beta",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": ["reviewer"],
+      "credentials": [{"type": "password", "value": "${OPS_KC_PERSONA_JORDAN_PASSWORD}", "temporary": false}]
+    },
+    {
+      "username": "service-account-ops-view-users",
+      "enabled": true,
+      "serviceAccountClientId": "ops-view-users",
+      "clientRoles": {"realm-management": ["view-users"]}
+    }
+  ]
+}

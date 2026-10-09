@@ -1,0 +1,13 @@
+[project]
+name = "ops-core"
+version = "0.0.1"
+description = "Shared domain, application and contract code (ADR-0001). A library, not a service."
+requires-python = ">=3.13"
+dependencies = ["pydantic>=2.13,<3"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ops_core"]

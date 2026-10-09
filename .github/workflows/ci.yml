@@ -1,0 +1,36 @@
+# CI for the monorepo: runs the same one command a developer runs locally (scripts/check.py) plus the handoff
+# integrity gate. It has no deploy step and needs nothing from the repository's configured credentials (T06).
+# Pushing this file is the owner's decision; nothing here runs until then.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+# Least privilege: the job token can read the repository and nothing else; tests/plan_a/test_ci_workflow.py
+# fails if this widens.
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    # A hung step should fail the run rather than occupy a runner for the 6 hour default.
+    timeout-minutes: 15
+    steps:
+      # Actions are pinned to full commit SHAs (resolved with scripts/pin_actions.py); the trailing comment is the
+      # human-readable tag. Do not replace a SHA with a tag: tags can be moved.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # Later steps never push, so do not leave the token in .git/config where any step could read it.
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+      # 3.13 matches .python-version and the members' requires-python.
+      - run: uv python install 3.13
+      # --locked fails if uv.lock is stale; --all-packages installs every workspace member so mypy and pytest can
+      # import them.
+      - run: uv sync --locked --all-packages
+      - run: uv run python scripts/check.py
+      # The handoff checker is stdlib-only, so it runs on the runner's own python3; -I ignores environment
+      # variables and the working directory so nothing outside the checked-out files can change what it imports.
+      - run: python3 -I scripts/verify_handoff.py --reference-code --manifest

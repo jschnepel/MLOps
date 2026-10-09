@@ -1,7 +1,7 @@
 {
   "specification": "OPS-BUILD-1.3.6 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
   "current_milestone": "M00",
-  "note": "Dependency graph. IDs stable since 1.2; T41 (1.3) and T42-T46 (1.3.3 splits) and T47 (1.3.4 mcp-write) appended. Requirements sit with the first task able to test them. review_notes carry later-round items for the owning task. M15 is optional. See SPEC_AMENDMENTS.md AM-60.",
+  "note": "Dependency graph. IDs stable since 1.2; T41 (1.3) and T42-T46 (1.3.3 splits) and T47 (1.3.4 mcp-write) appended. Requirements sit with the first task able to test them. review_notes carry later-round items for the owning task. M15 is optional. See SPEC_AMENDMENTS.md AM-60. Status vocabulary: PLANNED, DONE (all steps done and reviewed), DONE_PENDING_OWNER (agent steps done; an owner-only step remains, named in review_notes).",
   "milestones": [
     {
       "id": "M00",
@@ -189,13 +189,16 @@
       "requirement_ids": [
         "R001"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "58-test result and CLI output saved with exact commands and environment.",
         "Failures recorded verbatim; nothing skipped or edited to pass.",
         "Venv path recorded and outside the repo; `git status` clean apart from reports/baseline/."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Plan A (branch plan-a): done in cca13fc..e4b38ac; captures under reports/baseline/."
+      ]
     },
     {
       "id": "T03",
@@ -206,7 +209,7 @@
       "requirement_ids": [
         "R071"
       ],
-      "status": "PLANNED",
+      "status": "DONE_PENDING_OWNER",
       "definition_of_done": [
         "evals/holdout-case.schema.json and evals/holdout.sha256 committed; hash also recorded externally with date.",
         "No holdout content in the repo or agent-readable paths.",
@@ -214,7 +217,8 @@
       ],
       "external_approval_required": true,
       "review_notes": [
-        "Hash procedure: sha256 of the exact file bytes via `python -c \"import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())\" <file>`; the owner attests the external record (dated email) in SESSION_STATE.md."
+        "Hash procedure: sha256 of the exact file bytes via `python -c \"import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())\" <file>`; the owner attests the external record (dated email) in SESSION_STATE.md.",
+        "Plan A (branch plan-a): agent part done in 13b62d6 (case schema, seal script). Pending owner step 9: author the holdout off-machine, seal it into evals/holdout.sha256 and record the hash outside this repo."
       ]
     },
     {
@@ -229,13 +233,16 @@
       "requirement_ids": [
         "R081"
       ],
-      "status": "PLANNED",
+      "status": "DONE_PENDING_OWNER",
       "definition_of_done": [
         "reports/model-probe-qwen3-8b.md with measured rates, denominators, CIs, digest and parameters.",
         "Cancellation behaviour measured and the model_permit release rule chosen accordingly.",
         "Owner decision on proceeding recorded."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Plan A (branch plan-a): agent part done in d008866, 7e5b422 and final-review F3-F5 (probe inputs, probe.py, AM-31 structured-output configuration). Pending owner step: the live probe run after the T03 seal; the probe refuses to run without a well-formed seal."
+      ]
     },
     {
       "id": "T42",
@@ -248,7 +255,7 @@
       "requirement_ids": [
         "R121"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "`verify_handoff.py --reference-code --manifest` passes (remap + zip).",
         "Reference suite passes from reference/ in its external venv; reference/ bytes identical to the original."
@@ -256,7 +263,8 @@
       "external_approval_required": false,
       "review_notes": [
         "Both T42 and T45 edit verify_handoff.py: T45 runs after T42.",
-        "Runs BEFORE T04 (1.3.6): a root pytest cannot load while reference tests/conftest.py is above tests/plan_a, and ruff cannot be green with hash-pinned files under the root."
+        "Runs BEFORE T04 (1.3.6): a root pytest cannot load while reference tests/conftest.py is above tests/plan_a, and ruff cannot be green with hash-pinned files under the root.",
+        "Plan A (branch plan-a): done in 6b672cd, dcc7b1d; final review F1 added provenance/reference-tree.json and the --reference-tree check (implied by --reference-code)."
       ]
     },
     {
@@ -271,7 +279,7 @@
         "R003",
         "R031"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "`uv sync --locked --all-packages` succeeds from a clean clone (verified by cloning locally); `.python-version` pins 3.13.",
         "`uv run python scripts/check.py` is green on the skeleton.",
@@ -279,7 +287,8 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Non-editable in-tree installs write build/ and egg-info: build/ is git-ignored and both are deleted after every install. Never create files with PowerShell `>`/Tee-Object (BOM + CRLF); scripts write their own output."
+        "Non-editable in-tree installs write build/ and egg-info: build/ is git-ignored and both are deleted after every install. Never create files with PowerShell `>`/Tee-Object (BOM + CRLF); scripts write their own output.",
+        "Plan A (branch plan-a): done in fed6484; final review F2 made the virtual root depend on all seven members so `uv sync --locked` then `uv run python scripts/check.py` is GREEN on a fresh clone."
       ]
     },
     {
@@ -294,7 +303,7 @@
         "R102",
         "R101"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "One command brings up the dev profile from a clean clone on Windows; `docker compose ps` shows only 127.0.0.1 bindings.",
         "Workload tokens carry the expected aud and azp; user tokens' sub equals the Keycloak user ID; iss identical from host and container (asserted).",
@@ -303,7 +312,8 @@
       "external_approval_required": false,
       "review_notes": [
         "Do not route host callers through host.docker.internal: it resolves to the LAN IP and cannot reach 127.0.0.1-bound ports. Keycloak: KC_HOSTNAME=http://localhost:<port> plus KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true (verified in the round-4 dry run).",
-        "Two MCP audiences and clients: MCP_READ_RESOURCE_URL / MCP_WRITE_RESOURCE_URL; the worker holds one client but two handle types."
+        "Two MCP audiences and clients: MCP_READ_RESOURCE_URL / MCP_WRITE_RESOURCE_URL; the worker holds one client but two handle types.",
+        "Plan B (branch plan-b): done in f864197, a23f602 (Compose dev profile, file secrets, bootstrap script) and b7b5266, e530082 (ops-dev realm, workload audiences, seeded personas, token claims asserted from host and container). Evidence: reports/bootstrap/. Reviewed: docs/reviews/plan-review-b-2026-10-08.md (plan) and the per-task reviews in the execution ledger."
       ]
     },
     {
@@ -318,12 +328,15 @@
         "R101",
         "R102"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "All five personas and both tenants log in via the direct-grant test client; service account can read `enabled` and nothing more is granted.",
         "Bootstrap admin absent after bootstrap; documented rotation procedure."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Plan B (branch plan-b): done in 051c828, 628c638. All five personas and both tenants log in through ops-dev-direct; ops-view-users holds exactly realm-management/view-users (200 on GET user, 403 on PUT/POST users and GET clients, live-tested); the bootstrap admin is deleted by `bootstrap_dev.py up` with its own token and stays absent across a restart (HTTP 400 on Keycloak 26.8, measured). Memberships and tenants are seeded in PostgreSQL by T08/T09, not in Keycloak (users carry no tenant attribute)."
+      ]
     },
     {
       "id": "T44",
@@ -336,12 +349,15 @@
       "requirement_ids": [
         "R101"
       ],
-      "status": "PLANNED",
+      "status": "DONE_PENDING_OWNER",
       "definition_of_done": [
         "A container reaches Ollama and the host cannot be reached from the LAN once the owner applies the runbook (owner attests).",
         "Runbook committed with exact commands and a verification step."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "Plan B (branch plan-b): agent part done in 06bcec0, 8841305 (host and container routes to Ollama proven, ops_core.model_pins loader with 13 tests, docs/runbooks/ollama-network.md). Measured 2026-10-08: container traffic to host.docker.internal reaches the host from 127.0.0.1 (Docker Desktop proxies it), so the runbook's primary control is a loopback bind (OLLAMA_HOST=127.0.0.1:11434 at User scope) with the scoped firewall rule as fallback; it proposes an AM-31 errata. Pending owner step 10: apply step A, verify, fill the attestation table, decide on the errata."
+      ]
     },
     {
       "id": "T06",
@@ -354,14 +370,15 @@
       "requirement_ids": [
         "R103"
       ],
-      "status": "PLANNED",
+      "status": "DONE_PENDING_OWNER",
       "definition_of_done": [
         "CI runs on push and PR in jschnepel/MLOps and is green.",
         "No secrets or privileged contexts used."
       ],
       "external_approval_required": true,
       "review_notes": [
-        "Requires a public repo at M01 while publication approval sits at T34 - owner decides: approve early publication or start private and flip public at T34."
+        "Requires a public repo at M01 while publication approval sits at T34 - owner decides: approve early publication or start private and flip public at T34.",
+        "Plan A (branch plan-a): workflow committed in 289c16a (SHA-pinned actions, read-only token, no secrets). Pending owner step 7: gh auth login, choose visibility, create the remote and push; record the first CI run URL in SESSION_STATE.md."
       ]
     },
     {
@@ -794,7 +811,10 @@
         "Recorded real-model run evidence (digest, params, outputs).",
         "Injected source cannot add tools or authority; invalid output -> repair -> controlled failure."
       ],
-      "external_approval_required": false
+      "external_approval_required": false,
+      "review_notes": [
+        "`probe.py` pins the digest from `/api/tags` (`/api/show` carried no digest for qwen3:8b on Ollama 0.33.3); reconcile with AM-31's `/api/show` wording before designing the fail-closed check."
+      ]
     },
     {
       "id": "T20",
