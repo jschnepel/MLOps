@@ -163,7 +163,8 @@ POLICY_QUAL: Final = "(tenant_id = (NULLIF(current_setting('app.tenant_id'::text
 # name -> (argument types, callers granted EXECUTE); the signature text is what GRANT needs to name an overload.
 DEFINER_FUNCTIONS: Final[dict[str, tuple[str, tuple[str, ...]]]] = {
     "current_time": ("", RUNTIME_ROLES),
-    "resolve_identity": ("text, uuid", ("api",)),  # the sweeper's membership sync (T11) adds itself
+    # resolve_identity: api only; the sweeper's sync writes memberships directly (Plan F ruling 13).
+    "resolve_identity": ("text, uuid", ("api",)),
     "create_run": ("uuid, uuid, jsonb, text, uuid", ("api",)),
     "transition_run": ("uuid, text, text, text, integer, jsonb", ("worker",)),
     "append_event": ("uuid, text, jsonb, text", ("api", "worker", "sweeper")),

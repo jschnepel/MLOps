@@ -2,9 +2,9 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan E (T09, T10) is executed on branch `plan-e` (`3fb9645..5fbb272`, on top of `plan-d`). Owner inputs still pending, unchanged: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) `plan-b` to `plan-e` were pushed on 2026-10-08; open/merge the stacked PRs (plan-b -> main, plan-c -> plan-b, plan-d -> plan-c, plan-e -> plan-d) and record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata of Plan C and the errata of Plan E below. Then write Plan F: T11 (sessions and membership sync; it depends on T09 and T43, both DONE, so it is the earliest dependency-satisfied task) or T13 (leases), whichever the backlog's dependency graph puts first, and dry-run it on scratch copies before executing.
+**Next task:** Plan F (T11) is executed on branch `plan-f` (`0d1a892..0c6617b`, on top of `plan-e`; the close-out commit follows). Owner inputs still pending, unchanged: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) `plan-b` to `plan-e` were pushed on 2026-10-08; open/merge the stacked PRs (plan-b -> main, plan-c -> plan-b, plan-d -> plan-c, plan-e -> plan-d; plan-f -> plan-e once pushed) and record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata of Plan C and the errata of Plan E and Plan F below; two new inputs: (5) migrate the dev database to revision 0005 (`uv run python scripts/skeleton.py migrate`; no owner data is at risk because `sessions` is empty) and (6) decide errata 26-34. Next is Plan G: T12 (admission router and Idempotency-Key) or T13 (leases); both depend only on T09 and T12 comes first in the backlog's order, so write Plan G for T12 unless the owner prefers T13, and dry-run it on scratch copies before executing.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-e` (Plan E work on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` are local only and await the owner's push and PRs.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-f` (Plan F work on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08; `plan-f` is local only and awaits the owner's push and PR.
 
 ## Done in the planning session (2026-10-06)
 
@@ -197,6 +197,32 @@
   - `transition_run` called with a NULL `expected_version` relies on the from-state under `FOR UPDATE` rather than a version check (by design, Task 3 review M3)
   - a zero-orphan case for `skeleton.py keys` needs a clean database pair -> T32/T13; a shared connect-and-assert helper for the three servers (the MCP lifespans duplicate it and incident-sim never closes its connection) -> T13/T30; the `testclock` branch revision still renders its grantee tuples from the live matrix (freeze them in the next migration task).
 
+## Plan F executed (2026-10-09, branch `plan-f`)
+
+- T11 = `0d1a892..0c6617b` (the debt list first; the close-out commit with the handoff records follows). The plan (`docs/superpowers/plans/2026-10-08-first-slice-f-sessions-login-sync.md`) holds the rulings; `docs/reviews/plan-review-f-2026-10-09.md` keeps the review record. Evidence: the live module `tests/e2e/test_auth_live.py` (login, CSRF, idle expiry, logout, back-channel logout, forged token, disable-and-sync), `reports/auth/t11-sessions-revocation.txt` (header plus eight lines) and `reports/skeleton/r105-walking-skeleton.txt` (the walking skeleton now runs six processes, the sweeper being the sixth); the unit half is in `tests/plan_f/`. Locked versions: authlib 1.8.0 and joserfc 1.7.5 (AM-30's 1.8.0 holds). Measured: R086 `synced_after` 23-24 s (the 60 s target holds) and the sweeper re-stamp 25 s.
+- Gates: see STATUS.md ("Update - Plan F executed") for the final counts. `check.py --profile test` needs the dev stack up and `skeleton.py status` all down.
+- Rulings made during execution: (a) Keycloak with `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` spells the server-side endpoints with the host the discovery document was fetched from, so `Discovery.from_document` accepts `token_endpoint`, `end_session_endpoint` and `jwks_uri` under `base_url` or `server_url`, while `authorization_endpoint` must be under `base_url` (a third host is refused). (b) The maintenance job row's `available_at` is on `app.current_time()` and the sweeper claims the id it inserted (ruling 24 of Plan E). (c) The listing guard counts absent subjects only (floor 3, more than half), with `OPS_SYNC_ALLOW_MASS_DEACTIVATION=1` as the owner's one-shot override.
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan E's twenty-five:
+  26. AM-20.3: `sync_memberships` is the sweeper's routine, not a definer function (SA:470 against SA:412).
+  27. AM-20.2: rows for `login_state` and `logout_jti`, and `sweeper` SELECT on `sessions` (with 25).
+  28. AM-01: the directory table gains `sweeper/`.
+  29. A disabled or membership-less user is 401, not 403, on every path (the BS:301 reading).
+  30. The dev realm carries a dev/test-only `ops-test-admin` client with `manage-users`; striking it loses R086's live disable path.
+  31. The provider refresh token is stored sealed and spent at logout; the ID and access tokens are not stored.
+  32. BS:352's "tenant switching" is not in v1: a subject with two memberships is refused at login and with a bearer token (SA:107 has no tenant administration; a switch needs a new session row and rotation).
+  33. SA:565's "authlib's OIDC state lives in that store" is read as "the authorization request's state, nonce and verifier live in PostgreSQL" (`app.login_state`, keyed by the login cookie's hash) rather than in authlib's own session-dict machinery, which needs Starlette's `SessionMiddleware`.
+  34. BS:268's route table gains `POST /auth/backchannel-logout` (SA:541 requires the endpoint) and `GET /` (a landing page until T26); the realm's SSO lifetimes are 8 h so the provider session outlives the application session.
+- **Open items for later**, parked by the task reviews (ledger: `.superpowers/sdd/2026-10-08-first-slice-f-sessions-login-sync/progress.md`):
+  - the `RedactingFilter` "traceback unavailable" fallback has no direct test;
+  - a conninfo password that psycopg quotes (spaces or quotes) and a generic `token=` key are not redacted; `KEYCLOAK_*` cookie redaction covers the dict and `key=value` forms only;
+  - nothing tests the worker's `execute()` deferred branch end to end, and the `GRANT_DEFERRED` re-queue has no retry bound (TODO T13);
+  - the R006 test docstring predates the 0005 downgrade check;
+  - the live store test's atomicity case replays the two statements by hand rather than through `record_logout`;
+  - the `auth_fakes` classes carry no docstrings;
+  - a closer raising during `make_auth` or the sweeper's `_main` cleanup would mask the original startup error;
+  - a third-host negative exists for `token_endpoint` only;
+  - the back-channel live test's session counts are not scoped to its own `sid`.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -283,7 +309,9 @@ Allowed shortcuts in T11, each with its owning task:
 
 ## Dev database state (2026-10-08)
 
-The owner approved migrating the dev database: `skeleton.py migrate` (dev profile) applied revisions 0002–0004 to `ops` (`app@head`, no `app.test_clock`) and incident revision 0002 to `incident`; `skeleton.py up` then brought all five processes to ready under their own roles and `down` stopped them. Plan F (T11) research (fact sheet and spike) started the same day.
+The owner approved migrating the dev database: `skeleton.py migrate` (dev profile) applied revisions 0002–0004 to `ops` (`app@head`, no `app.test_clock`) and incident revision 0002 to `incident`; `skeleton.py up` then brought all five processes to ready under their own roles and `down` stopped them.
+
+**Update (2026-10-09):** the dev `ops` database is still at revision 0004. Plan F added revision 0005 (`sessions` columns, `app.login_state`, `app.logout_jti`), which only the live suite has applied (to `ops_test`). Until the owner runs `uv run python scripts/skeleton.py migrate`, the API and the sweeper refuse to start (the lifespan guard finds `app.login_state` / `app.logout_jti` missing), so `skeleton.py up` fails fast with that message rather than serving a half-migrated schema. `sessions` is empty, so no data is at risk. The shared dev realm already carries the Plan F clients (`ops-test-admin`, the `ops-web` back-channel attributes, the 8 h SSO lifetimes) from the re-import in Task 2.
 
 ## Open owner inputs
 
@@ -319,6 +347,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan F as described in the Next task line.
+Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan G as described in the Next task line.
 
 Do not store secrets or private reasoning in this file.
