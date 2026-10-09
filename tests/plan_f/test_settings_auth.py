@@ -56,7 +56,17 @@ def test_session_defaults_follow_build_spec_section_9() -> None:
 
 @pytest.mark.parametrize(
     "base",
-    ["http://ops.example.com", "https://ops.example.com/app", "localhost:8000", "http://localhost:8000/?x=1"],
+    [
+        "http://ops.example.com",
+        "https://ops.example.com/app",
+        "localhost:8000",
+        "http://localhost:8000/?x=1",
+        "http://localhost:8000?",
+        "https://ops.example.com#",
+        "https://user:pw@ops.example.com",
+        "https://ops.example.com:99999",
+        "https://ops.example.com:abc",
+    ],
 )
 def test_public_base_url_must_be_an_origin_and_http_only_for_loopback(monkeypatch: pytest.MonkeyPatch, base: str):
     monkeypatch.setenv("OPS_PUBLIC_BASE_URL", base)
@@ -68,6 +78,43 @@ def test_https_base_url_makes_cookies_secure(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("OPS_PUBLIC_BASE_URL", "https://ops.example.com/")
     s = settings.sessions()
     assert s.cookie_secure is True and s.origin == "https://ops.example.com"
+
+
+@pytest.mark.parametrize(
+    ("base", "origin", "secure"),
+    [
+        ("HTTPS://Ops.Example.com", "https://ops.example.com", True),
+        ("https://ops.example.com:443/", "https://ops.example.com", True),
+        ("https://ops.example.com:8443", "https://ops.example.com:8443", True),
+        ("http://localhost:80", "http://localhost", False),
+        ("HTTP://LOCALHOST:8000", "http://localhost:8000", False),
+    ],
+)
+def test_public_base_url_is_normalised(monkeypatch: pytest.MonkeyPatch, base: str, origin: str, secure: bool) -> None:
+    monkeypatch.setenv("OPS_PUBLIC_BASE_URL", base)
+    s = settings.sessions()
+    assert s.origin == origin and s.cookie_secure is secure
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("OPS_SESSION_IDLE_SECONDS", "0"),
+        ("OPS_SESSION_LOGIN_SECONDS", "-5"),
+        ("OPS_SESSION_ABSOLUTE_SECONDS", "60"),  # below the 1800 s idle default
+    ],
+)
+def test_session_lifetimes_must_be_sane(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:
+    monkeypatch.setenv(name, value)
+    with pytest.raises(SettingsError):
+        settings.sessions()
+
+
+def test_loopback_swap_touches_only_the_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPS_KC_BASE_URL", "https://localhost.example.com:8443")
+    assert settings.keycloak().server_url == "https://localhost.example.com:8443"
+    monkeypatch.setenv("OPS_KC_BASE_URL", "https://localhost:8443")
+    assert settings.keycloak().server_url == "https://127.0.0.1:8443"
 
 
 def test_admin_check_budget(monkeypatch: pytest.MonkeyPatch) -> None:

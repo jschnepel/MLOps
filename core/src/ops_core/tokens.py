@@ -89,7 +89,8 @@ class TokenVerifier:
         self._allowed_azp = allowed_azp
         self._jwks_url = jwks_url
         self._algorithms = list(algorithms)
-        self._required_claims = tuple(required_claims)
+        # exp, iss and aud are read below whatever the caller asks for, so they are always required.
+        self._required_claims = tuple(dict.fromkeys(("exp", "iss", "aud", *required_claims)))
         self._require_azp = require_azp
         self._typ = typ
         self._keys: PyJWKSet | None = None
@@ -128,6 +129,7 @@ class TokenVerifier:
         self.install_keys(document)
 
     def verify(self, token: str) -> Principal:
+        """Check signature and claims against the pinned issuer, audience and knobs; return the Principal."""
         if self._keys is None:
             raise TokenRejected("signing keys are not loaded")
         try:
@@ -153,7 +155,7 @@ class TokenVerifier:
         except InvalidTokenError as exc:
             # PyJWT's message names the failed check (expired, audience, issuer, signature) and never the token.
             raise TokenRejected(f"token rejected: {exc.__class__.__name__}") from exc
-        if self._typ is not None and header.get("typ") != self._typ:
+        if self._typ is not None and str(header.get("typ", "")).lower() != self._typ.lower():
             raise TokenRejected("token type is not accepted here")
         subject = claims.get("sub", "")
         if "sub" in self._required_claims and (not isinstance(subject, str) or not subject):

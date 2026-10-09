@@ -8,8 +8,8 @@ and `Basic` values, JWT-shaped strings (ID, access, refresh and logout tokens), 
 values, `Cookie` headers, the three session cookies' values and Keycloak's own cookies (`KEYCLOAK_*`,
 `AUTH_SESSION_ID`). It sits on the handlers, not on a logger: a filter on a parent logger never sees a child's
 records (spike §6). It also rewrites the formatted traceback and clears `exc_info`, because an exception's text
-bypasses `msg` and uvicorn logs "Exception in ASGI application"
-with the full chain (spike §6). T28 extends the same patterns to telemetry.
+bypasses `msg` and uvicorn logs "Exception in ASGI application" with the full chain (spike §6). T28 extends the
+same patterns to telemetry.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ from typing import Final
 
 REDACTED: Final = "[REDACTED]"
 _SECRET_KEYS = (
-    "code|state|session_state|nonce|code_verifier|logout_token|id_token_hint|refresh_token|access_token|id_token"
-    "|client_secret|password|ops_session|ops_csrf|ops_login"
+    r"code|state|session_state|nonce|code_verifier|logout_token|id_token_hint|refresh_token|access_token|id_token"
+    r"|client_secret|password|ops_session|ops_csrf|ops_login|keycloak_[a-z_]+|auth_session_id\w*|kc_[a-z_]+"
 )
 # Order matters only where patterns overlap (the authorization rule runs before the bare-JWT rule so a redacted bearer
 # is not rewritten twice); each pattern keeps the key and replaces the value. Over-redaction is accepted where a key is
@@ -37,10 +37,10 @@ _PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
     # ('key', 'value') in a repr of form data (Starlette's FormData, a list of pairs).
     (re.compile(rf"(?i)(\(['\"](?:{_SECRET_KEYS})['\"],\s*b?['\"])[^'\"]+"), rf"\1{REDACTED}"),
     (re.compile(r"(postgres(?:ql)?://[^:/\s@]+:)[^@\s]+@"), rf"\1{REDACTED}@"),
-    (re.compile(r"(?i)((?:x-ops-invocation|x-csrf-token)['\"]?\s*[:=]\s*['\"]?)[^\s'\",;}]+"), rf"\1{REDACTED}"),
+    (re.compile(r"(?i)((?:x-ops-invocation|x-csrf-token)['\"]?\s*[,:=]\s*b?['\"]?)[^\s'\",;}]+"), rf"\1{REDACTED}"),
     (re.compile(r"(?i)(\bcookie['\"]?\s*:\s*)[^\r\n]+"), rf"\1{REDACTED}"),
     (re.compile(r"(\bops_(?:session|csrf|login)=)[^;\s\"'<>]+"), rf"\1{REDACTED}"),
-    (re.compile(r"(\b(?:KEYCLOAK_[A-Z_]+|AUTH_SESSION_ID|KC_[A-Z_]+)=)[^;\s\"'<>]+"), rf"\1{REDACTED}"),
+    (re.compile(r"(\b(?:KEYCLOAK_[A-Z_]+|AUTH_SESSION_ID\w*|KC_[A-Z_]+)=)[^;\s\"'<>]+"), rf"\1{REDACTED}"),
 )
 
 
@@ -55,18 +55,30 @@ class RedactingFilter(logging.Filter):
     """Rewrite each record's message and traceback before any handler formats it."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Redact message and traceback in place; never raises and never drops the line."""
         try:
             message = record.getMessage()
-        except (TypeError, ValueError):  # a malformed format string must not lose the line (or raise here)
-            message = f"{record.msg!r} {record.args!r}"
+        except Exception:  # noqa: BLE001 - bad format, mapping args or a raising __str__ must not lose the line
+            message = _safe_repr(record.msg, record.args)
         record.msg = redact(message)
         record.args = ()
         if record.exc_info:
-            # Formatter.formatException renders the chain; the redacted text goes where the formatter looks first,
-            # and exc_info is cleared so nothing re-renders the original.
-            record.exc_text = redact(logging.Formatter().formatException(record.exc_info))
+            try:
+                # Formatter.formatException renders the chain; the redacted text goes where the formatter looks first,
+                # and exc_info is cleared so nothing re-renders the original.
+                record.exc_text = redact(logging.Formatter().formatException(record.exc_info))
+            except Exception:  # noqa: BLE001 - an exception whose __str__ raises must not hide the log line
+                record.exc_text = "traceback unavailable"
             record.exc_info = None
         return True
+
+
+def _safe_repr(msg: object, args: object) -> str:
+    """Best-effort text for a record whose message cannot be formatted."""
+    try:
+        return f"{msg!r} {args!r}"
+    except Exception:  # noqa: BLE001 - even repr may raise
+        return "unformattable log message"
 
 
 def install(level: int = logging.INFO) -> None:

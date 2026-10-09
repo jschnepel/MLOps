@@ -52,6 +52,10 @@ def test_every_secret_shape_is_redacted_in_messages_and_tracebacks() -> None:
         f"{{'password': '{CANARY}', 'logout_token': b'{CANARY}'}}",
         f"FormData([('logout_token', '{CANARY}')])",
         f"KEYCLOAK_IDENTITY={CANARY}; AUTH_SESSION_ID={CANARY}",
+        f"raw_headers=[(b'x-ops-invocation', b'{CANARY}')]",  # the ASGI scope's header tuples
+        f"headers=[('x-csrf-token', '{CANARY}')]",
+        f"cookies={{'KEYCLOAK_IDENTITY': '{CANARY}'}}",
+        f"AUTH_SESSION_ID_LEGACY={CANARY}",
     ]
     for shape in shapes:
         child.info("%s", shape)
@@ -74,9 +78,28 @@ def test_redact_is_a_pure_function_and_keeps_ordinary_text() -> None:
     assert redact("exit code=1") == f"exit code={REDACTED}"  # accepted over-redaction (see the comment on _PATTERNS)
 
 
+class _Hostile:
+    def __str__(self) -> str:
+        raise RuntimeError("no string for you")
+
+
+def test_a_record_that_cannot_be_formatted_is_still_emitted_and_redacted() -> None:
+    logger, stream = capture()
+    logger.warning("%(x)s", {"y": f"Bearer {CANARY}"})  # mapping args with a missing key: KeyError in getMessage
+    logger.warning(_Hostile())  # __str__ raises
+    try:
+        raise ValueError(_Hostile())  # formatException calls str() on the exception
+    except ValueError:
+        logger.exception("handled %s", f"code={CANARY}")
+    out = stream.getvalue()
+    assert CANARY not in out and out.count("WARNING") == 2 and "ERROR" in out
+    assert "ValueError" in out  # the traceback module guards str() itself; our fallback covers anything else
+
+
 def test_install_puts_the_filter_on_every_root_handler() -> None:
     root = logging.getLogger()
     before = {id(h): list(h.filters) for h in root.handlers}  # pytest's capture handlers live for the session
+    level, handlers = root.level, list(root.handlers)
     try:
         redaction.install()
         assert root.handlers, "basicConfig must have installed a handler"
@@ -88,3 +111,6 @@ def test_install_puts_the_filter_on_every_root_handler() -> None:
     finally:
         for handler in root.handlers:  # leave pytest's handlers as they were (other tests inspect record.args)
             handler.filters[:] = before.get(id(handler), [])
+        for added in [h for h in root.handlers if h not in handlers]:  # basicConfig on a bare root adds a handler
+            root.removeHandler(added)
+        root.setLevel(level)

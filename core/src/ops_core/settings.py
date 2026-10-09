@@ -190,10 +190,18 @@ class Keycloak:
         return self.server_url + url[len(self.base_url) :] if url.startswith(self.base_url + "/") else url
 
 
+def _loopback(base: str) -> str:
+    """`base` with a host of exactly `localhost` swapped for `127.0.0.1`, scheme and port kept (not `localhost.x.y`)."""
+    parts = urlsplit(base)
+    if parts.hostname != "localhost":
+        return base
+    return parts._replace(netloc=parts.netloc.replace("localhost", "127.0.0.1", 1)).geturl()
+
+
 def keycloak() -> Keycloak:
     """Base URL for the host (`KC_HOSTNAME` makes `iss` the same for containers, SA:556) and the dial address."""
     base = env("OPS_KC_BASE_URL", "http://localhost:18080").rstrip("/")
-    server = env("OPS_KC_SERVER_URL", base.replace("://localhost", "://127.0.0.1", 1)).rstrip("/")
+    server = env("OPS_KC_SERVER_URL", _loopback(base)).rstrip("/")
     return Keycloak(base_url=base, issuer=env("OPS_KC_ISSUER", f"{base}/realms/{REALM}"), server_url=server)
 
 
@@ -222,20 +230,40 @@ class SessionSettings:
         return self.public_base_url.startswith("https://")
 
 
+def _origin(raw: str) -> str:
+    """Normalise `OPS_PUBLIC_BASE_URL` to an origin: lowercase, default port dropped, nothing but scheme+host."""
+    refusal = SettingsError("OPS_PUBLIC_BASE_URL must be an origin: scheme and host only")
+    if "?" in raw or "#" in raw:  # urlsplit hides an empty query or fragment, but the Origin comparison would not
+        raise refusal
+    parts = urlsplit(raw.rstrip("/"))
+    try:
+        port = parts.port  # an out-of-range or non-numeric port raises here
+    except ValueError as exc:
+        raise refusal from exc
+    host = parts.hostname
+    if parts.scheme.lower() not in ("http", "https") or not host or parts.path or "@" in parts.netloc:
+        raise refusal
+    scheme = parts.scheme.lower()
+    if scheme == "http" and host not in ("localhost", "127.0.0.1"):
+        raise SettingsError("OPS_PUBLIC_BASE_URL may use http for localhost only; other hosts need https")
+    shown = f"[{host}]" if ":" in host else host
+    if port is not None and port != (443 if scheme == "https" else 80):
+        shown += f":{port}"
+    return f"{scheme}://{shown}"
+
+
 def sessions() -> SessionSettings:
     """`OPS_PUBLIC_BASE_URL` must be a bare origin; `http` is for localhost only (BUILD_SPEC §9's exception)."""
-    base = env("OPS_PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
-    parts = urlsplit(base)
-    if parts.scheme not in ("http", "https") or not parts.netloc or parts.path or parts.query or parts.fragment:
-        raise SettingsError("OPS_PUBLIC_BASE_URL must be an origin: scheme and host only")
-    if parts.scheme == "http" and parts.hostname not in ("localhost", "127.0.0.1"):
-        raise SettingsError("OPS_PUBLIC_BASE_URL may use http for localhost only; other hosts need https")
-    return SessionSettings(
-        public_base_url=base,
+    origin = _origin(env("OPS_PUBLIC_BASE_URL", "http://localhost:8000"))
+    result = SessionSettings(
+        public_base_url=origin,
         idle_seconds=env_int("OPS_SESSION_IDLE_SECONDS", 1800),
         absolute_seconds=env_int("OPS_SESSION_ABSOLUTE_SECONDS", 28800),
         login_seconds=env_int("OPS_SESSION_LOGIN_SECONDS", 600),
     )
+    if result.idle_seconds <= 0 or result.login_seconds <= 0 or result.absolute_seconds < result.idle_seconds:
+        raise SettingsError("session lifetimes must be positive and the absolute lifetime at least the idle one")
+    return result
 
 
 def admin_check_timeout() -> float:

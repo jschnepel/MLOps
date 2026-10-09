@@ -61,6 +61,13 @@ def test_header_typ_is_required_when_configured() -> None:
     assert v.verify(mint(headers={"typ": "logout+jwt"})).subject.startswith("2fc05986")
 
 
+def test_baseline_claims_are_always_required_and_typ_ignores_case() -> None:
+    v = verifier(required_claims=("jti",), require_azp=False, typ="logout+jwt")
+    with pytest.raises(TokenRejected):  # exp, iss and aud stay required whatever the caller lists
+        v.verify(mint(headers={"typ": "logout+jwt"}, jti="j1", exp=None))
+    assert v.verify(mint(headers={"typ": "Logout+JWT"}, jti="j1")).claims["jti"] == "j1"
+
+
 def test_subject_is_optional_only_when_not_required() -> None:
     v = verifier(required_claims=("exp", "iss", "aud"), require_azp=False)
     assert v.verify(mint(sub=None)).subject == ""

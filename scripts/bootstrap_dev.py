@@ -46,8 +46,8 @@ SECRET_NAMES: tuple[str, ...] = (
     "postgres_operator_password",
     "postgres_test_harness_password",
     # T11: the API's Fernet key material for sealed provider tokens, and the dev/test-only admin client the live
-    # suite uses to disable and re-enable a persona (ruling 18). Neither is mounted into a container except the
-    # Keycloak client secret, which the entrypoint exports for the realm import.
+    # suite uses to disable and re-enable a persona (ruling 18). Only the Keycloak client secret is mounted (the
+    # entrypoint exports it for the realm import); the session key is read from the host.
     "api_session_key",
     "kc_client_secret_ops_test_admin",
 )
