@@ -1,5 +1,6 @@
 {
-  "specification": "OPS-BUILD-1.0",
+  "specification": "OPS-BUILD-1.3.6",
+  "version": "1.3.3",
   "examples": [
     {
       "path": "schemas/examples/message-valid.json",
@@ -17,13 +18,17 @@
       "path": "schemas/examples/message-invalid-authority.json",
       "schema": "schemas/message.schema.json",
       "valid": false,
-      "note": "Synthetic target contract example; not a live result."
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A client may not supply tenant_id (R004).",
+      "reason_match": "^\\$: Additional properties are not allowed \\('tenant_id'"
     },
     {
       "path": "schemas/examples/message-invalid-bool-hours.json",
       "schema": "schemas/message.schema.json",
       "valid": false,
-      "note": "Synthetic target contract example; not a live result."
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "hours must be an integer, never a boolean.",
+      "reason_match": "^\\$\\.context\\.hours: True is not of type 'integer'$"
     },
     {
       "path": "schemas/examples/clarification-valid.json",
@@ -47,19 +52,25 @@
       "path": "schemas/examples/draft-invalid-approval.json",
       "schema": "schemas/model-draft.schema.json",
       "valid": false,
-      "note": "Synthetic target contract example; not a live result."
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A model may not assert approval.",
+      "reason_match": "^\\$: Additional properties are not allowed \\('approved'"
     },
     {
       "path": "schemas/examples/draft-invalid-no-evidence.json",
       "schema": "schemas/model-draft.schema.json",
       "valid": false,
-      "note": "Synthetic target contract example; not a live result."
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A proposal cites at least one piece of evidence.",
+      "reason_match": "^\\$\\.evidence_refs: \\[\\] (is too short|should be non-empty)$"
     },
     {
       "path": "schemas/examples/draft-invalid-duplicate-evidence.json",
       "schema": "schemas/model-draft.schema.json",
       "valid": false,
-      "note": "Synthetic target contract example; not a live result."
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "Evidence references are unique.",
+      "reason_match": "^\\$\\.evidence_refs: .* has non-unique elements$"
     },
     {
       "path": "schemas/examples/evidence-valid.json",
@@ -83,7 +94,9 @@
       "path": "schemas/examples/decision-invalid-actor.json",
       "schema": "schemas/decision.schema.json",
       "valid": false,
-      "note": "Synthetic target contract example; not a live result."
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "The reviewer is the session, never a body field.",
+      "reason_match": "^\\$: Additional properties are not allowed \\('actor_id'"
     },
     {
       "path": "schemas/examples/cancellation-valid.json",
@@ -107,13 +120,17 @@
       "path": "schemas/examples/outcome-invalid-fake-success.json",
       "schema": "schemas/action-outcome.schema.json",
       "valid": false,
-      "note": "Synthetic target contract example; not a live result."
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "SUCCEEDED without a receipt is a fake success.",
+      "reason_match": "^\\$\\.receipt: None is not of type 'object'$"
     },
     {
       "path": "schemas/examples/outcome-invalid-unknown-receipt.json",
       "schema": "schemas/action-outcome.schema.json",
       "valid": false,
-      "note": "Synthetic target contract example; not a live result."
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A receipt on UNKNOWN would claim a commit nobody verified.",
+      "reason_match": "^\\$\\.receipt: .* is not of type 'null'$"
     },
     {
       "path": "schemas/examples/tool-get_asset_status-valid.json",
@@ -161,7 +178,9 @@
       "path": "schemas/examples/event-invalid-model-success.json",
       "schema": "schemas/event.schema.json",
       "valid": false,
-      "note": "Synthetic target contract example; not a live result."
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "model_summary may emit only explanation.ready, never an outcome (R083).",
+      "reason_match": "^\\$\\.type: 'explanation\\.ready' was expected$"
     },
     {
       "path": "schemas/examples/error-valid.json",
@@ -174,6 +193,442 @@
       "schema": "schemas/model-draft.schema.json",
       "valid": true,
       "note": "Synthetic read-only answer shape, not a write or actual model result."
+    },
+    {
+      "path": "schemas/examples/feedback-valid.json",
+      "schema": "schemas/feedback.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/manual-proposal-valid.json",
+      "schema": "schemas/manual-proposal.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/revision-valid.json",
+      "schema": "schemas/revision.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/cancel-response-valid.json",
+      "schema": "schemas/cancel-response.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/model-pins-valid.json",
+      "schema": "schemas/model-pins.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/route-valid.json",
+      "schema": "schemas/route.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/run-manifest-valid.json",
+      "schema": "schemas/run-manifest.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/job-valid.json",
+      "schema": "schemas/job.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/tool-abort_incident-valid.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/tools-create_incident-input-valid.json",
+      "schema": "schemas/tools/create_incident.input.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/event-invalid-confirmed-no-receipt.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "action.confirmed requires a receipt (R083).",
+      "reason_match": "^\\$\\.payload: 'receipt' is a required property$"
+    },
+    {
+      "path": "schemas/examples/event-invalid-destination-granted.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "source=destination only on the four destination-evidence types.",
+      "reason_match": "^\\$\\.type: 'action\\.granted' is not one of"
+    },
+    {
+      "path": "schemas/examples/event-invalid-late-evidence-no-outcome.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "action.late_evidence requires the destination outcome.",
+      "reason_match": "^\\$\\.payload: 'outcome' is a required property$"
+    },
+    {
+      "path": "schemas/examples/event-invalid-confirmed-application-source.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "action.confirmed comes only from record_outcome with source=destination.",
+      "reason_match": "^\\$\\.source: 'destination' was expected$"
+    },
+    {
+      "path": "schemas/examples/event-invalid-occurred-at.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "occurred_at must be an RFC 3339 date-time (FormatChecker with rfc3339-validator).",
+      "reason_match": "^\\$\\.occurred_at: 'yesterday' is not a 'date-time'$"
+    },
+    {
+      "path": "schemas/examples/event-invalid-late-evidence-succeeded-without-receipt.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A SUCCEEDED late-evidence outcome is proved by a receipt, never a tombstone.",
+      "reason_match": "^\\$\\.payload: ('receipt' is a required property|.* should not be valid under)"
+    },
+    {
+      "path": "schemas/examples/event-invalid-outcome-on-conflict.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "Only action.confirmed, action.failed and action.late_evidence may carry an outcome.",
+      "reason_match": "^\\$\\.payload: .* should not be valid under"
+    },
+    {
+      "path": "schemas/examples/tool-invalid-ok-unknown.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "Envelope ok must wrap a success, never UNKNOWN (R083).",
+      "reason_match": "^\\$\\.data\\.status: ('SUCCEEDED' was expected|'UNKNOWN' is not one of \\['SUCCEEDED'\\])$"
+    },
+    {
+      "path": "schemas/examples/tool-invalid-outcome-no-action-id.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "An outcome always names its action (R083).",
+      "reason_match": "^\\$\\.data: 'action_id' is a required property$"
+    },
+    {
+      "path": "schemas/examples/tool-invalid-status-unknown.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "The 1.0 envelope status unknown is gone (probed on a create_incident success).",
+      "reason_match": "^\\$\\.status: 'unknown' is not one of"
+    },
+    {
+      "path": "schemas/examples/tool-invalid-read-tool-outcome.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A read tool cannot return an outcome envelope: rule (b) restricts `outcome` to the write tools.",
+      "reason_match": "^\\$\\.tool_name: 'get_asset_status' is not one of"
+    },
+    {
+      "path": "schemas/examples/draft-invalid-empty-question.json",
+      "schema": "schemas/model-draft.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "An empty question is no question.",
+      "reason_match": "^\\$\\.question: '' (is too short|should be non-empty)$"
+    },
+    {
+      "path": "schemas/examples/draft-invalid-question-on-proposal.json",
+      "schema": "schemas/model-draft.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "Only an abstain carries a question.",
+      "reason_match": "^\\$: .* should not be valid under \\{'required': \\['question'\\]\\}$"
+    },
+    {
+      "path": "schemas/examples/feedback-invalid-authority.json",
+      "schema": "schemas/feedback.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A client may not supply actor_id (R004).",
+      "reason_match": "^\\$: Additional properties are not allowed \\('actor_id'"
+    },
+    {
+      "path": "schemas/examples/manual-proposal-invalid-authored-by.json",
+      "schema": "schemas/manual-proposal.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "authored_by is derived by the server, never supplied.",
+      "reason_match": "^\\$: Additional properties are not allowed \\('authored_by'"
+    },
+    {
+      "path": "schemas/examples/revision-invalid-supersedes.json",
+      "schema": "schemas/revision.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "supersedes_run_id is a run UUID.",
+      "reason_match": "^\\$\\.supersedes_run_id: 'run-7' is not a 'uuid'$"
+    },
+    {
+      "path": "schemas/examples/cancel-response-invalid-attempt-without-grant.json",
+      "schema": "schemas/cancel-response.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "An attempt state exists only after a grant.",
+      "reason_match": "^\\$\\.attempt_state: 'SENT' is not of type 'null'$"
+    },
+    {
+      "path": "schemas/examples/error-invalid-unknown-code.json",
+      "schema": "schemas/error.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "Error codes come from the documented set.",
+      "reason_match": "^\\$\\.code: 'OOPS' is not one of"
+    },
+    {
+      "path": "schemas/examples/tools-create_incident-input-invalid-tenant.json",
+      "schema": "schemas/tools/create_incident.input.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "Tool arguments never carry tenant_id (AM-15).",
+      "reason_match": "^\\$: Additional properties are not allowed \\('tenant_id'"
+    },
+    {
+      "path": "schemas/examples/outcome-invalid-failed-reason.json",
+      "schema": "schemas/action-outcome.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "conflict is not a FAILED_NO_COMMIT reason.",
+      "reason_match": "^\\$\\.reason: 'conflict' is not one of"
+    },
+    {
+      "path": "schemas/examples/outcome-invalid-committed-tombstone.json",
+      "schema": "schemas/action-outcome.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A COMMITTED key has a receipt, not a tombstone.",
+      "reason_match": "^\\$\\.tombstone\\.state: 'COMMITTED' is not one of"
+    },
+    {
+      "path": "schemas/examples/model-pins-invalid-prefixed-digest.json",
+      "schema": "schemas/model-pins.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "The digest is bare hex (AM-31).",
+      "reason_match": "^\\$\\.digest: '.*' (does not match|is too long)"
+    },
+    {
+      "path": "schemas/examples/message-invalid-kind-question.json",
+      "schema": "schemas/message.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "The 1.0 kind question is gone.",
+      "reason_match": "^\\$\\.kind: 'question' is not one of"
+    },
+    {
+      "path": "schemas/examples/run-manifest-invalid-model-route.json",
+      "schema": "schemas/run-manifest.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "Unknown model route.",
+      "reason_match": "^\\$\\.model_route: 'gpt' is not one of"
+    },
+    {
+      "path": "schemas/examples/job-invalid-execute-read-tool.json",
+      "schema": "schemas/job.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "An execute job may call only create_incident.",
+      "reason_match": "^\\$\\.allowed_tools\\[0\\]: 'get_recent_alerts' is not one of"
+    },
+    {
+      "path": "schemas/examples/decision-invalid-old-hash-field.json",
+      "schema": "schemas/decision.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "The 1.0 field name payload_sha256 is gone (AM-11).",
+      "reason_match": "^\\$: (Additional properties are not allowed \\('payload_sha256'|'expected_payload_sha256' is a required property)"
+    },
+    {
+      "path": "schemas/examples/proposal-invalid-authored-by-in-payload.json",
+      "schema": "schemas/proposal.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "authored_by sits outside the hashed payload.",
+      "reason_match": "^\\$\\.payload: Additional properties are not allowed \\('authored_by'"
+    },
+    {
+      "path": "schemas/examples/proposal-invalid-non-utc.json",
+      "schema": "schemas/proposal.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A stored proposal spells UTC as Z (ruling 6).",
+      "reason_match": "^\\$\\.payload\\.start_at: '2026-10-05T14:00:00\\+02:00' does not match"
+    },
+    {
+      "path": "schemas/examples/tool-get_incident_receipt-invalid-unknown.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "The 1.0 receipt example's envelope unknown is gone.",
+      "reason_match": "^\\$\\.status: 'unknown' is not one of"
+    },
+    {
+      "path": "schemas/examples/outcome-failed-valid.json",
+      "schema": "schemas/action-outcome.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/tool-create_incident-failed-valid.json",
+      "schema": "schemas/tool-result.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/cancel-response-failed-before-grant-valid.json",
+      "schema": "schemas/cancel-response.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/event-failed-valid.json",
+      "schema": "schemas/event.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/cancel-response-invalid-not-requested.json",
+      "schema": "schemas/cancel-response.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A cancel response always records the cancel request.",
+      "reason_match": "^\\$\\.cancel_requested: True was expected$"
+    },
+    {
+      "path": "schemas/examples/cancel-response-invalid-cancelled-after-grant.json",
+      "schema": "schemas/cancel-response.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "CANCELLED after a grant would claim an undo (AM-13).",
+      "reason_match": "^\\$\\.grant_exists: False was expected$"
+    },
+    {
+      "path": "schemas/examples/cancel-response-invalid-post-grant-without-grant.json",
+      "schema": "schemas/cancel-response.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "EXECUTING is reached only through grant_execution, so it implies a grant.",
+      "reason_match": "^\\$\\.status: 'EXECUTING' should not be valid under"
+    },
+    {
+      "path": "schemas/examples/cancel-response-invalid-pre-grant-with-grant.json",
+      "schema": "schemas/cancel-response.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "The grant commits with APPROVED → EXECUTING, so an APPROVED run has none.",
+      "reason_match": "^\\$\\.grant_exists: False was expected$"
+    },
+    {
+      "path": "schemas/examples/cancel-response-invalid-rejected-with-grant.json",
+      "schema": "schemas/cancel-response.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A rejected proposal was never granted, so a REJECTED run has no grant.",
+      "reason_match": "^\\$\\.grant_exists: False was expected$"
+    },
+    {
+      "path": "schemas/examples/event-invalid-failed-conflict-reason.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "action.failed carries a FAILED_NO_COMMIT reason; conflict is not one.",
+      "reason_match": "^\\$\\.payload\\.reason: 'conflict' is not one of"
+    },
+    {
+      "path": "schemas/examples/event-invalid-failed-with-receipt.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A receipt proves a commit, which contradicts action.failed.",
+      "reason_match": "^\\$\\.payload: .* should not be valid under \\{'required': \\['receipt'\\]\\}$"
+    },
+    {
+      "path": "schemas/examples/event-invalid-confirmed-with-tombstone.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A tombstone proves no commit, which contradicts action.confirmed.",
+      "reason_match": "^\\$\\.payload: .* should not be valid under \\{'required': \\['tombstone'\\]\\}$"
+    },
+    {
+      "path": "schemas/examples/outcome-invalid-rejected-tombstone-other-reason.json",
+      "schema": "schemas/action-outcome.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A REJECTED tombstone pairs only with reason rejected.",
+      "reason_match": "^\\$\\.reason: 'rejected' was expected$"
+    },
+    {
+      "path": "schemas/examples/outcome-invalid-rejected-reason-aborted-tombstone.json",
+      "schema": "schemas/action-outcome.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "Reason rejected needs the destination's REJECTED tombstone, not an ABORTED one.",
+      "reason_match": "^\\$\\.tombstone\\.state: 'REJECTED' was expected$"
+    },
+    {
+      "path": "schemas/examples/message-invalid-asset-id-newline.json",
+      "schema": "schemas/message.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "An asset id ends at its last character; a trailing newline is a different id.",
+      "reason_match": "^\\$\\.context\\.asset_id: 'A17\\\\n' does not match"
+    },
+    {
+      "path": "schemas/examples/decision-invalid-sha256-newline.json",
+      "schema": "schemas/decision.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A sha256 digest is exactly 64 hex characters.",
+      "reason_match": "^\\$\\.expected_payload_sha256: '[0-9a-f]{64}\\\\n' (does not match|is too long)"
+    },
+    {
+      "path": "schemas/examples/proposal-invalid-hashed-timestamp-newline.json",
+      "schema": "schemas/proposal.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A hashed timestamp is spelled exactly; a trailing newline would change the hashed bytes.",
+      "reason_match": "^\\$\\.payload\\.expires_at: '2026-10-06T12:15:00Z\\\\n' does not match"
+    },
+    {
+      "path": "schemas/examples/manual-proposal-invalid-request-timestamp-newline.json",
+      "schema": "schemas/manual-proposal.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A request timestamp ends at its offset.",
+      "reason_match": "^\\$\\.start_at: '2026-10-05T12:00:00Z\\\\n' does not match"
+    },
+    {
+      "path": "schemas/examples/event-invalid-occurred-at-newline.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "rfc3339-validator accepts a trailing newline; the date-time pattern does not.",
+      "reason_match": "^\\$\\.occurred_at: '2026-10-06T12:04:01Z\\\\n' does not match"
     }
   ]
 }

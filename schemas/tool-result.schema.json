@@ -12,7 +12,8 @@
         "get_recent_alerts",
         "search_procedures",
         "create_incident",
-        "get_incident_receipt"
+        "get_incident_receipt",
+        "abort_incident"
       ]
     },
     "request_id": {
@@ -23,12 +24,13 @@
       "enum": [
         "ok",
         "error",
-        "unknown"
+        "outcome"
       ]
     },
     "observed_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
     },
     "truncated": {
       "type": "boolean"
@@ -135,10 +137,7 @@
             "const": "get_asset_status"
           },
           "status": {
-            "enum": [
-              "ok",
-              "unknown"
-            ]
+            "const": "ok"
           }
         }
       },
@@ -150,7 +149,8 @@
             "properties": {
               "asset_id": {
                 "type": "string",
-                "pattern": "^[A-Z][A-Z0-9_-]{0,31}$"
+                "maxLength": 32,
+                "pattern": "^[A-Z][A-Z0-9_-]{0,31}(?![\\s\\S])"
               },
               "state": {
                 "enum": [
@@ -165,7 +165,8 @@
               },
               "observed_at": {
                 "type": "string",
-                "format": "date-time"
+                "format": "date-time",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
               },
               "data_source": {
                 "const": "synthetic"
@@ -189,10 +190,7 @@
             "const": "get_recent_alerts"
           },
           "status": {
-            "enum": [
-              "ok",
-              "unknown"
-            ]
+            "const": "ok"
           }
         }
       },
@@ -204,15 +202,18 @@
             "properties": {
               "asset_id": {
                 "type": "string",
-                "pattern": "^[A-Z][A-Z0-9_-]{0,31}$"
+                "maxLength": 32,
+                "pattern": "^[A-Z][A-Z0-9_-]{0,31}(?![\\s\\S])"
               },
               "start_at": {
                 "type": "string",
-                "format": "date-time"
+                "format": "date-time",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
               },
               "end_at": {
                 "type": "string",
-                "format": "date-time"
+                "format": "date-time",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
               },
               "alerts": {
                 "type": "array",
@@ -226,11 +227,13 @@
                     },
                     "asset_id": {
                       "type": "string",
-                      "pattern": "^[A-Z][A-Z0-9_-]{0,31}$"
+                      "maxLength": 32,
+                      "pattern": "^[A-Z][A-Z0-9_-]{0,31}(?![\\s\\S])"
                     },
                     "occurred_at": {
                       "type": "string",
-                      "format": "date-time"
+                      "format": "date-time",
+                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
                     },
                     "code": {
                       "type": "string",
@@ -258,13 +261,26 @@
                 },
                 "minItems": 0,
                 "maxItems": 100
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
               "asset_id",
               "start_at",
               "end_at",
-              "alerts"
+              "alerts",
+              "next_cursor"
             ]
           }
         }
@@ -277,10 +293,7 @@
             "const": "search_procedures"
           },
           "status": {
-            "enum": [
-              "ok",
-              "unknown"
-            ]
+            "const": "ok"
           }
         }
       },
@@ -318,7 +331,8 @@
                     },
                     "content_sha256": {
                       "type": "string",
-                      "pattern": "^[a-f0-9]{64}$"
+                      "maxLength": 64,
+                      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
                     },
                     "excerpt": {
                       "type": "string",
@@ -327,11 +341,13 @@
                     },
                     "effective_from": {
                       "type": "string",
-                      "format": "date-time"
+                      "format": "date-time",
+                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
                     },
                     "retrieved_at": {
                       "type": "string",
-                      "format": "date-time"
+                      "format": "date-time",
+                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
                     }
                   },
                   "required": [
@@ -378,7 +394,7 @@
           "status": {
             "enum": [
               "ok",
-              "unknown"
+              "outcome"
             ]
           }
         }
@@ -403,7 +419,8 @@
               },
               "payload_sha256": {
                 "type": "string",
-                "pattern": "^[a-f0-9]{64}$"
+                "maxLength": 64,
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
               },
               "receipt": {
                 "anyOf": [
@@ -422,7 +439,8 @@
                       },
                       "committed_at": {
                         "type": "string",
-                        "format": "date-time"
+                        "format": "date-time",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
                       }
                     },
                     "required": [
@@ -436,10 +454,68 @@
                   }
                 ]
               },
+              "tombstone": {
+                "$comment": "The tombstone must name this outcome's action_id and payload_sha256. JSON Schema cannot compare two values in one document, so ActionOutcome enforces that identity.",
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "action_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "ABORTED",
+                          "REJECTED"
+                        ]
+                      },
+                      "payload_sha256": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "decided_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
+                      }
+                    },
+                    "required": [
+                      "action_id",
+                      "state",
+                      "payload_sha256",
+                      "reason",
+                      "decided_at"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "reason": {
-                "type": "string",
-                "minLength": 0,
-                "maxLength": 500
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "cancelled_before_send",
+                      "aborted_no_commit",
+                      "rejected",
+                      "expired"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -447,6 +523,7 @@
               "action_id",
               "payload_sha256",
               "receipt",
+              "tombstone",
               "reason"
             ],
             "allOf": [
@@ -475,7 +552,8 @@
                         },
                         "committed_at": {
                           "type": "string",
-                          "format": "date-time"
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
                         }
                       },
                       "required": [
@@ -483,18 +561,149 @@
                         "incident_id",
                         "committed_at"
                       ]
+                    },
+                    "tombstone": {
+                      "type": "null"
+                    },
+                    "reason": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "FAILED_NO_COMMIT"
                     }
                   }
                 },
-                "else": {
+                "then": {
                   "properties": {
+                    "tombstone": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "action_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "ABORTED",
+                            "REJECTED"
+                          ]
+                        },
+                        "payload_sha256": {
+                          "type": "string",
+                          "maxLength": 64,
+                          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "decided_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "action_id",
+                        "state",
+                        "payload_sha256",
+                        "reason",
+                        "decided_at"
+                      ]
+                    },
                     "receipt": {
                       "type": "null"
                     },
                     "reason": {
                       "type": "string",
-                      "minLength": 1,
-                      "maxLength": 500
+                      "enum": [
+                        "cancelled_before_send",
+                        "aborted_no_commit",
+                        "rejected",
+                        "expired"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "UNKNOWN",
+                        "CONFLICT"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "receipt": {
+                      "type": "null"
+                    },
+                    "tombstone": {
+                      "type": "null"
+                    },
+                    "reason": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "tombstone": {
+                      "type": "object",
+                      "required": [
+                        "state"
+                      ],
+                      "properties": {
+                        "state": {
+                          "const": "REJECTED"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "reason": {
+                      "const": "rejected"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "reason": {
+                      "const": "rejected"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "tombstone": {
+                      "type": "object",
+                      "required": [
+                        "state"
+                      ],
+                      "properties": {
+                        "state": {
+                          "const": "REJECTED"
+                        }
+                      }
                     }
                   }
                 }
@@ -513,7 +722,7 @@
           "status": {
             "enum": [
               "ok",
-              "unknown"
+              "outcome"
             ]
           }
         }
@@ -538,7 +747,8 @@
               },
               "payload_sha256": {
                 "type": "string",
-                "pattern": "^[a-f0-9]{64}$"
+                "maxLength": 64,
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
               },
               "receipt": {
                 "anyOf": [
@@ -557,7 +767,8 @@
                       },
                       "committed_at": {
                         "type": "string",
-                        "format": "date-time"
+                        "format": "date-time",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
                       }
                     },
                     "required": [
@@ -571,10 +782,68 @@
                   }
                 ]
               },
+              "tombstone": {
+                "$comment": "The tombstone must name this outcome's action_id and payload_sha256. JSON Schema cannot compare two values in one document, so ActionOutcome enforces that identity.",
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "action_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "ABORTED",
+                          "REJECTED"
+                        ]
+                      },
+                      "payload_sha256": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "decided_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
+                      }
+                    },
+                    "required": [
+                      "action_id",
+                      "state",
+                      "payload_sha256",
+                      "reason",
+                      "decided_at"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "reason": {
-                "type": "string",
-                "minLength": 0,
-                "maxLength": 500
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "cancelled_before_send",
+                      "aborted_no_commit",
+                      "rejected",
+                      "expired"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -582,6 +851,7 @@
               "action_id",
               "payload_sha256",
               "receipt",
+              "tombstone",
               "reason"
             ],
             "allOf": [
@@ -610,7 +880,8 @@
                         },
                         "committed_at": {
                           "type": "string",
-                          "format": "date-time"
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
                         }
                       },
                       "required": [
@@ -618,18 +889,149 @@
                         "incident_id",
                         "committed_at"
                       ]
+                    },
+                    "tombstone": {
+                      "type": "null"
+                    },
+                    "reason": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "FAILED_NO_COMMIT"
                     }
                   }
                 },
-                "else": {
+                "then": {
                   "properties": {
+                    "tombstone": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "action_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "ABORTED",
+                            "REJECTED"
+                          ]
+                        },
+                        "payload_sha256": {
+                          "type": "string",
+                          "maxLength": 64,
+                          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "decided_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "action_id",
+                        "state",
+                        "payload_sha256",
+                        "reason",
+                        "decided_at"
+                      ]
+                    },
                     "receipt": {
                       "type": "null"
                     },
                     "reason": {
                       "type": "string",
-                      "minLength": 1,
-                      "maxLength": 500
+                      "enum": [
+                        "cancelled_before_send",
+                        "aborted_no_commit",
+                        "rejected",
+                        "expired"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "UNKNOWN",
+                        "CONFLICT"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "receipt": {
+                      "type": "null"
+                    },
+                    "tombstone": {
+                      "type": "null"
+                    },
+                    "reason": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "tombstone": {
+                      "type": "object",
+                      "required": [
+                        "state"
+                      ],
+                      "properties": {
+                        "state": {
+                          "const": "REJECTED"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "reason": {
+                      "const": "rejected"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "reason": {
+                      "const": "rejected"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "tombstone": {
+                      "type": "object",
+                      "required": [
+                        "state"
+                      ],
+                      "properties": {
+                        "state": {
+                          "const": "REJECTED"
+                        }
+                      }
                     }
                   }
                 }
@@ -642,8 +1044,239 @@
     {
       "if": {
         "properties": {
+          "tool_name": {
+            "const": "abort_incident"
+          },
           "status": {
-            "const": "unknown"
+            "enum": [
+              "ok",
+              "outcome"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "action_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "outcome": {
+                "enum": [
+                  "SUCCEEDED",
+                  "FAILED_NO_COMMIT"
+                ]
+              },
+              "receipt": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "receipt_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "incident_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "committed_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
+                      }
+                    },
+                    "required": [
+                      "receipt_id",
+                      "incident_id",
+                      "committed_at"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tombstone": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "action_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "ABORTED",
+                          "REJECTED"
+                        ]
+                      },
+                      "payload_sha256": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "decided_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
+                      }
+                    },
+                    "required": [
+                      "action_id",
+                      "state",
+                      "payload_sha256",
+                      "reason",
+                      "decided_at"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "action_id",
+              "outcome",
+              "receipt",
+              "tombstone"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "outcome": {
+                      "const": "SUCCEEDED"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "receipt": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "receipt_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "incident_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        "committed_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "receipt_id",
+                        "incident_id",
+                        "committed_at"
+                      ]
+                    },
+                    "tombstone": {
+                      "type": "null"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "tombstone": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "action_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "ABORTED",
+                            "REJECTED"
+                          ]
+                        },
+                        "payload_sha256": {
+                          "type": "string",
+                          "maxLength": 64,
+                          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "decided_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "action_id",
+                        "state",
+                        "payload_sha256",
+                        "reason",
+                        "decided_at"
+                      ]
+                    },
+                    "receipt": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tool_name": {
+            "enum": [
+              "get_asset_status",
+              "get_recent_alerts",
+              "search_procedures"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok",
+              "error"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "outcome"
           }
         }
       },
@@ -652,13 +1285,127 @@
           "tool_name": {
             "enum": [
               "create_incident",
-              "get_incident_receipt"
+              "get_incident_receipt",
+              "abort_incident"
             ]
           },
           "data": {
+            "type": "object",
+            "required": [
+              "action_id"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "outcome"
+          },
+          "tool_name": {
+            "enum": [
+              "create_incident",
+              "get_incident_receipt"
+            ]
+          }
+        },
+        "required": [
+          "tool_name"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
             "properties": {
               "status": {
-                "const": "UNKNOWN"
+                "enum": [
+                  "UNKNOWN",
+                  "CONFLICT",
+                  "FAILED_NO_COMMIT"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          },
+          "tool_name": {
+            "enum": [
+              "create_incident",
+              "get_incident_receipt"
+            ]
+          }
+        },
+        "required": [
+          "tool_name"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "properties": {
+              "status": {
+                "const": "SUCCEEDED"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          },
+          "tool_name": {
+            "const": "abort_incident"
+          }
+        },
+        "required": [
+          "tool_name"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "properties": {
+              "outcome": {
+                "const": "SUCCEEDED"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "outcome"
+          },
+          "tool_name": {
+            "const": "abort_incident"
+          }
+        },
+        "required": [
+          "tool_name"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "properties": {
+              "outcome": {
+                "const": "FAILED_NO_COMMIT"
               }
             }
           }

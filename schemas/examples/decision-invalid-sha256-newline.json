@@ -1,0 +1,6 @@
+{
+  "expected_revision": 1,
+  "expected_payload_sha256": "9d5c1fb0f7ef65456f4ccf76396564e6290ecd530e58d2b32024e64079134cf7\n",
+  "decision": "approve",
+  "reason": "Reviewed the exact synthetic proposal."
+}

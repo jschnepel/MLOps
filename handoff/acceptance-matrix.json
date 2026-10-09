@@ -1,6 +1,6 @@
 {
   "specification": "OPS-BUILD-1.3.6 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
-  "note": "Target acceptance requirements, not passing tests. Milestone = earliest owning task; R097 accrues across T24/T27/T29/T32. R081-R131 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement.",
+  "note": "Target acceptance requirements, not passing tests. Milestone = earliest owning task; R097 accrues across T24/T27/T29/T32. R081-R131 come from SPEC_AMENDMENTS.md. suggested_test paths are targets to implement. Status vocabulary: evidence_status NOT_RUN or RECORDED_LOCALLY (the tests in evidence_paths pass in scripts/check.py and CI; the suggested_test acceptance file does not exist yet); implementation_status NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED or IMPLEMENTED_LOCALLY_VERIFIED (the core library or contract exists and those tests verify it; no running target capability).",
   "requirements": [
     {
       "id": "R001",
@@ -53,11 +53,13 @@
       "category": "contracts",
       "requirement": "Model or client authority fields are rejected",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r004_model_or_client_authority_fields_are_rejected.py",
       "expected_evidence": "Inject role/tenant/approved/actor fields in model and browser payloads; validation fails.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "tests/plan_c/test_contracts.py"
+      ],
       "owning_tasks": [
         "T07"
       ]
@@ -68,11 +70,14 @@
       "category": "domain",
       "requirement": "Canonical payload and action identity stay stable",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r005_canonical_payload_and_action_identity_stay_stabl.py",
       "expected_evidence": "Property-test NFC/ordering/duplicate keys/nonfinite rejection; store exact bytes; changed payload changes hash.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "tests/plan_c/test_canonical.py",
+        "tests/plan_c/test_contracts.py"
+      ],
       "owning_tasks": [
         "T07"
       ]
@@ -1226,26 +1231,33 @@
       "id": "R082",
       "category": "domain",
       "requirement": "Run transitions are enforced from one table including ESCALATED",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Exhaustive transition tests; disallowed transitions rejected and logged.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "tests/plan_c/test_states.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M01",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T07"
       ],
-      "suggested_test": "tests/acceptance/test_r082_run_transitions_are_enforced_from_one_table_incl.py"
+      "suggested_test": "tests/acceptance/test_r082_run_transitions_are_enforced_from_one_table_incl.py",
+      "note": "\"logged\" half is TODO(T09); the local evidence covers the rest"
     },
     {
       "id": "R083",
       "category": "contracts",
       "requirement": "Schemas forbid model-asserted outcomes and envelope/data contradictions",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Probes: model_summary status, action.confirmed without receipt, ok+UNKNOWN, outcome without action_id all rejected.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "tests/plan_c/test_jobs_routes_outcomes.py",
+        "tests/plan_c/test_schema_conformance.py",
+        "tests/plan_a/test_verify_handoff.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M01",
       "blocking_for_v1": true,
@@ -1585,10 +1597,15 @@
       "id": "R104",
       "category": "contracts",
       "requirement": "Schemas, examples and fixtures match the 1.3.6 contract",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "verify_handoff.py --contracts passes including AM-80 negative probes.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "tests/plan_c/test_schemas_generated.py",
+        "tests/plan_c/test_schema_conformance.py",
+        "tests/plan_c/test_fixture_meta.py",
+        "tests/plan_a/test_verify_handoff.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M01",
       "blocking_for_v1": true,
@@ -1890,10 +1907,12 @@
       "id": "R123",
       "category": "reference",
       "requirement": "Every reference test is traced to a port, replacement or justified drop",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "reference/TRACEABILITY.md lists all 58 with owning tasks; ported tests pass.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "tests/plan_c/test_traceability.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r123_every_reference_test_is_traced_to_a_port_replace.py",
       "milestone": "M01",

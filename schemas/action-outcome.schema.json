@@ -20,7 +20,8 @@
     },
     "payload_sha256": {
       "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
     },
     "receipt": {
       "anyOf": [
@@ -39,7 +40,8 @@
             },
             "committed_at": {
               "type": "string",
-              "format": "date-time"
+              "format": "date-time",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
             }
           },
           "required": [
@@ -53,10 +55,68 @@
         }
       ]
     },
+    "tombstone": {
+      "$comment": "The tombstone must name this outcome's action_id and payload_sha256. JSON Schema cannot compare two values in one document, so ActionOutcome enforces that identity.",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "action_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "ABORTED",
+                "REJECTED"
+              ]
+            },
+            "payload_sha256": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "decided_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "action_id",
+            "state",
+            "payload_sha256",
+            "reason",
+            "decided_at"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "reason": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 500
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "cancelled_before_send",
+            "aborted_no_commit",
+            "rejected",
+            "expired"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -64,6 +124,7 @@
     "action_id",
     "payload_sha256",
     "receipt",
+    "tombstone",
     "reason"
   ],
   "allOf": [
@@ -92,7 +153,8 @@
               },
               "committed_at": {
                 "type": "string",
-                "format": "date-time"
+                "format": "date-time",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
               }
             },
             "required": [
@@ -100,18 +162,149 @@
               "incident_id",
               "committed_at"
             ]
+          },
+          "tombstone": {
+            "type": "null"
+          },
+          "reason": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "FAILED_NO_COMMIT"
           }
         }
       },
-      "else": {
+      "then": {
         "properties": {
+          "tombstone": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "action_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "ABORTED",
+                  "REJECTED"
+                ]
+              },
+              "payload_sha256": {
+                "type": "string",
+                "maxLength": 64,
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "decided_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
+              }
+            },
+            "required": [
+              "action_id",
+              "state",
+              "payload_sha256",
+              "reason",
+              "decided_at"
+            ]
+          },
           "receipt": {
             "type": "null"
           },
           "reason": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 500
+            "enum": [
+              "cancelled_before_send",
+              "aborted_no_commit",
+              "rejected",
+              "expired"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "UNKNOWN",
+              "CONFLICT"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "receipt": {
+            "type": "null"
+          },
+          "tombstone": {
+            "type": "null"
+          },
+          "reason": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tombstone": {
+            "type": "object",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "const": "REJECTED"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "const": "rejected"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "reason": {
+            "const": "rejected"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "tombstone": {
+            "type": "object",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "const": "REJECTED"
+              }
+            }
           }
         }
       }

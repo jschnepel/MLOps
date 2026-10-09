@@ -9,11 +9,14 @@ fail: a modified, deleted or added file under reference/, a remap target outside
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
+
+import pytest
 
 # -I matches how CI runs the checker: no environment variables or working-directory modules can alter it.
 CHECKER = [sys.executable, "-I", "scripts/verify_handoff.py"]
@@ -138,3 +141,86 @@ def test_reference_tree_fails_on_remap_outside_reference(tmp_path: Path):
     out = _run_tree(root)
     assert out.returncode != 0
     assert "FAIL: remap target outside reference/: tests/conftest.py -> scripts/conftest.py" in out.stdout
+
+
+def _run_contracts(copy: Path) -> subprocess.CompletedProcess[str]:
+    """Run `--contracts` on a copy; the checker prints PASS lines to stdout and its FAIL line to stderr."""
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    return subprocess.run(
+        [sys.executable, "-I", "scripts/verify_handoff.py", "--contracts"],
+        cwd=copy,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_contracts_pass_on_the_committed_tree(tmp_path: Path):
+    r = _run_contracts(_tracked_copy(tmp_path))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "negative examples failed for their stated reason" in r.stdout
+
+
+def test_contracts_fail_when_a_negative_example_validates(tmp_path: Path):
+    copy = _tracked_copy(tmp_path)
+    p = copy / "schemas/examples/message-invalid-kind-question.json"
+    # newline="\n": on Windows the default would write CRLF, and the CR check would then fire first.
+    p.write_text(p.read_text(encoding="utf-8").replace('"question"', '"ask"'), encoding="utf-8", newline="\n")
+    r = _run_contracts(copy)
+    out = r.stdout + r.stderr
+    assert r.returncode == 1 and "message-invalid-kind-question.json" in out and "validated" in out
+
+
+def test_contracts_fail_when_a_negative_fails_for_the_wrong_reason(tmp_path: Path):
+    copy = _tracked_copy(tmp_path)
+    p = copy / "schemas/examples/message-invalid-kind-question.json"
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    doc["kind"] = "ask"
+    doc["tenant_id"] = "x"  # now invalid for an unrelated reason
+    p.write_text(json.dumps(doc), encoding="utf-8", newline="\n")
+    r = _run_contracts(copy)
+    assert r.returncode == 1 and "stated reason" in r.stdout + r.stderr
+
+
+def test_contracts_reject_a_carriage_return_in_a_governed_file(tmp_path: Path):
+    copy = _tracked_copy(tmp_path)
+    p = copy / "schemas/examples/message-valid.json"
+    p.write_bytes(p.read_bytes().replace(b"\n", b"\r\n", 1))
+    r = _run_contracts(copy)
+    assert r.returncode == 1 and "carriage return" in r.stdout + r.stderr
+
+
+def test_contracts_require_index_version(tmp_path: Path):
+    copy = _tracked_copy(tmp_path)
+    p = copy / "schemas/examples/index.json"
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    doc["version"] = "1.0"
+    p.write_text(json.dumps(doc), encoding="utf-8", newline="\n")
+    r = _run_contracts(copy)
+    assert r.returncode == 1 and "index.json version" in r.stdout + r.stderr
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="needs uv")
+def test_contracts_block_when_the_date_time_validator_is_missing():
+    """An interpreter with jsonschema but no rfc3339-validator must stop the gate (exit 2), not pass it silently."""
+    env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "VIRTUAL_ENV"}}
+    r = subprocess.run(
+        ["uv", "run", "--isolated", "--no-project", "--python", "3.13", "--with", "jsonschema>=4.26,<5"]
+        + ["python", "-I", "scripts/verify_handoff.py", "--contracts"],
+        cwd=Path(__file__).resolve().parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert r.returncode == 2 and "BLOCKED" in r.stderr and "rfc3339-validator" in r.stderr, r.stdout + r.stderr
+
+
+def test_reference_tree_accepts_traceability(tmp_path: Path):
+    """T46: the repo-owned reference/TRACEABILITY.md is allowed (and required) like README.md."""
+    root = _tracked_copy(tmp_path)
+    assert (root / "reference/TRACEABILITY.md").is_file()
+    out = _run_tree(root)
+    assert out.returncode == 0, out.stdout + out.stderr

@@ -1,0 +1,8 @@
+{
+  "kind": "investigate",
+  "text": "Investigate the alerts on A17 over the last 24 hours.",
+  "context": {
+    "asset_id": "A17\n",
+    "hours": 24
+  }
+}

@@ -34,14 +34,17 @@ dev = [
   "pytest>=9.0,<10",
   "ruff>=0.14,<1",
   "mypy>=1.19,<2",
+  # best_match ranking is version-sensitive: the negatives' reason_match values are tuned to the locked version.
   "jsonschema>=4.26,<5",
   "hypothesis>=6.140,<7",
   "pyyaml>=6.0,<7",
+  "rfc3339-validator>=0.1.4,<1",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/plan_a", "tests/plan_b"]
-norecursedirs = ["reference", ".venv", "node_modules", "build"]
+testpaths = ["tests/plan_a", "tests/plan_b", "tests/plan_c"]
+# Setting this replaces pytest's defaults (which include ".*"), so ".*" is restated: otherwise pytest walks .hypothesis/.
+norecursedirs = ["reference", ".venv", "node_modules", "build", ".*"]
 addopts = "-ra"
 
 [tool.ruff]

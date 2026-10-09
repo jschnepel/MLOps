@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operations-copilot:schema:tools/search_procedures-input:1",
+  "title": "Operations Copilot tool input search_procedures v1",
+  "$comment": "Target contract. Declarative validation does not implement authentication, authorization, semantic support, atomicity, or runtime integrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "asset_type": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8
+    },
+    "mode": {
+      "enum": [
+        "lexical",
+        "vector_exact"
+      ]
+    }
+  },
+  "required": [
+    "query",
+    "limit",
+    "mode"
+  ]
+}

@@ -31,6 +31,7 @@ jobs:
       # import them.
       - run: uv sync --locked --all-packages
       - run: uv run python scripts/check.py
-      # The handoff checker is stdlib-only, so it runs on the runner's own python3; -I ignores environment
-      # variables and the working directory so nothing outside the checked-out files can change what it imports.
-      - run: python3 -I scripts/verify_handoff.py --reference-code --manifest
+      # --contracts needs jsonschema and rfc3339-validator (dev group), so the checker runs under `uv run`; -I still
+      # ignores environment variables and the working directory, and the checker puts the repository root on
+      # sys.path itself, so nothing outside the checked-out files can change what it imports.
+      - run: uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts
