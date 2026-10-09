@@ -2,7 +2,7 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan E (T09, T10) is executed on branch `plan-e` (`3fb9645..5fbb272`, on top of `plan-d`). Owner inputs still pending, unchanged: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) push `plan-b` to `plan-e` and open/merge the PRs, record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata of Plan C and the errata of Plan E below. Then write Plan F: T11 (sessions and membership sync; it depends on T09 and T43, both DONE, so it is the earliest dependency-satisfied task) or T13 (leases), whichever the backlog's dependency graph puts first, and dry-run it on scratch copies before executing.
+**Next task:** Plan E (T09, T10) is executed on branch `plan-e` (`3fb9645..5fbb272`, on top of `plan-d`). Owner inputs still pending, unchanged: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) `plan-b` to `plan-e` were pushed on 2026-10-08; open/merge the stacked PRs (plan-b -> main, plan-c -> plan-b, plan-d -> plan-c, plan-e -> plan-d) and record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata of Plan C and the errata of Plan E below. Then write Plan F: T11 (sessions and membership sync; it depends on T09 and T43, both DONE, so it is the earliest dependency-satisfied task) or T13 (leases), whichever the backlog's dependency graph puts first, and dry-run it on scratch copies before executing.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-e` (Plan E work on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` are local only and await the owner's push and PRs.
 
@@ -267,7 +267,7 @@ Allowed shortcuts in T09/T10, each with its owning task:
 
 ## Open owner inputs
 
-- Approval to push `plan-b` and `plan-c` and open the PRs (the remote exists; `main` and `plan-a` are already pushed).
+- Open and merge the stacked PRs for `plan-b` to `plan-e` (all four pushed on 2026-10-08; `main` and `plan-a` were pushed earlier) and record the first CI run URL.
 - Decide on the nine proposed contract errata (see "Plan C executed").
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
 - T06: decide whether to publish early (public repo at M01) or start private and make it public at T34. (The repo `jschnepel/MLOps` exists and `main`/`plan-a` were pushed on 2026-10-07; `plan-b` is local.)
