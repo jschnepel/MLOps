@@ -90,3 +90,19 @@ The six application processes run on the host until T30 containerises them (`doc
 The back-channel URL in the realm export is `http://host.docker.internal:8000/auth/backchannel-logout`: Keycloak runs in a container and the API runs on the host, so the container reaches the host through Docker's host alias, not `localhost`. T30 replaces it when the API is containerised. The realm's SSO lifetimes are 8 h so the provider session outlives the application session; every authorization request carries `max_age=1800` and an idle- or absolute-expired application session also ends its Keycloak session, so after idle expiry the next login asks for the password again (ruling 3 as amended). `host.docker.internal` resolves without `extra_hosts` on Docker Desktop only; a Linux engine needs `extra_hosts: ["host.docker.internal:host-gateway"]` on the Keycloak service (T30 owns the containerised URL).
 
 **Warning.** `ops-test-admin` (a service account with `manage-users`) exists in the dev realm only, for the live suite's persona switch (disable and re-enable a user). Never import it into the demo realm (T30).
+
+## Admission (T12)
+
+A client creates a conversation (`POST /api/v1/conversations`, 201) and posts messages to it
+(`POST /api/v1/conversations/{id}/messages`). Every such mutation carries an `Idempotency-Key` header of 8-128
+visible ASCII characters (a UUID is the usual choice), new for each new request and the same for a retry: the API
+records the answer of each key with the request's fingerprint for 24 h (`OPS_IDEMPOTENCY_TTL_SECONDS`), returns that
+answer to a retry, and refuses a reuse with another request (409 `IDEMPOTENCY_CONFLICT`). A message of kind
+`investigate` or `ask` starts a run (202) only when its text agrees with its form fields; otherwise the API stores a
+clarification question and answers 200 with it, and the requester sends a new message. `kind=status` is answered
+from the recorded state (200, no run). A reply to a run's own question goes to
+`POST /api/v1/runs/{id}/clarifications` with the question id and the run's version. One conversation holds one
+active run (409 `SLOT_OCCUPIED`); a tenant holds at most `OPS_TENANT_QUEUE_QUOTA` queued runs (429 with
+`Retry-After`; a 429 is never recorded, so a retry with the same key is admitted once the queue drains).
+Under `PROFILE=test` only, `POST /internal/faults/drop_before_commit` arms the crash-before-commit fault the live
+test uses.

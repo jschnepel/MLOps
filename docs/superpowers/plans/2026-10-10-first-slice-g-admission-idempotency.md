@@ -617,7 +617,7 @@ today, 77 after Task 2, 83 after Task 6): after Tasks 1, 2, 4, 5 and 6 it is 774
   False) -> JSONResponse`; `create_app(verifier, store_factory, auth_factory, *, admission: AdmissionSettings | None
   = None)`.
 
-- [ ] **Step 1a: Record both baselines**
+- [x] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN` with pytest `679 passed, 95 skipped`; with the
 dev stack up and `uv run python scripts/skeleton.py status` showing every process down, run
@@ -625,7 +625,7 @@ dev stack up and `uv run python scripts/skeleton.py status` showing every proces
 `git checkout -- reports/bootstrap reports/skeleton reports/auth`. Record both lines in the report (Global
 Constraints, "Counts"). A gate that is not GREEN stops the plan here, before anything is committed.
 
-- [ ] **Step 1b: Record the base**
+- [x] **Step 1b: Record the base**
 
 Before the first commit of this plan's execution, record the base: run `git rev-parse --short HEAD` and write the
 hash it prints as `BASE=<hash>` in the report and in the SDD ledger
@@ -633,7 +633,7 @@ hash it prints as `BASE=<hash>` in the report and in the SDD ledger
 `<base>..<last>` from it, so a commit that revises this plan before execution starts never falls inside the
 executed range.
 
-- [ ] **Step 1c: Commit the debt list (before any code)**
+- [x] **Step 1c: Commit the debt list (before any code)**
 
 Append the debt-list block from "Declared debt and errata" to `SESSION_STATE.md` as the section
 `## Plan G debt list (T12; committed before coding) [R6-B7]`, immediately after the `## Plan F debt list …` section
@@ -644,7 +644,7 @@ git add SESSION_STATE.md
 git commit -m "docs: declare Plan G's shortcuts before coding (T12 debt list)"
 ```
 
-- [ ] **Step 2: Put `tests/plan_g` on the test path**
+- [x] **Step 2: Put `tests/plan_g` on the test path**
 
 In `pyproject.toml` replace
 
@@ -666,7 +666,7 @@ testpaths = [
 
 and create `tests/plan_g/__init__.py` as an empty file.
 
-- [ ] **Step 3: Write the failing settings test**
+- [x] **Step 3: Write the failing settings test**
 
 Create `tests/plan_g/test_settings_admission.py`:
 
@@ -732,7 +732,7 @@ def test_a_non_integer_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
 Run: `uv run python -m pytest tests/plan_g/test_settings_admission.py -q`
 Expected: `1 error in` (`ImportError: cannot import name 'AdmissionSettings' from 'ops_core.settings'`).
 
-- [ ] **Step 4: Add the admission settings**
+- [x] **Step 4: Add the admission settings**
 
 In `core/src/ops_core/settings.py` insert, immediately before `@dataclass(frozen=True)` / `class Urls:` (after
 `admission_check_timeout()`):
@@ -786,7 +786,7 @@ class Urls:
 Run: `uv run python -m pytest tests/plan_g/test_settings_admission.py -q`
 Expected: `5 passed`.
 
-- [ ] **Step 5: Write the failing middleware and error-surface tests**
+- [x] **Step 5: Write the failing middleware and error-surface tests**
 
 Create `tests/plan_g/test_limits.py`:
 
@@ -1074,7 +1074,7 @@ def test_the_request_id_header_is_the_body_request_id(app_and_store) -> None:
 Run: `uv run python -m pytest tests/plan_g/test_limits.py tests/plan_g/test_error_surface.py -q`
 Expected: `2 errors in` (both modules: `ModuleNotFoundError: No module named 'ops_api.limits'`).
 
-- [ ] **Step 6: Write the middlewares**
+- [x] **Step 6: Write the middlewares**
 
 Create `api/src/ops_api/limits.py`:
 
@@ -1240,7 +1240,7 @@ class BodyLimit:
         await response(scope, receive, send)
 ```
 
-- [ ] **Step 7: Route every refusal through `safe(request, …)` and install the middlewares**
+- [x] **Step 7: Route every refusal through `safe(request, …)` and install the middlewares**
 
 In `api/src/ops_api/app.py` make these edits (each "replace" block is unique in the file; line numbers are today's):
 
@@ -1588,7 +1588,7 @@ Run: `uv run python -m pytest tests/plan_d/test_api.py tests/plan_f -q`
 Expected: `157 passed` (the existing callers of `safe` now pass the request; the 503 of a lost connection stays
 `retryable: true`, and a `PersistenceError` 503 is now `retryable: false`, which no existing test pins).
 
-- [ ] **Step 8: Gates and commit**
+- [x] **Step 8: Gates and commit**
 
 Format, lint and count characters on the touched Python files (`ruff format`, `ruff check --fix`, the counting
 command): `core/src/ops_core/settings.py api/src/ops_api/limits.py api/src/ops_api/app.py tests/plan_g`, the
@@ -1633,7 +1633,7 @@ git commit -m "feat(api): safe error surface, request ids and the body limit; ad
   "sweeper": sel+del}`; the revision's `GRANTS_0006`, `STORED_KINDS_0006`, `SYSTEM_KINDS_0006`, `TABLES`,
   `MAIN_GRANTEES_0006`; `sync.purge_expired(conn) -> dict[str, int]` with the key `"idempotency_request"`.
 
-- [ ] **Step 1: Write the failing revision tests**
+- [x] **Step 1: Write the failing revision tests**
 
 Create `tests/plan_g/test_migration_0006.py`:
 
@@ -1749,7 +1749,7 @@ Expected: `1 error in` (collection stops at the module-level `assert` on `REVISI
 file `0006_admission_idempotency.py` does not exist yet). The newest-revision check stays red until Step 3; nothing
 else is red at any point of this task.
 
-- [ ] **Step 2: Write the revision**
+- [x] **Step 2: Write the revision**
 
 Create `migrations/app/versions/0006_admission_idempotency.py`:
 
@@ -1867,7 +1867,7 @@ Expected: `2 failed, 12 passed`: `test_the_frozen_cells_are_the_live_matrix_and_
 `test_the_newest_revision_of_every_cell_equals_the_live_matrix` fail with `KeyError: 'idempotency_request'` (the
 matrix has no row yet).
 
-- [ ] **Step 3: The matrix row**
+- [x] **Step 3: The matrix row**
 
 In `core/src/ops_core/privileges.py`:
 
@@ -1941,7 +1941,7 @@ uv run python -m pytest tests/plan_g/test_migration_0006.py tests/plan_e/test_tr
 
 Expected: `16 passed` (3 new, the transitions module's 11 with one more parametrised revision, Plan F's 2).
 
-- [ ] **Step 4a: The failing purge test**
+- [x] **Step 4a: The failing purge test**
 
 In `tests/plan_f/test_sweeper.py`:
 
@@ -2011,7 +2011,7 @@ async def test_the_override_covers_the_first_successful_sync_only(
 Run: `uv run python -m pytest tests/plan_f/test_sweeper.py -q`
 Expected: `1 failed, 8 passed` (`test_the_purge_covers_the_idempotency_records`: the counts have three keys).
 
-- [ ] **Step 4b: The sweeper purges the records and refuses a database without them**
+- [x] **Step 4b: The sweeper purges the records and refuses a database without them**
 
 In `sweeper/src/ops_sweeper/sync.py`:
 
@@ -2111,7 +2111,7 @@ with:
 Run: `uv run python -m pytest tests/plan_f/test_sweeper.py -q`
 Expected: `9 passed` (the live purge test runs in Step 5).
 
-- [ ] **Step 4c: The API refuses a database without the record table**
+- [x] **Step 4c: The API refuses a database without the record table**
 
 In `api/src/ops_api/app.py` (line numbers as Task 1 left the file):
 
@@ -2136,7 +2136,7 @@ Run: `uv run python -m pytest tests/plan_d/test_api.py tests/plan_f -q`
 Expected: `158 passed` (Task 1's 157 and the new purge test; the fakes are not a `DbStore`, so the guard does not
 run here: Step 5 and the live gate run it).
 
-- [ ] **Step 5: The live revision test**
+- [x] **Step 5: The live revision test**
 
 Create `tests/e2e/test_migration_0006_live.py`:
 
@@ -2295,7 +2295,7 @@ OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migration_0006_li
 Expected: `7 passed` (3 new and the sweeper module's 4, its purge test now with the expired record; the `migrated`
 fixture recreates `ops_test` at 0006 first).
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
@@ -2344,7 +2344,7 @@ git commit -m "feat(migrations): revision 0006, the idempotency record and typed
   route, cause=None)`, `ADMISSION_RULES`, `REPLY_RULES`, `route_admission(facts) -> AdmissionDecision`,
   `route_reply(facts) -> AdmissionDecision` (raises `LookupError` when no row matches).
 
-- [ ] **Step 1: Write the failing router test**
+- [x] **Step 1: Write the failing router test**
 
 Create `tests/plan_g/test_routing_admission.py`:
 
@@ -2666,7 +2666,7 @@ def test_the_stored_vocabulary_is_revision_0006s_and_the_request_kinds_are_uncha
 Run: `uv run python -m pytest tests/plan_g/test_routing_admission.py -q`
 Expected: `1 error in` (`ImportError: cannot import name 'SYSTEM_MESSAGE_KINDS' from 'ops_core.contracts'`).
 
-- [ ] **Step 2: The stored message kinds**
+- [x] **Step 2: The stored message kinds**
 
 In `core/src/ops_core/contracts.py`, after `class MessageKind`:
 
@@ -2707,7 +2707,7 @@ SYSTEM_MESSAGE_KINDS: Final = frozenset({StoredMessageKind.STATUS_ANSWER, Stored
 Run: `uv run python -m pytest tests/plan_g/test_routing_admission.py -q`
 Expected: `1 error in` (`ImportError: cannot import name 'ADMISSION_RULES' from 'ops_core.routing'`).
 
-- [ ] **Step 3: The table and the parser**
+- [x] **Step 3: The table and the parser**
 
 Replace `core/src/ops_core/routing.py` with:
 
@@ -3035,7 +3035,7 @@ class RunManifest(BaseModel):
 Run: `uv run python -m pytest tests/plan_g/test_routing_admission.py tests/plan_c/test_jobs_routes_outcomes.py -q`
 Expected: `57 passed` (39 new, 18 of Plan C's route and job vocabulary tests unchanged).
 
-- [ ] **Step 4: Gates and commit**
+- [x] **Step 4: Gates and commit**
 
 Format, lint and count characters on the three files. `routing.py` now imports `ops_core.contracts`, which imports
 nothing from `routing`, so no cycle exists (check: `uv run python -c "import ops_core.routing"` prints nothing).
@@ -3104,7 +3104,7 @@ git commit -m "feat(core): the AM-16 admission router table and the text-versus-
   reply's run lock),
   `slot_occupied`, `clock`; `seed_question(run_id)`; T11's session methods).
 
-- [ ] **Step 1: Write the failing key-and-unit test**
+- [x] **Step 1: Write the failing key-and-unit test**
 
 Create `tests/plan_g/test_idempotency.py`:
 
@@ -3248,7 +3248,7 @@ def test_a_verdict_renders_the_same_bytes_whatever_its_key_order() -> None:
 Run: `uv run python -m pytest tests/plan_g/test_idempotency.py -q`
 Expected: `1 error in` (`ModuleNotFoundError: No module named 'ops_api.idempotency'`).
 
-- [ ] **Step 2: The scoped key**
+- [x] **Step 2: The scoped key**
 
 Create `api/src/ops_api/idempotency.py`:
 
@@ -3453,7 +3453,7 @@ def response(verdict: Verdict) -> VerdictResponse:
 Run: `uv run python -m pytest tests/plan_g/test_idempotency.py -q`
 Expected: `8 passed`.
 
-- [ ] **Step 3: The persistence helpers the units read and write through**
+- [x] **Step 3: The persistence helpers the units read and write through**
 
 In `core/src/ops_core/persistence.py` (the comment in `insert_job` names its replacement; the six helpers go before
 `claim_job`):
@@ -3559,7 +3559,7 @@ async def claim_job(conn: Conn, *, worker_name: str, tenant_ids: Sequence[UUID])
 
 These are thin SQL with no branch of their own; the live tests of Tasks 2 and 6 run every one of them as `api`.
 
-- [ ] **Step 4: Write the shared fake and the failing unit tests**
+- [x] **Step 4: Write the shared fake and the failing unit tests**
 
 Create `tests/plan_g/fakes.py` (it inherits the real orchestration, so it fails to import until Step 5):
 
@@ -4320,7 +4320,7 @@ Run: `uv run python -m pytest tests/plan_g/test_store_units.py -q`
 Expected: `1 error in` (`ImportError: cannot import name 'DbUnit' from 'ops_api.store'`: the module's own
 `ops_api.store` import is the first to name what Step 5 adds).
 
-- [ ] **Step 5: The admission units**
+- [x] **Step 5: The admission units**
 
 Replace `api/src/ops_api/store.py` with:
 
@@ -5604,7 +5604,7 @@ Expected: `22 passed`.
 Run: `uv run python -m pytest tests/plan_d/test_api.py tests/plan_f -q`
 Expected: `158 passed` (the routes still call the pre-T12 methods, kept above with their `TODO(T12)`).
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
 Format, lint and count characters on the six files; `uv run mypy core/src api/src --no-incremental` once (the
 `Unit` protocol and `DbUnit` must agree member for member).
@@ -5655,7 +5655,7 @@ git commit -m "feat(api): the scoped Idempotency-Key and the admission units ove
   module's `ROWS`; `tests.plan_d.test_api.auth(name)` adds a fresh `Idempotency-Key`;
   `tests.plan_f.test_api_auth.browser(csrf, **extra)` adds one too.
 
-- [ ] **Step 1: Write the failing route test**
+- [x] **Step 1: Write the failing route test**
 
 Create `tests/plan_g/test_api_admission.py`:
 
@@ -5975,7 +5975,7 @@ Run: `uv run python -m pytest tests/plan_g/test_api_admission.py -q`
 Expected: `21 failed, 1 passed` (only `test_the_fault_route_does_not_exist_outside_the_test_profile` passes: the
 routes still call the pre-T12 methods and `create_app` takes no `profile`).
 
-- [ ] **Step 2a: The names the routes use**
+- [x] **Step 2a: The names the routes use**
 
 In `api/src/ops_api/app.py` (line numbers as Task 2 left the file, in all three parts of this step):
 
@@ -6094,7 +6094,7 @@ class FaultRequest(BaseModel):
 Run: `uv run python -m pytest tests/plan_g/test_api_admission.py -q`
 Expected: `21 failed, 1 passed` (nothing calls the new names yet).
 
-- [ ] **Step 2b: The test profile's fault hook**
+- [x] **Step 2b: The test profile's fault hook**
 
 In `api/src/ops_api/app.py` (line numbers as Task 2 left the file):
 
@@ -6198,7 +6198,7 @@ Run: `uv run python -m pytest tests/plan_g/test_api_admission.py -q`
 Expected: `21 failed, 1 passed` (the fault route exists under the test profile now, but every admission still takes
 the pre-T12 path until Step 2c).
 
-- [ ] **Step 2c: The key dependency and the routes over the units**
+- [x] **Step 2c: The key dependency and the routes over the units**
 
 In `api/src/ops_api/app.py` (line numbers as Task 2 left the file):
 
@@ -6486,7 +6486,7 @@ Run: `uv run python -m pytest tests/plan_d/test_api.py tests/plan_f -q`
 Expected: `8 failed, 150 passed` (the Plan D and Plan F tests still post without a key, and Plan D's own fake has no
 units yet; Step 3 fixes both).
 
-- [ ] **Step 3: The Plan D and Plan F unit tests use the shared fake and send keys**
+- [x] **Step 3: The Plan D and Plan F unit tests use the shared fake and send keys**
 
 In `tests/plan_d/test_api.py`:
 
@@ -6859,7 +6859,7 @@ with:
 Run: `uv run python -m pytest tests/plan_g tests/plan_d/test_api.py tests/plan_f -q`
 Expected: `265 passed` (107 Plan G tests, 5 + 8 + 8 + 3 + 39 + 8 + 14 + 22, and the 158 Plan D/F tests).
 
-- [ ] **Step 4: The pre-T12 store mutations go**
+- [x] **Step 4: The pre-T12 store mutations go**
 
 In `api/src/ops_api/store.py` (as Task 4 left it), delete the two `TODO(T12)` blocks:
 
@@ -7016,7 +7016,7 @@ Expected: `Success: no issues found in 23 source files`.
 Run: `uv run python -m pytest tests/plan_g tests/plan_d/test_api.py tests/plan_f -q`
 Expected: `265 passed`.
 
-- [ ] **Step 5: The two live modules that post to the API send keys**
+- [x] **Step 5: The two live modules that post to the API send keys**
 
 (Moved here from Task 6 so the live suite is never red between tasks.) In `tests/e2e/test_r105_walking_skeleton.py`:
 
@@ -7198,7 +7198,7 @@ with:
             decided_code, decided_body = decided.status_code, decided.json()
 ```
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
@@ -7238,7 +7238,7 @@ git commit -m "feat(api): idempotent admission routes, the clarifications route 
 - Produces: `tests.e2e.conftest.purge_conversation(conn, conversation_id) -> None`; `PURGE_ORDER` deletes the
   record whose response names the run; `EVIDENCE_ROOTS` includes `reports/admission`.
 
-- [ ] **Step 1: The purge helper and the evidence root**
+- [x] **Step 1: The purge helper and the evidence root**
 
 In `tests/e2e/conftest.py`:
 
@@ -7335,7 +7335,7 @@ JWT = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}
 Run: `uv run python -m pytest tests/plan_b/test_evidence.py -q`
 Expected: `2 passed` (`reports/admission` does not exist yet; the scan treats a missing root as empty).
 
-- [ ] **Step 2: The live admission module**
+- [x] **Step 2: The live admission module**
 
 Create `tests/e2e/test_admission_live.py`:
 
@@ -7782,7 +7782,7 @@ async def test_r115_live_errors_use_the_safe_schema(created: list[str], lines: l
 Run: `uv run python -m pytest tests/e2e/test_admission_live.py -q`
 Expected: `6 skipped` (the live gate).
 
-- [ ] **Step 3: Run it live and read the evidence**
+- [x] **Step 3: Run it live and read the evidence**
 
 With the dev stack up and `uv run python scripts/skeleton.py status` showing every process down:
 
@@ -7819,13 +7819,13 @@ line each in the file; they are wrapped here at 120 characters.) Read the file a
 cookie and no id of the second tenant (it holds none of either by construction: the bearer values are persona names,
 every id is ALPHA's, and riley's refusal is named by its status only).
 
-- [ ] **Step 4: The walking skeleton again, six processes, keys on every mutation**
+- [x] **Step 4: The walking skeleton again, six processes, keys on every mutation**
 
 Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_r105_walking_skeleton.py -q`
 Expected: `1 passed`; `reports/skeleton/r105-walking-skeleton.txt` is rewritten with the same nine events ending
 `action.confirmed`, and the module's clean-up has deleted the idempotency records of every key it sent.
 
-- [ ] **Step 5: Gates and commit**
+- [x] **Step 5: Gates and commit**
 
 Format, lint and count characters on the three test files.
 
@@ -7866,7 +7866,7 @@ Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-
 this task commits); a commit that revised this plan before execution started is at or before `<base>` and so never
 falls inside the range. `<date>` is `date -u +%F` on the day of the close-out.
 
-- [ ] **Step 1: Handoff records**
+- [x] **Step 1: Handoff records**
 
 Run this once from the repository root, with `BASE` set to the hash Task 1 Step 1b recorded (it rewrites the two JSON
 files in their own format: two-space indent, non-ASCII kept, one trailing newline, which round-trips both files byte
@@ -7952,7 +7952,7 @@ EOF
 Expected: it prints the span (for example `1a2b3c4..5d6e7f8`). `git diff --stat handoff` shows three files changed;
 `git diff handoff/acceptance-matrix.json` shows only the six rows.
 
-- [ ] **Step 2: Project state**
+- [x] **Step 2: Project state**
 
 In `SESSION_STATE.md`:
 
@@ -8033,7 +8033,7 @@ messages through the new identity column and changes no row.
 5. In the line that begins `**Repository:**`, replace ``branch `plan-f` (Plan F work on top of `plan-e`,`` with
    ``branch `plan-g` (Plan G work on top of `plan-f`, on top of `plan-e`,`` (the rest of the line is unchanged).
 
-- [ ] **Step 3: Status, history and the documents**
+- [x] **Step 3: Status, history and the documents**
 
 `STATUS.md`: append
 
@@ -8136,7 +8136,7 @@ Under `PROFILE=test` only, `POST /internal/faults/drop_before_commit` arms the c
 test uses.
 ```
 
-- [ ] **Step 4: Final gates**
+- [x] **Step 4: Final gates**
 
 ```bash
 PYTHONUTF8=1 uv run python scripts/check.py
@@ -8148,7 +8148,7 @@ Expected: `CHECK: GREEN` with `788 passed, 104 skipped`; `CHECK: GREEN` with `87
 Then `git checkout -- reports/bootstrap reports/auth`; the live run rewrote `reports/admission` and
 `reports/skeleton`, and Step 5 commits both. Tick this plan's checkboxes (`- [ ]` → `- [x]`) for every step executed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add handoff SESSION_STATE.md STATUS.md README.md api/README.md sweeper/README.md docs/PROJECT_HISTORY.md

@@ -2,9 +2,9 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan F (T11) is executed on branch `plan-f` (`0d1a892..ad3163f`, on top of `plan-e`: the seven tasks, the handoff close-out and the final-review fix wave; the record commit follows). Owner inputs still pending, unchanged: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) merge the stacked PRs #1-#5 in order (plan-b -> main, plan-c -> plan-b, plan-d -> plan-c, plan-e -> plan-d, plan-f -> plan-e; all five are green on CI, T06 closed); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata of Plan C and the errata of Plan E and Plan F below; one new input: (5) decide errata 26-34 (the dev database was migrated to 0005 by the owner on 2026-10-09 and the six processes were proved up and down against it). Next is Plan G: T12 (admission router and Idempotency-Key) or T13 (leases); both depend only on T09 and T12 comes first in the backlog's order, so write Plan G for T12 unless the owner prefers T13, and dry-run it on scratch copies before executing.
+**Next task:** Plan G (T12) is executed on branch `plan-g` (`c5d3bbc..24207e2`, on top of `plan-f`: the seven tasks; the close-out commit follows). Owner inputs: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) merge the stacked PRs in order and open the plan-g -> plan-f PR; (3) T44 step 10 (`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F and G (G: 35-44 below); (5) migrate the dev database to revision 0006 (`uv run python scripts/skeleton.py migrate`, dev profile: it adds `app.idempotency_request` and `messages.seq` and numbers the existing messages; nothing is deleted). Next is Plan H: T13 (leases, wake-ups and the lease fence; it now also owns the global queue bound), the earliest dependency-satisfied task in `handoff/tasks.json`.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-f` (Plan F work on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09 (`origin/plan-e` is two docs commits behind local `plan-e`; a `git push origin plan-e` brings it level before the plan-f -> plan-e PR). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`). Merging them in order is the owner's call.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-g` (Plan G work on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09 (`origin/plan-e` is two docs commits behind local `plan-e`; a `git push origin plan-e` brings it level before the plan-f -> plan-e PR). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`). Merging them in order is the owner's call.
 
 ## Done in the planning session (2026-10-06)
 
@@ -221,6 +221,93 @@
   - the back-channel live test's session counts are not scoped to its own `sid`.
 - **Final whole-branch review** (opus): 0 Critical / 2 Important / 9 Minor, closed in one fix wave (bc6d16c, ad3163f) with a clean re-review; record `docs/reviews/plan-f-final-review-2026-10-09.md`. The two Important findings: the 30-minute idle limit was undone by the 8 h provider session (fixed two ways: `max_age` on the authorization request with a bounded `auth_time` in the ID-token verifier, and an expired session row now ends the provider session with its sealed refresh token, live-proved by the login form reappearing), and the disable live test lacked positive controls (added). Also closed: the override is consumed by the first successful sync; absent subjects are confirmed by a direct read before deactivation; a key-set outage is a retryable 503 at the callback and the back-channel endpoint; a failed back-channel write is logged. Still open with owners: quoted conninfo passwords and a generic `token=` key are not redacted (T28); a close that raises during startup cleanup masks the original error (T13/T30). Optional minors from the re-review: the `auth_time` bound and Keycloak's own `max_age` check can disagree at the boundary (one retry); the post-disable `me` check has a tens-of-milliseconds flake window against the sweeper tick.
 
+## Plan G executed (2026-10-10, branch `plan-g`)
+
+- T12 = `c5d3bbc..24207e2` (the debt list first, then the seven tasks). The plan
+  (`docs/superpowers/plans/2026-10-10-first-slice-g-admission-idempotency.md`) holds the thirty rulings; the
+  inputs are `docs/superpowers/research/2026-10-09-plan-g-inputs.md` and
+  `docs/superpowers/research/2026-10-10-plan-g-spike.md`.
+  Evidence: `tests/e2e/test_admission_live.py` and `reports/admission/t12-admission.txt` (header plus fourteen lines),
+  `tests/e2e/test_migration_0006_live.py`, `reports/skeleton/r105-walking-skeleton.txt` (R105 with keys); the unit
+  half is in `tests/plan_g/`.
+- Gates: `check.py` 805 passed / 104 skipped; `check.py --profile test` 888 passed / 21 skipped; `verify_handoff.py`
+  exit 0 (STATUS.md, "Update — Plan G executed"). The plan's stated tails (788/104 and 871/21) are offset by +17, the
+  tests the fix rounds added (see ruling (d)).
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan F's
+  thirty-four:
+  35. BS:264: the Idempotency-Key is required on every `/api/v1` mutation; `/auth/logout` and
+      `/auth/backchannel-logout` are exempt by design, and the test-profile fault route from the key only (it keeps
+      identity and the CSRF/origin check).
+  36. SA:429 (AM-20.2 `idempotency_request`): the sweeper holds SELECT beside its DELETE (erratum 25 extended).
+  37. SA:188: the lock order begins with the idempotency scope's advisory lock, PostgreSQL's two-key form
+      `pg_advisory_xact_lock(1, hashtext(<scope>))` (namespace 1, `hashtext`), a lock space distinct from the asset
+      guard's one-key locks.
+  38. BS:548 and R017: a read-only (`answer_only`) run holds the conversation slot and needs an asset and an
+      interval.
+  39. BS:550: T12 bounds QUEUED runs per tenant (default 100); the global bound moves to T13. A full tenant queue
+      answers 429 with `Retry-After` and writes nothing: AM-16's "nothing written except the idempotency record"
+      covers the router's 409 and 422 rejections; a 429 writes nothing.
+  40. SA:369 (AM-16 `clarification_reply`): the entry is BS:273's `POST /api/v1/runs/{id}/clarifications`; on the
+      messages route `kind=clarification` is a 422 reject.
+  41. SA:450: `supersedes_run_id` is validated against the tenant and the conversation.
+  42. BS:230 with SA:370/SA:372: the message sequence is the table-wide identity `messages.seq`; the stored kinds
+      are `investigate`, `ask`, `status_question`, `status_answer`, `clarification_question`, `clarification_reply`;
+      `author` is NULL exactly for the two system kinds.
+  43. BS:301: a wrong method keeps 405 (`INVALID_INPUT`, with `Allow`); the body limit is 422, never 413, and is
+      checked before identity because it is middleware.
+  44. SA:373 (AM-16 `reject`): an unroutable `kind` and an over-limit text are refused by the strict request model
+      as an unrecorded 422 before the router; only the router's own rejects write a record.
+- Rulings made during execution (three amend plan rulings 19 and 12; the plan text stays as written, this is the
+  record):
+  - (a) Amends ruling 19 (Task 1 review): psycopg's class-53/54 errors are flat siblings of `OperationalError`, not a
+    hierarchy, so the retryable split is by SQLSTATE inside `_database_down`: class 54 and 53400
+    (configuration_limit_exceeded) answer the non-retryable 503 "service error"; 53100/53200/53300 (disk full, out of
+    memory, too many connections) stay retryable; the two class-specific handler registrations are gone. Why: BS:562
+    says never retry what is not transient. Tests cover the five limit classes and DiskFull.
+  - (b) Amends ruling 19 (Task 1 review): the catch-all is no longer a Starlette `Exception` handler (whose
+    ServerErrorMiddleware re-raises, so the server logs the traceback with the exception's text) but the outermost
+    pure-ASGI middleware `SafeErrors` in `api/src/ops_api/limits.py` (order SafeErrors, RequestId, BodyLimit): one
+    ERROR line with the request id and the exception class, never its text; the safe 503 `retryable: false` if the
+    response has not started; no re-raise. The request id is read everywhere through
+    `limits.request_id_of(request.scope)`.
+  - (c) Amends ruling 12 (Task 3 review): the window number pattern reads any number of ASCII digits with optional
+    thousands commas and an optional or leading decimal point (`[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?` or `\.[0-9]+`), so
+    "last 12345 hours", "last 1,000 hours" and "last .5 days" are read and can conflict or fall out of range; the form
+    never wins silently on a number the parser can see. `AdmissionRule.cause` and `AdmissionDecision.cause` are typed
+    `ClarifyCause | RejectCause | None`; `TEXT_ASSET`'s quantifiers are capped at `{0,31}` (linear) with the
+    32-character check kept; `said()` pluralises; the R129 walk asserts causes and shares the module's
+    `resolution_for`.
+  - (d) Gate arithmetic: the plan's per-task tails are offset by the tests the fix rounds added (+5 Task 1, +5
+    Task 3, +2 Task 4, +5 Task 5 = +17 by Task 6); the deltas held at every task. Final tails: `check.py` 805 passed /
+    104 skipped; `--profile test` 888 / 21. The evidence file has a header and fourteen lines, not twelve (Task 6's
+    review made R016's replay-after-the-run-moved-on proof and the status-answer counts their own lines).
+  - (e) Task 2 review minors: the live purge proof binds the seeded key; the write-once live test cleans up by key and
+    filters its sweeper DELETE by key; a comment records that pre-0006 rows get `seq` in physical scan order (readers
+    needing history order on them sort by `(created_at, seq)`).
+  - (f) Task 4 review minors: a test pins the replayed request-id rewrite at the store layer; the
+    recording-connection test pins the job INSERT's grant shape (no RETURNING, no conflict target) and the two DbUnit
+    refusal paths.
+  - (g) Task 5 review minors: every R115 unit case asserts `code` and `retryable`; HTTP tests for the fault route's
+    refusals, the cookie-mode CSRF refusal, the absent-run and other-tenant 404s on clarifications, and the
+    missing-asset / missing-interval clarifications; `test_auth_live.py` deletes its records by key like R105.
+- **Open items for later**, parked by the task reviews and the ledger
+  (`.superpowers/sdd/2026-10-10-first-slice-g-admission-idempotency/progress.md`):
+  - a malformed thousands group ("last 1,00 hours") is invisible to the window parser, so the form wins silently;
+    other-script digits are unread by design (ASCII only) -> T21 (revision parsing) or a later parser pass;
+  - `_idempotent`'s "not reusable yet" refusal for an unpurged expired record does the work and rolls it back before
+    answering (correct, wasteful, rare); if the sweeper purges between the rollback and the re-read the client is
+    told to use a new key for a key that just became reusable (harmless) -> T14/T28 polish;
+  - `decide_once` reuses the "stale" message for any `Conflict` code (only `VERSION_CONFLICT` reaches it today) ->
+    T21;
+  - `create_app` sets `app.state.store.faults = faults` on whatever the store factory returns (works because
+    `AdmissionStore` declares `faults`); passing faults into the store would be cleaner -> T13 (fault factory);
+  - the global queue bound (BS:550 "100 total") is unreachable by the `api` role under RLS; only the per-tenant quota
+    exists -> T13 (already a debt line of Plan G);
+  - the deferred items of the Plan G debt list keep their owners: the model hint's producer -> T19, `resume_input`
+    handling and the ANSWERED path -> T20, `stream_url` -> T27, response schemas -> T26, the `feedback` table -> T21.
+- **Final whole-branch review:** recorded by the controller after the review (its record and any fix wave follow
+  this close-out).
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -335,8 +422,15 @@ The owner approved migrating the dev database: `skeleton.py migrate` (dev profil
 
 **Update (2026-10-09):** the owner ran `uv run python scripts/skeleton.py migrate` (dev profile) after Plan F closed: the dev `ops` database is at revision `0005_sessions_login_logout` (`sessions` columns, `app.login_state`, `app.logout_jti`; `sessions` was empty, so nothing was at risk). `skeleton.py up` then brought all six processes (incident-sim, mcp-read, mcp-write, api, worker, sweeper) to ready under their own roles and `down` stopped them. The shared dev realm already carries the Plan F clients (`ops-test-admin`, the `ops-web` back-channel attributes, the 8 h SSO lifetimes) from the re-import in Task 2.
 
+**Update (2026-10-10):** Plan G adds revision 0006. The dev `ops` database stays at 0005 until the owner runs
+`uv run python scripts/skeleton.py migrate` (dev profile); until then `skeleton.py up` fails fast because the API
+and the sweeper refuse to start without `app.idempotency_request`. The upgrade adds the table, numbers the existing
+messages through the new identity column and changes no row.
+
 ## Open owner inputs
 
+- Migrate the dev database to revision 0006 (`uv run python scripts/skeleton.py migrate`, dev profile), then decide
+  errata 35-44 (see "Plan G executed").
 - Merge the stacked PRs #1-#5 in order (opened 2026-10-09, all green on CI; the first merge also exercises the push-to-main trigger).
 - Decide on the nine proposed contract errata (see "Plan C executed").
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.

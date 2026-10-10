@@ -135,3 +135,24 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 - PRs #1-#5 opened for the stack (plan-b -> main, plan-c -> plan-b, plan-d -> plan-c, plan-e -> plan-d, plan-f -> plan-e) with plan summaries from this file.
 - The first five CI runs were `CHECK: RED` on a single ruff finding, EXE001 on `scripts/verify_handoff.py` (a shebang without the executable bit; ruff skips the rule on Windows, where every local check had run). Every test passed on the Linux runner (93, 382, 459, 531 and 680 passed; one more than locally, the POSIX-only permissions test). Fixed by a file-mode commit on `plan-b` cherry-picked onto the four branches above it; all five re-runs are green. First green run: https://github.com/jschnepel/MLOps/actions/runs/37962510516; the red one: https://github.com/jschnepel/MLOps/actions/runs/37962039002. Record: `reports/ci/t06-first-ci-runs.txt`.
 - T06 is `DONE` and R103 is evidenced (`RECORDED_LOCALLY_LIVE`, on GitHub-hosted runners with the read-only token and no secrets). The push-to-main trigger fires with the first merge.
+
+## Update — Plan G executed (2026-10-10, branch `plan-g`)
+
+- Plan G (T12 durable admission, the AM-16 admission router, the scoped Idempotency-Key and the safe error
+  surface) executed on branch `plan-g` (`c5d3bbc..24207e2`, on top of `plan-f`). The plan is
+  `docs/superpowers/plans/2026-10-10-first-slice-g-admission-idempotency.md`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `805 passed, 104 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `888 passed, 21 skipped`.
+  `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
+- **Evidenced** (acceptance matrix `RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R015, R016, R017,
+  R018, R115 and R129 (the admission half; T20 owns the graph router's). A crash before commit leaves no message,
+  run, job or record and the same key then commits; a replay returns the first answer byte for byte and a changed
+  body or another conversation under the same key is 409; two connections racing one conversation give one 202 and
+  one 409 with one slot holder, and one key racing itself gives two identical 202s and one run; the interval ends on
+  the database clock and a replay three days later returns the same interval; a text that disagrees with the form
+  is a stored clarification and never a job; every admission route answers live; every error is the safe schema
+  with its request id (`reports/admission/t12-admission.txt`).
+- The dev `ops` database needs revision 0006 (an owner input); the API and the sweeper refuse to start until then.
+- Deferred, each with its owner in `SESSION_STATE.md`: the global queue bound -> T13; the model hint's producer ->
+  T19; `resume_input` handling and the ANSWERED path -> T20; `stream_url` -> T27; response schemas -> T26; the
+  `feedback` table -> T21. Ten errata (35-44) are proposed for the owner to decide.

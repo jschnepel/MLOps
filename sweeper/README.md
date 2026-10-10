@@ -4,7 +4,7 @@ Scheduler process (AM-20.1): membership sync, expiry purges; later leases, wake-
 
 ## Owns
 The membership sync (deactivation of disabled or deleted users, `synced_at`), the per-minute maintenance job rows, the
-purge of expired sessions, login state and logout-token ids
+purge of expired sessions, login state, logout-token ids and idempotency records past their replay window (T12)
 
 ## Trusts
 The realm's user listing through `ops-view-users` (read-only) and its own `sweeper` grants

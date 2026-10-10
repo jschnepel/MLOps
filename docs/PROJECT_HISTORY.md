@@ -232,6 +232,45 @@ changed its shape. The brief's decisions survived every round; what the rounds f
 ruling and its code (a lock named in prose but taken last; a record rule that swept in a transient refusal; a parser
 that read half the units people write), which is exactly the distance a dry run cannot see and a critic can.
 
+**Execution (seven tasks, `c5d3bbc..24207e2`; every task reviewed, one fix round each, every re-review clean).** The
+plan ran as written: the debt list first, then Tasks 1 to 7, with six per-task reviews that found no Critical defect and
+a fix round after each. Tasks 1, 3 and 6 needed fixes; Tasks 2, 4 and 5 were approved with minors, most of them applied
+in a fix round. Three findings changed a plan ruling, and the plan's text stays as written with the change recorded in
+`SESSION_STATE.md`.
+
+**Problem.** Ruling 19 mapped psycopg's limit errors (class 54, such as too many columns or arguments) to a
+non-retryable 503 by registering two exception classes ahead of the lost-connection handler, on the premise that they
+were subclasses of `OperationalError`. They are flat siblings: the library gives each its own class under the one
+parent, so a client told to retry a defect would have retried it forever. **Change.** `_database_down` routes by
+SQLSTATE: class 54 and 53400 answer the non-retryable "service error", while disk full, out of memory and too many
+connections stay retryable; the two registrations are gone. The same review found that the catch-all `Exception`
+handler is not safe: Starlette's outer error middleware re-raises after the handler answers, so the server logged the
+traceback with the exception's text. **Change.** The catch-all became the outermost pure-ASGI middleware
+`SafeErrors`, which logs one line with the request id and the exception class and never the text, answers the safe
+503 and does not re-raise.
+
+**Problem.** Ruling 12 gave the window parser the pattern `\d{1,4}`, so "last 12345 hours", "last 1,000 hours" and
+"last .5 days" beside a form window of 24 hours were invisible to the parser and the form won silently: a 24-hour
+investigation for a 12,345-hour request, the exact guess the ruling exists to forbid. **Change.** The number pattern
+reads any run of ASCII digits with optional thousands commas and a decimal point, so such texts conflict or fall out
+of range and the requester is asked. The same review typed the router's causes (`ClarifyCause | RejectCause | None`)
+so the status mapping is exhaustive, capped the asset scan at 31 characters so it is linear, and made the R129 walk
+assert causes instead of only statuses.
+
+**Problem.** The Task 6 review found that R016's headline property, a recorded 202 replaying after the run it
+created had moved on, was never exercised live, and that the evidence file was written even when a test failed
+half-way. **Change.** The investigate key became fixed, the replay runs after the run is awaiting input and after the
+reply, the status-answer counts and a skeleton-down guard were added, and the evidence file is written only when
+complete (a header and fourteen lines instead of the planned twelve).
+
+The smaller review findings were test depth rather than behaviour: a live purge proof that did not bind its key, a
+write-once test that did not clean up by key, a replayed request-id rewrite and a job INSERT grant shape that no test
+pinned, R115 cases that asserted the status but not the `code` and `retryable` fields, and HTTP tests for the fault
+route's refusals and the missing-asset clarification. The gate tails ended at 805 passed / 104 skipped and 888 / 21,
+seventeen above the plan's, the tests those fix rounds added; the per-task deltas held throughout. Five observations
+were parked with owners instead of fixed (a malformed thousands group, the expired-record refusal, the reuse of the
+stale message for any conflict, the fault attribute on the store, and the global queue bound).
+
 ## 25. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.
