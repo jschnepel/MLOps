@@ -40,7 +40,8 @@ the six services, `scripts/skeleton.py`, `tests/e2e/`, and the Plan D/F unit tes
 ## Global Constraints
 
 Carried from Plan F's header, verbatim (rewrapped to 120 characters; "Plan F" and "T11" there mean the plan that
-wrote them, and the Plan G additions below say how each applies here):
+wrote them, and the Plan G additions below say how each applies here; the one change is `reports/auth` in the
+post-live checkout, which the round-1 dry run found rewritten by every live run):
 
 - **Debt before code (SA:698).** The Plan F debt list (below) is committed in Task 1 before any code changes.
   Nothing not on the list may be shortcut; every line names its owning task.
@@ -88,9 +89,9 @@ wrote them, and the Plan G additions below say how each applies here):
   `PYTHONUTF8=1 uv run python scripts/check.py` GREEN after every task,
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exit 0, and the live suite
   `PYTHONUTF8=1 uv run python scripts/check.py --profile test` after every task that changes a migration, a service,
-  the realm or a live test. After a live run: `git checkout -- reports/bootstrap reports/skeleton` (both are
-  rewritten by live runs; a task commits the R105 file only when it says so). `verify_handoff.py` runs in every
-  task's gate step. mypy's incremental cache can report spurious errors after many edits; rerun with
+  the realm or a live test. After a live run: `git checkout -- reports/bootstrap reports/skeleton reports/auth` (all
+  three are rewritten by live runs; a task commits the R105 file only when it says so). `verify_handoff.py` runs in
+  every task's gate step. mypy's incremental cache can report spurious errors after many edits; rerun with
   `--no-incremental` before treating one as real.
 - **No interim red across tasks.** Task 2 changes the realm export and the `sessions` table under Plan D's API, which
   gains its session code only in Task 4; nothing is red between tasks: the API keeps the bearer path, the autouse
@@ -110,7 +111,8 @@ Plan G additions (they win over the carried text where the two differ):
   before any code change; Plan G touches no realm, no secret and no Keycloak object, so `bootstrap_dev.py` is never
   run and no realm re-import happens.
 - **Counting characters** (the carried "Comments" rule): print every line over 120 characters in the given files;
-  no output means the files pass.
+  no output means the files pass. The lists never name `pyproject.toml`: its line 53 (the `norecursedirs` comment,
+  121 characters) predates Plan G and is not Python.
 
   ```bash
   uv run python - <files> <<'EOF'
@@ -138,8 +140,9 @@ Plan G additions (they win over the carried text where the two differ):
   default stays `now()`.
 - **Tests, here:** Plan G's unit tests live in `tests/plan_g/` (added to `testpaths` in Task 1), its live tests in
   `tests/e2e/`; `tests/plan_d/test_api.py`, `tests/plan_f/test_api_auth.py`, `tests/plan_e/test_transitions_table.py`,
-  `tests/plan_f/test_sweeper.py`, `tests/plan_b/test_evidence.py`, `tests/e2e/conftest.py` and the two live modules
-  that post to the API are updated in the task that changes the interface they pin, never deleted.
+  `tests/plan_f/test_sweeper.py`, `tests/e2e/test_sweeper_live.py`, `tests/plan_b/test_evidence.py`,
+  `tests/e2e/conftest.py` and the two live modules that post to the API are updated in the task that changes the
+  interface they pin, never deleted.
 - **No `noqa: BLE001`** and no broad `except Exception` added by this plan (the one existing `except Exception` in
   the back-channel route is Plan F's and stays).
 - **No interim red, here:** every task ends with the dev gate GREEN at the stated counts and, where it changes a
@@ -172,10 +175,12 @@ Plan G additions (they win over the carried text where the two differ):
    in Task 3 (`test_text_and_fields`, its rows "Compare B22 with A17, last 24 hours." and "Investigate B22 over the
    last 24 hours.", and `test_questions_name_what_disagreed`) and live in Task 6 (R018).
 5. **A member whose membership was revoked must not replay a recorded success** (BS:264: an authenticated current
-   session): identity runs before the record. Pinned in Task 5
-   (`test_a_revoked_member_cannot_replay_a_recorded_success`). A clarification reply with a stale
+   session): identity runs before the record, and so does the role. Pinned in Task 5
+   (`test_a_revoked_member_cannot_replay_a_recorded_success`,
+   `test_a_member_who_lost_the_reviewer_role_cannot_replay_a_decision`). A clarification reply with a stale
    `expected_version`, the sixth candidate, is pinned too: Task 4
-   (`test_a_reply_binds_to_the_outstanding_question_and_its_version`) and Task 5
+   (`test_a_reply_binds_to_the_outstanding_question_and_its_version`,
+   `test_the_reply_locks_the_run_before_it_checks_or_writes`) and Task 5
    (`test_a_stale_clarification_reply_is_a_recorded_409`).
 
 ## Rulings (decisions the spec leaves to this plan)
@@ -210,23 +215,32 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
 4. **The record is the response.** `app.idempotency_request(tenant_id, subject, route, key, fingerprint_sha256,
    status_code smallint, response jsonb, created_at DEFAULT clock_timestamp(), expires_at, PRIMARY KEY (tenant_id,
    subject, route, key))`, no RLS (SA:523), owned by `migrator`; `api` sel+ins, `sweeper` sel+del (erratum 25
-   extended, erratum 36). A replay returns the stored status and body, rendered with sorted keys so the bytes are
-   the first answer's; a replayed 202 says `QUEUED` even when the run moved on. The row is written last in the unit
-   (SA:188) by a target-less `INSERT … ON CONFLICT DO NOTHING`. — Why: BS:299 asks for "the same logical result", and
-   `api` holds no UPDATE (SA:429), so there is no "in progress" row to complete; the full answer is the only thing a
-   replay can return without re-deciding (spike §1: write-once works with SELECT + INSERT; jsonb reorders keys, so
-   the rendering is canonical). — Cost if wrong: a client that wants the current state follows `status_url`.
+   extended, erratum 36). A replay returns the stored status and body, rendered with sorted keys. A success body
+   carries no request id, so its bytes are the first answer's; a replayed error (status ≥ 400) has its `request_id`
+   rewritten to the replaying request's id before serialisation (`idempotency.replay`), so its `X-Request-Id`
+   header, its body and the log line agree. A replayed 202 says `QUEUED` even when the run moved on. The row is
+   written last in the unit (SA:188) by a target-less `INSERT … ON CONFLICT DO NOTHING`. — Why: BS:299 asks for "the
+   same logical result", and `api` holds no UPDATE (SA:429), so there is no "in progress" row to complete; the full
+   answer is the only thing a replay can return without re-deciding (spike §1: write-once works with SELECT +
+   INSERT; jsonb reorders keys, so the rendering is canonical); BS:301's `request_id` names the request a client
+   sent, and an id from another request would match no log line. — Cost if wrong: a client that wants the current
+   state follows `status_url`.
 5. **What gets a record: the router's verdict and the route's own decisions.** 201/202/200, 409 `SLOT_OCCUPIED`,
-   409 `VERSION_CONFLICT`, 404 for a conversation, run or proposal the caller cannot see, 422 router rejections and
-   429 are recorded; 401, 403, the 422s of header, body size and body parse, 409 `IDEMPOTENCY_CONFLICT` and 503 are
-   not. Rule of thumb in the code: the router's verdict is recorded; everything before the router is not. — Why:
-   AM-16's reject row writes "nothing … except the idempotency record"; a refusal of identity or shape decided
-   nothing, and a 503 committed nothing (BS:681). — Cost if wrong: a replay of a recorded 404 stays 404 after the
-   conversation appears (it cannot appear under the same id: ids are server-made).
+   409 `VERSION_CONFLICT`, 404 for a conversation, run or proposal the caller cannot see, and the 422 router
+   rejections are recorded; 401, 403, the 422s of header, body size and body parse, 409 `IDEMPOTENCY_CONFLICT`, 429
+   and 503 are not. A 429 is transient (`Retry-After` promises the same request a later success), so the unit raises
+   `QueueFull`, rolls back and writes nothing, and a retry under the same key is admitted once the quota allows.
+   Rule of thumb in the code: the router's verdict is recorded; everything before the router, and the queue's
+   momentary fill, is not. — Why: AM-16's reject row writes "nothing … except the idempotency record", which covers
+   the 409 and 422 rejections; a refusal of identity or shape decided nothing, and a 429 or a 503 committed nothing
+   (BS:681); a recorded 429 would replay for the whole window after the queue drained. — Cost if wrong: a replay of
+   a recorded 404 stays 404 after the conversation appears (it cannot appear under the same id: ids are server-made).
 6. **In-flight duplicates wait on an advisory lock on the scope.** The unit's first statement is
-   `SELECT pg_advisory_xact_lock(hashtextextended('<tenant>|<subject>|<route>|<key>', 0))`, then the lookup
-   (`expires_at > app.current_time()`): a hit replays, a miss proceeds. The loser of a race waits, then replays the
-   winner's record. The lock comes before every table lock (erratum 37 adds it to SA:188's order). The final
+   `SELECT pg_advisory_xact_lock(1, hashtext('<tenant>|<subject>|<route>|<key>'))`, PostgreSQL's two-key form in
+   namespace `IDEMPOTENCY_LOCK_NAMESPACE = 1`, a lock space kept apart from the asset guard's one-key (bigint) locks
+   (SA:189); then the lookup (`expires_at > app.current_time()`): a hit replays, a miss proceeds. The loser of a race
+   waits, then replays the winner's record. The lock comes before every table lock (erratum 37 adds it to SA:188's
+   order). The final
    `ON CONFLICT DO NOTHING` is belt and braces: rowcount 0 rolls the unit back and the store re-reads; a test proves
    that path with a pre-inserted (expired, unpurged) row. — Why: spike §1 measured both alternatives: with the record
    written last a racing replay gets `SLOT_OCCUPIED` from `create_run` instead of its 202, and with it written first
@@ -295,13 +309,21 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
     allowed while the conversation is busy; the parser is not run. — Why: SA:370 ("answered from recorded events and
     state … no run, no job, no run event") and R017. — Cost if wrong: the wording changes with T26.
 15. **`clarification_reply` enters through BS:273's `POST /api/v1/runs/{run_id}/clarifications`** with the existing
-    `ClarificationReply(question_id, expected_version, context)`. The run must be the caller's tenant's (404), in
-    `AWAITING_INPUT` at `expected_version` (else 409 `VERSION_CONFLICT`), and `question_id` must be its latest
-    `clarification.requested` event (else 404 "no outstanding clarification"). One unit: a `clarification_reply`
-    message ("Clarification: asset {asset_id}, hours {hours}"), a `resume_input` job by target-less `INSERT … ON
-    CONFLICT DO NOTHING` (dedup `<run_id>:<question_id>`, `available_at = app.current_time()`; rowcount 0 means the
-    question was already answered: 409), `clarification.received` through `persistence.append_event`, the record;
-    202 with the accepted body. On the messages route `kind=clarification` is `reject`, 422 "clarification replies go
+    `ClarificationReply(question_id, expected_version, context)`. After the scope's advisory lock and the record
+    lookup, the unit's first table statement locks the run: `SELECT run_id, state, state_version, requester,
+    conversation_id FROM app.runs WHERE run_id = %s FOR UPDATE` (SA:186: an API mutation serialises on the run row
+    plus `expected_version`; SA:188: runs before messages; `api` holds a column UPDATE on `runs`, Plan E ruling 23).
+    Under that lock the run must be the caller's tenant's and the caller must be its `requester` (else 404 "no such
+    run", recorded: existence is not disclosed, and a reply's author must never be another requester who could then
+    review the draft it shaped, SA:539), in `AWAITING_INPUT` at `expected_version` (else 409 `VERSION_CONFLICT`), and
+    `question_id` must be its latest `clarification.requested` event (an earlier one of the same run is 409
+    `VERSION_CONFLICT` "the clarification was superseded"; any other id is 404 "no outstanding clarification"). Then,
+    in this order: a `clarification_reply` message ("Clarification: asset {asset_id}, hours {hours}"), a
+    `resume_input` job by target-less `INSERT … ON CONFLICT DO NOTHING` (dedup `<run_id>:<question_id>`,
+    `available_at = app.current_time()`; rowcount 0 means the question was already answered: 409),
+    `clarification.received` through `persistence.append_event`, the record; 202 with the accepted body. A cancel or
+    a worker transition therefore waits for the unit or wins before it, never in between. On the messages route
+    `kind=clarification` is `reject`, 422 "clarification replies go
     to /api/v1/runs/{run_id}/clarifications". The live test stages `AWAITING_INPUT` through the worker role's
     `app.transition_run`; the worker finishes the `resume_input` job unhandled today (fact sheet §3.13). — Why:
     `MessageRequest` has no `question_id` (a schema change would ripple through `build_schemas.py`); `api` holds INSERT
@@ -326,7 +348,8 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
     before routing, which is the bound itself.
 18. **429 is a per-tenant quota of QUEUED runs.** In the admission unit `SELECT count(*) FROM app.runs WHERE state =
     'QUEUED'` (RLS scopes it, spike §8); at or above `OPS_TENANT_QUEUE_QUOTA` (default 100, 1-10000) an admission
-    that would start a run is 429 `RATE_LIMITED` "tenant queue is full" with `Retry-After: 5`, recorded, no run. —
+    that would start a run is 429 `RATE_LIMITED` "tenant queue is full" with `Retry-After: 5`, no run, and not
+    recorded (ruling 5: the unit raises `QueueFull` and rolls back, so the same key is admitted later). —
     Why: BS:550 bounds queued work; `api` cannot count across tenants or read `jobs` (spike §8: 42501), so the global
     "100 total" needs a definer or a grant (debt → T13; erratum 39). A status question or a clarification adds
     nothing to the queue and is never a 429. — Cost if wrong: the unit test sets the quota to 1; the live test does
@@ -343,8 +366,10 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
     traceback through the redaction filter. — Cost if wrong: a client stops retrying a defect a restart would fix.
 20. **`request_id`.** An ASGI middleware `RequestId` assigns `uuid4()` per request (a client's `X-Request-Id` is
     ignored), keeps it in `scope["state"]` (`request.state.request_id`), echoes it as `X-Request-Id` on every
-    response, and every error body carries it; error log lines include it. `safe(request, status, code, message, *,
-    retryable=False)` takes the id from the request; `ApiError` is unchanged. — Why: today's id is random per error
+    response, and every error body carries it (a replayed recorded error too: ruling 4); error log lines include it
+    (the `failed` line, the enabled check's line and the back-channel route's four lines, from
+    `request.state.request_id`). `safe(request, status, code, message, *, retryable=False)` takes the id from the
+    request; `ApiError` is unchanged. — Why: today's id is random per error
     and logged nowhere (fact sheet §3.1), so an operator cannot match a client's report to the log. — Cost if wrong:
     none; the header is additive.
 21. **Check order on the messages route.** identity (401) → CSRF/origin (403) → role `requester` (403) →
@@ -352,10 +377,12 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
     `IDEMPOTENCY_CONFLICT`) → conversation in tenant (404) → quota count → active-run read → router → effect → record
     → commit. The body size is checked first of all, because it is middleware (erratum 43). A replay by a subject
     whose membership was revoked fails at identity (401) and never reaches the record. Conversations: identity →
-    CSRF → key → unit. Decisions: `enabled_identity` → key → body → unit (lock, lookup, proposal 404, reviewer check
-    403 unrecorded, revision 409, `record_decision(…, idempotency_key=key)`, record). Clarifications: identity → CSRF
-    → `requester` → key → body → unit (ruling 15). — Why: BS:264 ("an authenticated current session") and BS:301
-    (no unauthorized existence leak before the role check). — Cost if wrong: a 401/403 learns nothing either way.
+    CSRF → key → unit. Decisions: `enabled_identity` → role `reviewer` (403, unrecorded; the `reviewer_mutation`
+    dependency, so a member who lost the role cannot replay a recorded decision) → key → body → unit (lock, lookup,
+    proposal 404, independence check 403 unrecorded, revision 409, `record_decision(…, idempotency_key=key)`,
+    record). Clarifications: identity → CSRF → `requester` → key → body → unit (ruling 15: the run's lock, then the
+    run's own requester). — Why: BS:264 ("an authenticated current session") and BS:301 (no unauthorized existence
+    leak before the role check). — Cost if wrong: a 401/403 learns nothing either way.
 22. **Conversations.** No body; 201 `{conversation_id}`; fingerprint over `{"path": {}, "body": null}`; a replay
     returns the same id. — Why: BS:270, fact sheet §5 Q24. — Cost if wrong: none.
 23. **The 202 body keeps its keys.** `conversation_id, message_id, run_id, status, state_version, status_url,
@@ -364,12 +391,14 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
     if wrong: T27 adds one key.
 24. **Crash before commit (R015, DoD 1) through a test-profile-only fault route.** `POST /internal/faults/{kind}` with
     `{"count": n}`, mirroring incident-sim's; outside `PROFILE=test` the route is not registered (the safe 404).
-    The API implements `drop_before_commit` only: the store raises `persistence.PersistenceError("fault:
+    The API implements `drop_before_commit` only: the store raises `psycopg.OperationalError("fault:
     drop_before_commit")` after the message and `create_run` and before the record and the commit, so the unit rolls
-    back and the client gets 503 `retryable: false`. The live test proves with the superuser that no message, run,
-    job or record exists, replays the same key (202: nothing was recorded) and finds the job. — Why: R098 (fault
-    hooks are test-harness-only; `core.testing.faults` refuses to exist outside the test profile) and the fact
-    sheet's §3.10 (the API had no hook). — Cost if wrong: the fault route lives under `/internal`, never `/api/v1`.
+    back and the client gets what a real crash before commit (a lost connection) gives it: 503 "database
+    unavailable", `retryable: true` (ruling 19). The live test proves with the superuser that no message, run, job
+    or record exists, retries the same key (202: nothing was recorded) and finds the job. — Why: R098 (fault hooks
+    are test-harness-only; `core.testing.faults` refuses to exist outside the test profile), the fact sheet's §3.10
+    (the API had no hook), and BS:299 (a retry is what the key is for, so the simulated crash must say "retry"). —
+    Cost if wrong: the fault route lives under `/internal`, never `/api/v1`.
 25. **`supersedes_run_id`** stays validated against the tenant and the conversation by `create_run` (no function
     change). — Why: fact sheet §3.5 measured the function's actual rule; a cross-conversation supersede would break
     the slot's meaning. — Cost if wrong: erratum 41 against SA:450's "tenant/asset".
@@ -444,13 +473,17 @@ The spec text stays authoritative until the owner decides; each line names the t
 36. **SA:429** (AM-20.2 row `idempotency_request`: `sweeper` "del (expired)"): the sweeper also holds SELECT, because
     a DELETE with a WHERE reads the row (erratum 25 extended; spike §1 measured 42501 without it) (ruling 4).
 37. **SA:188** (the lock order): "idempotency scope advisory lock" is the first entry, before the asset guard
-    advisory lock; idempotency rows are still written last (ruling 6).
+    advisory lock; it is PostgreSQL's two-key form `pg_advisory_xact_lock(1, hashtext(<scope>))` (namespace
+    `IDEMPOTENCY_LOCK_NAMESPACE = 1` in `idempotency.py`), a lock space distinct from the asset guard's one-key
+    (bigint) space, so the two never collide; idempotency rows are still written last (ruling 6).
 38. **BS:548** ("One state-mutating run per conversation") and **R017** ("Only one active mutating run"): a read-only
     (`answer_only`) run holds the conversation slot too, as SA:145's active states and `create_run` already make it,
     and it needs an asset and an interval like an investigation (ruling 10).
 39. **BS:550** ("Queued work | 100 total initially; bounded tenant quotas"): T12 enforces the tenant quota (100 QUEUED
     runs per tenant by default); the global bound needs a cross-tenant count `api` cannot make and moves to T13
-    (ruling 18).
+    (ruling 18). A full tenant queue answers 429 with `Retry-After` and writes nothing, not even the idempotency
+    record: AM-16's "nothing written except the idempotency record" covers the 409 and 422 rejections; a 429 writes
+    nothing (ruling 5).
 40. **SA:369** (AM-16 `clarification_reply` row): the route's entry is BS:273's `POST /api/v1/runs/{id}/clarifications`
     with `ClarificationReply`; on the messages route `kind=clarification` is `reject` (422) (ruling 15).
 41. **SA:450** (`create_run`: "`supersedes_run_id` validated against the tenant/asset"): the function validates it
@@ -466,17 +499,19 @@ The spec text stays authoritative until the owner decides; each line names the t
 ## File structure
 
 - `core/src/ops_core/settings.py` (Task 1): `AdmissionSettings`, `admission()`.
-- `api/src/ops_api/limits.py` (new, Task 1): `RequestId`, `BodyLimit`, `BodyTooLarge`, `read_bounded`,
-  `request_id_of`, `safe_response`.
+- `api/src/ops_api/limits.py` (new, Task 1): `RequestId`, `BodyLimit`, `BodyTooLarge`, `BodyIncomplete`,
+  `read_bounded`, `request_id_of`, `safe_response`.
 - `api/src/ops_api/app.py` (Tasks 1, 2, 5): the handlers (1), the 0006 guard (2), the key, the routes and the fault
   route (5).
 - `migrations/app/versions/0006_admission_idempotency.py` (new, Task 2): the record table, `messages.seq`, the
   CHECKs.
 - `core/src/ops_core/privileges.py` (Task 2): the `idempotency_request` row, `NO_RLS`, the docstring.
-- `sweeper/src/ops_sweeper/sync.py`, `main.py` (Task 2): the fourth purge, the startup guard.
+- `sweeper/src/ops_sweeper/sync.py`, `main.py` (Task 2): the fourth purge, the startup guard;
+  `tests/e2e/test_sweeper_live.py` (Task 2): the purge proved live on one expired record.
 - `core/src/ops_core/routing.py` (Task 3): `ADMISSION_RULES`, `REPLY_RULES`, the parser, the templates.
 - `core/src/ops_core/contracts.py` (Task 3): `StoredMessageKind`, `SYSTEM_MESSAGE_KINDS`.
-- `api/src/ops_api/idempotency.py` (new, Task 4): key, scope, fingerprint, `idempotent()`, verdict rendering.
+- `api/src/ops_api/idempotency.py` (new, Task 4): key, scope, fingerprint, `idempotent()`, `replay()`, `QueueFull`,
+  verdict rendering.
 - `core/src/ops_core/persistence.py` (Task 4): `current_time`, `insert_job_untargeted`, `latest_active_run`,
   `latest_run`, `latest_event`, `queued_count`.
 - `api/src/ops_api/store.py` (Tasks 4, 5): `Unit`, `AdmissionStore`, `DbUnit`, `DbStore` (4); the pre-T12 methods go
@@ -487,24 +522,27 @@ The spec text stays authoritative until the owner decides; each line names the t
 ## Task overview
 
 - **Task 1:** the debt list; `AdmissionSettings`; `RequestId` and `BodyLimit`; the safe error surface;
-  `tests/plan_g` on `testpaths`. Tests: `test_settings_admission.py` 5, `test_limits.py` 7, `test_error_surface.py` 7.
-  Dev gate after: 698 passed, 95 skipped.
+  `tests/plan_g` on `testpaths`. Tests: `test_settings_admission.py` 5, `test_limits.py` 8, `test_error_surface.py` 7.
+  Dev gate after: 699 passed, 95 skipped.
 - **Task 2:** revision 0006; the matrix row; the sweeper's purge and guard; the API's guard. Tests:
   `test_migration_0006.py` 3, `test_transitions_table.py` +1 (parametrised), `test_sweeper.py` +1; live
-  `test_migration_0006_live.py` 3. Dev gate after: 703 passed, 98 skipped.
+  `test_migration_0006_live.py` 3 and `test_sweeper_live.py` (changed, still 4). Dev gate after: 704 passed, 98
+  skipped.
 - **Task 3:** the router table, the parser, `StoredMessageKind`. Tests: `test_routing_admission.py` 26. Dev gate
-  after: 729 passed, 98 skipped.
+  after: 730 passed, 98 skipped.
 - **Task 4:** `idempotency.py`; the persistence helpers; `AdmissionStore`/`DbUnit`; the shared fake. Tests:
-  `test_idempotency.py` 8, `test_store_units.py` 12. Dev gate after: 749 passed, 98 skipped.
+  `test_idempotency.py` 8, `test_store_units.py` 14. Dev gate after: 752 passed, 98 skipped.
 - **Task 5:** the key dependency; the routes over the units; the clarifications route; the fault route; the Plan D/F
-  unit tests and the two live callers send keys. Tests: `test_api_admission.py` 16. Dev gate after: 765 passed, 98
+  unit tests and the two live callers send keys. Tests: `test_api_admission.py` 22. Dev gate after: 774 passed, 98
   skipped.
 - **Task 6:** live proof and evidence; the purge helper; the evidence root; R105 re-run. Tests: live
-  `test_admission_live.py` 6. Dev gate after: 765 passed, 104 skipped.
+  `test_admission_live.py` 6. Dev gate after: 774 passed, 104 skipped.
 - **Task 7:** handoff records, errata, documents, final gates. No tests.
 
-The live gate (`check.py --profile test`) after Tasks 1, 2, 4, 5 and 6: 772/21, 780/21, 826/21, 842/21 and 848/21
-passed/skipped (the dev count plus 74 live tests today, 77 after Task 2, 83 after Task 6).
+The arithmetic, once: the dev gate is 679 + 20 (Task 1: 5 + 8 + 7) = 699, + 5 (Task 2: 3 + 1 + 1) = 704, + 26 =
+730, + 22 (Task 4: 8 + 14) = 752, + 22 (Task 5) = 774; the skips are 95, + 3 live = 98, + 6 live = 104. The live
+gate (`check.py --profile test`) is the dev count plus the live tests (74 today, 77 after Task 2, 83 after Task 6):
+after Tasks 1, 2, 4, 5 and 6 it is 773/21, 781/21, 829/21, 851/21 and 857/21 passed/skipped.
 
 ---
 
@@ -514,8 +552,8 @@ passed/skipped (the dev count plus 74 live tests today, 77 after Task 2, 83 afte
 - Modify: `SESSION_STATE.md` (new debt section after `## Plan F debt list …`), `pyproject.toml:48-51` (`testpaths`),
   `core/src/ops_core/settings.py:281-282` (insert before `class Urls`), `api/src/ops_api/app.py:6-9`
   (docstring), `:18-20`, `:27-32`, `:34-37` (imports), `:56-62` (`safe`), `:113-116` (`create_app` signature),
-  `:140-141` (middlewares), `:211-215`, `:222-227`, `:231-245` (handlers), `:262-264` (readiness), `:603-604`
-  (`production_app`)
+  `:140-141` (middlewares), `:204` (the enabled check's log line), `:211-215`, `:222-227`, `:231-245` (handlers),
+  `:262-264` (readiness), `:396-412` (the back-channel route's log lines), `:603-604` (`production_app`)
 - Create: `api/src/ops_api/limits.py`, `tests/plan_g/__init__.py`, `tests/plan_g/test_settings_admission.py`,
   `tests/plan_g/test_limits.py`, `tests/plan_g/test_error_surface.py`
 
@@ -526,9 +564,9 @@ passed/skipped (the dev count plus 74 live tests today, 77 after Task 2, 83 afte
   idempotency_key_min=8, idempotency_key_max=128, tenant_queue_quota=100)` (frozen dataclass) and
   `settings.admission() -> AdmissionSettings`.
 - Produces: `ops_api.limits.REQUEST_ID_HEADER = "X-Request-Id"`, `BodyTooLarge(Exception)`,
-  `request_id_of(scope: Scope) -> UUID`, `safe_response(request_id: UUID, status: int, code: ErrorCode, message: str,
-  *, retryable: bool = False, headers: dict[str, str] | None = None) -> JSONResponse`, `RequestId(app)`,
-  `read_bounded(receive, max_bytes: int) -> bytes`, `BodyLimit(app, max_bytes: int)`.
+  `BodyIncomplete(Exception)`, `request_id_of(scope: Scope) -> UUID`, `safe_response(request_id: UUID, status: int,
+  code: ErrorCode, message: str, *, retryable: bool = False, headers: dict[str, str] | None = None) -> JSONResponse`,
+  `RequestId(app)`, `read_bounded(receive, max_bytes: int) -> bytes`, `BodyLimit(app, max_bytes: int)`.
 - Produces: `ops_api.app.safe(request: Request, status: int, code: ErrorCode, message: str, *, retryable: bool =
   False) -> JSONResponse`; `create_app(verifier, store_factory, auth_factory, *, admission: AdmissionSettings | None
   = None)`.
@@ -538,7 +576,8 @@ passed/skipped (the dev count plus 74 live tests today, 77 after Task 2, 83 afte
 Run `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN` with pytest `679 passed, 95 skipped`; with the
 dev stack up and `uv run python scripts/skeleton.py status` showing every process down, run
 `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → `CHECK: GREEN` with `753 passed, 21 skipped`, then
-`git checkout -- reports/bootstrap reports/skeleton`. Record both lines in the report (Global Constraints, "Counts").
+`git checkout -- reports/bootstrap reports/skeleton reports/auth`. Record both lines in the report (Global
+Constraints, "Counts").
 
 Append the debt-list block from "Declared debt and errata" to `SESSION_STATE.md` as the section
 `## Plan G debt list (T12; committed before coding) [R6-B7]`, immediately after the `## Plan F debt list …` section
@@ -701,7 +740,8 @@ client declares, and every response carries a server-made request id.
 
 Catches: Starlette's own limiter shape (a plain-text 413 after the route already ran, spike §5), a chunked body that
 is never counted, a `Content-Length` that lies low and smuggles the rest, a malformed length read as "no limit", a
-route that sees a truncated body, a request id taken from the client, and an id that repeats.
+route that sees a truncated body (one cut short by a client that disconnected included), a request id taken from
+the client, and an id that repeats.
 """
 
 import asyncio
@@ -793,6 +833,23 @@ def test_a_body_at_the_limit_reaches_the_route_intact() -> None:
     assert status == 200 and doc == {"received": LIMIT} and inner.ran
 
 
+def test_a_client_that_disconnects_mid_body_reaches_no_route() -> None:
+    inner = Echo()
+    scope = {"type": "http", "method": "POST", "path": "/", "headers": [], "query_string": b""}
+    pending: list[Message] = [{"type": "http.request", "body": b'{"kind": "investigate"}', "more_body": True}]
+    sent: list[Message] = []
+
+    async def receive() -> Message:
+        return pending.pop(0) if pending else {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    asyncio.run(BodyLimit(inner, LIMIT)(scope, receive, send))
+    # What arrived parses as JSON, but it is not the request: the client is gone, so nothing runs and nothing answers.
+    assert not inner.ran and sent == []
+
+
 def test_every_response_carries_a_fresh_server_made_request_id() -> None:
     planted = "00000000-0000-0000-0000-000000000000"
     seen = set()
@@ -823,7 +880,9 @@ Create `tests/plan_g/test_error_surface.py`:
 ```python
 """R115's error surface (BUILD_SPEC §7 safe errors, Plan G rulings 19 and 20): every refusal the framework or a
 defect produces is the `{code, message, retryable, request_id}` schema, `retryable` is true only for an outage that
-may pass, and the id in the body is the id in the `X-Request-Id` header and in the one log line.
+may pass, and the id in the body is the id in the `X-Request-Id` header and in the one log line. That holds for a
+replayed recorded error too: its stored id is rewritten to the replaying request's (ruling 4; pinned in
+tests/plan_g/test_api_admission.py, which has the recorded verdicts).
 
 Catches: FastAPI's `{"detail": ...}` 404/405 (spike §5), a plain-text 500, a psycopg DETAIL (a 23505 names the
 tenant, the subject and the key, spike §1) or an exception's text reaching the client or the log, a server defect
@@ -951,7 +1010,8 @@ written on every error log line, so an operator can match a client's report to t
 `X-Request-Id` is never trusted (it would let a caller plant ids in the log). `BodyLimit` refuses an oversized body
 before any route runs: Starlette's own `RequestBodyLimitMiddleware` answers a plain-text 413 after the route has
 already run and never stops a route that reads no body (spike §5: a conversation was created and still got 413), so
-this middleware pre-reads up to the limit and replays the bytes, the shape the spike measured clean.
+this middleware pre-reads up to the limit and replays the bytes, the shape the spike measured clean. A client that
+disconnects before its body is complete reaches no route at all: what arrived is not the request.
 """
 
 from __future__ import annotations
@@ -968,6 +1028,10 @@ _STATE_KEY = "request_id"
 
 class BodyTooLarge(Exception):
     """The body grew past the limit while it was being read (a chunked body declares no length)."""
+
+
+class BodyIncomplete(Exception):
+    """The client disconnected before the last chunk of its body arrived."""
 
 
 def request_id_of(scope: Scope) -> UUID:
@@ -1034,13 +1098,18 @@ async def read_bounded(receive: Receive, max_bytes: int) -> bytes:
     """Read the whole request body, raising BodyTooLarge as soon as it passes `max_bytes`.
 
     Counting the bytes that arrive, not the declared length, is what stops a `Content-Length` that lies low.
+
+    Raises:
+        BodyTooLarge: the body passed `max_bytes`.
+        BodyIncomplete: the client disconnected first; the bytes that arrived may still parse (a body cut after a
+            closing brace), so they must never be handed on as the request (Starlette's own read raises too).
     """
     parts: list[bytes] = []
     total = 0
     while True:
         message = await receive()
         if message["type"] != "http.request":
-            break  # a disconnect: the route sees what arrived and its own read fails
+            raise BodyIncomplete
         chunk = message.get("body", b"")
         total += len(chunk)
         if total > max_bytes:
@@ -1072,6 +1141,8 @@ class BodyLimit:
         except BodyTooLarge:
             await self._refuse(scope, receive, send)
             return
+        except BodyIncomplete:
+            return  # the client is gone: no route runs for half a request, and nobody is left to read an answer
         replayed = False
 
         async def replay() -> Message:
@@ -1234,7 +1305,19 @@ with:
     issuer = settings.keycloak().issuer
 ```
 
-Edit 8 (old lines 211-215), replace:
+Edit 8 (old line 204), replace:
+
+```python
+            log.warning("enabled check unavailable: %s", exc)
+```
+
+with:
+
+```python
+            log.warning("request %s: enabled check unavailable: %s", request.state.request_id, exc)
+```
+
+Edit 9 (old lines 211-215), replace:
 
 ```python
 
@@ -1261,7 +1344,7 @@ with:
         if exc.clear_session or exc.clear_login:  # the auth deps exist whenever a route that sets these flags runs
 ```
 
-Edit 9 (old lines 222-227), replace:
+Edit 10 (old lines 222-227), replace:
 
 ```python
 
@@ -1287,7 +1370,7 @@ with:
 
 ```
 
-Edit 10 (old lines 231-245), replace:
+Edit 11 (old lines 231-245), replace:
 
 ```python
     @app.exception_handler(EventRuleViolation)
@@ -1344,7 +1427,7 @@ with:
 
 ```
 
-Edit 11 (old lines 262-264), replace:
+Edit 12 (old lines 262-264), replace:
 
 ```python
             except (psycopg.Error, OSError):  # readiness reports a database failure as not ready
@@ -1360,7 +1443,51 @@ with:
         return JSONResponse({"status": "ready"})
 ```
 
-Edit 12 (old lines 603-604), replace:
+Edit 13 (old lines 396-412), replace:
+
+```python
+        except SigningKeysUnavailable as exc:
+            log.warning("back-channel logout not applied: signing keys unavailable")
+            raise ApiError(503, ErrorCode.UNAVAILABLE, "identity provider unavailable") from exc
+        except TokenRejected as exc:
+            log.info("back-channel logout token rejected: %s", exc)
+            raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token rejected") from exc
+        keep_until = datetime.fromtimestamp(claims.expires_at, UTC) + timedelta(days=1)
+        try:
+            revoked = await store.record_logout(claims.jti, expires_at=keep_until, sid=claims.sid)
+        except psycopg.Error as exc:
+            # Keycloak never retries, so this line is the operator's only trace of a logout that did not take effect
+            # (final review M4); the class name only, never the token. The 503 handler answers.
+            log.warning("back-channel logout not applied: %s", exc.__class__.__name__)
+            raise
+        if revoked is None:
+            raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token replayed")
+        log.info("back-channel logout revoked %d session(s)", revoked)
+```
+
+with (the same lines, each log line now naming its request; ruling 20):
+
+```python
+        except SigningKeysUnavailable as exc:
+            log.warning("request %s: back-channel logout failed: no signing keys", request.state.request_id)
+            raise ApiError(503, ErrorCode.UNAVAILABLE, "identity provider unavailable") from exc
+        except TokenRejected as exc:
+            log.info("request %s: back-channel logout token rejected: %s", request.state.request_id, exc)
+            raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token rejected") from exc
+        keep_until = datetime.fromtimestamp(claims.expires_at, UTC) + timedelta(days=1)
+        try:
+            revoked = await store.record_logout(claims.jti, expires_at=keep_until, sid=claims.sid)
+        except psycopg.Error as exc:
+            # Keycloak never retries, so this line is the operator's only trace of a logout that did not take effect
+            # (final review M4); the class name only, never the token. The 503 handler answers.
+            log.warning("request %s: back-channel logout failed: %s", request.state.request_id, type(exc).__name__)
+            raise
+        if revoked is None:
+            raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token replayed")
+        log.info("request %s: back-channel logout revoked %d session(s)", request.state.request_id, revoked)
+```
+
+Edit 14 (old lines 603-604), replace:
 
 ```python
 
@@ -1375,7 +1502,7 @@ with:
 ```
 
 Run: `uv run python -m pytest tests/plan_g/test_limits.py tests/plan_g/test_error_surface.py -q`
-Expected: `14 passed`.
+Expected: `15 passed`.
 
 Run: `uv run python -m pytest tests/plan_d/test_api.py tests/plan_f -q`
 Expected: `157 passed` (the existing callers of `safe` now pass the request; the 503 of a lost connection stays
@@ -1383,15 +1510,16 @@ Expected: `157 passed` (the existing callers of `safe` now pass the request; the
 
 - [ ] **Step 8: Gates and commit**
 
-Format, lint and count characters on the touched files (`ruff format`, `ruff check --fix`, the counting command):
-`core/src/ops_core/settings.py api/src/ops_api/limits.py api/src/ops_api/app.py tests/plan_g pyproject.toml`.
+Format, lint and count characters on the touched Python files (`ruff format`, `ruff check --fix`, the counting
+command): `core/src/ops_core/settings.py api/src/ops_api/limits.py api/src/ops_api/app.py tests/plan_g`
+(`pyproject.toml` is not Python and is left out of all three; its line 53 predates Plan G).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `698 passed, 95 skipped` (679 + 5 + 7 + 7).
+Expected: `CHECK: GREEN`; pytest `699 passed, 95 skipped` (679 + 5 + 8 + 7).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `772 passed, 21 skipped` (698 + 74 live). Then
-`git checkout -- reports/bootstrap reports/skeleton`.
+Expected: `CHECK: GREEN`; pytest `773 passed, 21 skipped` (699 + 74 live). Then
+`git checkout -- reports/bootstrap reports/skeleton reports/auth`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
 Expected: exit 0.
@@ -1411,7 +1539,8 @@ git commit -m "feat(api): safe error surface, request ids and the body limit; ad
 - Modify: `core/src/ops_core/privileges.py:6-15` (docstring), `:81-82` (row), `:154-155` (`NO_RLS`),
   `tests/plan_e/test_transitions_table.py:90-91` (`REVISIONS`), `sweeper/src/ops_sweeper/sync.py:88-91`, `:102-103`,
   `sweeper/src/ops_sweeper/main.py:188-190`, `tests/plan_f/test_sweeper.py:10-11`, `:137-140`,
-  `api/src/ops_api/app.py:131-133` (as Task 1 left it)
+  `tests/e2e/test_sweeper_live.py:129-136` (the live purge test), `api/src/ops_api/app.py:131-133` (as Task 1 left
+  it)
 
 **Interfaces:**
 - Consumes: `ops_core.privileges.Grant`, `grant_statements(tables, grants, *, revokees)`; `scripts.skeleton.migrate`,
@@ -1731,9 +1860,9 @@ uv run python -m pytest tests/plan_g/test_migration_0006.py tests/plan_e/test_tr
 
 Expected: `16 passed` (3 new, the transitions module's 11 with one more parametrised revision, Plan F's 2).
 
-- [ ] **Step 4: The sweeper purges the records, and both services refuse a database without them**
+- [ ] **Step 4a: The failing purge test**
 
-Write the failing purge test first, in `tests/plan_f/test_sweeper.py`:
+In `tests/plan_f/test_sweeper.py`:
 
 Edit 1 (old lines 10-11), replace:
 
@@ -1801,6 +1930,8 @@ async def test_the_override_covers_the_first_successful_sync_only(
 Run: `uv run python -m pytest tests/plan_f/test_sweeper.py -q`
 Expected: `1 failed, 8 passed` (`test_the_purge_covers_the_idempotency_records`: the counts have three keys).
 
+- [ ] **Step 4b: The sweeper purges the records and refuses a database without them**
+
 In `sweeper/src/ops_sweeper/sync.py`:
 
 Edit 1 (old lines 88-91), replace:
@@ -1855,6 +1986,52 @@ with:
     except BaseException:  # close what was built before the tasks exist (a refused start must not leak sockets)
 ```
 
+In `tests/e2e/test_sweeper_live.py` (the live purge test pins the result's keys; it now seeds one expired record as
+the superuser and proves the purge deletes exactly it, so the new DELETE is proved live, not only counted):
+
+Edit 1 (old lines 129-136), replace:
+
+```python
+        counts = await sync.purge_expired(sweeper)
+        assert counts == {"sessions": 2, "login_state": 1, "logout_jti": 1}
+        for table, key in (("sessions", "session_sha256"), ("login_state", "login_sha256"), ("logout_jti", "jti")):
+            cur = await app_conn.execute(f"SELECT {key} AS k FROM app.{table} WHERE {key} LIKE %s", (f"{tag}-%",))
+            assert [r["k"] for r in await cur.fetchall()] == [f"{tag}-live"]
+    finally:
+        for table, key in (("sessions", "session_sha256"), ("login_state", "login_sha256"), ("logout_jti", "jti")):
+            await app_conn.execute(f"DELETE FROM app.{table} WHERE {key} LIKE %s", (f"{tag}-%",))
+```
+
+with:
+
+```python
+        # Plan G ruling 7: one expired idempotency record beside whatever earlier modules left (all inside their
+        # replay window, so the purge must leave every one of them).
+        cur = await app_conn.execute("SELECT count(*) AS n FROM app.idempotency_request")
+        others = (await cur.fetchone())["n"]
+        await app_conn.execute(
+            "INSERT INTO app.idempotency_request (tenant_id, subject, route, key, fingerprint_sha256, status_code,"
+            f" response, expires_at) VALUES (%s, %s, 'POST /api/v1/conversations', %s, %s, 201, '{{}}', {past})",
+            (ALPHA, ALEX, f"{tag}-expired", "0" * 64),
+        )
+        counts = await sync.purge_expired(sweeper)
+        assert counts == {"sessions": 2, "login_state": 1, "logout_jti": 1, "idempotency_request": 1}
+        for table, key in (("sessions", "session_sha256"), ("login_state", "login_sha256"), ("logout_jti", "jti")):
+            cur = await app_conn.execute(f"SELECT {key} AS k FROM app.{table} WHERE {key} LIKE %s", (f"{tag}-%",))
+            assert [r["k"] for r in await cur.fetchall()] == [f"{tag}-live"]
+        cur = await app_conn.execute("SELECT count(*) AS n FROM app.idempotency_request")
+        assert (await cur.fetchone())["n"] == others  # exactly the seeded record went
+    finally:
+        for table, key in (("sessions", "session_sha256"), ("login_state", "login_sha256"), ("logout_jti", "jti")):
+            await app_conn.execute(f"DELETE FROM app.{table} WHERE {key} LIKE %s", (f"{tag}-%",))
+        await app_conn.execute("DELETE FROM app.idempotency_request WHERE key LIKE %s", (f"{tag}-%",))
+```
+
+Run: `uv run python -m pytest tests/plan_f/test_sweeper.py -q`
+Expected: `9 passed` (the live purge test runs in Step 5).
+
+- [ ] **Step 4c: The API refuses a database without the record table**
+
 In `api/src/ops_api/app.py` (line numbers as Task 1 left the file):
 
 Edit 1 (old lines 131-133), replace:
@@ -1874,8 +2051,9 @@ with:
             if not verifier.ready:
 ```
 
-Run: `uv run python -m pytest tests/plan_f/test_sweeper.py -q`
-Expected: `9 passed`.
+Run: `uv run python -m pytest tests/plan_d/test_api.py tests/plan_f -q`
+Expected: `158 passed` (Task 1's 157 and the new purge test; the fakes are not a `DbStore`, so the guard does not
+run here: Step 5 and the live gate run it).
 
 - [ ] **Step 5: The live revision test**
 
@@ -1939,9 +2117,10 @@ async def test_upgrade_numbers_existing_messages_and_the_round_trip_restores_000
     from scripts.skeleton import downgrade, migrate
 
     superuser = settings.superuser_postgres()
-    downgrade("app", superuser, "0005_sessions_login_logout")
-    conv = await conversation(app_conn)
+    conv: UUID | None = None
     try:
+        downgrade("app", superuser, "0005_sessions_login_logout")
+        conv = await conversation(app_conn)
         assert not await has_column(app_conn, "messages", "seq")
         older = uuid4()
         await app_conn.execute(INSERT_MESSAGE, (older, ALPHA, conv, "investigate", ALEX))
@@ -1968,8 +2147,11 @@ async def test_upgrade_numbers_existing_messages_and_the_round_trip_restores_000
         )
         assert (await cur.fetchone())["is_nullable"] == "NO"
     finally:
-        assert migrate(Profile.TEST) == 0  # every later test needs the head
-        await forget(app_conn, conv)
+        try:
+            assert migrate(Profile.TEST) == 0  # every later test needs the head
+        finally:
+            if conv is not None:  # nested, so a failing migrate or a failing first downgrade leaks nothing
+                await forget(app_conn, conv)
     assert await has_column(app_conn, "messages", "seq")
 
 
@@ -2024,21 +2206,26 @@ async def test_api_inserts_numbered_messages_and_the_checks_hold(
 ```
 
 Run (dev stack up, no skeleton process running):
-`OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migration_0006_live.py -q`
-Expected: `3 passed` (the `migrated` fixture recreates `ops_test` at 0006 first).
+
+```bash
+OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migration_0006_live.py tests/e2e/test_sweeper_live.py -q
+```
+
+Expected: `7 passed` (3 new and the sweeper module's 4, its purge test now with the expired record; the `migrated`
+fixture recreates `ops_test` at 0006 first).
 
 - [ ] **Step 6: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `703 passed, 98 skipped` (698 + 3 + 1 parametrised revision + 1 purge; the 3 new
+Expected: `CHECK: GREEN`; pytest `704 passed, 98 skipped` (699 + 3 + 1 parametrised revision + 1 purge; the 3 new
 live tests skip without `OPS_LIVE`).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `780 passed, 21 skipped` (703 + 77 live: R006's downgrade now passes through 0006,
+Expected: `CHECK: GREEN`; pytest `781 passed, 21 skipped` (704 + 77 live: R006's downgrade now passes through 0006,
 whose guard finds no system message because nothing writes one before Task 5). Then
-`git checkout -- reports/bootstrap reports/skeleton`.
+`git checkout -- reports/bootstrap reports/skeleton reports/auth`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
 Expected: exit 0.
@@ -2046,7 +2233,7 @@ Expected: exit 0.
 ```bash
 git add migrations/app/versions/0006_admission_idempotency.py core/src/ops_core/privileges.py sweeper/src
 git add api/src/ops_api/app.py tests/plan_g/test_migration_0006.py tests/plan_e/test_transitions_table.py
-git add tests/plan_f/test_sweeper.py tests/e2e/test_migration_0006_live.py
+git add tests/plan_f/test_sweeper.py tests/e2e/test_sweeper_live.py tests/e2e/test_migration_0006_live.py
 git commit -m "feat(migrations): revision 0006, the idempotency record and typed, numbered messages (T12)"
 ```
 
@@ -2633,7 +2820,7 @@ Format, lint and count characters on the three files. `routing.py` now imports `
 nothing from `routing`, so no cycle exists (check: `uv run python -c "import ops_core.routing"` prints nothing).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `729 passed, 98 skipped` (703 + 26).
+Expected: `CHECK: GREEN`; pytest `730 passed, 98 skipped` (704 + 26).
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
 Expected: exit 0 (no schema or example changed).
@@ -2653,7 +2840,7 @@ git commit -m "feat(core): the AM-16 admission router table and the text-versus-
 **Files:**
 - Create: `api/src/ops_api/idempotency.py`, `tests/plan_g/fakes.py`, `tests/plan_g/test_idempotency.py`,
   `tests/plan_g/test_store_units.py`
-- Modify: `core/src/ops_core/persistence.py:466-468` (the `insert_job` comment), `:472-477` (five helpers before
+- Modify: `core/src/ops_core/persistence.py:466-468` (the `insert_job` comment), `:472-477` (six helpers before
   `claim_job`),
   `api/src/ops_api/store.py` (whole file; the three pre-T12 mutations stay until Task 5)
 
@@ -2663,14 +2850,16 @@ git commit -m "feat(core): the AM-16 admission router table and the text-versus-
   `ops_core.settings.AdmissionSettings` (Task 1); `ops_core.canonical.canonical_sha256`;
   `ops_core.testing.faults.Faults`, `FaultKind`; `ops_core.jobs.dedup_key`, `JobType`; the 0006 schema (Task 2).
 - Produces (`ops_api.idempotency`): `HEADER = "Idempotency-Key"`, `KEY_REFUSAL` (ruling 1's message),
-  `KeyInvalid(ValueError)`, `IdempotencyConflict(message=…)` with `.message`, `RecordRace`,
+  `IDEMPOTENCY_LOCK_NAMESPACE = 1`, `KeyInvalid(ValueError)`, `IdempotencyConflict(message=…)` with `.message`,
+  `QueueFull`, `RecordRace`,
   `validate_key(raw: str | None, bounds: AdmissionSettings | None = None) -> str`,
   `Scope(tenant_id: UUID, subject: UUID, route: str, key: str)` with `.lock_key`, `scope_lock_key(scope) -> str`,
   `fingerprint(path: Mapping[str, str], body: Mapping[str, Any] | None) -> str`,
   `Verdict(status: int, body: dict[str, Any], replayed: bool = False)`, `Record(fingerprint, status, body)`,
   `Idem(scope, fingerprint, ttl_seconds, request_id)`, `RecordUnit` (protocol: `lock_scope`, `find_record`,
-  `save_record`), `idempotent(unit, idem, work) -> Verdict`, `error_verdict(status, code, message, request_id) ->
-  Verdict`, `render(body) -> bytes`, `VerdictResponse`, `response(verdict) -> VerdictResponse`.
+  `save_record`), `replay(found: Record, idem: Idem) -> Verdict`, `idempotent(unit, idem, work) -> Verdict`,
+  `error_verdict(status, code, message, request_id) -> Verdict`, `render(body) -> bytes`, `VerdictResponse`,
+  `response(verdict) -> VerdictResponse`.
 - Produces (`ops_core.persistence`): `insert_job_untargeted(conn, *, job_type, tenant_id, run_id, key) -> bool`,
   `current_time(conn) -> datetime`, `latest_active_run(conn, conversation_id) -> DictRow | None`,
   `latest_run(conn, conversation_id) -> DictRow | None`, `latest_event(conn, run_id) -> DictRow | None`,
@@ -2680,14 +2869,19 @@ git commit -m "feat(core): the AM-16 admission router table and the text-versus-
   tenant_id, conversation_id, requester, request, quota) -> Verdict`, `status_answer(unit, *, conversation_id,
   requester, request) -> Verdict`, `clarify(unit, *, conversation_id, requester, request, decision) -> Verdict`,
   `reply_clarification(*, idem, tenant_id, run_id, requester, reply) -> Verdict`, `decide_once(*, idem, tenant_id,
-  proposal_id, reviewer, roles, request) -> Verdict`; `DbUnit(conn, tenant_id)`; `DbStore(AdmissionStore)`;
-  `stamp`, `accepted_body`, `status_text`, `reply_text`, `STORED_KIND`, `NO_RUNS`, `CLARIFICATIONS_HINT`. The names
+  proposal_id, reviewer, roles, request) -> Verdict`; `ReplyRefused(status, code, message)`,
+  `check_reply_run(run, *, requester, expected_version) -> dict[str, Any]`, `check_reply_question(asked,
+  question_id) -> None`; `DbUnit(conn, tenant_id)`; `DbStore(AdmissionStore)`; `stamp`, `accepted_body`,
+  `status_text`, `reply_text`, `STORED_KIND`, `NO_RUNS`, `CLARIFICATIONS_HINT`. The `Unit` member `record_reply(*,
+  run_id, requester, question_id, expected_version, text, context) -> Accepted` locks the run, checks it and writes
+  (ruling 15); there is no unlocked run read in `Unit`. The names
   `open_conversation`/`admit_message`/`decide_once` differ from the pre-T12 `create_conversation`/`admit`/`decide`
   on purpose: both sets live in `DbStore` for this one task, so Task 2's routes keep working (no interim red).
-- Produces (`tests.plan_g.fakes`): `ISSUER`, `ALPHA`, `BETA`, `ALEX`, `SAM`, `LEE`, `JORDAN`, `DUAL`, `PERSONAS`,
-  `ROWS`, `StubVerifier`, `FakeUnit`, `FakeStore` (tables `conversations`, `messages`, `runs`, `jobs`, `event_log`,
-  `records`, `proposals`, `decided`, `decision_keys`; `locks`, `slot_occupied`, `clock`; `seed_question(run_id)`;
-  T11's session methods).
+- Produces (`tests.plan_g.fakes`): `ISSUER`, `ALPHA`, `BETA`, `ALEX`, `SAM`, `LEE`, `JORDAN`, `DUAL`, `CASEY`,
+  `PERSONAS`, `ROWS`, `StubVerifier`, `FakeUnit`, `FakeStore` (tables `conversations`, `messages`, `runs`, `jobs`,
+  `event_log`, `records`, `proposals`, `decided`, `decision_keys`; `locks` (scope locks, and `run <id>` for a reply's
+  run lock),
+  `slot_occupied`, `clock`; `seed_question(run_id)`; T11's session methods).
 
 - [ ] **Step 1: Write the failing key-and-unit test**
 
@@ -2824,8 +3018,8 @@ def test_a_save_that_meets_an_existing_row_is_a_record_race() -> None:
 
 def test_a_verdict_renders_the_same_bytes_whatever_its_key_order() -> None:
     assert render({"b": 1, "a": "é"}) == render({"a": "é", "b": 1}) == '{"a":"é","b":1}'.encode()
-    limited = response(error_verdict(429, ErrorCode.RATE_LIMITED, "tenant queue is full", uuid4()))
-    assert limited.status_code == 429 and limited.headers["retry-after"] == "5"
+    rendered = response(Verdict(202, {"b": 1, "a": "é"}))
+    assert rendered.status_code == 202 and rendered.body == render({"a": "é", "b": 1})
     body: dict[str, Any] = error_verdict(409, ErrorCode.SLOT_OCCUPIED, "busy", ALEX).body
     assert body == {"code": "SLOT_OCCUPIED", "message": "busy", "retryable": False, "request_id": str(ALEX)}
 ```
@@ -2846,10 +3040,12 @@ crash before commit leaves no record (R015, R016). Inside the unit the first sta
 scope: a second request with the same key waits for the first to commit and then replays its record, where a plain
 unique index would hand it a 23505 whose DETAIL prints the tenant, the subject and the key (spike §1).
 
-Two answers are never recorded because nothing was decided: a key reused for another request (409
+Three kinds of answer are never recorded. Two because nothing was decided: a key reused for another request (409
 IDEMPOTENCY_CONFLICT; recording it would turn a client bug into a permanent answer) and anything raised before or
-outside the router's verdict (401, 403, the header and body shape refusals, 503). The rule of thumb in the code:
-the router's verdict is recorded; everything before the router is not.
+outside the router's verdict (401, 403, the header and body shape refusals, 503). The third because it is transient:
+a full tenant queue (429 with Retry-After) promises the same request a later success, which a recorded 429 would
+break for the whole replay window (ruling 5). The rule of thumb in the code: the router's verdict is recorded;
+everything before the router, and the queue's momentary fill, is not.
 """
 
 from __future__ import annotations
@@ -2867,6 +3063,9 @@ from ops_core.settings import AdmissionSettings
 
 HEADER = "Idempotency-Key"
 KEY_REFUSAL = "Idempotency-Key header is required (8–128 visible ASCII characters)"
+# The first key of the scope lock's two-key form (ruling 6): PostgreSQL keeps two-key advisory locks apart from the
+# one-key (bigint) locks the asset guard takes (SA:189), so a scope can never collide with an asset (erratum 37).
+IDEMPOTENCY_LOCK_NAMESPACE = 1
 
 
 class KeyInvalid(ValueError):
@@ -2879,6 +3078,10 @@ class IdempotencyConflict(Exception):
     def __init__(self, message: str = "Idempotency-Key was already used with a different request") -> None:
         super().__init__(message)
         self.message = message
+
+
+class QueueFull(Exception):
+    """The tenant's queue is at its quota (ruling 18): transient, so the unit rolls back and nothing is recorded."""
 
 
 class RecordRace(Exception):
@@ -2909,7 +3112,7 @@ class Scope:
 
     @property
     def lock_key(self) -> str:
-        """The string the unit's advisory lock hashes (`hashtextextended`, ruling 6)."""
+        """The string the unit's advisory lock hashes (`hashtext`, in IDEMPOTENCY_LOCK_NAMESPACE; ruling 6)."""
         return f"{self.tenant_id}|{self.subject}|{self.route}|{self.key}"
 
 
@@ -2945,7 +3148,7 @@ class Record:
 @dataclass(frozen=True)
 class Idem:
     """Everything a unit needs to look up, decide and record: the scope, the fingerprint, the replay window, and the
-    request id that error bodies carry (a replayed error keeps the first request's id, by design)."""
+    request id that error bodies carry (a replayed error carries it too: `replay`)."""
 
     scope: Scope
     fingerprint: str
@@ -2969,6 +3172,16 @@ class RecordUnit(Protocol):
         ...
 
 
+def replay(found: Record, idem: Idem) -> Verdict:
+    """The recorded answer to this request (ruling 4). A success body carries no request id and replays unchanged; a
+    recorded error carries the replaying request's id, so its body, its X-Request-Id header and the log agree (BS:301:
+    the id names the request the client sent, and the first request's id would match no line of this one)."""
+    body = found.body
+    if found.status >= 400 and "request_id" in body:
+        body = {**body, "request_id": str(idem.request_id)}
+    return Verdict(found.status, body, replayed=True)
+
+
 async def idempotent(unit: RecordUnit, idem: Idem, work: Callable[[], Awaitable[Verdict]]) -> Verdict:
     """Lock, look up, then replay, refuse or run `work` and record its verdict last (SA:188), all in the caller's
     transaction.
@@ -2982,7 +3195,7 @@ async def idempotent(unit: RecordUnit, idem: Idem, work: Callable[[], Awaitable[
     if found is not None:
         if found.fingerprint != idem.fingerprint:
             raise IdempotencyConflict
-        return Verdict(found.status, found.body, replayed=True)
+        return replay(found, idem)
     verdict = await work()
     if not await unit.save_record(idem.scope, idem.fingerprint, verdict, idem.ttl_seconds):
         # Impossible while every writer takes the lock first; an expired row the sweeper has not purged yet is the one
@@ -3011,9 +3224,8 @@ class VerdictResponse(JSONResponse):
 
 
 def response(verdict: Verdict) -> VerdictResponse:
-    """The HTTP response of a verdict; a recorded 429 keeps its Retry-After on every replay (ruling 18)."""
-    headers = {"Retry-After": "5"} if verdict.status == 429 else None
-    return VerdictResponse(content=verdict.body, status_code=verdict.status, headers=headers)
+    """The HTTP response of a verdict, a first answer and a replay alike (a 429 is never a verdict: ruling 5)."""
+    return VerdictResponse(content=verdict.body, status_code=verdict.status)
 ```
 
 Run: `uv run python -m pytest tests/plan_g/test_idempotency.py -q`
@@ -3021,7 +3233,7 @@ Expected: `8 passed`.
 
 - [ ] **Step 3: The persistence helpers the units read and write through**
 
-In `core/src/ops_core/persistence.py` (the comment in `insert_job` names its replacement; the five helpers go before
+In `core/src/ops_core/persistence.py` (the comment in `insert_job` names its replacement; the six helpers go before
 `claim_job`):
 
 Edit 1 (old lines 466-468), replace:
@@ -3152,8 +3364,8 @@ from uuid import UUID, uuid4
 
 from ops_api import store
 from ops_api.idempotency import Record, Scope, Verdict
-from ops_api.store import Accepted, Conflict, Decided, LoginState, NotFound, SessionRow
-from ops_core.contracts import DecisionRequest, StoredMessageKind
+from ops_api.store import Accepted, Conflict, Decided, LoginState, NotFound, ReplyRefused, SessionRow
+from ops_core.contracts import DecisionRequest, ErrorCode, StoredMessageKind
 from ops_core.states import ACTIVE_STATES, Intent
 from ops_core.tokens import Principal, TokenRejected
 
@@ -3164,13 +3376,15 @@ SAM = UUID("03f7eb09-e18d-5f33-bf75-12c57d5aaa54")
 LEE = UUID("abcc1200-6791-57ab-87b5-9392d356b512")
 JORDAN = UUID("cb551e64-83ec-582b-9047-8dadf20e151a")
 DUAL = UUID("11111111-2222-5333-8444-555555555555")  # a subject seeded in two tenants
-PERSONAS = {"alex": ALEX, "sam": SAM, "lee": LEE, "jordan": JORDAN, "dual": DUAL}
+CASEY = UUID("22222222-3333-5444-8555-666666666666")  # a second requester of ALPHA (fake-only, like DUAL)
+PERSONAS = {"alex": ALEX, "sam": SAM, "lee": LEE, "jordan": JORDAN, "dual": DUAL, "casey": CASEY}
 ROWS = {
     ALEX: [(ALPHA, "requester")],
     SAM: [(ALPHA, "reviewer")],
     LEE: [(ALPHA, "reader")],
     JORDAN: [(BETA, "reviewer")],
     DUAL: [(ALPHA, "requester"), (BETA, "reviewer")],
+    CASEY: [(ALPHA, "requester")],
 }
 ACTIVE = {state.value for state in ACTIVE_STATES}
 TABLES = ("conversations", "messages", "runs", "jobs", "event_log", "records", "proposals", "decided", "decision_keys")
@@ -3325,35 +3539,35 @@ class FakeUnit:
         self.fake.event_log.append({"run_id": run_id, "type": "run.accepted", "occurred_at": now, "payload": {}})
         return Accepted(conversation_id, message_id, run_id, "QUEUED", 1)
 
-    async def run(self, run_id: UUID) -> dict[str, Any] | None:
-        row = self.fake.runs.get(run_id)
-        if row is None or row["tenant_id"] != self.tenant_id:
-            return None
-        return {k: row[k] for k in ("run_id", "conversation_id", "state", "state_version")}
-
-    async def latest_clarification(self, run_id: UUID) -> UUID | None:
-        asked = [e for e in self.fake.event_log if e["run_id"] == run_id and e["type"] == "clarification.requested"]
-        return None if not asked else UUID(str(asked[-1]["event_id"]))
-
     async def record_reply(
         self,
         *,
         run_id: UUID,
-        conversation_id: UUID,
+        requester: UUID,
         question_id: UUID,
+        expected_version: int,
         text: str,
         context: dict[str, Any],
-        author: UUID,
-    ) -> UUID:
+    ) -> Accepted:
+        self.fake.locks.append(f"run {run_id}")  # DbUnit's FOR UPDATE: taken before any check or write
+        row = self.fake.runs.get(run_id)
+        mine = None if row is None or row["tenant_id"] != self.tenant_id else dict(row)
+        run = store.check_reply_run(mine, requester=requester, expected_version=expected_version)
+        asked = [
+            e["event_id"]
+            for e in self.fake.event_log
+            if e["run_id"] == run_id and e["type"] == "clarification.requested"
+        ]
+        store.check_reply_question(asked, question_id)
         key = f"{run_id}:{question_id}"
         if any(j["dedup_key"] == key for j in self.fake.jobs):
-            raise Conflict("VERSION_CONFLICT")
+            raise ReplyRefused(409, ErrorCode.VERSION_CONFLICT, "the clarification was already answered")
         message_id = await self.insert_message(
-            conversation_id=conversation_id,
+            conversation_id=run["conversation_id"],
             kind=StoredMessageKind.CLARIFICATION_REPLY,
             text=text,
             context=context,
-            author=author,
+            author=requester,
         )
         self.fake.jobs.append({"type": "resume_input", "run_id": run_id, "dedup_key": key})
         self.fake.event_log.append(
@@ -3364,7 +3578,7 @@ class FakeUnit:
                 "payload": {"question_id": str(question_id), "message_id": str(message_id)},
             }
         )
-        return message_id
+        return Accepted(run["conversation_id"], message_id, run_id, run["state"], run["state_version"])
 
     async def proposal(self, proposal_id: UUID) -> dict[str, Any] | None:
         row = self.fake.proposals.get(proposal_id)
@@ -3521,10 +3735,12 @@ Create `tests/plan_g/test_store_units.py`:
 24): what each route writes in one unit, what it records, and what it leaves behind when it fails.
 
 Catches: a 202 whose record was not written in the same unit (a replay would start a second run), a changed body
-replayed instead of refused, a quota that refuses status questions, a status answer or a clarification that starts a
-run, writes a job or an event (R017, R018), a lost slot race that leaves the loser's message behind, a fault before
-commit that keeps anything (R015), an expired unpurged key that replays its old answer, a clarification reply bound to
-a stale version or another question, and a reviewer refusal that gets recorded.
+replayed instead of refused, a quota that refuses status questions or whose 429 is recorded (a retry after the queue
+drains must be admitted), a status answer or a clarification that starts a run, writes a job or an event (R017,
+R018), a lost slot race that leaves the loser's message behind, a fault before commit that keeps anything (R015) or
+tells the client not to retry, an expired unpurged key that replays its old answer, a clarification reply bound to a
+stale version, a superseded question or another question, checked before the run is locked or answered by another
+requester, and a reviewer refusal that gets recorded.
 """
 
 import asyncio
@@ -3533,17 +3749,18 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+import psycopg
 import pytest
-from ops_api.idempotency import Idem, IdempotencyConflict, Scope, Verdict, fingerprint
+from ops_api.idempotency import Idem, IdempotencyConflict, QueueFull, Scope, Verdict, fingerprint
 from ops_api.store import Forbidden, resolve_interval
-from ops_core import persistence
 from ops_core.contracts import ClarificationReply, DecisionRequest, MessageRequest, load
 from ops_core.settings import Profile
 from ops_core.testing.faults import FaultKind, Faults
 
-from tests.plan_g.fakes import ALEX, ALPHA, SAM, FakeStore
+from tests.plan_g.fakes import ALEX, ALPHA, CASEY, SAM, FakeStore
 
 MESSAGES = "POST /api/v1/conversations/{conversation_id}/messages"
+REPLIES = "POST /api/v1/runs/{run_id}/clarifications"
 SAMPLE = {
     "kind": "investigate",
     "text": "Investigate the alerts on Asset A17 over the last 24 hours.",
@@ -3594,14 +3811,17 @@ def test_a_changed_body_under_the_same_key_is_a_conflict_and_writes_nothing() ->
     assert len(fake.runs) == 1 and len(fake.records) == 1
 
 
-def test_the_quota_refuses_only_what_would_start_a_run() -> None:
+def test_the_quota_refuses_only_what_would_start_a_run_and_records_nothing() -> None:
     fake = FakeStore()
     busy, idle = conversation(fake), conversation(fake)
     admit(fake, busy, SAMPLE, "key-0001")  # one QUEUED run in the tenant
-    limited = admit(fake, idle, SAMPLE, "key-0002", quota=1)
-    assert limited.status == 429 and limited.body["code"] == "RATE_LIMITED" and len(fake.runs) == 1
+    with pytest.raises(QueueFull):
+        admit(fake, idle, SAMPLE, "key-0002", quota=1)
+    assert len(fake.runs) == 1 and len(fake.records) == 1  # transient: the 429 is nobody's record (ruling 5)
     status = admit(fake, idle, {"kind": "status", "text": "Anything running?"}, "key-0003", quota=1)
     assert status.status == 200
+    later = admit(fake, idle, SAMPLE, "key-0002", quota=2)  # the quota allows it now: the same key does the work
+    assert later.status == 202 and not later.replayed
 
 
 def test_a_status_question_writes_two_messages_and_nothing_else_even_while_busy() -> None:
@@ -3662,7 +3882,7 @@ def test_a_fault_before_commit_leaves_no_message_no_run_and_no_record() -> None:
     fake.faults = Faults(Profile.TEST)
     fake.faults.arm(FaultKind.DROP_BEFORE_COMMIT)
     cid = conversation(fake)
-    with pytest.raises(persistence.PersistenceError):
+    with pytest.raises(psycopg.OperationalError):  # what a real crash before commit looks like (ruling 24)
         admit(fake, cid, SAMPLE, "key-0001")
     assert not fake.messages and not fake.runs and not fake.jobs and not fake.records  # R015
     retried = admit(fake, cid, SAMPLE, "key-0001")  # nothing was recorded, so the same key does the work now
@@ -3692,19 +3912,17 @@ def test_the_interval_is_resolved_once_on_the_units_clock() -> None:
     assert run["end_at"] == datetime(2026, 10, 10, 8, 30, 15, tzinfo=UTC)
 
 
-def reply(fake: FakeStore, run_id: UUID, question_id: UUID, version: int, key: str) -> Verdict:
+def reply(fake: FakeStore, run_id: UUID, question_id: UUID, version: int, key: str, requester: UUID = ALEX) -> Verdict:
     body = load(
         ClarificationReply,
         json.dumps({"question_id": str(question_id), "expected_version": version, "context": {"hours": 12}}),
     )
     return asyncio.run(
         fake.reply_clarification(
-            idem=idem(
-                "POST /api/v1/runs/{run_id}/clarifications", key, {"run_id": str(run_id)}, body.model_dump(mode="json")
-            ),
+            idem=idem(REPLIES, key, {"run_id": str(run_id)}, body.model_dump(mode="json"), requester),
             tenant_id=ALPHA,
             run_id=run_id,
-            requester=ALEX,
+            requester=requester,
             reply=body,
         )
     )
@@ -3714,13 +3932,16 @@ def test_a_reply_binds_to_the_outstanding_question_and_its_version() -> None:
     fake = FakeStore()
     run_id = UUID(admit(fake, conversation(fake), SAMPLE, "key-0001").body["run_id"])
     assert reply(fake, run_id, uuid4(), 1, "key-0002").status == 409  # QUEUED: no question is outstanding
-    question = fake.seed_question(run_id)
-    assert reply(fake, run_id, question, 1, "key-0003").body["code"] == "VERSION_CONFLICT"
-    assert reply(fake, run_id, uuid4(), 3, "key-0004").body["message"] == "no outstanding clarification"
-    assert reply(fake, uuid4(), question, 3, "key-0005").body["message"] == "no such run"
-    accepted = reply(fake, run_id, question, 3, "key-0006")
+    earlier = fake.seed_question(run_id)  # AWAITING_INPUT at version 3
+    question = fake.seed_question(run_id)  # asked again: version 5, and the earlier question is superseded
+    assert reply(fake, run_id, question, 3, "key-0003").body["code"] == "VERSION_CONFLICT"
+    assert reply(fake, run_id, uuid4(), 5, "key-0004").body["message"] == "no outstanding clarification"
+    superseded = reply(fake, run_id, earlier, 5, "key-0005")  # a stale version of the question: 409, not 404
+    assert (superseded.status, superseded.body["message"]) == (409, "the clarification was superseded")
+    assert reply(fake, uuid4(), question, 5, "key-0006").body["message"] == "no such run"
+    accepted = reply(fake, run_id, question, 5, "key-0007")
     assert (
-        accepted.status == 202 and accepted.body["status"] == "AWAITING_INPUT" and accepted.body["state_version"] == 3
+        accepted.status == 202 and accepted.body["status"] == "AWAITING_INPUT" and accepted.body["state_version"] == 5
     )
     assert fake.jobs[-1] == {"type": "resume_input", "run_id": run_id, "dedup_key": f"{run_id}:{question}"}
     assert fake.event_log[-1]["type"] == "clarification.received"
@@ -3728,8 +3949,33 @@ def test_a_reply_binds_to_the_outstanding_question_and_its_version() -> None:
         fake.messages[-1]["kind"] == "clarification_reply"
         and fake.messages[-1]["text"] == "Clarification: asset -, hours 12"
     )
-    again = reply(fake, run_id, question, 3, "key-0007")  # a second answer under a new key
+    again = reply(fake, run_id, question, 5, "key-0008")  # a second answer under a new key
     assert again.status == 409 and again.body["message"] == "the clarification was already answered"
+
+
+def test_the_reply_locks_the_run_before_it_checks_or_writes() -> None:
+    """SA:186/SA:188: right after the scope's lock the unit locks the run, so a run whose version moved after the
+    client read it (a cancel, a worker transition) is refused under the lock and before any message, job or event."""
+    fake = FakeStore()
+    run_id = UUID(admit(fake, conversation(fake), SAMPLE, "key-0001").body["run_id"])
+    question = fake.seed_question(run_id)  # the client reads version 3
+    fake.runs[run_id]["state_version"] = 4  # then the run moves on
+    written = (len(fake.messages), len(fake.jobs), len(fake.event_log))
+    moved = reply(fake, run_id, question, 3, "key-0002")
+    assert (moved.status, moved.body["code"]) == (409, "VERSION_CONFLICT")
+    assert (len(fake.messages), len(fake.jobs), len(fake.event_log)) == written
+    assert fake.locks[-2:] == [Scope(ALPHA, ALEX, REPLIES, "key-0002").lock_key, f"run {run_id}"]
+
+
+def test_only_the_runs_requester_may_answer_its_question() -> None:
+    """A reply shapes the run's draft (SA:539: its author must not later review it), so another requester of the
+    tenant gets the 404 a missing run gets, recorded like it (ruling 5), and nothing is written."""
+    fake = FakeStore()
+    run_id = UUID(admit(fake, conversation(fake), SAMPLE, "key-0001").body["run_id"])
+    question = fake.seed_question(run_id)
+    stranger = reply(fake, run_id, question, 3, "key-0002", requester=CASEY)
+    assert (stranger.status, stranger.body["message"]) == (404, "no such run")
+    assert not any(j["type"] == "resume_input" for j in fake.jobs) and len(fake.records) == 2
 
 
 def decide(fake: FakeStore, proposal_id: UUID, subject: UUID, roles: frozenset[str], key: str) -> Verdict:
@@ -3788,8 +4034,10 @@ Every mutation is one idempotent unit (Plan G rulings 4-6, 21): advisory lock on
 the route's own checks and the router's verdict, the effect, and the record written last (SA:188), committed
 together, so the response a client gets is exactly what a replay of the same key returns, and a crash before commit
 leaves neither (R015). The record is the response, which is why the units build HTTP status codes and bodies: the
-row must hold them before the commit. The orchestration (`AdmissionStore`) runs over a `Unit` of primitive
-operations; `DbUnit` is their SQL, and the unit-test fake supplies an in-memory `Unit` to the same orchestration.
+row must hold them before the commit. The one refusal a unit raises instead of recording is a full tenant queue
+(`QueueFull`, 429): it is transient, and a recorded 429 would outlive the queue it describes (ruling 5). The
+orchestration (`AdmissionStore`) runs over a `Unit` of primitive operations; `DbUnit` is their SQL, and the
+unit-test fake supplies an in-memory `Unit` to the same orchestration.
 """
 
 from __future__ import annotations
@@ -3801,6 +4049,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+import psycopg
 from ops_core import persistence
 from ops_core.contracts import (
     ClarificationReply,
@@ -3825,8 +4074,10 @@ from ops_core.testing.faults import FaultKind, Faults
 from psycopg.types.json import Jsonb
 
 from ops_api.idempotency import (
+    IDEMPOTENCY_LOCK_NAMESPACE,
     Idem,
     IdempotencyConflict,
+    QueueFull,
     Record,
     RecordRace,
     RecordUnit,
@@ -3834,6 +4085,7 @@ from ops_api.idempotency import (
     Verdict,
     error_verdict,
     idempotent,
+    replay,
 )
 
 
@@ -3856,6 +4108,14 @@ class Conflict(Exception):
 class Internal(Exception):
     """A definer function refused input the API already validated, or returned nothing: a server defect, never the
     client's (maps to 503)."""
+
+
+class ReplyRefused(Exception):
+    """A clarification reply the run cannot take: the status, code and message of the refusal the unit records."""
+
+    def __init__(self, status: int, code: ErrorCode, message: str) -> None:
+        super().__init__(message)
+        self.status, self.code, self.message = status, code, message
 
 
 @dataclass(frozen=True)
@@ -3989,6 +4249,30 @@ def reply_text(reply: ClarificationReply) -> str:
     return f"Clarification: asset {asset}, hours {hours}"
 
 
+def check_reply_run(run: dict[str, Any] | None, *, requester: UUID, expected_version: int) -> dict[str, Any]:
+    """The run a reply may bind to, read under its row lock (ruling 15): the caller's own run, waiting for input at
+    the version the client read.
+
+    Another requester of the tenant gets the 404 a missing run gets: existence is not disclosed, and a reply shapes
+    the run's draft, so its author must never be someone who could then review that draft (SA:539).
+    """
+    if run is None or run["requester"] != requester:
+        raise ReplyRefused(404, ErrorCode.NOT_FOUND, "no such run")
+    if run["state"] != RunState.AWAITING_INPUT.value or run["state_version"] != expected_version:
+        raise ReplyRefused(409, ErrorCode.VERSION_CONFLICT, "the run is not waiting at that version")
+    return run
+
+
+def check_reply_question(asked: list[UUID], question_id: UUID) -> None:
+    """The question a reply answers must be the run's latest `clarification.requested` (`asked` in sequence order).
+    An earlier question of the same run is a stale version, 409 like any other (BS:301); an id the run never asked
+    is 404."""
+    if question_id not in asked:
+        raise ReplyRefused(404, ErrorCode.NOT_FOUND, "no outstanding clarification")
+    if asked[-1] != question_id:
+        raise ReplyRefused(409, ErrorCode.VERSION_CONFLICT, "the clarification was superseded")
+
+
 class Unit(RecordUnit, Protocol):
     """The primitive operations of one admission transaction under one tenant (Plan G ruling 21)."""
 
@@ -4050,26 +4334,19 @@ class Unit(RecordUnit, Protocol):
         neither, and the unit stays usable for the record."""
         ...
 
-    async def run(self, run_id: UUID) -> dict[str, Any] | None:
-        """A run of the tenant: `run_id`, `conversation_id`, `state`, `state_version`."""
-        ...
-
-    async def latest_clarification(self, run_id: UUID) -> UUID | None:
-        """The event id of the run's newest `clarification.requested`, or None."""
-        ...
-
     async def record_reply(
         self,
         *,
         run_id: UUID,
-        conversation_id: UUID,
+        requester: UUID,
         question_id: UUID,
+        expected_version: int,
         text: str,
         context: dict[str, Any],
-        author: UUID,
-    ) -> UUID:
-        """Message, `resume_input` job and `clarification.received`, atomically within the unit; Conflict when the
-        question was already answered (the job's dedup key exists)."""
+    ) -> Accepted:
+        """Lock the run (SA:186), check it (`check_reply_run`, `check_reply_question`), then the message, the
+        `resume_input` job and `clarification.received`, atomically within the unit. Every refusal, the question
+        already answered included (the job's dedup key exists), is ReplyRefused and leaves the unit usable."""
         ...
 
     async def proposal(self, proposal_id: UUID) -> dict[str, Any] | None:
@@ -4109,7 +4386,7 @@ class AdmissionStore:
             raise IdempotencyConflict("Idempotency-Key is not reusable yet; use a new key")
         if found.fingerprint != idem.fingerprint:
             raise IdempotencyConflict
-        return Verdict(found.status, found.body, replayed=True)
+        return replay(found, idem)
 
     async def open_conversation(self, *, idem: Idem, tenant_id: UUID, created_by: UUID) -> Verdict:
         """201 `{conversation_id}`; a replay returns the same id (ruling 22)."""
@@ -4163,9 +4440,10 @@ class AdmissionStore:
                     unit, conversation_id=conversation_id, requester=requester, request=request, decision=decision
                 )
             # Ruling 18: the quota bounds what would start a run; a status question or a clarification adds nothing
-            # to the queue, so the count read above refuses only here.
+            # to the queue, so the count read above refuses only here. Raised, never recorded (ruling 5): the queue
+            # drains, and the same key must then be admitted.
             if queued >= quota:
-                return error_verdict(429, ErrorCode.RATE_LIMITED, "tenant queue is full", rid)
+                raise QueueFull
             return await self._start(
                 unit,
                 idem=idem,
@@ -4286,7 +4564,8 @@ class AdmissionStore:
             )
         if self.faults is not None and self.faults.take(FaultKind.DROP_BEFORE_COMMIT):
             # R015's crash: the message and the run exist inside the transaction, the record and the commit do not.
-            raise persistence.PersistenceError("fault: drop_before_commit")
+            # A real crash here is a lost connection, so the client sees what that shows: a retryable 503 (ruling 24).
+            raise psycopg.OperationalError("fault: drop_before_commit")
         return Verdict(
             202,
             accepted_body(
@@ -4297,18 +4576,11 @@ class AdmissionStore:
     async def reply_clarification(
         self, *, idem: Idem, tenant_id: UUID, run_id: UUID, requester: UUID, reply: ClarificationReply
     ) -> Verdict:
-        """BS:273's route, the clarification_reply entry (ruling 15): bound to the run's outstanding question and its
-        expected version; message, `resume_input` job and `clarification.received` together, then 202."""
-        rid = idem.request_id
+        """BS:273's route, the clarification_reply entry (ruling 15): the requester's reply, bound under the run's lock
+        to its outstanding question and expected version; message, `resume_input` job and `clarification.received`
+        together, then 202."""
 
         async def work(unit: Unit) -> Verdict:
-            run = await unit.run(run_id)
-            if run is None:
-                return error_verdict(404, ErrorCode.NOT_FOUND, "no such run", rid)
-            if run["state"] != RunState.AWAITING_INPUT.value or run["state_version"] != reply.expected_version:
-                return error_verdict(409, ErrorCode.VERSION_CONFLICT, "the run is not waiting at that version", rid)
-            if await unit.latest_clarification(run_id) != reply.question_id:
-                return error_verdict(404, ErrorCode.NOT_FOUND, "no outstanding clarification", rid)
             text = reply_text(reply)
             decision = route_reply(
                 AdmissionFacts(
@@ -4322,18 +4594,21 @@ class AdmissionStore:
             if decision.route is not AdmissionRoute.CLARIFICATION_REPLY:
                 raise Internal("a bound reply did not route to clarification_reply")
             try:
-                message_id = await unit.record_reply(
+                accepted = await unit.record_reply(
                     run_id=run_id,
-                    conversation_id=run["conversation_id"],
+                    requester=requester,
                     question_id=reply.question_id,
+                    expected_version=reply.expected_version,
                     text=text,
                     context=reply.context.model_dump(mode="json"),
-                    author=requester,
                 )
-            except Conflict:
-                return error_verdict(409, ErrorCode.VERSION_CONFLICT, "the clarification was already answered", rid)
+            except ReplyRefused as exc:
+                return error_verdict(exc.status, exc.code, exc.message, idem.request_id)
             return Verdict(
-                202, accepted_body(run["conversation_id"], message_id, run_id, run["state"], run["state_version"])
+                202,
+                accepted_body(
+                    accepted.conversation_id, accepted.message_id, run_id, accepted.status, accepted.state_version
+                ),
             )
 
         return await self._idempotent(tenant_id, idem, work)
@@ -4519,8 +4794,11 @@ class DbUnit:
         self.tenant_id = tenant_id
 
     async def lock_scope(self, lock_key: str) -> None:
-        """Ruling 6: first statement of the unit, before every table lock; no grant needed (spike §6)."""
-        await self.conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s::text, 0))", (lock_key,))
+        """Ruling 6: first statement of the unit, before every table lock; no grant needed (spike §6). The two-key
+        form in IDEMPOTENCY_LOCK_NAMESPACE never meets the asset guard's one-key locks (erratum 37)."""
+        await self.conn.execute(
+            "SELECT pg_advisory_xact_lock(%s::int, hashtext(%s::text))", (IDEMPOTENCY_LOCK_NAMESPACE, lock_key)
+        )
 
     async def find_record(self, scope: Scope) -> Record | None:
         """The live record of the scope; an expired row is ignored here and purged by the sweeper."""
@@ -4661,56 +4939,57 @@ class DbUnit:
             raise map_refusal(exc) from exc
         return Accepted(conversation_id, message_id, run_id, RunState.QUEUED.value, version)
 
-    async def run(self, run_id: UUID) -> dict[str, Any] | None:
-        """The run's id, conversation, state and version, if it is this tenant's."""
-        cur = await self.conn.execute(
-            "SELECT run_id, conversation_id, state, state_version FROM app.runs WHERE run_id = %s AND tenant_id = %s",
-            (run_id, self.tenant_id),
-        )
-        row = await cur.fetchone()
-        return None if row is None else dict(row)
-
-    async def latest_clarification(self, run_id: UUID) -> UUID | None:
-        """The newest `clarification.requested` event of the run (the outstanding question)."""
-        cur = await self.conn.execute(
-            "SELECT event_id FROM app.events WHERE run_id = %s AND type = %s ORDER BY sequence DESC LIMIT 1",
-            (run_id, EventType.CLARIFICATION_REQUESTED.value),
-        )
-        row = await cur.fetchone()
-        return None if row is None else UUID(str(row["event_id"]))
-
     async def record_reply(
         self,
         *,
         run_id: UUID,
-        conversation_id: UUID,
+        requester: UUID,
         question_id: UUID,
+        expected_version: int,
         text: str,
         context: dict[str, Any],
-        author: UUID,
-    ) -> UUID:
-        """Message, `resume_input` job and `clarification.received` inside a savepoint (ruling 15)."""
-        async with self.conn.transaction():  # a savepoint, as in start_run
+    ) -> Accepted:
+        """The run locked, then checked, then message, `resume_input` job and `clarification.received` inside a
+        savepoint (ruling 15)."""
+        # SA:186: an API mutation serialises on the run row (FOR UPDATE plus expected_version), and SA:188 puts runs
+        # before messages, so this lock is the unit's first table statement after the scope's advisory lock: a cancel
+        # or a worker transition waits for this unit or wins before it, never in between, and `append_event` below
+        # re-takes a lock the unit already holds. `api` holds a column UPDATE on runs (Plan E ruling 23).
+        cur = await self.conn.execute(
+            "SELECT run_id, state, state_version, requester, conversation_id FROM app.runs"
+            " WHERE run_id = %s FOR UPDATE",
+            (run_id,),
+        )
+        found = await cur.fetchone()
+        run = check_reply_run(
+            None if found is None else dict(found), requester=requester, expected_version=expected_version
+        )
+        cur = await self.conn.execute(
+            "SELECT event_id FROM app.events WHERE run_id = %s AND type = %s ORDER BY sequence",
+            (run_id, EventType.CLARIFICATION_REQUESTED.value),
+        )
+        check_reply_question([UUID(str(row["event_id"])) for row in await cur.fetchall()], question_id)
+        async with self.conn.transaction():  # a savepoint, as in start_run: a refusal below rolls the message back
             message_id = await self.insert_message(
-                conversation_id=conversation_id,
+                conversation_id=run["conversation_id"],
                 kind=StoredMessageKind.CLARIFICATION_REPLY,
                 text=text,
                 context=context,
-                author=author,
+                author=requester,
             )
             key = dedup_key(JobType.RESUME_INPUT, run_id=run_id, clarification_event_id=question_id)
             queued = await persistence.insert_job_untargeted(
                 self.conn, job_type=JobType.RESUME_INPUT, tenant_id=self.tenant_id, run_id=run_id, key=key
             )
             if not queued:
-                raise Conflict("VERSION_CONFLICT")  # the savepoint rolls the message back
+                raise ReplyRefused(409, ErrorCode.VERSION_CONFLICT, "the clarification was already answered")
             await persistence.append_event(
                 self.conn,
                 run_id=run_id,
                 type=EventType.CLARIFICATION_RECEIVED,
                 payload={"question_id": str(question_id), "message_id": str(message_id)},
             )
-        return message_id
+        return Accepted(run["conversation_id"], message_id, run_id, run["state"], run["state_version"])
 
     async def proposal(self, proposal_id: UUID) -> dict[str, Any] | None:
         """A proposal with its run's requester and state, as the reviewer check needs it."""
@@ -5015,7 +5294,7 @@ def _session_row(row: Any) -> SessionRow:
 ```
 
 Run: `uv run python -m pytest tests/plan_g/test_store_units.py tests/plan_g/test_idempotency.py -q`
-Expected: `20 passed`.
+Expected: `22 passed`.
 
 Run: `uv run python -m pytest tests/plan_d/test_api.py tests/plan_f -q`
 Expected: `158 passed` (the routes still call the pre-T12 methods, kept above with their `TODO(T12)`).
@@ -5026,12 +5305,12 @@ Format, lint and count characters on the six files; `uv run mypy core/src api/sr
 `Unit` protocol and `DbUnit` must agree member for member).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `749 passed, 98 skipped` (729 + 8 + 12).
+Expected: `CHECK: GREEN`; pytest `752 passed, 98 skipped` (730 + 8 + 14).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `826 passed, 21 skipped` (749 + 77; the API's DbStore now inherits
+Expected: `CHECK: GREEN`; pytest `829 passed, 21 skipped` (752 + 77; the API's DbStore now inherits
 `AdmissionStore`, and every live test still drives the pre-T12 methods). Then
-`git checkout -- reports/bootstrap reports/skeleton`.
+`git checkout -- reports/bootstrap reports/skeleton reports/auth`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
 Expected: exit 0.
@@ -5051,8 +5330,9 @@ git commit -m "feat(api): the scoped Idempotency-Key and the admission units ove
 - Modify: `api/src/ops_api/app.py` as Task 2 left it, `:8-10`, `:28-36`, `:41-42`, `:45-46`, `:67-68`, `:116-117`,
   `:120-124`, `:128-129`, `:226-227`, `:463-489`, `:492-509`, `:545-562`, `:564-576`, `:589-590`, `:642-643`
   (docstring, imports, route constants, `FaultRequest`, `create_app(…, profile=…)`, the lifespan's `faults`,
-  `requester_mutation`, `idempotency_key`, `scoped`, `recorded`, the four mutation routes, the fault route,
-  `production_app`); `api/src/ops_api/store.py` as Task 4 left it, `:653-677`, `:986-1083` (the pre-T12 mutations
+  `requester_mutation`, `reviewer_mutation`, `idempotency_key`, `scoped`, `recorded`, the four mutation routes, the
+  fault route,
+  `production_app`); `api/src/ops_api/store.py` as Task 4 left it, `:682-706`, `:1019-1116` (the pre-T12 mutations
   go); `tests/plan_d/test_api.py:5-10`, `:19-23`, `:25-26`, `:72-218`, `:228-230`, `:260-265`, `:287-292`,
   `:405-411`; `tests/plan_f/test_api_auth.py:36-38`, `:132-134`; `tests/e2e/test_r105_walking_skeleton.py:12-14`,
   `:83-84`, `:118-123`, `:146-156`; `tests/e2e/test_auth_live.py:11-13`, `:115-117`, `:231-233`, `:240-242`
@@ -5064,7 +5344,9 @@ git commit -m "feat(api): the scoped Idempotency-Key and the admission units ove
   admission: AdmissionSettings | None = None, profile: Profile = Profile.DEV)`; the route
   `POST /api/v1/runs/{run_id}/clarifications`; under `profile=Profile.TEST` only, `POST /internal/faults/{kind}`
   (body `{"count": n}`, answers `{"armed": {...}}`). Every `/api/v1` mutation answers through
-  `idempotency.response(verdict)` (no `status_code=` decorators any more).
+  `idempotency.response(verdict)` (no `status_code=` decorators any more), except the unrecorded 429 of a full
+  tenant queue, which `recorded()` renders from `QueueFull` with `Retry-After: 5`; decisions depend on
+  `reviewer_mutation` (`enabled_identity` plus the `reviewer` role).
 - Produces: `tests.plan_d.test_api.FakeStore` becomes a subclass of `tests.plan_g.fakes.FakeStore` reading its own
   module's `ROWS`; `tests.plan_d.test_api.auth(name)` adds a fresh `Idempotency-Key`;
   `tests.plan_f.test_api_auth.browser(csrf, **extra)` adds one too.
@@ -5079,9 +5361,11 @@ admission routes, replay and conflict, the check order, every status code of R11
 
 Catches: a route answering without a key, the key checked before identity (a stranger learning which keys exist) or
 after the body (a malformed body recorded), a replay that differs from the first answer, one key replaying across
-conversations, a recorded 422 for a body that never parsed, a revoked member replaying a recorded success (BS:264
-"authenticated current session"), a 429 without Retry-After, a fault before commit that keeps anything, the fault
-route reachable outside the test profile, and a stale clarification reply accepted.
+conversations, a recorded 422 for a body that never parsed, an unroutable kind that writes anything, a revoked member
+or a demoted reviewer replaying a recorded success (BS:264 "authenticated current session"), a 429 without
+Retry-After or one recorded (the same key must succeed once the queue drains), a fault before commit that keeps
+anything or tells the client not to retry, the fault route reachable outside the test profile, a stale clarification
+reply accepted, another requester answering a run's question, and a replayed error naming the first request's id.
 """
 
 import json
@@ -5097,13 +5381,14 @@ from ops_core.settings import AdmissionSettings, Profile
 
 from tests.plan_f.auth_fakes import fake_auth
 from tests.plan_g import fakes
-from tests.plan_g.fakes import ALEX, FakeStore, StubVerifier
+from tests.plan_g.fakes import ALEX, SAM, FakeStore, StubVerifier
 
 SAMPLE = {
     "kind": "investigate",
     "text": "Investigate the alerts on Asset A17 over the last 24 hours.",
     "context": {"asset_id": "A17", "hours": 24},
 }
+DECISION = {"expected_revision": 1, "expected_payload_sha256": "9" * 64, "decision": "approve"}
 
 
 def h(name: str = "alex", key: str | None = None) -> dict[str, str]:
@@ -5130,6 +5415,26 @@ def new_conversation(c: TestClient) -> str:
 
 def messages(cid: str) -> str:
     return f"/api/v1/conversations/{cid}/messages"
+
+
+def proposal(fake: FakeStore) -> UUID:
+    """A proposal of alex's run in ALPHA at revision 1, with the hash DECISION names."""
+    pid = uuid4()
+    fake.proposals[pid] = {
+        "proposal_id": pid,
+        "tenant_id": fakes.ALPHA,
+        "run_id": uuid4(),
+        "revision": 1,
+        "payload_sha256": "9" * 64,
+        "authored_by": [ALEX],
+        "requester": ALEX,
+    }
+    return pid
+
+
+def without_id(body: dict[str, Any]) -> dict[str, Any]:
+    """An error body without its request id: a replayed error is the recorded answer under this request's id."""
+    return {k: v for k, v in body.items() if k != "request_id"}
 
 
 def test_the_six_admission_routes_over_http(api) -> None:
@@ -5161,6 +5466,16 @@ def test_the_six_admission_routes_over_http(api) -> None:
     reply = c.post(f"/api/v1/runs/{run_id}/clarifications", headers=h(), json=body)
     assert reply.status_code == 202 and reply.json()["run_id"] == str(run_id)
     assert fake.jobs[-1]["type"] == "resume_input"
+
+
+@pytest.mark.parametrize("kind", ["delete", "", "STATUS"])
+def test_an_unroutable_kind_is_an_unrecorded_422_that_writes_nothing(api, kind: str) -> None:
+    c, fake = api
+    cid = new_conversation(c)
+    records = len(fake.records)  # the conversation's own
+    r = c.post(messages(cid), headers=h(), json={"kind": kind, "text": "Investigate A17 over the last 24 hours."})
+    assert r.status_code == 422 and r.json()["code"] == "INVALID_INPUT"  # the strict kind enum, before the router
+    assert not fake.messages and not fake.runs and not fake.jobs and len(fake.records) == records  # AM-16, SA:373
 
 
 def test_a_replay_is_the_same_bytes_and_a_reused_key_is_a_conflict(api) -> None:
@@ -5203,26 +5518,29 @@ def test_a_malformed_key_is_refused_before_anything_is_read(api, key: str) -> No
     assert r.status_code == 422 and r.json()["code"] == "INVALID_INPUT" and not fake.runs
 
 
-def test_a_full_tenant_queue_is_a_recorded_429_with_retry_after() -> None:
+def test_a_full_tenant_queue_is_an_unrecorded_429_with_retry_after() -> None:
     fake = FakeStore()
     with client(fake, admission=AdmissionSettings(tenant_queue_quota=1)) as c:
         assert c.post(messages(new_conversation(c)), headers=h(), json=SAMPLE).status_code == 202
         cid = new_conversation(c)
+        records = len(fake.records)
         full = c.post(messages(cid), headers=h(key="key-quota-01"), json=SAMPLE)
         assert full.status_code == 429 and full.headers["Retry-After"] == "5" and full.json()["code"] == "RATE_LIMITED"
-        fake.runs.clear()  # the queue drains; a replay is still the recorded answer
+        assert full.json()["request_id"] == full.headers["X-Request-Id"] and len(fake.records) == records
+        fake.runs.clear()  # the queue drains
         again = c.post(messages(cid), headers=h(key="key-quota-01"), json=SAMPLE)
-        assert again.status_code == 429 and again.content == full.content and again.headers["Retry-After"] == "5"
+        assert again.status_code == 202  # Retry-After told the truth: the same key is admitted now (ruling 5)
 
 
-def test_a_fault_before_commit_is_a_final_503_and_the_same_key_then_succeeds() -> None:
+def test_a_fault_before_commit_is_a_retryable_503_and_the_same_key_then_succeeds() -> None:
     fake = FakeStore()
     with client(fake, profile=Profile.TEST) as c:
         cid = new_conversation(c)
         armed = c.post("/internal/faults/drop_before_commit", headers=h(), json={"count": 1})
         assert armed.status_code == 200 and armed.json() == {"armed": {"drop_before_commit": 1}}
         crashed = c.post(messages(cid), headers=h(key="key-fault-01"), json=SAMPLE)
-        assert crashed.status_code == 503 and crashed.json()["retryable"] is False
+        assert crashed.status_code == 503 and crashed.json()["retryable"] is True  # a lost connection (ruling 24)
+        assert crashed.json()["message"] == "database unavailable"
         assert not fake.runs and not fake.messages and len(fake.records) == 1  # only the conversation's record
         retried = c.post(messages(cid), headers=h(key="key-fault-01"), json=SAMPLE)
         assert retried.status_code == 202 and len(fake.jobs) == 1  # R015: after commit the job exists
@@ -5253,11 +5571,21 @@ def test_router_verdicts_are_recorded_and_replayed(api) -> None:
     missing = f"/api/v1/conversations/{uuid4()}/messages"
     first = c.post(missing, headers=h(key="key-404-0001"), json=SAMPLE)
     again = c.post(missing, headers=h(key="key-404-0001"), json=SAMPLE)
-    assert first.status_code == again.status_code == 404 and again.content == first.content  # the first request_id
+    assert first.status_code == again.status_code == 404 and without_id(again.json()) == without_id(first.json())
     cid = new_conversation(c)
     assert c.post(messages(cid), headers=h(), json=SAMPLE).status_code == 202
     busy = c.post(messages(cid), headers=h(key="key-409-0001"), json=SAMPLE)
     assert busy.status_code == 409 and busy.json()["code"] == "SLOT_OCCUPIED"
+
+
+def test_a_replayed_error_carries_the_replaying_requests_id(api) -> None:
+    c, _ = api
+    cid = new_conversation(c)
+    assert c.post(messages(cid), headers=h(), json=SAMPLE).status_code == 202
+    first = c.post(messages(cid), headers=h(key="key-409-0002"), json=SAMPLE)
+    again = c.post(messages(cid), headers=h(key="key-409-0002"), json=SAMPLE)  # a replay of the recorded 409
+    assert first.status_code == again.status_code == 409 and without_id(again.json()) == without_id(first.json())
+    assert again.json()["request_id"] == again.headers["X-Request-Id"] != first.json()["request_id"]  # ruling 4
 
 
 def test_a_revoked_member_cannot_replay_a_recorded_success(api) -> None:
@@ -5273,6 +5601,19 @@ def test_a_revoked_member_cannot_replay_a_recorded_success(api) -> None:
         fakes.ROWS[ALEX] = saved
 
 
+def test_a_member_who_lost_the_reviewer_role_cannot_replay_a_decision(api) -> None:
+    c, fake = api
+    url = f"/api/v1/proposals/{proposal(fake)}/decisions"
+    assert c.post(url, headers=h("sam", "key-demote-1"), json=DECISION).status_code == 200
+    saved = fakes.ROWS[SAM]
+    fakes.ROWS[SAM] = [(fakes.ALPHA, "reader")]  # the sync demoted sam; the membership itself stays
+    try:
+        replay = c.post(url, headers=h("sam", "key-demote-1"), json=DECISION)
+        assert replay.status_code == 403 and replay.json()["code"] == "FORBIDDEN"  # the role before the record
+    finally:
+        fakes.ROWS[SAM] = saved
+
+
 def test_a_stale_clarification_reply_is_a_recorded_409(api) -> None:
     c, fake = api
     run_id = UUID(c.post(messages(new_conversation(c)), headers=h(), json=SAMPLE).json()["run_id"])
@@ -5281,7 +5622,8 @@ def test_a_stale_clarification_reply_is_a_recorded_409(api) -> None:
     stale = {"question_id": str(question), "expected_version": 2, "context": {"hours": 12}}
     first = c.post(url, headers=h(key="key-stale-01"), json=stale)
     assert first.status_code == 409 and first.json()["code"] == "VERSION_CONFLICT"
-    assert c.post(url, headers=h(key="key-stale-01"), json=stale).content == first.content
+    replayed = c.post(url, headers=h(key="key-stale-01"), json=stale)
+    assert replayed.status_code == 409 and without_id(replayed.json()) == without_id(first.json())
     assert (
         c.post(url, headers={"Authorization": "Bearer sam", "Idempotency-Key": "key-stale-02"}, json=stale).status_code
         == 403
@@ -5290,25 +5632,25 @@ def test_a_stale_clarification_reply_is_a_recorded_409(api) -> None:
     assert not any(j["type"] == "resume_input" for j in fake.jobs)
 
 
+def test_another_requester_cannot_answer_the_runs_question(api) -> None:
+    c, fake = api
+    run_id = UUID(c.post(messages(new_conversation(c)), headers=h(), json=SAMPLE).json()["run_id"])
+    question = fake.seed_question(run_id)
+    body = {"question_id": str(question), "expected_version": 3, "context": {"hours": 12}}
+    stranger = c.post(f"/api/v1/runs/{run_id}/clarifications", headers=h("casey"), json=body)
+    assert stranger.status_code == 404 and stranger.json()["message"] == "no such run"  # existence is not disclosed
+    assert not any(j["type"] == "resume_input" for j in fake.jobs) and not fake.messages[1:]  # only alex's request
+
+
 def test_a_decision_replays_and_the_first_decision_wins(api) -> None:
     c, fake = api
-    pid = uuid4()
-    fake.proposals[pid] = {
-        "proposal_id": pid,
-        "tenant_id": fakes.ALPHA,
-        "run_id": uuid4(),
-        "revision": 1,
-        "payload_sha256": "9" * 64,
-        "authored_by": [ALEX],
-        "requester": ALEX,
-    }
+    pid = proposal(fake)
     url = f"/api/v1/proposals/{pid}/decisions"
-    body = {"expected_revision": 1, "expected_payload_sha256": "9" * 64, "decision": "approve"}
-    assert c.post(url, headers=h("alex"), json=body).status_code == 403  # the requester: refused, not recorded
-    first = c.post(url, headers=h("sam", "key-decide-1"), json=body)
+    assert c.post(url, headers=h("alex"), json=DECISION).status_code == 403  # the requester: refused, not recorded
+    first = c.post(url, headers=h("sam", "key-decide-1"), json=DECISION)
     assert first.status_code == 200 and fake.decision_keys[pid] == "key-decide-1"
-    assert c.post(url, headers=h("sam", "key-decide-1"), json=body).content == first.content
-    second = c.post(url, headers=h("sam"), json=body)
+    assert c.post(url, headers=h("sam", "key-decide-1"), json=DECISION).content == first.content
+    second = c.post(url, headers=h("sam"), json=DECISION)
     assert second.status_code == 409 and second.json()["code"] == "VERSION_CONFLICT"
 
 
@@ -5321,12 +5663,12 @@ def test_a_conversation_replay_returns_the_same_id(api) -> None:
 ```
 
 Run: `uv run python -m pytest tests/plan_g/test_api_admission.py -q`
-Expected: `15 failed, 1 passed` (only `test_the_fault_route_does_not_exist_outside_the_test_profile` passes: the
+Expected: `21 failed, 1 passed` (only `test_the_fault_route_does_not_exist_outside_the_test_profile` passes: the
 routes still call the pre-T12 methods and `create_app` takes no `profile`).
 
-- [ ] **Step 2: The key dependency and the routes over the units**
+- [ ] **Step 2a: The names the routes use**
 
-In `api/src/ops_api/app.py` (line numbers as Task 2 left the file):
+In `api/src/ops_api/app.py` (line numbers as Task 2 left the file, in all three parts of this step):
 
 Edit 1 (old lines 8-10), replace:
 
@@ -5391,6 +5733,7 @@ from ops_api.idempotency import (
     Idem,
     IdempotencyConflict,
     KeyInvalid,
+    QueueFull,
     Scope,
     Verdict,
     fingerprint,
@@ -5439,6 +5782,13 @@ class FaultRequest(BaseModel):
     count: int = Field(ge=1, le=100)
 
 ```
+
+Run: `uv run python -m pytest tests/plan_g/test_api_admission.py -q`
+Expected: `21 failed, 1 passed` (nothing calls the new names yet).
+
+- [ ] **Step 2b: The test profile's fault hook**
+
+In `api/src/ops_api/app.py` (line numbers as Task 2 left the file):
 
 Edit 6 (old lines 116-117), replace:
 
@@ -5492,7 +5842,58 @@ with:
         try:
 ```
 
-Edit 9 (old lines 226-227), replace:
+Edit 9 (old lines 589-590), replace:
+
+```python
+        return {"events": [{**r, "occurred_at": stamp(r["occurred_at"])} if "occurred_at" in r else r for r in rows]}
+
+```
+
+with:
+
+```python
+        return {"events": [{**r, "occurred_at": stamp(r["occurred_at"])} if "occurred_at" in r else r for r in rows]}
+
+    if faults is not None:
+        armable = faults  # a local the closure can rely on: `faults` is narrowed to non-None only here
+
+        @app.post("/internal/faults/{kind}")
+        async def arm_fault(
+            kind: FaultKind, request: Request, _: Annotated[Identity, Depends(identity)]
+        ) -> dict[str, dict[str, int]]:
+            """Arm a fault for the next `count` admissions (R015's crash before commit, ruling 24); the route exists
+            only under PROFILE=test, like incident-sim's."""
+            if kind is not FaultKind.DROP_BEFORE_COMMIT:
+                raise ApiError(422, ErrorCode.INVALID_INPUT, "the API implements drop_before_commit only")
+            armed: FaultRequest = await body(request, FaultRequest)
+            armable.arm(kind, armed.count)
+            return {"armed": armable.armed()}
+
+```
+
+Edit 10 (old lines 642-643), replace:
+
+```python
+
+    return create_app(verifier, make_store, make_auth, admission=settings.admission())
+```
+
+with:
+
+```python
+
+    return create_app(verifier, make_store, make_auth, admission=settings.admission(), profile=settings.profile())
+```
+
+Run: `uv run python -m pytest tests/plan_g/test_api_admission.py -q`
+Expected: `21 failed, 1 passed` (the fault route exists under the test profile now, but every admission still takes
+the pre-T12 path until Step 2c).
+
+- [ ] **Step 2c: The key dependency and the routes over the units**
+
+In `api/src/ops_api/app.py` (line numbers as Task 2 left the file):
+
+Edit 11 (old lines 226-227), replace:
 
 ```python
         log.error("request %s failed: %s", limits.request_id_of(request.scope), exc.__class__.__name__)
@@ -5507,6 +5908,12 @@ with:
     async def requester_mutation(who: Annotated[Identity, Depends(browser_mutation)]) -> Identity:
         """A browser-safe mutation by a requester: the role check precedes the key and the body (ruling 21)."""
         who.require("requester")
+        return who
+
+    async def reviewer_mutation(who: Annotated[Identity, Depends(enabled_identity)]) -> Identity:
+        """A decision by a current reviewer: the role check precedes the key and the record (ruling 21), so a member
+        who lost the role cannot replay a recorded decision; independence stays the unit's check (it needs the row)."""
+        who.require("reviewer")
         return who
 
     async def idempotency_key(request: Request) -> str:
@@ -5528,16 +5935,25 @@ with:
             limits.request_id_of(request.scope),
         )
 
-    async def recorded(unit: Awaitable[Verdict]) -> Response:
-        """The verdict as the response; a key reused for another request is a 409 nobody records (ruling 5)."""
+    async def recorded(request: Request, unit: Awaitable[Verdict]) -> Response:
+        """The verdict as the response. Two refusals are nobody's record (ruling 5): a key reused for another request
+        (409) and a full tenant queue (429 with Retry-After: transient, so the same key succeeds once it drains)."""
         try:
             return response(await unit)
         except IdempotencyConflict as exc:
             raise ApiError(409, ErrorCode.IDEMPOTENCY_CONFLICT, exc.message) from exc
+        except QueueFull:
+            return limits.safe_response(
+                limits.request_id_of(request.scope),
+                429,
+                ErrorCode.RATE_LIMITED,
+                "tenant queue is full",
+                headers={"Retry-After": "5"},
+            )
 
 ```
 
-Edit 10 (old lines 463-489), replace:
+Edit 12 (old lines 463-489), replace:
 
 ```python
 
@@ -5582,7 +5998,9 @@ with:
         """BS:270: 201 `{conversation_id}`; no body, so the fingerprint is an empty path and a null body (ruling 22)."""
         store: st.Store = request.app.state.store
         idem = scoped(request, who, ROUTE_CONVERSATIONS, key, {}, None)
-        return await recorded(store.open_conversation(idem=idem, tenant_id=who.tenant_id, created_by=who.subject))
+        return await recorded(
+            request, store.open_conversation(idem=idem, tenant_id=who.tenant_id, created_by=who.subject)
+        )
 
     @app.post("/api/v1/conversations/{conversation_id}/messages")
     async def post_message(
@@ -5597,12 +6015,13 @@ with:
         store: st.Store = request.app.state.store
         idem = scoped(request, who, ROUTE_MESSAGES, key, {"conversation_id": str(conversation_id)}, message)
         return await recorded(
+            request,
             store.admit_message(
                 idem=idem,
                 tenant_id=who.tenant_id,
 ```
 
-Edit 11 (old lines 492-509), replace:
+Edit 13 (old lines 492-509), replace:
 
 ```python
                 request=message,
@@ -5630,7 +6049,7 @@ with:
 ```python
                 request=message,
                 quota=bounds.tenant_queue_quota,
-            )
+            ),
         )
 
     @app.post("/api/v1/runs/{run_id}/clarifications")
@@ -5645,14 +6064,15 @@ with:
         store: st.Store = request.app.state.store
         idem = scoped(request, who, ROUTE_CLARIFICATIONS, key, {"run_id": str(run_id)}, reply)
         return await recorded(
+            request,
             store.reply_clarification(
                 idem=idem, tenant_id=who.tenant_id, run_id=run_id, requester=who.subject, reply=reply
-            )
+            ),
         )
 
 ```
 
-Edit 12 (old lines 545-562), replace:
+Edit 14 (old lines 545-562), replace:
 
 ```python
     async def post_decision(
@@ -5681,15 +6101,17 @@ with:
     async def post_decision(
         proposal_id: UUID,
         request: Request,
-        who: Annotated[Identity, Depends(enabled_identity)],
+        who: Annotated[Identity, Depends(reviewer_mutation)],
         key: Annotated[str, Depends(idempotency_key)],
     ) -> Response:
-        """BS:466: the first decision wins and a replay of the same key returns its recorded result."""
+        """BS:466: the first decision wins and a replay of the same key returns its recorded result; the enabled check
+        and the reviewer role run first (ruling 21)."""
         decision: DecisionRequest = await body(request, DecisionRequest)
         store: st.Store = request.app.state.store
         idem = scoped(request, who, ROUTE_DECISIONS, key, {"proposal_id": str(proposal_id)}, decision)
         try:
             return await recorded(
+                request,
                 store.decide_once(
                     idem=idem,
                     tenant_id=who.tenant_id,
@@ -5697,11 +6119,11 @@ with:
                     reviewer=who.subject,
                     roles=who.roles,
                     request=decision,
-                )
+                ),
             )
 ```
 
-Edit 13 (old lines 564-576), replace:
+Edit 15 (old lines 564-576), replace:
 
 ```python
             raise ApiError(403, ErrorCode.FORBIDDEN, "an independent current reviewer is required") from exc
@@ -5726,51 +6148,8 @@ with:
 
 ```
 
-Edit 14 (old lines 589-590), replace:
-
-```python
-        return {"events": [{**r, "occurred_at": stamp(r["occurred_at"])} if "occurred_at" in r else r for r in rows]}
-
-```
-
-with:
-
-```python
-        return {"events": [{**r, "occurred_at": stamp(r["occurred_at"])} if "occurred_at" in r else r for r in rows]}
-
-    if faults is not None:
-        armable = faults  # a local the closure can rely on: `faults` is narrowed to non-None only here
-
-        @app.post("/internal/faults/{kind}")
-        async def arm_fault(
-            kind: FaultKind, request: Request, _: Annotated[Identity, Depends(identity)]
-        ) -> dict[str, dict[str, int]]:
-            """Arm a fault for the next `count` admissions (R015's crash before commit, ruling 24); the route exists
-            only under PROFILE=test, like incident-sim's."""
-            if kind is not FaultKind.DROP_BEFORE_COMMIT:
-                raise ApiError(422, ErrorCode.INVALID_INPUT, "the API implements drop_before_commit only")
-            armed: FaultRequest = await body(request, FaultRequest)
-            armable.arm(kind, armed.count)
-            return {"armed": armable.armed()}
-
-```
-
-Edit 15 (old lines 642-643), replace:
-
-```python
-
-    return create_app(verifier, make_store, make_auth, admission=settings.admission())
-```
-
-with:
-
-```python
-
-    return create_app(verifier, make_store, make_auth, admission=settings.admission(), profile=settings.profile())
-```
-
 Run: `uv run python -m pytest tests/plan_g/test_api_admission.py -q`
-Expected: `16 passed`.
+Expected: `22 passed`.
 
 Run: `uv run python -m pytest tests/plan_d/test_api.py tests/plan_f -q`
 Expected: `8 failed, 150 passed` (the Plan D and Plan F tests still post without a key, and Plan D's own fake has no
@@ -6147,13 +6526,13 @@ with:
 ```
 
 Run: `uv run python -m pytest tests/plan_g tests/plan_d/test_api.py tests/plan_f -q`
-Expected: `242 passed` (84 Plan G tests and the 158 Plan D/F tests).
+Expected: `251 passed` (93 Plan G tests, 5 + 8 + 7 + 3 + 26 + 8 + 14 + 22, and the 158 Plan D/F tests).
 
 - [ ] **Step 4: The pre-T12 store mutations go**
 
 In `api/src/ops_api/store.py` (as Task 4 left it), delete the two `TODO(T12)` blocks:
 
-Edit 1 (old lines 653-677), replace:
+Edit 1 (old lines 682-706), replace:
 
 ```python
 
@@ -6190,7 +6569,7 @@ with:
     async def run(self, tenant_id: UUID, run_id: UUID) -> dict[str, Any] | None:
 ```
 
-Edit 2 (old lines 986-1083), replace:
+Edit 2 (old lines 1019-1116), replace:
 
 ```python
 
@@ -6304,7 +6683,7 @@ Run: `uv run mypy core/src api/src --no-incremental`
 Expected: `Success: no issues found in 23 source files`.
 
 Run: `uv run python -m pytest tests/plan_g tests/plan_d/test_api.py tests/plan_f -q`
-Expected: `242 passed`.
+Expected: `251 passed`.
 
 - [ ] **Step 5: The two live modules that post to the API send keys**
 
@@ -6475,12 +6854,12 @@ with:
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `765 passed, 98 skipped` (749 + 16).
+Expected: `CHECK: GREEN`; pytest `774 passed, 98 skipped` (752 + 22).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `842 passed, 21 skipped` (765 + 77; R105 now admits through the router and the
+Expected: `CHECK: GREEN`; pytest `851 passed, 21 skipped` (774 + 77; R105 now admits through the router and the
 units and decides with a key per decision, and the auth module's conversation and decision posts carry keys). Then
-`git checkout -- reports/bootstrap reports/skeleton`.
+`git checkout -- reports/bootstrap reports/skeleton reports/auth`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
 Expected: exit 0.
@@ -6662,6 +7041,7 @@ SAMPLE = {
 # A week-long replay window, so R018's replay three days on the test clock is still inside it (the default 24 h
 # window is SA:297's; the bound is ruling 7's maximum).
 WEEK = AdmissionSettings(idempotency_ttl_seconds=604800)
+KEYS: list[str] = []  # every Idempotency-Key a test sent, so the `created` fixture can delete its records
 
 
 @pytest.fixture(scope="module")
@@ -6674,12 +7054,17 @@ def lines() -> Iterator[list[str]]:
 
 @pytest_asyncio.fixture
 async def created(app_conn: persistence.Conn) -> AsyncIterator[list[str]]:
-    """Every conversation a test makes is purged afterwards with all its rows: revision 0006's downgrade (a later
-    module's R006 test) refuses a database that still holds a system message."""
+    """Every conversation a test makes is purged afterwards with all its rows (revision 0006's downgrade, a later
+    module's R006 test, refuses a database that still holds a system message), and every record the test's keys
+    left is deleted by key: an error's record names no conversation, so the purge alone would keep it."""
     made: list[str] = []
     yield made
-    for cid in made:
-        await purge_conversation(app_conn, UUID(cid))
+    try:
+        for cid in made:
+            await purge_conversation(app_conn, UUID(cid))
+    finally:
+        await app_conn.execute("DELETE FROM app.idempotency_request WHERE key = ANY(%s)", (KEYS,))
+        KEYS.clear()
 
 
 @asynccontextmanager
@@ -6699,7 +7084,10 @@ async def api(admission: AdmissionSettings = WEEK) -> AsyncIterator[httpx2.Async
 
 
 def h(name: str = "alex", key: str | None = None) -> dict[str, str]:
-    return {"Authorization": f"Bearer {name}", "Idempotency-Key": key or str(uuid4())}
+    """A persona's bearer header and an Idempotency-Key (fresh unless given), remembered for the clean-up."""
+    chosen = key or str(uuid4())
+    KEYS.append(chosen)
+    return {"Authorization": f"Bearer {name}", "Idempotency-Key": chosen}
 
 
 async def conversation(c: httpx2.AsyncClient, created: list[str]) -> str:
@@ -6725,10 +7113,11 @@ async def test_r015_a_crash_before_commit_leaves_nothing_and_the_retry_commits(
     async with api() as c:
         cid = await conversation(c, created)
         armed = await c.post("/internal/faults/drop_before_commit", headers=h(), json={"count": 1})
-        assert armed.status_code == 200
+        armed_status = armed.status_code
+        assert armed_status == 200, armed_status
         crashed = await c.post(messages(cid), headers=h(key="r015-key-0001"), json=SAMPLE)
         crash_status, crash_body = crashed.status_code, crashed.json()
-        assert crash_status == 503 and crash_body["retryable"] is False, crash_status
+        assert crash_status == 503 and crash_body["retryable"] is True, crash_status  # a lost connection (ruling 24)
         left = [
             await count(app_conn, "SELECT count(*) AS n FROM app.messages WHERE conversation_id = %s", UUID(cid)),
             await count(app_conn, "SELECT count(*) AS n FROM app.runs WHERE conversation_id = %s", UUID(cid)),
@@ -6742,7 +7131,7 @@ async def test_r015_a_crash_before_commit_leaves_nothing_and_the_retry_commits(
     jobs = [(r["type"], r["dedup_key"]) for r in await cur.fetchall()]
     assert jobs == [("investigate", f"{run_id}:1")]  # after commit the job exists
     lines.append(
-        f"R015 crash before commit: 503 retryable=False, left messages/runs/records={left}; retry 202 jobs={len(jobs)}"
+        f"R015 crash before commit: 503 retryable=True, left messages/runs/records={left}; retry 202 jobs={len(jobs)}"
     )
 
 
@@ -6753,8 +7142,8 @@ async def test_r016_a_replay_resolves_once_and_a_changed_body_conflicts(
         cid, other = await conversation(c, created), await conversation(c, created)
         first = await c.post(messages(cid), headers=h(key="r016-key-0001"), json=SAMPLE)
         again = await c.post(messages(cid), headers=h(key="r016-key-0001"), json=SAMPLE)
-        same = again.content == first.content
-        assert first.status_code == again.status_code == 202 and same
+        codes, same = (first.status_code, again.status_code), again.content == first.content
+        assert codes == (202, 202) and same, codes
         changed = await c.post(
             messages(cid), headers=h(key="r016-key-0001"), json={**SAMPLE, "context": {"asset_id": "A17", "hours": 12}}
         )
@@ -6770,12 +7159,16 @@ async def test_r016_a_replay_resolves_once_and_a_changed_body_conflicts(
             " app.current_time() - interval '1 minute')",
             (ALPHA, ALEX, ROUTE_MESSAGES, "0" * 64, Jsonb({"old": True})),
         )
-        blocked = await c.post(messages(other), headers=h(key="r016-key-0002"), json=SAMPLE)
-        blocked_code, blocked_message = blocked.status_code, blocked.json()["message"]
-        assert (blocked_code, blocked_message) == (409, "Idempotency-Key is not reusable yet; use a new key")
-        other_runs = await count(app_conn, "SELECT count(*) AS n FROM app.runs WHERE conversation_id = %s", UUID(other))
-        assert other_runs == 0  # the unit's work was rolled back with the failed record insert
-    await app_conn.execute("DELETE FROM app.idempotency_request WHERE key = 'r016-key-0002'")
+        try:
+            blocked = await c.post(messages(other), headers=h(key="r016-key-0002"), json=SAMPLE)
+            blocked_code, blocked_message = blocked.status_code, blocked.json()["message"]
+            assert (blocked_code, blocked_message) == (409, "Idempotency-Key is not reusable yet; use a new key")
+            other_runs = await count(
+                app_conn, "SELECT count(*) AS n FROM app.runs WHERE conversation_id = %s", UUID(other)
+            )
+            assert other_runs == 0  # the unit's work was rolled back with the failed record insert
+        finally:
+            await app_conn.execute("DELETE FROM app.idempotency_request WHERE key = 'r016-key-0002'")
     lines.append(f"R016 replay: 202 twice, same bytes={same}, runs=1; changed body and other conversation: {conflicts}")
     lines.append(f"R016 expired unpurged key: {blocked_code} not reusable, runs started=0")
 
@@ -6785,23 +7178,31 @@ async def test_r017_one_active_run_per_conversation(
 ) -> None:
     async with api() as one, api() as two:  # two apps, two `api` connections: the race reaches PostgreSQL
         cid = await conversation(one, created)
+        keys = ("r017-key-0001", "r017-key-0002")
         raced = await asyncio.gather(
-            one.post(messages(cid), headers=h(), json=SAMPLE), two.post(messages(cid), headers=h(), json=SAMPLE)
+            one.post(messages(cid), headers=h(key=keys[0]), json=SAMPLE),
+            two.post(messages(cid), headers=h(key=keys[1]), json=SAMPLE),
         )
         statuses = sorted(r.status_code for r in raced)
         codes = [r.json().get("code") for r in raced if r.status_code == 409]
         assert statuses == [202, 409] and codes == ["SLOT_OCCUPIED"], statuses
+        loser = next(key for key, r in zip(keys, raced, strict=True) if r.status_code == 409)
         held = await count(
             app_conn, "SELECT count(*) AS n FROM app.runs WHERE conversation_id = %s AND slot_held", UUID(cid)
         )
-        assert held == 1
+        written = await count(app_conn, "SELECT count(*) AS n FROM app.messages WHERE conversation_id = %s", UUID(cid))
+        refusals = await count(
+            app_conn, "SELECT count(*) AS n FROM app.idempotency_request WHERE key = %s AND status_code = 409", loser
+        )
+        # AM-16: the loser wrote nothing but its record, whether the slot read or create_run's savepoint refused it.
+        assert (held, written, refusals) == (1, 1, 1), (held, written, refusals)
         twin = await conversation(one, created)
         same_key = await asyncio.gather(
-            one.post(messages(twin), headers=h(key="r017-key-0001"), json=SAMPLE),
-            two.post(messages(twin), headers=h(key="r017-key-0001"), json=SAMPLE),
+            one.post(messages(twin), headers=h(key="r017-key-0003"), json=SAMPLE),
+            two.post(messages(twin), headers=h(key="r017-key-0003"), json=SAMPLE),
         )
-        twins = [r.status_code for r in same_key]
-        assert twins == [202, 202] and same_key[0].content == same_key[1].content  # the advisory lock, then a replay
+        twins, twin_bytes = [r.status_code for r in same_key], same_key[0].content == same_key[1].content
+        assert twins == [202, 202] and twin_bytes, twins  # the advisory lock, then a replay
         twin_runs = await count(app_conn, "SELECT count(*) AS n FROM app.runs WHERE conversation_id = %s", UUID(twin))
         assert twin_runs == 1
         before = [
@@ -6828,7 +7229,10 @@ async def test_r017_one_active_run_per_conversation(
         busy = await one.post(messages(cid), headers=h(), json=SAMPLE)
         busy_code = (busy.status_code, busy.json()["code"])
         assert busy_code == (409, "SLOT_OCCUPIED")
-    lines.append(f"R017 race, two connections, two keys: {statuses}; one key: {twins} with one run; slot holders=1")
+    lines.append(
+        f"R017 race, two connections, two keys: {statuses}; slot holders, messages, loser's 409 records: "
+        f"{[held, written, refusals]}; one key: {twins} with one run"
+    )
     lines.append(
         f"R017 status question while busy: 200, jobs/events unchanged {before}; sequential admission {busy_code}"
     )
@@ -6854,7 +7258,8 @@ async def test_r018_the_interval_is_resolved_once_and_ambiguity_clarifies(
             assert timedelta(hours=1, minutes=59) < ahead < timedelta(hours=2, minutes=1), ahead
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '3 days 2 hours'")
             replay = await c.post(messages(cid), headers=h(key="r018-key-0001"), json=SAMPLE)
-            assert replay.status_code == 202 and replay.content == first.content
+            replay_code, replay_same = replay.status_code, replay.content == first.content
+            assert replay_code == 202 and replay_same, replay_code
             cur = await app_conn.execute("SELECT start_at, end_at FROM app.runs WHERE run_id = %s", (run_id,))
             again = await cur.fetchone()
             assert (again["start_at"], again["end_at"]) == (stored["start_at"], stored["end_at"])
@@ -6929,6 +7334,13 @@ async def test_r129_every_admission_route_live(
         body = {"question_id": str(question), "expected_version": 3, "context": {"hours": 12}}
         reply = await c.post(f"/api/v1/runs/{run_id}/clarifications", headers=h(), json=body)
         seen["clarification_reply"] = reply.status_code
+        # DoD 4: an unroutable kind is a 422 before the router, and nothing is written (AM-16, SA:373).
+        unroutable = await c.post(
+            messages(silent := await conversation(c, created)),
+            headers=h(key="r129-key-0001"),
+            json={"kind": "delete", "text": "Investigate A17 over the last 24 hours."},
+        )
+        refused = (unroutable.status_code, unroutable.json()["code"])
     assert seen == {
         "investigate": 202,
         "status_question": 200,
@@ -6946,7 +7358,14 @@ async def test_r129_every_admission_route_live(
     cur = await app_conn.execute("SELECT type FROM app.events WHERE run_id = %s ORDER BY sequence", (run_id,))
     events = [r["type"] for r in await cur.fetchall()]
     assert events[-1] == "clarification.received", events
+    written = [
+        await count(app_conn, "SELECT count(*) AS n FROM app.messages WHERE conversation_id = %s", UUID(silent)),
+        await count(app_conn, "SELECT count(*) AS n FROM app.runs WHERE conversation_id = %s", UUID(silent)),
+        await count(app_conn, "SELECT count(*) AS n FROM app.idempotency_request WHERE key = %s", "r129-key-0001"),
+    ]
+    assert refused == (422, "INVALID_INPUT") and written == [0, 0, 0], (refused, written)
     lines.append(f"R129 routes: {seen}; answer_only run, resume_input job and clarification.received recorded")
+    lines.append(f"R129 unroutable kind 'delete': {refused}, messages/runs/records written={written}")
 
 
 async def test_r115_live_errors_use_the_safe_schema(created: list[str], lines: list[str]) -> None:
@@ -6979,27 +7398,30 @@ With the dev stack up and `uv run python scripts/skeleton.py status` showing eve
 Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_admission_live.py -q`
 Expected: `6 passed`.
 
-`reports/admission/t12-admission.txt` then holds the header `T12 durable admission — <UTC time>` and nine lines, in
+`reports/admission/t12-admission.txt` then holds the header `T12 durable admission — <UTC time>` and ten lines, in
 this order and of these shapes (the counts and statuses are exact; the run-free lines carry no id at all):
 
 ```text
-R015 crash before commit: 503 retryable=False, left messages/runs/records=[0, 0, 0]; retry 202 jobs=1
+R015 crash before commit: 503 retryable=True, left messages/runs/records=[0, 0, 0]; retry 202 jobs=1
 R016 replay: 202 twice, same bytes=True, runs=1; changed body and other conversation: [(409, 'IDEMPOTENCY_CONFLICT'),
 (409, 'IDEMPOTENCY_CONFLICT')]
 R016 expired unpurged key: 409 not reusable, runs started=0
-R017 race, two connections, two keys: [202, 409]; one key: [202, 202] with one run; slot holders=1
+R017 race, two connections, two keys: [202, 409]; slot holders, messages, loser's 409 records: [1, 1, 1]; one key:
+[202, 202] with one run
 R017 status question while busy: 200, jobs/events unchanged [1, 1]; sequential admission (409, 'SLOT_OCCUPIED')
 R018 window ends 1:59:59.<µs> past the wall clock (test clock +2 h); replay at +3 d: 202, same bytes and interval
 R018 new key while active: (409, 'SLOT_OCCUPIED'); text B22 vs form A17: (200, 'asset_conflict'), messages=
 [('investigate', False), ('clarification_question', True)], runs=0
 R129 routes: {'investigate': 202, 'status_question': 200, 'readonly_answer': 202, 'clarify': 200, 'reject': 422,
 'clarification_reply': 202}; answer_only run, resume_input job and clarification.received recorded
+R129 unroutable kind 'delete': (422, 'INVALID_INPUT'), messages/runs/records written=[0, 0, 0]
 R115 live sample: [401, 403, 404, 422, 422, 404], every body the safe schema with its X-Request-Id
 ```
 
-(The two R016 lines, the R018 line with the message list and the R129 line are one line each in the file; they are
-wrapped here at 120 characters.) Read the file and confirm it holds no token, no cookie and no id of the second
-tenant (it holds none of either by construction: the bearer values are persona names, and every row is ALPHA's).
+(The first R016 line, the first R017 line, the R018 line with the message list and the first R129 line are one line
+each in the file; they are wrapped here at 120 characters.) Read the file and confirm it holds no token, no cookie
+and no id of the second tenant (it holds none of either by construction: the bearer values are persona names, and
+every row is ALPHA's).
 
 - [ ] **Step 4: The walking skeleton again, six processes, keys on every mutation**
 
@@ -7012,13 +7434,13 @@ Expected: `1 passed`; `reports/skeleton/r105-walking-skeleton.txt` is rewritten 
 Format, lint and count characters on the three test files.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `765 passed, 104 skipped` (98 + the 6 live tests skipped).
+Expected: `CHECK: GREEN`; pytest `774 passed, 104 skipped` (98 + the 6 live tests skipped).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `848 passed, 21 skipped` (765 + 83 live). The admission module runs first in
+Expected: `CHECK: GREEN`; pytest `857 passed, 21 skipped` (774 + 83 live). The admission module runs first in
 the e2e directory (alphabetical) and purges every conversation it made, so the R006 downgrade later in the session
-passes revision 0006's guard. Then `git checkout -- reports/bootstrap` (the admission and R105 evidence files are
-committed below).
+passes revision 0006's guard. Then `git checkout -- reports/bootstrap reports/auth` (the admission and R105 evidence
+files are committed below).
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
 Expected: exit 0.
@@ -7041,10 +7463,11 @@ git commit -m "test(e2e): live durable admission: crash, replay, the slot race, 
   `api/README.md` (the "Runs" section), `docs/runbooks/walking-skeleton.md:21`, `:43`,
   `docs/runbooks/dev-topology.md` (a new last section), this plan (its checkboxes)
 
-Throughout, `<first>..<last>` is the commit range of this plan's execution on `plan-g`: `<first>` is the debt-list
-commit of Task 1 Step 1 and `<last>` the newest commit before this task's own (print both with
-`git log --reverse --format=%h b4e97bc..HEAD | sed -n '1p;$p'`), and `<date>` is `date -u +%F` on the day of the
-close-out.
+Throughout, `<first>..<last>` is the commit range of this plan's execution on `plan-g`. `e09b004` is this plan's own
+commit (the research commit `b4e97bc` precedes it), so the range `e09b004..HEAD` excludes both and starts at Task 1
+Step 1's debt-list commit: `<first>` is that commit and `<last>` the newest commit before this task's own (print
+them with `FIRST=$(git log --reverse --format=%h e09b004..HEAD | head -1)` and `LAST=$(git log -1 --format=%h)`,
+run before this task commits), and `<date>` is `date -u +%F` on the day of the close-out.
 
 - [ ] **Step 1: Handoff records**
 
@@ -7058,7 +7481,7 @@ import subprocess
 from pathlib import Path
 
 hashes = subprocess.run(
-    ["git", "log", "--reverse", "--format=%h", "b4e97bc..HEAD"], capture_output=True, text=True, check=True
+    ["git", "log", "--reverse", "--format=%h", "e09b004..HEAD"], capture_output=True, text=True, check=True
 ).stdout.split()
 span = f"{hashes[0]}..{hashes[-1]}"
 note = (
@@ -7071,9 +7494,9 @@ note = (
     "text-versus-fields parser (clarify on any disagreement, never a guess) and REPLY_RULES for "
     "POST /api/v1/runs/{id}/clarifications (message + resume_input job + clarification.received); status answers "
     "and conversation-level clarifications stored as messages; the interval resolved once on app.current_time() "
-    "inside the unit; the per-tenant queue quota (429, Retry-After 5); the safe error surface (request ids, "
-    "framework 404/405 and every exception class mapped, retryable only for outages) and the 64 KiB body limit "
-    "as middleware; the test-profile fault route. Evidence: tests/e2e/test_admission_live.py and "
+    "inside the unit; the per-tenant queue quota (429, Retry-After 5, never recorded); the safe error surface "
+    "(request ids, framework 404/405 and every exception class mapped, retryable only for outages) and the 64 KiB "
+    "body limit as middleware; the test-profile fault route. Evidence: tests/e2e/test_admission_live.py and "
     "reports/admission/t12-admission.txt (live), tests/plan_g/ for the unit half; R105 re-run with keys. "
     "Deferred: the global queue bound -> T13; the model hint's producer -> T19; resume_input handling and the "
     "ANSWERED path -> T20; stream_url -> T27; response schemas -> T26; the feedback table -> T21. Errata 35-43 "
@@ -7143,7 +7566,13 @@ A); (4) decide the proposed errata of Plans C, E, F and G (G: 35-43 below); (5) 
 lease fence; it now also owns the global queue bound), the earliest dependency-satisfied task in `handoff/tasks.json`.
 ```
 
-2. Insert, after the `## Plan F executed …` section and before `## Walking-skeleton debt list …`:
+2. Insert, after the `## Plan F executed …` section and before `## Walking-skeleton debt list …`, the block below,
+   then finish it with two bullets only execution can write. The first lists the rulings the task reviews recorded,
+   one line each with its reason, under `- Rulings made during execution:` (when there were none, write the line
+   `- Rulings made during execution: none beyond the plan.` instead). The second lists the items the task reviews
+   parked, from the SDD ledger `.superpowers/sdd/2026-10-10-first-slice-g-admission-idempotency/progress.md`, under
+   `- **Open items for later:**` (when there is no ledger or it parks nothing, write the line
+   `- **Open items for later:** none recorded.` instead).
 
 ```markdown
 ## Plan G executed (<date>, branch `plan-g`)
@@ -7152,20 +7581,23 @@ lease fence; it now also owns the global queue bound), the earliest dependency-s
   (`docs/superpowers/plans/2026-10-10-first-slice-g-admission-idempotency.md`) holds the thirty rulings; the
   inputs are `docs/superpowers/research/2026-10-09-plan-g-inputs.md` and
   `docs/superpowers/research/2026-10-10-plan-g-spike.md`.
-  Evidence: `tests/e2e/test_admission_live.py` and `reports/admission/t12-admission.txt` (header plus nine lines),
+  Evidence: `tests/e2e/test_admission_live.py` and `reports/admission/t12-admission.txt` (header plus ten lines),
   `tests/e2e/test_migration_0006_live.py`, `reports/skeleton/r105-walking-skeleton.txt` (R105 with keys); the unit
   half is in `tests/plan_g/`.
-- Gates: `check.py` 765 passed / 104 skipped; `check.py --profile test` 848 passed / 21 skipped; `verify_handoff.py`
+- Gates: `check.py` 774 passed / 104 skipped; `check.py --profile test` 857 passed / 21 skipped; `verify_handoff.py`
   exit 0 (STATUS.md, "Update - Plan G executed").
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan F's
   thirty-four:
   35. BS:264: the Idempotency-Key is required on every `/api/v1` mutation; `/auth/logout`, `/auth/backchannel-logout`
       and the test-profile fault route are exempt by design.
   36. SA:429 (AM-20.2 `idempotency_request`): the sweeper holds SELECT beside its DELETE (erratum 25 extended).
-  37. SA:188: the lock order begins with the idempotency scope's advisory lock.
+  37. SA:188: the lock order begins with the idempotency scope's advisory lock, PostgreSQL's two-key form in
+      namespace 1, a lock space distinct from the asset guard's one-key locks.
   38. BS:548 and R017: a read-only (`answer_only`) run holds the conversation slot and needs an asset and an
       interval.
-  39. BS:550: T12 bounds QUEUED runs per tenant (default 100); the global bound moves to T13.
+  39. BS:550: T12 bounds QUEUED runs per tenant (default 100); the global bound moves to T13. A full tenant queue
+      answers 429 with `Retry-After` and writes nothing: AM-16's "nothing written except the idempotency record"
+      covers the 409 and 422 rejections; a 429 writes nothing.
   40. SA:369 (AM-16 `clarification_reply`): the entry is BS:273's `POST /api/v1/runs/{id}/clarifications`; on the
       messages route `kind=clarification` is a 422 reject.
   41. SA:450: `supersedes_run_id` is validated against the tenant and the conversation.
@@ -7174,11 +7606,6 @@ lease fence; it now also owns the global queue bound), the earliest dependency-s
       `author` is NULL exactly for the two system kinds.
   43. BS:301: a wrong method keeps 405 (`INVALID_INPUT`, with `Allow`); the body limit is 422, never 413, and is
       checked before identity because it is middleware.
-- Rulings made during execution: each one the task reviews recorded, one line each with its reason; when there were
-  none, the line reads "none beyond the plan".
-- **Open items for later**, parked by the task reviews (from the SDD ledger
-  `.superpowers/sdd/2026-10-10-first-slice-g-admission-idempotency/progress.md`; in a literal run with no ledger, the
-  line reads "none recorded").
 ```
 
 3. Under `## Dev database state (2026-10-08)`, append the paragraph:
@@ -7207,8 +7634,8 @@ messages through the new identity column and changes no row.
 - Plan G (T12 durable admission, the AM-16 admission router, the scoped Idempotency-Key and the safe error
   surface) executed on branch `plan-g` (`<first>..<last>`, on top of `plan-f`). The plan is
   `docs/superpowers/plans/2026-10-10-first-slice-g-admission-idempotency.md`.
-- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `765 passed, 104 skipped`.
-  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `848 passed, 21 skipped`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `774 passed, 104 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `857 passed, 21 skipped`.
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
 - **Evidenced** (acceptance matrix `RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R015, R016, R017,
   R018, R115 and R129 (the admission half; T20 owns the graph router's). A crash before commit leaves no message,
@@ -7257,9 +7684,9 @@ Then, below that section and still before `## 25.`, add one `**Problem.**`/`**Ch
 reviews and the final review recorded (from the SDD ledger), or the single sentence "Execution found nothing the
 plan had not ruled on." when they recorded none.
 
-`README.md`, line 5: replace the status sentence's tail ", durable admission is next (Plan G)" with ", and durable
-admission with a scoped Idempotency-Key and the AM-16 router (T12)", so the line reads (one line in the file; wrapped
-here):
+`README.md`, line 5: replace the status sentence's tail "; durable admission is next (Plan G)" (a semicolon, then
+the words) with ", and durable admission with a scoped Idempotency-Key and the AM-16 router (T12)", so the line
+reads (one line in the file; wrapped here):
 
 ```markdown
 > **Status: walking skeleton runs locally (T08) under per-service database roles with RLS (T09) and a hardened
@@ -7311,7 +7738,8 @@ answer to a retry, and refuses a reuse with another request (409 `IDEMPOTENCY_CO
 clarification question and answers 200 with it, and the requester sends a new message. `kind=status` is answered
 from the recorded state (200, no run). A reply to a run's own question goes to
 `POST /api/v1/runs/{id}/clarifications` with the question id and the run's version. One conversation holds one
-active run (409 `SLOT_OCCUPIED`); a tenant holds at most `OPS_TENANT_QUEUE_QUOTA` queued runs (429, `Retry-After`).
+active run (409 `SLOT_OCCUPIED`); a tenant holds at most `OPS_TENANT_QUEUE_QUOTA` queued runs (429 with
+`Retry-After`; a 429 is never recorded, so a retry with the same key is admitted once the queue drains).
 Under `PROFILE=test` only, `POST /internal/faults/drop_before_commit` arms the crash-before-commit fault the live
 test uses.
 ```
@@ -7324,9 +7752,9 @@ PYTHONUTF8=1 uv run python scripts/check.py --profile test
 uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts
 ```
 
-Expected: `CHECK: GREEN` with `765 passed, 104 skipped`; `CHECK: GREEN` with `848 passed, 21 skipped`; exit 0.
-Then `git checkout -- reports/bootstrap`; commit `reports/admission` and `reports/skeleton` only if the live run
-changed them. Tick this plan's checkboxes (`- [ ]` → `- [x]`) for every step executed.
+Expected: `CHECK: GREEN` with `774 passed, 104 skipped`; `CHECK: GREEN` with `857 passed, 21 skipped`; exit 0.
+Then `git checkout -- reports/bootstrap reports/auth`; commit `reports/admission` and `reports/skeleton` only if the
+live run changed them. Tick this plan's checkboxes (`- [ ]` → `- [x]`) for every step executed.
 
 - [ ] **Step 5: Commit**
 
@@ -7348,21 +7776,25 @@ git commit -m "docs: close T12 - handoff records, acceptance rows, errata 35-43,
    schema and the 401/403/404/409/422/429/503 mapping → rulings 19-20, Task 1 and Task 5 (`test_api_admission.py`
    reaches every code: 401 and 403 in `test_the_key_comes_after_identity_and_role_and_before_the_body`, 404 and 409
    `SLOT_OCCUPIED` in `test_router_verdicts_are_recorded_and_replayed`, 409 `IDEMPOTENCY_CONFLICT` in the replay
-   test, 409 `VERSION_CONFLICT` in the stale-reply and decision tests, 422 for the key, the body parse, the router
-   reject (six-routes test) and the body size (Task 1), 429 in the quota test, 503 both ways in the fault and
-   lost-database tests); the six AM-16 routes as a table in `core/routing.py`, deterministic-first, the hint only
+   test, 409 `VERSION_CONFLICT` in the stale-reply and decision tests, 422 for the key, the body parse, an unroutable
+   kind (`test_an_unroutable_kind_is_an_unrecorded_422_that_writes_nothing`), the router reject (six-routes test) and
+   the body size (Task 1), the unrecorded 429 in the quota test, 503 retryable in the fault and lost-database tests
+   and not retryable in Task 1's error-surface tests); the six AM-16 routes as a table in `core/routing.py`,
+   deterministic-first, the hint only
    producing clarify → rulings 12, 16, Task 3; investigate/readonly_answer through `create_run` with intent → Task 4
    (`Intent.INVESTIGATE`/`ANSWER_ONLY`), Task 6 (`runs.intent = 'answer_only'`); status questions and
    conversation-level clarifications stored as messages with their kinds → rulings 13, 14, 26, Tasks 2, 3, 4. DoD 1
    → Task 6 R015 (and Task 4/5 unit tests); DoD 2 → Task 4, Task 5, Task 6 R016; DoD 3 → the list above; DoD 4 →
-   Task 3 (every row and cause), Task 5 (six routes over HTTP), Task 6 R129 and R018 (stored clarification, no job,
-   unroutable kind 422). Review note 1 → ruling 9 and Task 6 R017; review note 2 → rulings 13, 14, 16 (the slot row
+   Task 3 (every row and cause), Task 5 (six routes over HTTP, three unroutable kinds), Task 6 R129 (with one
+   unroutable kind that writes nothing) and R018 (stored clarification, no job). Review note 1 → ruling 9 and Task 6
+   R017 (with the loser's message and record counted); review note 2 → rulings 13, 14, 16 (the slot row
    precedes the clarify rows). R015, R016, R017, R018, R115, R129 → Task 6's six live tests and Task 7's rows.
    BS:264 → ruling 1 (erratum 35); BS:299 → rulings 4, 23; BS:301 → rulings 19, 21; BS:546 → ruling 17; BS:547 →
    ruling 12; BS:550 → ruling 18; SA:188 → ruling 6; SA:297 → ruling 7; SA:429/SA:523 → rulings 4, 8; SA:362-375 →
    rulings 12-16.
-2. **Placeholder scan.** No TBD, no "similar to Task N", no "add validation". The `TODO(T12)` markers in Task 4's
-   `store.py` name the step that removes them (Task 5 Step 4); the `TODO(T19)`/`TODO(T27)` markers are ownership
+2. **Placeholder scan.** No undecided placeholder, no cross-task "as in Task N", no "add validation". The
+   `TODO(T12)` markers in Task 4's `store.py` name the step that removes them (Task 5 Step 4); the
+   `TODO(T19)`/`TODO(T27)` markers are ownership
    markers `docs/CODE_COMMENTS.md` requires. `<first>..<last>` and `<date>` in Task 7 are defined with the command
    that prints them; the evidence shapes in Task 6 Step 3 are the exact strings the test writes (the timedelta's
    microseconds vary).
@@ -7381,46 +7813,51 @@ git commit -m "docs: close T12 - handoff records, acceptance rows, errata 35-43,
 4. **Review Focus.** Key reuse across conversations or bodies (1) → Task 4 and Task 5 tests named there, Task 6 R016;
    malformed keys (2) → Task 4 and Task 5; a lying `Content-Length`, a chunked body, a body-less route (3) → Task 1's
    three tests, Task 6 R115; text naming the form's asset among others versus only others (4) → Task 3's
-   `test_text_and_fields` rows and `test_questions_name_what_disagreed`, Task 6 R018; a replay after revocation (5) →
-   Task 5; the stale clarification reply → Task 4 and Task 5.
+   `test_text_and_fields` rows and `test_questions_name_what_disagreed`, Task 6 R018; a replay after revocation or
+   after losing the reviewer role (5) → Task 5; the stale clarification reply → Task 4 (with the run lock before any
+   check) and Task 5.
 
-## Plan author's notes
+## Round 1 changes
 
-- `BodyLimit` catches `BodyTooLarge` itself (pre-read, then replay) instead of letting a handler convert it: a route
-  that never reads its body would otherwise run (spike §5, case 5g); the 422 and its text are ruling 17's.
-- The body-size refusal comes before identity (it is middleware and ruling 17 applies it to every route); every
-  other step of ruling 21's order holds; erratum 43 records it.
-- The store's new methods are `open_conversation`/`admit_message`/`decide_once` (the brief's `create_conversation(…,
-  record)`/`admit`/`decide(…, key)`), so the pre-T12 methods live beside them through Task 4 and nothing is red
-  between tasks; Task 5 deletes the old ones.
-- The orchestration is `store.AdmissionStore` over a `Unit` protocol (SQL in `DbUnit`, memory in `FakeUnit`), and
-  `idempotent()` sits in `idempotency.py` over a three-method `RecordUnit`; `status_answer` and `clarify` are
-  `AdmissionStore` methods that take the unit, not separate protocol entries.
-- The quota count is read at ruling 21's position but refuses only investigate and readonly_answer (ruling 18's
-  "before create_run"); a status question or a clarification is never a 429.
-- `clarification_reply` is reached through a one-row `REPLY_RULES` table (`route_reply`), because ruling 16's table
-  and `AdmissionFacts` have nothing that could select it on the messages route; R129's walk covers both tables.
-- R018's live replay runs with a 604800 s window (ruling 7's maximum): with the default 86400 s, the +3-day replay of
-  ruling 11 would find the record expired.
-- An expired record the sweeper has not purged yet blocks its key (the primary key holds it): the re-read path of
-  ruling 6 answers 409 "Idempotency-Key is not reusable yet; use a new key"; that is the pre-inserted-row test.
-- The R105 and `test_auth_live.py` key edits move from Task 6 to Task 5 Step 5, so the live suite is never red between
-  tasks; Task 6 re-runs R105 and commits its evidence.
-- The Plan G debt list is committed in Task 1 Step 1 (SA:698, Plan F's precedent), not only in the close-out.
-- `create_app` gains `profile: Profile = Profile.DEV` (incident-sim's shape; `production_app` passes
-  `settings.profile()`), the fault route requires a persona (`identity`) and accepts `drop_before_commit` only (other
-  kinds are 422).
-- The `privileges.py` docstring edit (ruling 29's close-out list) is made in Task 2 with the row; `feedback`'s owner
-  there becomes T21 (Plan G creates no feedback table), with a debt line.
-- Every verdict renders through one sorted, compact serializer (`VerdictResponse`), because jsonb reorders keys and
-  ruling 4 asks for a byte-identical replay.
-- A framework `HTTPException` other than 404/405 becomes 422 `INVALID_INPUT` "request refused"; the 405 keeps its
-  status and its `Allow` header.
-- The parser ignores upper-case tokens longer than an `AssetId` (32 characters), takes the first window when the
-  text names several, and finds no window in "last 1000 hours" (three digits at most), which asks `missing_interval`.
-- A started run's message stores the resolved `{asset_id, hours}`; a clarification stores the request's own context.
-- `ApiError` stays unchanged; its 503s (all identity-provider outages) are rendered retryable by the handler.
-- A second clarification reply to the same question under a new key is 409 `VERSION_CONFLICT` "the clarification was
-  already answered" (the `resume_input` dedup key is the check, inside a savepoint).
-- `tests/e2e/conftest.py` gains `purge_conversation` beside `PURGE_ORDER`'s new statement: `purge_run` alone cannot
-  delete a conversation that holds status or clarification messages.
+- B1: ruling 15 (311-325); store `ReplyRefused`, `check_reply_run`/`check_reply_question`, `Unit.record_reply`,
+  `reply_clarification`, `DbUnit.record_reply` (4113, 4252-4278, 4337, 4576-4615, 4942-4995); fake 3542; test 3956.
+- B2: rulings 5, 18 (228-237, 349-350), erratum 39 (482); `QueueFull`, `response` (3083, 3226); `admit_message`
+  4446; `recorded` 5938; tests 3814, 5521, 3021; store/idempotency docstrings 3043, 4037; 7497, 7599, 7742.
+- I1: ruling 15 (316-318); `check_reply_run` 4252; fakes `CASEY` 3379; tests 3970, 5635.
+- I2: `BodyIncomplete`, `read_bounded`, `BodyLimit` (1033, 1100-1145), docstring 1014; test 836; 567, 503.
+- I2a: the disconnect comment in `read_bounded` and `BodyLimit` rewritten (1112, 1144).
+- I3: test 5472; live R129 7338-7343 and its evidence line (7417); self-review 7779-7784.
+- I4: live R017 7181-7202 and its evidence line 7409.
+- I5: ruling 21 (375-383); `reviewer_mutation` 5913, `post_decision` dependency; test 5604; review focus 5 (178).
+- I6: ruling 4 (215-227); `replay` 3175 and its uses; `Idem` docstring 3151; test_error_surface docstring 883;
+  tests 5581 and the replay asserts of the 404 and stale-reply tests.
+- M1: Task 7 README tail quoted with its semicolon (7687).
+- M2: ruling 24 (392-399); `_start` 4568; tests 3885, 5535; live R015 7134 and evidence 7405.
+- M3: live R015, R016, R017, R018 bind responses before asserting (7110-7270).
+- M4: live `KEYS`, `created`, `h` (7044-7085); R016 delete in a `finally` (7160-7171).
+- M5: ruling 6 (238-242), erratum 37 (475-478), `IDEMPOTENCY_LOCK_NAMESPACE` 3068, `DbUnit.lock_scope` 4800, 7595.
+- M6: ruling 15 (320-321); `check_reply_question`; the bind test 3939.
+- M7: `test_migration_0006_live` test 1, nested `finally` (2116-2155).
+- M8: Task 2 Steps 4a/4b/4c (1863, 1933, 2033); Task 5 Steps 2a/2b/2c (5669, 5789, 5892), each with a run line.
+- M9: ruling 20 (367-370); Task 1 Edits 8 and 13 (1308, 1446) and the Files list (553-556).
+- WA-1: every post-live checkout names `reports/auth` (43-44, 92, 579, 1522, 2228, 5313, 6862, 7442, 7756).
+- WA-2: counting lists exclude `pyproject.toml` (114-115, Task 1 Step 8 1512-1514).
+- WA-3: Task 2 Files (1542), Step 4b live sweeper edit (1989-2030), Step 5 run (2208-2215), commit; 143, 487.
+- WA-4: Task 7 "Throughout" (7466-7470) and the Step 1 script (7484) use `e09b004..HEAD`.
+- WA-5: the two executor bullets leave the SESSION_STATE block and become prose above it (7570-7576).
+- WA-6: same as M1 (7687).
+- T4 wording: "six helpers" (2843, 3236).
+- Counts: Task overview with the arithmetic once (522-547); every expected run and gate line recomputed.
+
+## Round 1 open points
+
+- M5: the ruling's `pg_advisory_xact_lock(1, hashtextextended(...))` has no (int, bigint) signature; `hashtext` used.
+- B2: the 429 keeps `retryable: false` (ruling 19 unchanged); only `Retry-After` says it is transient.
+- B1: the checks are pure functions shared by `DbUnit` and `FakeUnit`; `Unit.run`/`latest_clarification` are gone.
+- B1: the lock SELECT has no `tenant_id` filter (the ruling's text); RLS scopes it under the tenant unit.
+- I1: no seeded second requester exists in ALPHA, so `CASEY` is a fake-only persona in `tests/plan_g/fakes.py`.
+- M9: two back-channel log texts now say "failed" (not "not applied") so app.py keeps its line count for Task 5.
+- WA-4: a commit that revises this plan after `e09b004` falls inside `e09b004..HEAD`; the base must then move.
+- I3: the live unroutable-kind proof is its own evidence line, so the evidence file has ten lines, not nine.
+- I6: no unit test of `replay()` in `test_idempotency.py`; the HTTP test pins it.
+- Rulings 6 and 18 and errata 37 and 39 changed too, because M5 and B2 force their text.
