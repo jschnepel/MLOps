@@ -147,7 +147,8 @@ def create_app(
 
     app = FastAPI(title="ops-api", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(limits.BodyLimit, max_bytes=bounds.max_body_bytes)
-    app.add_middleware(limits.RequestId)  # added last, so outermost: the body refusal carries the request id too
+    app.add_middleware(limits.RequestId)  # the body refusal carries the request id too
+    app.add_middleware(limits.SafeErrors)  # added last, so outermost: the catch-all sees every other layer's failure
     issuer = settings.keycloak().issuer
 
     async def identity(
@@ -211,7 +212,7 @@ def create_app(
         try:
             enabled = await deps.admin.enabled(who.subject)
         except AdminUnavailable as exc:
-            log.warning("request %s: enabled check unavailable: %s", request.state.request_id, exc)
+            log.warning("request %s: enabled check unavailable: %s", limits.request_id_of(request.scope), exc)
             raise ApiError(503, ErrorCode.UNAVAILABLE, "identity provider unavailable") from exc
         if not enabled:
             if who.session is not None:
@@ -242,11 +243,9 @@ def create_app(
     @app.exception_handler(IllegalTransition)
     @app.exception_handler(EventRuleViolation)
     @app.exception_handler(psycopg.Error)
-    @app.exception_handler(psycopg.errors.ProgramLimitExceeded)
-    @app.exception_handler(psycopg.errors.StatementTooComplex)
     async def _server_defect(request: Request, exc: Exception) -> Response:
         # A defect, a refused deployment (AuthorityViolation is a PersistenceError), an untranslated SQLSTATE (a 23505)
-        # or a statement too big for the server (class 54): a retry meets the same defect, so not retryable (ruling 19).
+        # or a statement too big for the server: a retry meets the same defect, so not retryable (ruling 19).
         failed(request, exc)
         return safe(request, 503, ErrorCode.UNAVAILABLE, "service error")
 
@@ -254,15 +253,13 @@ def create_app(
     @app.exception_handler(psycopg.InterfaceError)
     async def _database_down(request: Request, exc: psycopg.Error) -> Response:
         # A lost connection or a transient server condition: nothing committed, so a retry may succeed (BS:564). The
-        # class-54 handlers above were registered first and Starlette walks the exception's MRO, so they keep theirs.
+        # limit classes (54xxx, 53400) are siblings of the transient ones under OperationalError, not a hierarchy, so
+        # the SQLSTATE is the only reliable key: BS:562 says never retry what is not transient.
+        code = getattr(exc, "sqlstate", None) or ""
         failed(request, exc)
+        if code[:2] == "54" or code == "53400":
+            return safe(request, 503, ErrorCode.UNAVAILABLE, "service error")
         return safe(request, 503, ErrorCode.UNAVAILABLE, "database unavailable", retryable=True)
-
-    @app.exception_handler(Exception)
-    async def _unhandled(request: Request, exc: Exception) -> Response:
-        # Starlette answers, then re-raises (spike §5): uvicorn logs the traceback through the redaction filter.
-        failed(request, exc)
-        return safe(request, 503, ErrorCode.UNAVAILABLE, "service error")
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(request: Request, exc: StarletteHTTPException) -> Response:
@@ -432,10 +429,10 @@ def create_app(
         try:
             claims = await deps.logout_tokens.verify(token)
         except SigningKeysUnavailable as exc:
-            log.warning("request %s: back-channel logout failed: no signing keys", request.state.request_id)
+            log.warning("request %s: back-channel logout failed: no signing keys", limits.request_id_of(request.scope))
             raise ApiError(503, ErrorCode.UNAVAILABLE, "identity provider unavailable") from exc
         except TokenRejected as exc:
-            log.info("request %s: back-channel logout token rejected: %s", request.state.request_id, exc)
+            log.info("request %s: back-channel logout token rejected: %s", limits.request_id_of(request.scope), exc)
             raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token rejected") from exc
         keep_until = datetime.fromtimestamp(claims.expires_at, UTC) + timedelta(days=1)
         try:
@@ -443,11 +440,13 @@ def create_app(
         except psycopg.Error as exc:
             # Keycloak never retries, so this line is the operator's only trace of a logout that did not take effect
             # (final review M4); the class name only, never the token. The 503 handler answers.
-            log.warning("request %s: back-channel logout failed: %s", request.state.request_id, type(exc).__name__)
+            log.warning(
+                "request %s: back-channel logout failed: %s", limits.request_id_of(request.scope), type(exc).__name__
+            )
             raise
         if revoked is None:
             raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token replayed")
-        log.info("request %s: back-channel logout revoked %d session(s)", request.state.request_id, revoked)
+        log.info("request %s: back-channel logout revoked %d session(s)", limits.request_id_of(request.scope), revoked)
         return no_store(Response(status_code=200))
 
     @app.get("/api/v1/me")

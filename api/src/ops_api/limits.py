@@ -1,4 +1,4 @@
-"""The API's two pure ASGI middlewares and the one SafeError builder they share with the routes (Plan G rulings 17,
+"""The API's three pure ASGI middlewares and the one SafeError builder they share with the routes (Plan G rulings 17,
 19 and 20; BUILD_SPEC §7 safe errors, §17 the 64 KiB body).
 
 `RequestId` gives every request a server-made id: it is echoed as `X-Request-Id`, carried in every error body and
@@ -12,12 +12,14 @@ disconnects before its body is complete reaches no route at all: what arrived is
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID, uuid4
 
 from fastapi.responses import JSONResponse
 from ops_core.contracts import ErrorCode, SafeError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+log = logging.getLogger("ops_api")
 REQUEST_ID_HEADER = "X-Request-Id"
 _STATE_KEY = "request_id"
 
@@ -157,3 +159,37 @@ class BodyLimit:
             request_id_of(scope), 422, ErrorCode.INVALID_INPUT, f"request body exceeds {self.max_bytes} bytes"
         )
         await response(scope, receive, send)
+
+
+class SafeErrors:
+    """The outermost catch-all: an escaped exception becomes the safe 503 and one log line, and is not re-raised.
+
+    Starlette's own catch-all re-raises after it answers, so the server would log the traceback again, with the
+    exception's text and its chained cause. BS:301 keeps stack traces out of bodies and the rule "the class name,
+    never the text" keeps them out of logs (a psycopg DETAIL names a tenant and a key), so the response is the
+    report to the client and the single line below is the trace.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def track(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, track)
+        except Exception as exc:  # noqa: BLE001 - the catch-all exists to answer whatever escaped
+            request_id = request_id_of(scope)
+            log.error("request %s failed: %s", request_id, type(exc).__name__)
+            if not started:  # a response already under way cannot be replaced; the log line is all that is left
+                response = safe_response(request_id, 503, ErrorCode.UNAVAILABLE, "service error")
+                await response(scope, receive, send)

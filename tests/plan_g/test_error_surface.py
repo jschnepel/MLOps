@@ -68,8 +68,8 @@ def test_an_unhandled_exception_is_a_non_retryable_503_and_one_log_line(app_and_
         raise RuntimeError(CANARY)
 
     app.add_api_route("/boom", boom, methods=["GET"])
-    # Starlette re-raises after the catch-all answers (spike §5); the client must still get the safe body.
-    with TestClient(app, raise_server_exceptions=False) as c:
+    # The catch-all middleware answers and does not re-raise, so no traceback reaches the server's log (spike §5).
+    with TestClient(app) as c:
         r = c.get("/boom")
     body = r.json()
     assert r.status_code == 503 and safe_shape(body)
@@ -77,6 +77,8 @@ def test_an_unhandled_exception_is_a_non_retryable_503_and_one_log_line(app_and_
     assert CANARY not in r.text and CANARY not in caplog.text
     lines = [rec.getMessage() for rec in caplog.records if rec.name == "ops_api"]
     assert lines == [f"request {body['request_id']} failed: RuntimeError"]
+    assert all(rec.exc_info is None for rec in caplog.records)  # no traceback: it would carry the text
+    assert r.headers[REQUEST_ID_HEADER] == body["request_id"]
 
 
 def test_a_unique_violation_is_a_non_retryable_503_without_its_detail(app_and_store, caplog, monkeypatch) -> None:
@@ -106,24 +108,44 @@ def test_a_lost_connection_is_a_retryable_503(app_and_store, monkeypatch) -> Non
     assert CANARY not in r.text
 
 
-def test_a_statement_the_server_cannot_run_is_a_non_retryable_503(app_and_store, caplog, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "defect",
+    [
+        psycopg.errors.ProgramLimitExceeded,
+        psycopg.errors.StatementTooComplex,
+        psycopg.errors.TooManyColumns,
+        psycopg.errors.TooManyArguments,
+        psycopg.errors.ConfigurationLimitExceeded,
+    ],
+)
+def test_a_statement_the_server_cannot_run_is_a_non_retryable_503(
+    app_and_store, caplog, monkeypatch, defect: type[psycopg.Error]
+) -> None:
     caplog.set_level(logging.ERROR, logger="ops_api")
     app, fake = app_and_store
-    answers, texts = [], []
+
+    async def too_big(tenant_id: UUID, run_id: UUID) -> None:
+        raise defect(CANARY)
+
+    monkeypatch.setattr(fake, "run", too_big)
     with TestClient(app) as c:
-        # Both are OperationalError subclasses (class 54): the same statement fails the same way on every retry.
-        for defect in (psycopg.errors.ProgramLimitExceeded, psycopg.errors.StatementTooComplex):
+        # All are OperationalError siblings, not a hierarchy: the same statement fails the same way on every retry.
+        r = c.get(f"/api/v1/runs/{uuid4()}", headers=auth("alex"))
+    assert (r.status_code, r.json()["retryable"], r.json()["message"]) == (503, False, "service error")
+    assert CANARY not in r.text and CANARY not in caplog.text and defect.__name__ in caplog.text
 
-            async def too_big(tenant_id: UUID, run_id: UUID, defect: type[psycopg.Error] = defect) -> None:
-                raise defect(CANARY)
 
-            monkeypatch.setattr(fake, "run", too_big)
-            r = c.get(f"/api/v1/runs/{uuid4()}", headers=auth("alex"))
-            answers.append((r.status_code, r.json()["retryable"], r.json()["message"]))
-            texts.append(r.text)
-    assert answers == [(503, False, "service error")] * 2
-    assert not any(CANARY in text for text in texts) and CANARY not in caplog.text
-    assert "ProgramLimitExceeded" in caplog.text and "StatementTooComplex" in caplog.text
+def test_a_transient_server_condition_stays_retryable(app_and_store, monkeypatch) -> None:
+    app, fake = app_and_store
+
+    async def full(tenant_id: UUID, run_id: UUID) -> None:
+        raise psycopg.errors.DiskFull(CANARY)
+
+    monkeypatch.setattr(fake, "run", full)
+    with TestClient(app) as c:
+        r = c.get(f"/api/v1/runs/{uuid4()}", headers=auth("alex"))
+    assert (r.status_code, r.json()["retryable"], r.json()["message"]) == (503, True, "database unavailable")
+    assert CANARY not in r.text
 
 
 def test_the_request_id_header_is_the_body_request_id(app_and_store) -> None:
