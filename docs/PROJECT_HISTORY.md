@@ -232,7 +232,7 @@ changed its shape. The brief's decisions survived every round; what the rounds f
 ruling and its code (a lock named in prose but taken last; a record rule that swept in a transient refusal; a parser
 that read half the units people write), which is exactly the distance a dry run cannot see and a critic can.
 
-**Execution (seven tasks, `c5d3bbc..24207e2`; every task reviewed, one fix round each, every re-review clean).** The
+**Execution (seven tasks, `c5d3bbc..b4fb01f`; every task reviewed, one fix round each, every re-review clean).** The
 plan ran as written: the debt list first, then Tasks 1 to 7, with six per-task reviews that found no Critical defect and
 a fix round after each. Tasks 1, 3 and 6 needed fixes; Tasks 2, 4 and 5 were approved with minors, most of them applied
 in a fix round. Three findings changed a plan ruling, and the plan's text stays as written with the change recorded in
@@ -270,6 +270,32 @@ route's refusals and the missing-asset clarification. The gate tails ended at 80
 seventeen above the plan's, the tests those fix rounds added; the per-task deltas held throughout. Five observations
 were parked with owners instead of fixed (a malformed thousands group, the expired-record refusal, the reuse of the
 stale message for any conflict, the fault attribute on the store, and the global queue bound).
+
+**Final review (whole branch, most capable model: 0 Critical, 2 Important, 6 Minor; one fix wave, clean re-review;
+record `docs/reviews/plan-g-final-review-2026-10-10.md`).**
+
+**Problem.** Both Important findings were in the parser that three plan rounds and a task review had already
+reworked, and both were consequences of earlier fixes. Round two had widened the window number to any length so
+that no number a person could write would let the form win silently; the renderer that puts that number into
+the clarification question converted it through a float, so a requester could send four hundred digits and
+turn a clarification into a 503 with an ERROR line. And ruling 12's asset rule said a form asset "possibly among
+others" in the text agrees, while the window rule from round two said two windows ask even when the form
+matches one; the review read the spec's "ask rather than guess" the same way for both and showed "B22 is
+failing, A17 is fine" with the form set to A17 starting an investigation of A17. The minors were of the same
+family: a refusal mapping that called every conflict a busy slot, a row lock on the API's single connection
+with no timeout, a quota count run for messages that never use it, and a runbook sentence that told a client
+to reuse its key after a refusal that would replay for a day.
+
+**Change.** The parser and renderer have no float at all: a window with more than twelve integer digits is
+read as too large and asks without echoing the number, and the renderer formats by integer arithmetic with
+at most two decimals. The asset rule now mirrors the window rule: two or more ids in the text ask, whatever
+the form says; one id equal to the form's agrees; one different id conflicts. The refusal mapping names
+`SLOT_OCCUPIED` only when the function does, the reply unit sets a two-second lock timeout before its
+`FOR UPDATE` (owned by T13 with the lease work), the quota count runs only for run verdicts, and the runbook
+says what a recorded refusal means for a retry. What the final review added to the planning rounds' lesson:
+a fix that widens what the system reads must be paired with a check on what the system then does with it,
+and a rule written for one input class (windows) has to be re-applied to its siblings (assets) or the two
+will disagree in exactly the case the spec forbids guessing.
 
 ## 25. What the process taught
 

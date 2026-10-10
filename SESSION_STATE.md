@@ -2,7 +2,7 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan G (T12) is executed on branch `plan-g` (`c5d3bbc..24207e2`, on top of `plan-f`: the seven tasks; the close-out commit follows). Owner inputs: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) merge the stacked PRs in order and open the plan-g -> plan-f PR; (3) T44 step 10 (`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F and G (G: 35-44 below); (5) migrate the dev database to revision 0006 (`uv run python scripts/skeleton.py migrate`, dev profile: it adds `app.idempotency_request` and `messages.seq` and numbers the existing messages; nothing is deleted). Next is Plan H: T13 (leases, wake-ups and the lease fence; it now also owns the global queue bound), the earliest dependency-satisfied task in `handoff/tasks.json`.
+**Next task:** Plan G (T12) is executed on branch `plan-g` (`c5d3bbc..b4fb01f`, on top of `plan-f`: the seven tasks; the close-out commit follows). Owner inputs: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) merge the stacked PRs in order and open the plan-g -> plan-f PR; (3) T44 step 10 (`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F and G (G: 35-44 below); (5) migrate the dev database to revision 0006 (`uv run python scripts/skeleton.py migrate`, dev profile: it adds `app.idempotency_request` and `messages.seq` and numbers the existing messages; nothing is deleted). Next is Plan H: T13 (leases, wake-ups and the lease fence; it now also owns the global queue bound), the earliest dependency-satisfied task in `handoff/tasks.json`.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-g` (Plan G work on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09 (`origin/plan-e` is two docs commits behind local `plan-e`; a `git push origin plan-e` brings it level before the plan-f -> plan-e PR). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`). Merging them in order is the owner's call.
 
@@ -223,7 +223,7 @@
 
 ## Plan G executed (2026-10-10, branch `plan-g`)
 
-- T12 = `c5d3bbc..24207e2` (the debt list first, then the seven tasks). The plan
+- T12 = `c5d3bbc..b4fb01f` (the debt list first, then the seven tasks). The plan
   (`docs/superpowers/plans/2026-10-10-first-slice-g-admission-idempotency.md`) holds the thirty rulings; the
   inputs are `docs/superpowers/research/2026-10-09-plan-g-inputs.md` and
   `docs/superpowers/research/2026-10-10-plan-g-spike.md`.
@@ -270,7 +270,7 @@
     ERROR line with the request id and the exception class, never its text; the safe 503 `retryable: false` if the
     response has not started; no re-raise. The request id is read everywhere through
     `limits.request_id_of(request.scope)`.
-  - (c) Amends ruling 12 (Task 3 review): the window number pattern reads any number of ASCII digits with optional
+  - (c) Amends ruling 12 (Task 3 review; narrowed by the final review): the window number pattern reads ASCII digits of any count with optional
     thousands commas and an optional or leading decimal point (`[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?` or `\.[0-9]+`), so
     "last 12345 hours", "last 1,000 hours" and "last .5 days" are read and can conflict or fall out of range; the form
     never wins silently on a number the parser can see. `AdmissionRule.cause` and `AdmissionDecision.cause` are typed
@@ -305,8 +305,20 @@
     exists -> T13 (already a debt line of Plan G);
   - the deferred items of the Plan G debt list keep their owners: the model hint's producer -> T19, `resume_input`
     handling and the ANSWERED path -> T20, `stream_url` -> T27, response schemas -> T26, the `feedback` table -> T21.
-- **Final whole-branch review:** recorded by the controller after the review (its record and any fix wave follow
-  this close-out).
+- **Final whole-branch review** (opus, record `docs/reviews/plan-g-final-review-2026-10-10.md`): 0 Critical /
+  2 Important / 6 Minor, closed in one fix wave (b4fb01f) with a clean re-review. The two Important findings
+  were both in the parser the three plan rounds had already reworked: a window number large enough to overflow
+  the renderer's float turned a clarification into a 503 (fixed: no float anywhere; a window with more than
+  twelve integer digits asks without echoing the number; `said()` uses integer arithmetic), and a form asset
+  that was one of several named in the text started a run (fixed: two or more ids in the text ask
+  `asset_ambiguous` even when one is the form's; ruling 12 amended). Also closed: the `create_run` refusal
+  mapping is explicit (only `SLOT_OCCUPIED` is the busy-slot 409), the reply unit sets `lock_timeout = 2s`
+  before its `FOR UPDATE` (a 55P03 is the retryable 503; `TODO(T13)`), the quota count runs only for run
+  verdicts, and the runbook says a recorded refusal replays for the window so a retry after fixing the cause
+  needs a new key. Ledgered, not fixed: lower-case, accented or full-width asset spellings and "previous"/
+  "two days" are unread (the AssetId grammar is upper-case ASCII by contract) → T21. Gates after the wave:
+  `check.py` 816 passed / 104 skipped GREEN; `--profile test` 899 / 21 GREEN (the live suite re-run by the
+  controller); `verify_handoff` exit 0.
 
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
@@ -463,6 +475,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan G as described in the Next task line.
+Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan H (T13) as described in the Next task line.
 
 Do not store secrets or private reasoning in this file.

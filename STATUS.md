@@ -139,9 +139,9 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 ## Update — Plan G executed (2026-10-10, branch `plan-g`)
 
 - Plan G (T12 durable admission, the AM-16 admission router, the scoped Idempotency-Key and the safe error
-  surface) executed on branch `plan-g` (`c5d3bbc..24207e2`, on top of `plan-f`). The plan is
+  surface) executed on branch `plan-g` (`c5d3bbc..b4fb01f`, on top of `plan-f`). The plan is
   `docs/superpowers/plans/2026-10-10-first-slice-g-admission-idempotency.md`.
-- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `805 passed, 104 skipped`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `816 passed, 104 skipped` (after the final-review fix wave).
   `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `888 passed, 21 skipped`.
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
 - **Evidenced** (acceptance matrix `RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R015, R016, R017,
@@ -156,3 +156,8 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 - Deferred, each with its owner in `SESSION_STATE.md`: the global queue bound -> T13; the model hint's producer ->
   T19; `resume_input` handling and the ANSWERED path -> T20; `stream_url` -> T27; response schemas -> T26; the
   `feedback` table -> T21. Ten errata (35-44) are proposed for the owner to decide.
+- The final whole-branch review (0 Critical, 2 Important, 6 Minor) was fixed in one wave (`b4fb01f`): the window
+  renderer no longer uses floats and a window with more than twelve integer digits asks without echoing the
+  number; two asset ids in the text ask even when the form names one of them; the `create_run` refusal mapping
+  is explicit; the reply unit bounds its row lock with `lock_timeout = 2s`; the quota count runs only for run
+  verdicts. Record: `docs/reviews/plan-g-final-review-2026-10-10.md`.
