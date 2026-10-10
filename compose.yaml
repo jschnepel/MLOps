@@ -59,6 +59,7 @@ services:
       - kc_persona_lee_password
       - kc_persona_riley_password
       - kc_persona_jordan_password
+      - kc_client_secret_ops_test_admin
     volumes:
       - ./deploy/dev/keycloak/entrypoint.sh:/opt/ops/entrypoint.sh:ro
       - ./deploy/dev/keycloak/realm-ops-dev.json:/opt/keycloak/data/import/realm-ops-dev.json:ro
@@ -113,6 +114,10 @@ secrets:
     file: ${OPS_SECRETS_DIR}/postgres_operator_password
   postgres_test_harness_password:
     file: ${OPS_SECRETS_DIR}/postgres_test_harness_password
+  api_session_key:
+    file: ${OPS_SECRETS_DIR}/api_session_key
+  kc_client_secret_ops_test_admin:
+    file: ${OPS_SECRETS_DIR}/kc_client_secret_ops_test_admin
 
 volumes:
   pg-data:

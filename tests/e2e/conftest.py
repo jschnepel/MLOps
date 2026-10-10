@@ -111,6 +111,21 @@ async def incident_conn(migrated: None) -> AsyncIterator[persistence.Conn]:
         await conn.close()
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def fresh_memberships(migrated: None, request: pytest.FixtureRequest) -> None:
+    """T11's 120 s rule (grant_execution refuses MEMBERSHIP_STALE): the seeded rows carry the migration instant as
+    `synced_at`, and the sweeper that keeps it fresh runs only inside the R105 skeleton, so every live test starts
+    with the rows stamped now. Tests of the rule itself age the rows afterwards. A module marked `sweeper_stamps`
+    (R105) proves the sweeper instead, so it is left alone."""
+    if request.node.get_closest_marker("sweeper_stamps"):
+        return
+    conn = await persistence.connect(settings.superuser_postgres())
+    try:
+        await conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
+    finally:
+        await conn.close()
+
+
 PURGE_ORDER = (
     "DELETE FROM app.invocation_context WHERE run_id = %s",
     "DELETE FROM app.events WHERE run_id = %s",

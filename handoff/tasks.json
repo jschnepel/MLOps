@@ -370,7 +370,7 @@
       "requirement_ids": [
         "R103"
       ],
-      "status": "DONE_PENDING_OWNER",
+      "status": "DONE",
       "definition_of_done": [
         "CI runs on push and PR in jschnepel/MLOps and is green.",
         "No secrets or privileged contexts used."
@@ -378,7 +378,8 @@
       "external_approval_required": true,
       "review_notes": [
         "Requires a public repo at M01 while publication approval sits at T34 - owner decides: approve early publication or start private and flip public at T34.",
-        "Plan A (branch plan-a): workflow committed in 289c16a (SHA-pinned actions, read-only token, no secrets). Pending owner step 7: gh auth login, choose visibility, create the remote and push; record the first CI run URL in SESSION_STATE.md."
+        "Plan A (branch plan-a): workflow committed in 289c16a (SHA-pinned actions, read-only token, no secrets). Pending owner step 7: gh auth login, choose visibility, create the remote and push; record the first CI run URL in SESSION_STATE.md.",
+        "2026-10-09: PRs #1-#5 (plan-b -> main ... plan-f -> plan-e) opened; the first runs were red on ruff EXE001 (scripts/verify_handoff.py had a shebang without the executable bit; the rule is skipped on Windows), every test green; fixed by a file-mode commit on each branch; first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516. Record: reports/ci/t06-first-ci-runs.txt. The push-to-main trigger fires when PR #1 merges."
       ]
     },
     {
@@ -556,7 +557,7 @@
         "R013",
         "R086"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "Negative tests for state/nonce/iss/aud, CSRF, revoked membership.",
         "Disabled user: next decision-class mutation 401; grants blocked within 60 s.",
@@ -567,7 +568,8 @@
         "Admin-API check: 2 s timeout, cached service-account token, fail closed 503 retryable when Keycloak is down/slow. The 'grants blocked <=60 s' half of R086 is verified in T21.",
         "Membership sync fails closed: grants refuse if the last successful sync is older than 120 s; a deleted user (admin API 404) maps to 401. Run the admin-API check before opening the DB transaction.",
         "Back-channel logout: verify signature with an alg allowlist, exp, sid/sub, and a durable (Postgres) jti store; exempt the endpoint from CSRF/Idempotency-Key with a forged-token negative test.",
-        "Start a core logging redaction filter here (OIDC code, connection strings, tokens, handles) with a canary test; T28 extends it to telemetry."
+        "Start a core logging redaction filter here (OIDC code, connection strings, tokens, handles) with a canary test; T28 extends it to telemetry.",
+        "Plan F (branch plan-f): done in 0d1a892..ad3163f (the seven tasks, the close-out and the final-review fix wave; plan docs/superpowers/plans/2026-10-08-first-slice-f-sessions-login-sync.md, review docs/reviews/plan-review-f-2026-10-09.md). Shipped: the four auth routes (GET /auth/login, GET /auth/callback, POST /auth/logout, POST /auth/backchannel-logout) plus a GET / landing page; the opaque session-cookie path beside the bearer path in one identity dependency (the session row is looked up by hash, the membership is resolved per request, a disabled or membership-less user is 401 and the session is revoked); CSRF token and Origin check on browser mutations; the Keycloak enabled check on the decision route (2 s timeout, keep-alive to 127.0.0.1, fail closed 503 retryable); the hand-written back-channel logout endpoint with the durable jti store (app.logout_jti, a replayed or forged token is refused); revision 0005 (sessions sid/username/refresh_token_enc, app.login_state, app.logout_jti); the sweeper as the sixth host process (sync_memberships as a maintenance job per minute, MEMBERSHIP_STALE after 120 s, the GRANT_DEFERRED re-queue in the worker); the core redaction filter with canary tests. Evidence: tests/e2e/test_auth_live.py and reports/auth/t11-sessions-revocation.txt (live), tests/plan_f/ for the unit half; R105 re-run with six processes. authlib 1.8.0 and joserfc 1.7.5 locked (AM-30 holds). Deferred: Idempotency-Key -> T12; the enabled check on revisions, cancel and manual proposals, and the grant-side live evidence for R086 through a real grant_execution call -> T21; the SSE identity recheck -> T27; telemetry redaction -> T28; the containerised back-channel URL and the demo realm (omit ops-dev-direct and ops-test-admin) -> T30; the purge of finished maintenance jobs -> T14; the open items parked by the task reviews are listed in SESSION_STATE.md."
       ]
     },
     {

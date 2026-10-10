@@ -22,7 +22,7 @@ from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.tools.base import Tool
-from ops_core import persistence, settings
+from ops_core import persistence, redaction, settings
 from ops_core.jobs import Tool as ToolName
 from ops_core.outcomes import ActionOutcome, ToolOutcome
 from ops_core.settings import Role
@@ -57,9 +57,16 @@ def stamp(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def tool_error(code: str, message: str) -> dict[str, Any]:
-    """The `error` object of an envelope; never retryable in T08."""
-    return {"code": code, "message": message, "retryable": False}
+def tool_error(code: str, message: str, *, retryable: bool = False) -> dict[str, Any]:
+    """The `error` object of an envelope; retryable only for GRANT_DEFERRED (T11)."""
+    return {"code": code, "message": message, "retryable": retryable}
+
+
+def refusal_error(code: str) -> dict[str, Any]:
+    """The tool error for a grant refusal: MEMBERSHIP_STALE is the one the worker retries (Plan F ruling 14)."""
+    if code == "MEMBERSHIP_STALE":
+        return tool_error("GRANT_DEFERRED", f"grant deferred: {code}", retryable=True)
+    return tool_error("GRANT_REFUSED", f"grant refused: {code}")
 
 
 def envelope(tool_name: str, *, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None) -> ToolResult:
@@ -137,7 +144,7 @@ def strict_tool(fn: Any) -> Tool:
 def serve_app(app: ASGIApp, port: int) -> None:
     """Serve with uvicorn programmatically on a selector loop (ruling 23: `uvicorn.run` picks the Proactor loop on
     Windows and psycopg async refuses it)."""
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", log_config=None))
     if sys.platform == "win32":
         asyncio.run(server.serve(), loop_factory=asyncio.SelectorEventLoop)
     else:
@@ -180,7 +187,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         except persistence.HandleRejected as exc:
             return envelope("create_incident", error=tool_error("INVALID_HANDLE", str(exc)))
         except persistence.Refused as exc:
-            return envelope("create_incident", error=tool_error("GRANT_REFUSED", f"grant refused: {exc.code}"))
+            return envelope("create_incident", error=refusal_error(exc.code))
         except persistence.NotFound:
             return envelope("create_incident", error=tool_error("NOT_FOUND", "run not found"))
         except persistence.VersionConflict:
@@ -270,4 +277,6 @@ def production_app() -> Starlette:
 
 def serve() -> None:
     """Entry point: serve the production app on OPS_MCP_WRITE_PORT (default 8082)."""
+    # The redaction filter must sit on the root handler before the first log line (T11 note 4).
+    redaction.install()
     serve_app(production_app(), settings.env_int("OPS_MCP_WRITE_PORT", 8082))

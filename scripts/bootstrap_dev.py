@@ -45,6 +45,11 @@ SECRET_NAMES: tuple[str, ...] = (
     "postgres_mcp_exec_password",
     "postgres_operator_password",
     "postgres_test_harness_password",
+    # T11: the API's Fernet key material for sealed provider tokens, and the dev/test-only admin client the live
+    # suite uses to disable and re-enable a persona (ruling 18). Only the Keycloak client secret is mounted (the
+    # entrypoint exports it for the realm import); the session key is read from the host.
+    "api_session_key",
+    "kc_client_secret_ops_test_admin",
 )
 ENV_PATH = Path(".env")
 # Non-default high ports keep clear of a local PostgreSQL (5432) or another Keycloak/web server (8080) on the host.

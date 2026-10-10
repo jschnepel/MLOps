@@ -3,12 +3,13 @@
 
 Admission still commits message, run, job and `run.accepted` together (BUILD_SPEC §7) and a decision commits the
 decision row, the transition, the `execute` wake-up and `approval.recorded` together (§12): the functions do the
-writing inside the API's transaction. TODO(T12): Idempotency-Key, admission router.
+writing inside the API's transaction. T11: the session store (login_state, sessions, logout_jti).
+TODO(T12): Idempotency-Key, admission router.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -70,6 +71,29 @@ class Decided:
     state_version: int
 
 
+@dataclass(frozen=True)
+class LoginState:
+    """One authorization request in flight: the hashes the callback compares and the PKCE verifier it spends."""
+
+    state_sha256: str
+    nonce_sha256: str
+    code_verifier: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class SessionRow:
+    """A live session as the identity dependency sees it; `refresh_token_enc` is opened only at logout."""
+
+    session_sha256: str
+    issuer: str
+    subject: UUID
+    tenant_id: UUID
+    sid: str
+    username: str
+    csrf_secret_sha256: str = field(repr=False)
+    refresh_token_enc: bytes = field(repr=False)
+
+
 def resolve_interval(hours: int, now: datetime) -> tuple[datetime, datetime]:
     """ "Last N hours" resolved once, at admission, to whole seconds (BUILD_SPEC §7: retries keep the window)."""
     end = now.replace(microsecond=0)
@@ -105,7 +129,8 @@ def map_refusal(exc: persistence.Refused) -> Exception:
 
 
 class Store(Protocol):
-    """The seven operations the application needs; the unit tests fake it, `DbStore` implements it."""
+    """The seven operations of T08 plus T11's seven session operations; the unit tests fake it, `DbStore` implements
+    it."""
 
     async def membership(self, issuer: str, subject: UUID) -> Membership | None:
         """Resolve a verified subject to its active tenant membership, or None."""
@@ -142,6 +167,48 @@ class Store(Protocol):
 
     async def events(self, tenant_id: UUID, run_id: UUID, *, after: int, limit: int) -> list[dict[str, Any]]:
         """List a run's events after a sequence number."""
+        ...
+
+    async def begin_login(
+        self, *, login_sha256: str, state_sha256: str, nonce_sha256: str, code_verifier: str, ttl_seconds: int
+    ) -> None:
+        """Store one authorization request under the login cookie's hash."""
+        ...
+
+    async def take_login(self, login_sha256: str) -> LoginState | None:
+        """Consume the request (one shot): its state, or None when absent or expired."""
+        ...
+
+    async def create_session(
+        self,
+        *,
+        session_sha256: str,
+        issuer: str,
+        subject: UUID,
+        tenant_id: UUID,
+        sid: str,
+        username: str,
+        csrf_secret_sha256: str,
+        refresh_token_enc: bytes,
+        absolute_seconds: int,
+    ) -> None:
+        """Insert a session row with its absolute expiry."""
+        ...
+
+    async def live_session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
+        """The row if live (not revoked, inside both limits), touching `last_seen_at`; else None."""
+        ...
+
+    async def revoke_session(self, session_sha256: str) -> SessionRow | None:
+        """Revoke one session; the row it was (for the sealed refresh token), or None if none was live."""
+        ...
+
+    async def expire_session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
+        """Revoke a session that is past either limit; the row it was (for the sealed refresh token), or None."""
+        ...
+
+    async def record_logout(self, jti: str, *, expires_at: datetime, sid: str) -> int | None:
+        """Record a logout token's jti and revoke every session with its sid, atomically; None on a replay."""
         ...
 
 
@@ -280,3 +347,131 @@ class DbStore:
             )
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
+
+    async def begin_login(
+        self, *, login_sha256: str, state_sha256: str, nonce_sha256: str, code_verifier: str, ttl_seconds: int
+    ) -> None:
+        """Store one authorization request under the login cookie's hash."""
+        async with self.session.unit() as conn:
+            await conn.execute(
+                "INSERT INTO app.login_state (login_sha256, state_sha256, nonce_sha256, code_verifier, expires_at)"
+                " VALUES (%s, %s, %s, %s, app.current_time() + make_interval(secs => %s))",
+                (login_sha256, state_sha256, nonce_sha256, code_verifier, ttl_seconds),
+            )
+
+    async def take_login(self, login_sha256: str) -> LoginState | None:
+        """Consume the request (one shot): its state, or None when absent or expired."""
+        async with self.session.unit() as conn:
+            cur = await conn.execute(
+                "DELETE FROM app.login_state WHERE login_sha256 = %s"
+                " RETURNING state_sha256, nonce_sha256, code_verifier, expires_at > app.current_time() AS live",
+                (login_sha256,),
+            )
+            row = await cur.fetchone()
+        if row is None or not row["live"]:
+            return None
+        return LoginState(str(row["state_sha256"]), str(row["nonce_sha256"]), str(row["code_verifier"]))
+
+    async def create_session(
+        self,
+        *,
+        session_sha256: str,
+        issuer: str,
+        subject: UUID,
+        tenant_id: UUID,
+        sid: str,
+        username: str,
+        csrf_secret_sha256: str,
+        refresh_token_enc: bytes,
+        absolute_seconds: int,
+    ) -> None:
+        """Insert a session row with its absolute expiry (every timestamp from app.current_time(), R126)."""
+        async with self.session.unit() as conn:
+            await conn.execute(
+                "INSERT INTO app.sessions (session_sha256, issuer, subject, tenant_id, sid, username,"
+                " csrf_secret_sha256, refresh_token_enc, created_at, last_seen_at, expires_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, app.current_time(), app.current_time(),"
+                " app.current_time() + make_interval(secs => %s))",
+                (
+                    session_sha256,
+                    issuer,
+                    subject,
+                    tenant_id,
+                    sid,
+                    username,
+                    csrf_secret_sha256,
+                    refresh_token_enc,
+                    absolute_seconds,
+                ),
+            )
+
+    async def live_session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
+        """The row if live, touching `last_seen_at` in the same statement: one UPDATE … RETURNING decides liveness
+        (BUILD_SPEC §9 idle and absolute limits), so Python compares no clocks."""
+        async with self.session.unit() as conn:
+            cur = await conn.execute(
+                "UPDATE app.sessions SET last_seen_at = app.current_time()"
+                " WHERE session_sha256 = %s AND revoked_at IS NULL AND expires_at > app.current_time()"
+                " AND last_seen_at > app.current_time() - make_interval(secs => %s)"
+                " RETURNING session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256,"
+                " refresh_token_enc",
+                (session_sha256, idle_seconds),
+            )
+            row = await cur.fetchone()
+        return None if row is None else _session_row(row)
+
+    async def revoke_session(self, session_sha256: str) -> SessionRow | None:
+        """Revoke one session; the row it was, or None if none was live."""
+        async with self.session.unit() as conn:
+            cur = await conn.execute(
+                "UPDATE app.sessions SET revoked_at = app.current_time()"
+                " WHERE session_sha256 = %s AND revoked_at IS NULL"
+                " RETURNING session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256,"
+                " refresh_token_enc",
+                (session_sha256,),
+            )
+            row = await cur.fetchone()
+        return None if row is None else _session_row(row)
+
+    async def expire_session(self, session_sha256: str, *, idle_seconds: int) -> SessionRow | None:
+        """Revoke a session the limits have ended (final review I1): the same clock as `live_session`, the inverse
+        of its limits, so the caller can end the provider session too. Only the first caller gets the row."""
+        async with self.session.unit() as conn:
+            cur = await conn.execute(
+                "UPDATE app.sessions SET revoked_at = app.current_time()"
+                " WHERE session_sha256 = %s AND revoked_at IS NULL AND (expires_at <= app.current_time()"
+                " OR last_seen_at <= app.current_time() - make_interval(secs => %s))"
+                " RETURNING session_sha256, issuer, subject, tenant_id, sid, username, csrf_secret_sha256,"
+                " refresh_token_enc",
+                (session_sha256, idle_seconds),
+            )
+            row = await cur.fetchone()
+        return None if row is None else _session_row(row)
+
+    async def record_logout(self, jti: str, *, expires_at: datetime, sid: str) -> int | None:
+        """The jti insert and the revocation commit together (spike §5): a rolled-back revocation does not consume
+        the token. A target-less ON CONFLICT DO NOTHING needs INSERT only; rowcount 0 is the replay."""
+        async with self.session.unit() as conn:
+            cur = await conn.execute(
+                "INSERT INTO app.logout_jti (jti, expires_at) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (jti, expires_at),
+            )
+            if cur.rowcount != 1:
+                return None
+            cur = await conn.execute(
+                "UPDATE app.sessions SET revoked_at = app.current_time() WHERE sid = %s AND revoked_at IS NULL", (sid,)
+            )
+            return int(cur.rowcount)
+
+
+def _session_row(row: Any) -> SessionRow:
+    return SessionRow(
+        session_sha256=str(row["session_sha256"]),
+        issuer=str(row["issuer"]),
+        subject=UUID(str(row["subject"])),
+        tenant_id=UUID(str(row["tenant_id"])),
+        sid=str(row["sid"]),
+        username=str(row["username"]),
+        csrf_secret_sha256=str(row["csrf_secret_sha256"]),
+        refresh_token_enc=bytes(row["refresh_token_enc"]),
+    )

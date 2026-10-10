@@ -669,3 +669,31 @@ async def test_stale_mark_sent_and_early_outcome_are_refused(app_conn: persisten
     finally:
         for run in runs:
             await purge_run(app_conn, run)
+
+
+async def test_grant_execution_refuses_a_stale_sync(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
+    """T11 review note 2: a grant whose requester or reviewer was last synced more than 120 s ago is refused with
+    MEMBERSHIP_STALE (fail closed when the sweeper is gone); fresh rows grant as before."""
+    from tests.e2e.test_mcp_write_live import approved_run
+
+    api, worker, mcp_exec = await role_conn(Role.API), await role_conn(Role.WORKER), await role_conn(Role.MCP_EXEC)
+    tenant, run, proposal, handle = await approved_run(app_conn, api=api, worker=worker)
+    try:
+        await app_conn.execute(
+            "UPDATE app.memberships SET synced_at = app.current_time() - interval '121 seconds' WHERE tenant_id = %s",
+            (tenant,),
+        )
+        with pytest.raises(persistence.Refused) as refusal:
+            async with mcp_exec.transaction():
+                await persistence.grant_execution(mcp_exec, handle=handle, proposal_id=proposal)
+        assert refusal.value.code == "MEMBERSHIP_STALE"
+        cur = await app_conn.execute("SELECT count(*) AS n FROM app.execution_grant WHERE run_id = %s", (run,))
+        assert (await cur.fetchone())["n"] == 0  # nothing was granted
+        await app_conn.execute(
+            "UPDATE app.memberships SET synced_at = app.current_time() WHERE tenant_id = %s", (tenant,)
+        )
+        async with mcp_exec.transaction():
+            grant = await persistence.grant_execution(mcp_exec, handle=handle, proposal_id=proposal)
+        assert grant.run_id == run
+    finally:
+        await purge_run(app_conn, run)

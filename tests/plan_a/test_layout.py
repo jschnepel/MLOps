@@ -9,7 +9,7 @@ import importlib
 import tomllib
 from pathlib import Path
 
-# top-level directory -> importable package name; the seven members of the workspace (core is shared code).
+# top-level directory -> importable package name; the eight members of the workspace (core is shared code).
 MEMBERS = {
     "core": "ops_core",
     "api": "ops_api",
@@ -18,6 +18,7 @@ MEMBERS = {
     "mcp-write": "ops_mcp_write",
     "asset-sim": "ops_asset_sim",
     "incident-sim": "ops_incident_sim",
+    "sweeper": "ops_sweeper",
 }
 
 

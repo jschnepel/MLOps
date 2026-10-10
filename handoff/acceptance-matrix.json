@@ -180,14 +180,20 @@
       "category": "identity",
       "requirement": "OIDC validation rejects invalid token/callback context",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r011_oidc_validation_rejects_invalid_token_callback_c.py",
       "expected_evidence": "Wrong issuer/audience/nonce/state/expiry/signature/algorithm and redirect targets fail.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_auth_live.py",
+        "reports/auth/t11-sessions-revocation.txt",
+        "tests/plan_f/test_api_auth.py",
+        "tests/plan_f/test_id_and_logout_tokens.py"
+      ],
       "owning_tasks": [
         "T11"
-      ]
+      ],
+      "note": "Plan F (T11): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R012",
@@ -195,14 +201,20 @@
       "category": "identity",
       "requirement": "Sessions and CSRF protect browser mutations",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r012_sessions_and_csrf_protect_browser_mutations.py",
       "expected_evidence": "Cross-origin or missing CSRF mutation fails; logout/expiry/rotation invalidate old session.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_auth_live.py",
+        "reports/auth/t11-sessions-revocation.txt",
+        "tests/plan_f/test_api_auth.py",
+        "tests/plan_f/test_id_and_logout_tokens.py"
+      ],
       "owning_tasks": [
         "T11"
-      ]
+      ],
+      "note": "Plan F (T11): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R013",
@@ -210,14 +222,20 @@
       "category": "security",
       "requirement": "Current membership overrides old roles",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r013_current_membership_overrides_old_roles.py",
       "expected_evidence": "Revoke membership while session/token remains otherwise valid; new protected operations fail.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_auth_live.py",
+        "reports/auth/t11-sessions-revocation.txt",
+        "tests/plan_f/test_api_auth.py",
+        "tests/plan_f/test_id_and_logout_tokens.py"
+      ],
       "owning_tasks": [
         "T11"
-      ]
+      ],
+      "note": "Plan F (T11): live evidence runs under check.py --profile test (OPS_LIVE=1)."
     },
     {
       "id": "R014",
@@ -1326,17 +1344,23 @@
       "id": "R086",
       "category": "security",
       "requirement": "IdP disable and back-channel logout end application authority",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Disabled user: next decision-class mutation 401, grants blocked within 60 s; back-channel logout destroys sessions; replayed logout token rejected.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_auth_live.py",
+        "reports/auth/t11-sessions-revocation.txt",
+        "tests/plan_f/test_api_auth.py",
+        "tests/plan_f/test_id_and_logout_tokens.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M03",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T11"
       ],
-      "suggested_test": "tests/acceptance/test_r086_idp_disable_and_back_channel_logout_end_applicat.py"
+      "suggested_test": "tests/acceptance/test_r086_idp_disable_and_back_channel_logout_end_applicat.py",
+      "note": "the admin-API half and the sync half are live; the grant-side block through a real `grant_execution` call lands with T21 (T11 review note 1)"
     },
     {
       "id": "R087",
@@ -1613,10 +1637,14 @@
       "id": "R103",
       "category": "ci",
       "requirement": "Secret-free CI runs from the first code task",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Lint, type and unit jobs green on push/PR with pinned action SHAs and read-only token.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "reports/ci/t06-first-ci-runs.txt",
+        ".github/workflows/ci.yml",
+        "tests/plan_a/test_ci_workflow.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M01",
       "blocking_for_v1": true,

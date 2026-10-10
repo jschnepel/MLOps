@@ -2,9 +2,9 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan E (T09, T10) is executed on branch `plan-e` (`3fb9645..5fbb272`, on top of `plan-d`). Owner inputs still pending, unchanged: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) `plan-b` to `plan-e` were pushed on 2026-10-08; open/merge the stacked PRs (plan-b -> main, plan-c -> plan-b, plan-d -> plan-c, plan-e -> plan-d) and record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata of Plan C and the errata of Plan E below. Then write Plan F: T11 (sessions and membership sync; it depends on T09 and T43, both DONE, so it is the earliest dependency-satisfied task) or T13 (leases), whichever the backlog's dependency graph puts first, and dry-run it on scratch copies before executing.
+**Next task:** Plan F (T11) is executed on branch `plan-f` (`0d1a892..ad3163f`, on top of `plan-e`: the seven tasks, the handoff close-out and the final-review fix wave; the record commit follows). Owner inputs still pending, unchanged: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) merge the stacked PRs #1-#5 in order (plan-b -> main, plan-c -> plan-b, plan-d -> plan-c, plan-e -> plan-d, plan-f -> plan-e; all five are green on CI, T06 closed); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata; (4) decide on the nine proposed contract errata of Plan C and the errata of Plan E and Plan F below; one new input: (5) decide errata 26-34 (the dev database was migrated to 0005 by the owner on 2026-10-09 and the six processes were proved up and down against it). Next is Plan G: T12 (admission router and Idempotency-Key) or T13 (leases); both depend only on T09 and T12 comes first in the backlog's order, so write Plan G for T12 unless the owner prefers T13, and dry-run it on scratch copies before executing.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-e` (Plan E work on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` are local only and await the owner's push and PRs.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-f` (Plan F work on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09 (`origin/plan-e` is two docs commits behind local `plan-e`; a `git push origin plan-e` brings it level before the plan-f -> plan-e PR). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`). Merging them in order is the owner's call.
 
 ## Done in the planning session (2026-10-06)
 
@@ -197,6 +197,30 @@
   - `transition_run` called with a NULL `expected_version` relies on the from-state under `FOR UPDATE` rather than a version check (by design, Task 3 review M3)
   - a zero-orphan case for `skeleton.py keys` needs a clean database pair -> T32/T13; a shared connect-and-assert helper for the three servers (the MCP lifespans duplicate it and incident-sim never closes its connection) -> T13/T30; the `testclock` branch revision still renders its grantee tuples from the live matrix (freeze them in the next migration task).
 
+## Plan F executed (2026-10-09, branch `plan-f`)
+
+- T11 = `0d1a892..ad3163f` (the debt list first, then the seven tasks, the handoff close-out afaede4 and the final-review fix wave bc6d16c, ad3163f). The plan (`docs/superpowers/plans/2026-10-08-first-slice-f-sessions-login-sync.md`) holds the rulings; `docs/reviews/plan-review-f-2026-10-09.md` keeps the review record. Evidence: the live module `tests/e2e/test_auth_live.py` (login, CSRF, idle expiry, logout, back-channel logout, forged token, disable-and-sync), `reports/auth/t11-sessions-revocation.txt` (header plus eight lines) and `reports/skeleton/r105-walking-skeleton.txt` (the walking skeleton now runs six processes, the sweeper being the sixth); the unit half is in `tests/plan_f/`. Locked versions: authlib 1.8.0 and joserfc 1.7.5 (AM-30's 1.8.0 holds). Measured: R086 `synced_after` 23-24 s (the 60 s target holds) and the sweeper re-stamp 25 s.
+- Gates: see STATUS.md ("Update - Plan F executed") for the final counts. `check.py --profile test` needs the dev stack up and `skeleton.py status` all down.
+- Rulings made during execution: (a) Keycloak with `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` spells the server-side endpoints with the host the discovery document was fetched from, so `Discovery.from_document` accepts `token_endpoint`, `end_session_endpoint` and `jwks_uri` under `base_url` or `server_url`, while `authorization_endpoint` must be under `base_url` (a third host is refused). (b) The maintenance job row's `available_at` is on `app.current_time()` and the sweeper claims the id it inserted (ruling 24 of Plan E). (c) The listing guard counts absent subjects only (floor 3, more than half), with `OPS_SYNC_ALLOW_MASS_DEACTIVATION=1` as the owner's one-shot override (the sweeper clears it after its first successful sync); an active subject absent from the listing is deactivated only after `enabled()` confirms it (a 404 or disabled), so an offset-paging race keeps the user.
+- Amendment to ruling 3 (final review I1): the 8 h SSO lifetimes are paired with `max_age` equal to the 30-minute idle limit on every authorization request (the ID token's `auth_time` must be no older, zero leeway), and an idle- or absolute-expired application session also ends its Keycloak session with the sealed refresh token, so idle expiry always means a password on the next login.
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan E's twenty-five:
+  26. AM-20.3: `sync_memberships` is the sweeper's routine, not a definer function (SA:470 against SA:412).
+  27. AM-20.2: rows for `login_state` and `logout_jti`, and `sweeper` SELECT on `sessions` (with 25).
+  28. AM-01: the directory table gains `sweeper/`.
+  29. A disabled or membership-less user is 401, not 403, on every path (the BS:301 reading).
+  30. The dev realm carries a dev/test-only `ops-test-admin` client with `manage-users`; striking it loses R086's live disable path.
+  31. The provider refresh token is stored sealed and spent at logout; the ID and access tokens are not stored.
+  32. BS:352's "tenant switching" is not in v1: a subject with two memberships is refused at login and with a bearer token (SA:107 has no tenant administration; a switch needs a new session row and rotation).
+  33. SA:565's "authlib's OIDC state lives in that store" is read as "the authorization request's state, nonce and verifier live in PostgreSQL" (`app.login_state`, keyed by the login cookie's hash) rather than in authlib's own session-dict machinery, which needs Starlette's `SessionMiddleware`.
+  34. BS:268's route table gains `POST /auth/backchannel-logout` (SA:541 requires the endpoint) and `GET /` (a landing page until T26); the realm's SSO lifetimes are 8 h so the provider session outlives the application session; a back-channel logout whose store write fails answers 503 retryable rather than the specification's 400 (OIDC Back-Channel Logout 1.0 §2.8), and Keycloak does not retry either way.
+- **Open items for later**, parked by the task reviews (ledger: `.superpowers/sdd/2026-10-08-first-slice-f-sessions-login-sync/progress.md`):
+  - a conninfo password that psycopg quotes (spaces or quotes) and a generic `token=` key are not redacted; `KEYCLOAK_*` cookie redaction covers the dict and `key=value` forms only;
+  - the `GRANT_DEFERRED` re-queue has no retry bound (TODO T13 at the branch; the branch itself is unit-tested since the final fix wave);
+  - the live store test's atomicity case replays the two statements by hand rather than through `record_logout`;
+  - a closer raising during `make_auth` or the sweeper's `_main` cleanup would mask the original startup error;
+  - the back-channel live test's session counts are not scoped to its own `sid`.
+- **Final whole-branch review** (opus): 0 Critical / 2 Important / 9 Minor, closed in one fix wave (bc6d16c, ad3163f) with a clean re-review; record `docs/reviews/plan-f-final-review-2026-10-09.md`. The two Important findings: the 30-minute idle limit was undone by the 8 h provider session (fixed two ways: `max_age` on the authorization request with a bounded `auth_time` in the ID-token verifier, and an expired session row now ends the provider session with its sealed refresh token, live-proved by the login form reappearing), and the disable live test lacked positive controls (added). Also closed: the override is consumed by the first successful sync; absent subjects are confirmed by a direct read before deactivation; a key-set outage is a retryable 503 at the callback and the back-channel endpoint; a failed back-channel write is logged. Still open with owners: quoted conninfo passwords and a generic `token=` key are not redacted (T28); a close that raises during startup cleanup masks the original error (T13/T30). Optional minors from the re-review: the `auth_time` bound and Keycloak's own `max_age` check can disagree at the boundary (one retry); the post-disable `me` check has a tens-of-milliseconds flake window against the sweeper tick.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -241,6 +265,22 @@ Allowed shortcuts in T09/T10, each with its owning task:
 - `outbox`, `feedback`, `idempotency_request`, `operator_resolutions`, `documents`/`chunks`/`embeddings`, `model_permit` are absent, so their AM-20.2 rows are not yet in the grant matrix → T14/T12/T22/T17/T13;
 - the definer functions take no row lock on `proposals`, `decisions`, `memberships` or `execution_grant` (AM-20.3's lock column asks for `FOR SHARE`; a lock needs UPDATE, which AM-20.2 withholds); `runs FOR UPDATE` serialises the writers, and the `memberships` race against the sync → T11.
 
+## Plan F debt list (T11; committed before coding) [R6-B7]
+
+Allowed shortcuts in T11, each with its owning task:
+- no `Idempotency-Key` on the new mutations (`/auth/logout`) or the existing ones; `idempotency_request` does not exist → T12;
+- the enabled check guards the one decision-class route that exists (`POST /api/v1/proposals/{id}/decisions`); revisions, cancel and manual proposals attach the same dependency when they arrive → T21;
+- the "grants blocked within 60 s" half of R086 is implemented (`MEMBERSHIP_INACTIVE`/`MEMBERSHIP_STALE` in `grant_execution`) but its live evidence through a real grant lands with the final gate → T21;
+- no SSE stream exists, so "stop old streams on identity change" has no code yet; the identity dependency is the hook T27 rechecks every 30 s → T27;
+- `GET /` is a JSON landing page until the web app exists → T26;
+- the sweeper runs `sync_memberships` and the expiry purges only; `expire_proposals`, `sweep_wakeups`, `deliver_outbox` and lease reclaim → T13/T14/T21;
+- the back-channel logout URL in the realm export names `host.docker.internal:8000` (the host API from the Keycloak container); the containerised URL → T30;
+- the telemetry side of redaction (traces, metrics labels) → T28;
+- a two-tenant subject is refused rather than offered a tenant switch (SA:107: no tenant administration in v1); a switch, if ever, needs a new row and rotation → v2;
+- the dev-only clients `ops-dev-direct` and `ops-test-admin` exist in the dev realm only; the demo profile's realm must omit both → T30;
+- the sweeper inserts one `sync_memberships` job row per minute and holds no DELETE on `jobs`, so done maintenance rows accumulate; the sweeper's purge of finished jobs (an AM-20.2 cell for `sweeper` `del` on `jobs`, or a definer) → T14;
+- `/auth/login` trusts the request's `Host` header to decide whether to bounce to the public base URL; a reverse proxy that rewrites `Host` needs trusted-proxy handling (`X-Forwarded-Host`) → T30.
+
 ## Environment (observed)
 
 | Item | Observed |
@@ -267,14 +307,16 @@ Allowed shortcuts in T09/T10, each with its owning task:
 
 ## Dev database state (2026-10-08)
 
-The owner approved migrating the dev database: `skeleton.py migrate` (dev profile) applied revisions 0002–0004 to `ops` (`app@head`, no `app.test_clock`) and incident revision 0002 to `incident`; `skeleton.py up` then brought all five processes to ready under their own roles and `down` stopped them. Plan F (T11) research (fact sheet and spike) started the same day.
+The owner approved migrating the dev database: `skeleton.py migrate` (dev profile) applied revisions 0002–0004 to `ops` (`app@head`, no `app.test_clock`) and incident revision 0002 to `incident`; `skeleton.py up` then brought all five processes to ready under their own roles and `down` stopped them.
+
+**Update (2026-10-09):** the owner ran `uv run python scripts/skeleton.py migrate` (dev profile) after Plan F closed: the dev `ops` database is at revision `0005_sessions_login_logout` (`sessions` columns, `app.login_state`, `app.logout_jti`; `sessions` was empty, so nothing was at risk). `skeleton.py up` then brought all six processes (incident-sim, mcp-read, mcp-write, api, worker, sweeper) to ready under their own roles and `down` stopped them. The shared dev realm already carries the Plan F clients (`ops-test-admin`, the `ops-web` back-channel attributes, the 8 h SSO lifetimes) from the re-import in Task 2.
 
 ## Open owner inputs
 
-- Open and merge the stacked PRs for `plan-b` to `plan-e` (all four pushed on 2026-10-08; `main` and `plan-a` were pushed earlier) and record the first CI run URL.
+- Merge the stacked PRs #1-#5 in order (opened 2026-10-09, all green on CI; the first merge also exercises the push-to-main trigger).
 - Decide on the nine proposed contract errata (see "Plan C executed").
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
-- T06: decide whether to publish early (public repo at M01) or start private and make it public at T34. (The repo `jschnepel/MLOps` exists and `main`/`plan-a` were pushed on 2026-10-07; `plan-b` is local.)
+- T06 is closed (public repo, PRs green). The first CI runs were red on ruff EXE001 (a shebang on a non-executable file, a rule ruff skips on Windows) with every test green; fixed by a file-mode commit on each branch.
 - T44 step 10: run `docs/runbooks/ollama-network.md` step A (`OLLAMA_HOST=127.0.0.1:11434` at User scope, restart Ollama), verify with the three checks, fill the attestation table, and decide whether to adopt the proposed AM-31 errata (loopback bind primary, firewall fallback).
 
 ## Exact next step
@@ -303,6 +345,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan F as described in the Next task line.
+Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan G as described in the Next task line.
 
 Do not store secrets or private reasoning in this file.

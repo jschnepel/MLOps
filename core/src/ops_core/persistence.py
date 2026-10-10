@@ -165,6 +165,14 @@ async def assert_clock_profile(conn: Conn, profile: Profile) -> None:
         raise PersistenceError(f"app.test_clock exists; the {profile.value} profile refuses to start")
 
 
+async def assert_relation(conn: Conn, name: str) -> None:
+    """Refuse to start when a relation a later revision adds is absent (`to_regclass` works for any role)."""
+    cur = await conn.execute("SELECT to_regclass(%s) IS NULL AS missing", (name,))
+    row = await cur.fetchone()
+    if row is not None and row["missing"]:
+        raise PersistenceError(f"{name} is missing; run scripts/skeleton.py migrate for this profile")
+
+
 async def tenants(conn: Conn) -> list[UUID]:
     """Every tenant id (no RLS on tenants, SA:523): the worker's claim loop and the sweeper iterate these."""
     cur = await conn.execute("SELECT tenant_id FROM app.tenants ORDER BY tenant_id")
@@ -502,6 +510,43 @@ async def requeue_job(conn: Conn, job_id: UUID, delay_seconds: int) -> None:
         " available_at = app.current_time() + make_interval(secs => %s) WHERE id = %s",
         (delay_seconds, job_id),
     )
+
+
+async def insert_maintenance_job(conn: Conn, job_type: JobType, minute_bucket: str) -> UUID | None:
+    """A tenant-less sweeper job keyed by `<type>:<minute bucket>` (SA:504); None when that minute already exists.
+
+    `jobs_tenant_iff_run_check` allows a NULL tenant exactly for these, and the sweeper's `sweeper_all` policy
+    admits the row without a tenant setting. ON CONFLICT with a target and RETURNING both need SELECT, which the
+    sweeper holds on `jobs` (unlike the api role on `logout_jti`, where the insert is target-less). `available_at`
+    is set from the application clock: the column default is wall-clock `now()`, which a test-clock offset would put
+    in the future of `claim_maintenance_job`'s comparison (ruling 24).
+    """
+    if JOB_RULES[job_type].run_states:
+        raise ValueError(f"{job_type.value} is not a maintenance job")
+    key = dedup_key(job_type, minute_bucket=minute_bucket)  # validates the bucket's shape
+    cur = await conn.execute(
+        "INSERT INTO app.jobs (id, type, dedup_key, available_at) VALUES (%s, %s, %s, app.current_time())"
+        " ON CONFLICT (dedup_key) DO NOTHING RETURNING id",
+        (uuid4(), job_type.value, key),
+    )
+    row = await cur.fetchone()
+    return None if row is None else UUID(str(row["id"]))
+
+
+async def claim_maintenance_job(
+    conn: Conn, *, job_type: JobType, worker_name: str, job_id: UUID | None = None
+) -> DictRow | None:
+    """Claim the oldest unclaimed sweeper job of one type, or exactly `job_id` when given (SKIP LOCKED: a second
+    sweeper never runs the same one)."""
+    cur = await conn.execute(
+        "UPDATE app.jobs SET claimed_by = %s, claimed_at = app.current_time(), attempts = attempts + 1"
+        " WHERE id = (SELECT id FROM app.jobs WHERE type = %s AND tenant_id IS NULL AND done_at IS NULL"
+        "             AND claimed_at IS NULL AND available_at <= app.current_time()"
+        "             AND (%s::uuid IS NULL OR id = %s)"
+        "             ORDER BY available_at, id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *",
+        (worker_name, job_type.value, job_id, job_id),
+    )
+    return await cur.fetchone()
 
 
 async def mint_handle(
