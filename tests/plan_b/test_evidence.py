@@ -1,4 +1,4 @@
-"""Nothing under reports/bootstrap/ or reports/skeleton/ may contain a token, a password or a client secret.
+"""Nothing under reports/bootstrap, skeleton, auth, ci or admission may contain a token, a password or a client secret.
 
 Locally the generated secret values are read from the secrets directory (`.env`'s OPS_SECRETS_DIR, else the default)
 and must not appear in any evidence file; in CI no secrets exist, so only the JWT-shape check applies.

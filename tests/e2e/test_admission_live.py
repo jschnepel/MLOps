@@ -15,6 +15,7 @@ recorded refusal (AM-16), and an error that is not the safe schema (R115).
 """
 
 import asyncio
+import socket
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
@@ -42,6 +43,7 @@ RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 EVIDENCE = Path("reports/admission/t12-admission.txt")
 ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")
 ALEX = UUID("2fc05986-c7ec-544c-b628-fdb112bbf18a")
+SAFE_KEYS = {"code", "message", "retryable", "request_id"}
 SAMPLE = {
     "kind": "investigate",
     "text": "Investigate the alerts on Asset A17 over the last 24 hours.",
@@ -50,6 +52,8 @@ SAMPLE = {
 # A week-long replay window, so R018's replay three days on the test clock is still inside it (the default 24 h
 # window is SA:297's; the bound is ruling 7's maximum).
 WEEK = AdmissionSettings(idempotency_ttl_seconds=604800)
+EXPECTED_LINES = 14  # the evidence lines the six tests append between them
+SKELETON_PORTS = (8000, 8070, 8071, 8081, 8082, 8090)
 KEYS: list[str] = []  # every Idempotency-Key a test sent, so the `created` fixture can delete its records
 
 
@@ -57,8 +61,20 @@ KEYS: list[str] = []  # every Idempotency-Key a test sent, so the `created` fixt
 def lines() -> Iterator[list[str]]:
     out = [f"T12 durable admission — {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}"]
     yield out
+    if len(out) != 1 + EXPECTED_LINES:  # a failed or partial run leaves the committed file as it was
+        return
     EVIDENCE.parent.mkdir(parents=True, exist_ok=True)
     EVIDENCE.write_text("\n".join(out) + "\n", encoding="utf-8", newline="\n")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def skeleton_is_down() -> None:
+    """A live worker or sweeper would race these tests for jobs and slots, so refuse to run beside one."""
+    for port in SKELETON_PORTS:
+        with socket.socket() as probe:
+            probe.settimeout(0.5)
+            if probe.connect_ex(("127.0.0.1", port)) == 0:
+                pytest.fail(f"a skeleton process listens on 127.0.0.1:{port}; stop it (scripts/skeleton.py) first")
 
 
 @pytest_asyncio.fixture
@@ -130,7 +146,8 @@ async def test_r015_a_crash_before_commit_leaves_nothing_and_the_retry_commits(
         jobs_before = await count(app_conn, investigate_jobs)
         crashed = await c.post(messages(cid), headers=h(key="r015-key-0001"), json=SAMPLE)
         crash_status, crash_body = crashed.status_code, crashed.json()
-        assert crash_status == 503 and crash_body["retryable"] is True, crash_status  # a lost connection (ruling 24)
+        assert set(crash_body) == SAFE_KEYS and crash_body["retryable"] is True, crash_body
+        assert crash_status == 503, crash_status  # a lost connection (ruling 24)
         left = [
             await count(app_conn, "SELECT count(*) AS n FROM app.messages WHERE conversation_id = %s", UUID(cid)),
             await count(app_conn, "SELECT count(*) AS n FROM app.runs WHERE conversation_id = %s", UUID(cid)),
@@ -159,6 +176,7 @@ async def test_r016_a_replay_resolves_once_and_a_changed_body_conflicts(
         again = await c.post(messages(cid), headers=h(key="r016-key-0001"), json=SAMPLE)
         codes, same = (first.status_code, again.status_code), again.content == first.content
         assert codes == (202, 202) and same, codes
+        first_run = first.json()["run_id"]
         changed = await c.post(
             messages(cid), headers=h(key="r016-key-0001"), json={**SAMPLE, "context": {"asset_id": "A17", "hours": 12}}
         )
@@ -186,7 +204,7 @@ async def test_r016_a_replay_resolves_once_and_a_changed_body_conflicts(
             await app_conn.execute("DELETE FROM app.idempotency_request WHERE key = 'r016-key-0002'")
         # AM-16 in PostgreSQL: create_run refuses a supersede across conversations (OC002) after the message is
         # written, and only start_run's savepoint takes that message back before the 404 is recorded.
-        across = {**SAMPLE, "supersedes_run_id": first.json()["run_id"]}
+        across = {**SAMPLE, "supersedes_run_id": first_run}
         superseding = await c.post(messages(other), headers=h(key="r016-key-0003"), json=across)
         supersede = (superseding.status_code, superseding.json()["message"])
         assert supersede == (404, "no such superseded run"), supersede
@@ -274,7 +292,9 @@ async def test_r018_the_interval_is_resolved_once_and_ambiguity_clarifies(
         async with api() as c:
             cid = await conversation(c, created)
             first = await c.post(messages(cid), headers=h(key="r018-key-0001"), json=SAMPLE)
-            run_id = UUID(first.json()["run_id"])
+            first_code, first_body = first.status_code, first.json()
+            assert first_code == 202, first_code
+            run_id = UUID(first_body["run_id"])
             cur = await app_conn.execute(
                 "SELECT start_at, end_at, end_at - clock_timestamp() AS ahead FROM app.runs WHERE run_id = %s",
                 (run_id,),
@@ -289,7 +309,8 @@ async def test_r018_the_interval_is_resolved_once_and_ambiguity_clarifies(
             assert replay_code == 202 and replay_same, replay_code
             cur = await app_conn.execute("SELECT start_at, end_at FROM app.runs WHERE run_id = %s", (run_id,))
             again = await cur.fetchone()
-            assert (again["start_at"], again["end_at"]) == (stored["start_at"], stored["end_at"])
+            interval_same = (again["start_at"], again["end_at"]) == (stored["start_at"], stored["end_at"])
+            assert interval_same
             fresh = await c.post(messages(cid), headers=h(), json=SAMPLE)
             fresh_code = (fresh.status_code, fresh.json()["code"])
             assert fresh_code == (409, "SLOT_OCCUPIED")  # a new request, and the run still holds the slot
@@ -313,7 +334,8 @@ async def test_r018_the_interval_is_resolved_once_and_ambiguity_clarifies(
     finally:
         await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
     lines.append(
-        f"R018 window ends {ahead} past the wall clock (test clock +2 h); replay at +3 d: 202, same bytes and interval"
+        f"R018 window ends {ahead} past the wall clock (test clock +2 h); replay at +3 d: {replay_code}, "
+        f"identical={replay_same}, interval unchanged={interval_same}"
     )
     lines.append(
         f"R018 new key while active: {fresh_code}; text B22 vs form A17: {clarify}, messages={stored_kinds}, runs=0"
@@ -326,16 +348,32 @@ async def test_r129_every_admission_route_live(
     worker = await role_conn(Role.WORKER)
     seen: dict[str, Any] = {}
     async with api() as c:
-        investigate = await c.post(messages(cid := await conversation(c, created)), headers=h(), json=SAMPLE)
+        inv_key = "r129-key-0000"
+        investigate = await c.post(messages(cid := await conversation(c, created)), headers=h(key=inv_key), json=SAMPLE)
         seen["investigate"] = investigate.status_code
+        assert seen["investigate"] == 202, seen
+        inv_body = investigate.json()
+        msgs_sql = "SELECT count(*) AS n FROM app.messages WHERE conversation_id = %s"
+        msgs_before = await count(app_conn, msgs_sql, UUID(cid))
         status = await c.post(messages(cid), headers=h(), json={"kind": "status", "text": "Status?"})
         seen["status_question"] = status.status_code
+        msgs_delta = await count(app_conn, msgs_sql, UUID(cid)) - msgs_before
+        cur = await app_conn.execute(
+            "SELECT kind, author IS NULL AS system FROM app.messages WHERE conversation_id = %s"
+            " ORDER BY seq DESC LIMIT 1",
+            (UUID(cid),),
+        )
+        last = await cur.fetchone()
+        answer_row = (last["kind"], last["system"])
+        assert msgs_delta == 2 and answer_row == ("status_answer", True), (msgs_delta, answer_row)
         ask = await c.post(
             messages(await conversation(c, created)),
             headers=h(),
             json={"kind": "ask", "text": "What did A17 log in the last day?"},
         )
         seen["readonly_answer"] = ask.status_code
+        assert seen["readonly_answer"] == 202, seen
+        ask_run = ask.json()["run_id"]
         clarify = await c.post(
             messages(await conversation(c, created)),
             headers=h(),
@@ -348,16 +386,24 @@ async def test_r129_every_admission_route_live(
         seen["reject"] = reject.status_code
         # Nothing in the worker asks for clarification yet (T20), so the run is staged where the worker would put it,
         # through the worker role's own function (as tests/e2e/test_definers_run_path_live.py does).
-        run_id = UUID(investigate.json()["run_id"])
+        run_id = UUID(inv_body["run_id"])
         async with worker.transaction():
             await worker.execute("SELECT app.transition_run(%s, 'QUEUED', 'RETRIEVING', NULL, 1, '{}')", (run_id,))
             await worker.execute(
                 "SELECT app.transition_run(%s, 'RETRIEVING', 'AWAITING_INPUT', NULL, 2, '{}')", (run_id,)
             )
         cur = await app_conn.execute(
-            "SELECT event_id FROM app.events WHERE run_id = %s AND type = 'clarification.requested'", (run_id,)
+            "SELECT event_id FROM app.events WHERE run_id = %s AND type = 'clarification.requested'"
+            " ORDER BY sequence DESC LIMIT 1",
+            (run_id,),
         )
         question = (await cur.fetchone())["event_id"]
+        # R016: the recorded 202 still says QUEUED; the run is AWAITING_INPUT now, and the replay is that record.
+        cur = await app_conn.execute("SELECT state FROM app.runs WHERE run_id = %s", (run_id,))
+        state_then = (await cur.fetchone())["state"]
+        moved = await c.post(messages(cid), headers=h(key=inv_key), json=SAMPLE)
+        moved_code, moved_same = moved.status_code, moved.content == investigate.content
+        assert (moved_code, moved_same, state_then) == (202, True, "AWAITING_INPUT"), (moved_code, state_then)
         body = {"question_id": str(question), "expected_version": 3, "context": {"hours": 12}}
         url = f"/api/v1/runs/{run_id}/clarifications"
         # The realm's other requester is BETA's: RLS hides alex's run from riley's unit, so it is absent (404,
@@ -367,6 +413,9 @@ async def test_r129_every_admission_route_live(
         assert foreign_status == 404, foreign_status
         reply = await c.post(url, headers=h(), json=body)
         seen["clarification_reply"] = reply.status_code
+        later = await c.post(messages(cid), headers=h(key=inv_key), json=SAMPLE)
+        later_same = later.content == investigate.content
+        assert later_same  # and again once the answer has moved the run on
         # AM-16 in PostgreSQL: a second answer under a new key writes its message, meets the job's dedup key
         # (rowcount 0), and only record_reply's savepoint takes that message back before the 409 is recorded.
         again = await c.post(url, headers=h(), json=body)
@@ -393,12 +442,14 @@ async def test_r129_every_admission_route_live(
         "reject": 422,
         "clarification_reply": 202,
     }, seen
-    cur = await app_conn.execute("SELECT intent FROM app.runs WHERE run_id = %s", (UUID(ask.json()["run_id"]),))
-    assert (await cur.fetchone())["intent"] == "answer_only"
+    cur = await app_conn.execute("SELECT intent FROM app.runs WHERE run_id = %s", (UUID(ask_run),))
+    intent = (await cur.fetchone())["intent"]
+    assert intent == "answer_only"
     cur = await app_conn.execute(
         "SELECT dedup_key FROM app.jobs WHERE run_id = %s AND type = 'resume_input'", (run_id,)
     )
-    assert [r["dedup_key"] for r in await cur.fetchall()] == [f"{run_id}:{question}"]
+    resume_jobs = [r["dedup_key"] for r in await cur.fetchall()]
+    assert resume_jobs == [f"{run_id}:{question}"]
     cur = await app_conn.execute("SELECT type FROM app.events WHERE run_id = %s ORDER BY sequence", (run_id,))
     events = [r["type"] for r in await cur.fetchall()]
     assert events[-1] == "clarification.received", events
@@ -408,7 +459,14 @@ async def test_r129_every_admission_route_live(
         await count(app_conn, "SELECT count(*) AS n FROM app.idempotency_request WHERE key = %s", "r129-key-0001"),
     ]
     assert refused == (422, "INVALID_INPUT") and written == [0, 0, 0], (refused, written)
-    lines.append(f"R129 routes: {seen}; answer_only run, resume_input job and clarification.received recorded")
+    lines.append(
+        f"R129 routes: {seen}; run intent={intent}, resume_input jobs={len(resume_jobs)}, last event={events[-1]}"
+    )
+    lines.append(f"R129 status question: messages +{msgs_delta} (question, then system answer {answer_row})")
+    lines.append(
+        f"R016 replay after state moved: identical={moved_same} state_then={state_then}; "
+        f"after the answer: identical={later_same}"
+    )
     lines.append(
         f"R129 second answer under a new key: {answered}, clarification_reply messages={replies}; "
         f"the other tenant's requester: {foreign_status}"
@@ -418,6 +476,7 @@ async def test_r129_every_admission_route_live(
 
 async def test_r115_live_errors_use_the_safe_schema(created: list[str], lines: list[str]) -> None:
     codes: list[int] = []
+    checked = 0
     async with api(AdmissionSettings(max_body_bytes=1024)) as c:
         cid = await conversation(c, created)
         refusals = [
@@ -431,7 +490,11 @@ async def test_r115_live_errors_use_the_safe_schema(created: list[str], lines: l
         for r in refusals:
             status, doc, header = r.status_code, r.json(), r.headers.get("X-Request-Id")
             same = doc["request_id"] == header  # bound first: a header is never an assert operand
-            assert set(doc) == {"code", "message", "retryable", "request_id"} and same, status
+            assert set(doc) == SAFE_KEYS and same, status
             codes.append(status)
+            checked += 1
     assert codes == [401, 403, 404, 422, 422, 404], codes
-    lines.append(f"R115 live sample: {codes}, every body the safe schema with its X-Request-Id")
+    lines.append(
+        f"R115 live sample: {codes}, {checked} bodies checked, each with exactly {sorted(SAFE_KEYS)} "
+        "and its X-Request-Id"
+    )

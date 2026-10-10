@@ -1,13 +1,15 @@
-T12 durable admission — 2026-10-10T13:01:59Z
+T12 durable admission — 2026-10-10T13:11:49Z
 R015 crash before commit: 503 retryable=True, left messages/runs/jobs/records=[0, 0, 0, 0]; retry 202 jobs=1
 R016 replay: 202 twice, same bytes=True, runs=1; changed body and other conversation: [(409, 'IDEMPOTENCY_CONFLICT'), (409, 'IDEMPOTENCY_CONFLICT')]
 R016 expired unpurged key: 409 not reusable, runs started=0
 R016 supersede across conversations: (404, 'no such superseded run'), messages/records=[0, 1]
 R017 race, two connections, two keys: [202, 409]; slot holders, messages, loser's 409 records: [1, 1, 1]; one key: [202, 202] with one run
 R017 status question while busy: 200, jobs/events unchanged [1, 1]; sequential admission (409, 'SLOT_OCCUPIED')
-R018 window ends 1:59:59.808982 past the wall clock (test clock +2 h); replay at +3 d: 202, same bytes and interval
+R018 window ends 1:59:59.480242 past the wall clock (test clock +2 h); replay at +3 d: 202, identical=True, interval unchanged=True
 R018 new key while active: (409, 'SLOT_OCCUPIED'); text B22 vs form A17: (200, 'asset_conflict'), messages=[('investigate', False), ('clarification_question', True)], runs=0
-R129 routes: {'investigate': 202, 'status_question': 200, 'readonly_answer': 202, 'clarify': 200, 'reject': 422, 'clarification_reply': 202}; answer_only run, resume_input job and clarification.received recorded
+R129 routes: {'investigate': 202, 'status_question': 200, 'readonly_answer': 202, 'clarify': 200, 'reject': 422, 'clarification_reply': 202}; run intent=answer_only, resume_input jobs=1, last event=clarification.received
+R129 status question: messages +2 (question, then system answer ('status_answer', True))
+R016 replay after state moved: identical=True state_then=AWAITING_INPUT; after the answer: identical=True
 R129 second answer under a new key: (409, 'the clarification was already answered'), clarification_reply messages=1; the other tenant's requester: 404
 R129 unroutable kind 'delete': (422, 'INVALID_INPUT'), messages/runs/records written=[0, 0, 0]
-R115 live sample: [401, 403, 404, 422, 422, 404], every body the safe schema with its X-Request-Id
+R115 live sample: [401, 403, 404, 422, 422, 404], 6 bodies checked, each with exactly ['code', 'message', 'request_id', 'retryable'] and its X-Request-Id
