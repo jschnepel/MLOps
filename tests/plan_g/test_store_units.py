@@ -225,21 +225,21 @@ def test_a_reply_binds_to_the_outstanding_question_and_its_version() -> None:
 class Cursor:
     """One scripted answer: the row a statement returns (or None), and the rowcount that goes with it."""
 
-    def __init__(self, row: dict[str, Any] | None) -> None:
-        self.row = row
-        self.rowcount = 0 if row is None else 1
+    def __init__(self, row: dict[str, Any] | list[dict[str, Any]] | None) -> None:
+        self.rows = row if isinstance(row, list) else ([] if row is None else [row])  # a list answers fetchall whole
+        self.rowcount = len(self.rows)
 
     async def fetchone(self) -> dict[str, Any] | None:
-        return self.row
+        return self.rows[0] if self.rows else None
 
     async def fetchall(self) -> list[dict[str, Any]]:
-        return [] if self.row is None else [self.row]
+        return self.rows
 
 
 class RecordingConn:
     """The connection `DbUnit` runs on, recorded: each statement's SQL text in order, each answer from the script."""
 
-    def __init__(self, script: list[dict[str, Any] | None]) -> None:
+    def __init__(self, script: list[Any]) -> None:
         self.script = script
         self.statements: list[str] = []
 
@@ -305,6 +305,39 @@ def test_the_db_reply_locks_the_run_before_it_checks_or_writes() -> None:
         for marker in ("INSERT INTO app.messages", "INSERT INTO app.jobs", "app.append_event")
     ]
     assert 0 < writes[0] < writes[1] < writes[2] == len(conn.statements) - 1, conn.statements
+    job_insert = conn.statements[writes[1]]
+    # The one grant-sensitive statement: `api` holds INSERT only on jobs, so no RETURNING and no conflict target.
+    assert "RETURNING" not in job_insert and "ON CONFLICT (" not in job_insert, job_insert
+    assert job_insert.rstrip().endswith("ON CONFLICT DO NOTHING"), job_insert
+
+
+def test_the_db_reply_refuses_a_wrong_question_after_the_events_read_and_before_any_insert() -> None:
+    """An older `clarification.requested` of the run is a stale question (409); an id the run never asked is 404."""
+    run_id, older, newest = uuid4(), uuid4(), uuid4()
+    waiting = {
+        "run_id": run_id,
+        "state": "AWAITING_INPUT",
+        "state_version": 5,
+        "requester": ALEX,
+        "conversation_id": uuid4(),
+    }
+    cases = ((older, 409, "the clarification was superseded"), (uuid4(), 404, "no outstanding clarification"))
+    for question_id, status, message in cases:
+        conn = RecordingConn([dict(waiting), [{"event_id": older}, {"event_id": newest}]])
+        with pytest.raises(ReplyRefused) as refused:
+            asyncio.run(
+                DbUnit(conn, ALPHA).record_reply(
+                    run_id=run_id,
+                    requester=ALEX,
+                    question_id=question_id,
+                    expected_version=5,
+                    text="Clarification: asset -, hours 12",
+                    context={"hours": 12},
+                )
+            )
+        assert (refused.value.status, refused.value.message) == (status, message)
+        assert len(conn.statements) == 2 and "app.events" in conn.statements[1], conn.statements
+        assert not any("INSERT" in s for s in conn.statements), conn.statements
 
 
 def test_only_the_runs_requester_may_answer_its_question() -> None:

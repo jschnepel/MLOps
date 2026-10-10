@@ -132,3 +132,25 @@ def test_a_verdict_renders_the_same_bytes_whatever_its_key_order() -> None:
     assert rendered.status_code == 202 and rendered.body == render({"a": "é", "b": 1})
     body: dict[str, Any] = error_verdict(409, ErrorCode.SLOT_OCCUPIED, "busy", ALEX).body
     assert body == {"code": "SLOT_OCCUPIED", "message": "busy", "retryable": False, "request_id": str(ALEX)}
+
+
+def test_a_replayed_error_carries_the_replaying_request_id_and_a_replayed_success_is_unchanged() -> None:
+    recorded_by = uuid4()
+    refusal = error_verdict(409, ErrorCode.SLOT_OCCUPIED, "busy", recorded_by)
+    replaying = uuid4()
+    unit = Unit(Record("f" * 64, refusal.status, dict(refusal.body)))
+    again = asyncio.run(idempotent(unit, Idem(SCOPE, "f" * 64, 86400, replaying), _unused))
+    assert again.replayed and again.status == 409
+    assert again.body["request_id"] == str(replaying) != refusal.body["request_id"]
+    assert {k: v for k, v in again.body.items() if k != "request_id"} == {
+        k: v for k, v in refusal.body.items() if k != "request_id"
+    }
+    ok_body = {"run_id": "r0", "status": "QUEUED"}
+    unit = Unit(Record("f" * 64, 202, dict(ok_body)))
+    same = asyncio.run(idempotent(unit, Idem(SCOPE, "f" * 64, 86400, replaying), _unused))
+    assert same.replayed and same.body == ok_body and "request_id" not in same.body
+    assert render(same.body) == render(ok_body)
+
+
+async def _unused() -> Verdict:
+    raise AssertionError("a replay must not run the work")
