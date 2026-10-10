@@ -686,29 +686,6 @@ class Store(Protocol):
         """Record the first decision (idempotent)."""
         ...
 
-    # TODO(T12): the three pre-Plan-G mutations below serve the routes until Plan G Task 5 moves them to the
-    # idempotent units above; Task 5 deletes them.
-    async def create_conversation(self, tenant_id: UUID, created_by: UUID) -> UUID:
-        """Create an empty conversation in the tenant."""
-        ...
-
-    async def admit(
-        self,
-        *,
-        tenant_id: UUID,
-        conversation_id: UUID,
-        requester: UUID,
-        request: MessageRequest,
-        start_at: datetime,
-        end_at: datetime,
-    ) -> Accepted:
-        """Commit message, run, job and `run.accepted` together."""
-        ...
-
-    async def decide(self, *, tenant_id: UUID, proposal_id: UUID, reviewer: UUID, request: DecisionRequest) -> Decided:
-        """Record the first decision on the exact revision and hash, or raise Conflict."""
-        ...
-
     async def run(self, tenant_id: UUID, run_id: UUID) -> dict[str, Any] | None:
         """Read one run row in the tenant."""
         ...
@@ -1022,102 +999,6 @@ class DbStore(AdmissionStore):
         async with self.session.unit() as conn:  # the function walks the tenants itself (Plan E ruling 4)
             rows = await persistence.resolve_identity(conn, issuer=issuer, subject=subject)
         return single_tenant(rows)
-
-    # TODO(T12): the three pre-Plan-G mutations below serve the routes until Plan G Task 5 moves them to the
-    # idempotent units; Task 5 deletes them.
-    async def create_conversation(self, tenant_id: UUID, created_by: UUID) -> UUID:
-        """Create an empty conversation in the tenant."""
-        cid = uuid4()
-        async with self.session.unit(tenant_id) as conn:
-            await conn.execute(
-                "INSERT INTO app.conversations (conversation_id, tenant_id, created_by) VALUES (%s, %s, %s)",
-                (cid, tenant_id, created_by),
-            )
-        return cid
-
-    async def admit(
-        self,
-        *,
-        tenant_id: UUID,
-        conversation_id: UUID,
-        requester: UUID,
-        request: MessageRequest,
-        start_at: datetime,
-        end_at: datetime,
-    ) -> Accepted:
-        """Commit message, run, job and `run.accepted` together."""
-        if request.context is None or request.context.asset_id is None:  # app.py checked the route
-            raise ValueError("admit requires an investigate request with asset_id")
-        message_id = uuid4()
-        try:
-            async with self.session.unit(tenant_id) as conn:
-                cur = await conn.execute(
-                    "SELECT 1 FROM app.conversations WHERE conversation_id = %s AND tenant_id = %s",
-                    (conversation_id, tenant_id),
-                )
-                if await cur.fetchone() is None:
-                    raise NotFound
-                await conn.execute(
-                    "INSERT INTO app.messages (message_id, tenant_id, conversation_id, kind, text, context, author)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    (
-                        message_id,
-                        tenant_id,
-                        conversation_id,
-                        request.kind.value,
-                        request.text,
-                        Jsonb(request.context.model_dump(mode="json")),
-                        requester,
-                    ),
-                )
-                # The function validates the supersedes target against tenant and conversation (SA:450).
-                run_id, version = await persistence.create_run(
-                    conn,
-                    tenant_id=tenant_id,
-                    conversation_id=conversation_id,
-                    message_id=message_id,
-                    requester=requester,
-                    intent=Intent.INVESTIGATE,
-                    asset_id=request.context.asset_id,
-                    start_at=start_at,
-                    end_at=end_at,
-                    supersedes_run_id=request.supersedes_run_id,
-                )
-        except persistence.NotFound as exc:
-            raise NotFound from exc
-        except persistence.Refused as exc:
-            raise map_refusal(exc) from exc
-        return Accepted(conversation_id, message_id, run_id, RunState.QUEUED.value, version)
-
-    async def decide(self, *, tenant_id: UUID, proposal_id: UUID, reviewer: UUID, request: DecisionRequest) -> Decided:
-        """Record the first decision on the exact revision and hash, or raise Conflict / Forbidden / NotFound."""
-        try:
-            async with self.session.unit(tenant_id) as conn:
-                cur = await conn.execute(
-                    "SELECT revision FROM app.proposals WHERE proposal_id = %s AND tenant_id = %s",
-                    (proposal_id, tenant_id),
-                )
-                proposal = await cur.fetchone()
-                if proposal is None:
-                    raise NotFound
-                if proposal["revision"] != request.expected_revision:
-                    raise Conflict("VERSION_CONFLICT")  # the hash is the function's check; the revision is ours
-                decided = await persistence.record_decision(
-                    conn,
-                    tenant_id=tenant_id,
-                    proposal_id=proposal_id,
-                    reviewer=reviewer,
-                    expected_payload_sha256=request.expected_payload_sha256,
-                    decision=request.decision,
-                    reason=request.reason,
-                )
-        except persistence.NotFound as exc:
-            raise NotFound from exc
-        except persistence.VersionConflict as exc:
-            raise Conflict("VERSION_CONFLICT") from exc
-        except persistence.Refused as exc:
-            raise map_refusal(exc) from exc
-        return Decided(proposal_id, decided.run_id, request.decision, decided.state.value, decided.state_version)
 
     async def run(self, tenant_id: UUID, run_id: UUID) -> dict[str, Any] | None:
         """Read one run row in the tenant (RLS scopes the unit; the WHERE is belt and braces)."""

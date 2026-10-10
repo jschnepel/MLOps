@@ -9,7 +9,7 @@ import time
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx2
 import jwt
@@ -113,7 +113,9 @@ async def test_login_csrf_idle_expiry_and_logout(
         ).status_code,
     ]
     assert refused == [403, 403, 403, 403], refused
-    created = session.api.post("/api/v1/conversations", headers=session.mutation_headers())
+    created = session.api.post(
+        "/api/v1/conversations", headers={**session.mutation_headers(), "Idempotency-Key": str(uuid4())}
+    )
     assert created.status_code == 201
     lines.append(f"login: me=200 csrf_refusals={refused} mutation_with_token={created.status_code}")
     # A callback replayed by another client (no login cookie) is refused before any exchange (review focus 1).
@@ -229,7 +231,8 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
             # Positive controls (final review I2): the bearer token works and the enabled check passes for an enabled
             # sam, so the later 401s are the disable and the sync, not a token that never worked.
             me_enabled = c.get("/api/v1/me", headers=headers).status_code
-            decided_enabled = c.post(decision_url, headers=headers, json=body).status_code
+            keyed = {**headers, "Idempotency-Key": str(uuid4())}  # every /api/v1 mutation carries one (T12)
+            decided_enabled = c.post(decision_url, headers=keyed, json=body).status_code
             assert me_enabled == 200 and decided_enabled == 404, (me_enabled, decided_enabled)
             disabled = admin.set_enabled(SAM, False)
             # Before the sync: the membership is still active, so a read still works (R013 attribution below).
@@ -238,7 +241,7 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
             assert me_unsynced == 200, me_unsynced
             # A decision on a random proposal: the enabled check runs before any lookup, so a disabled user is 401,
             # never 404 (the check is a dependency, T11 review note 2).
-            decided = c.post(decision_url, headers=headers, json=body)
+            decided = c.post(decision_url, headers={**headers, "Idempotency-Key": str(uuid4())}, json=body)
             decided_code, decided_body = decided.status_code, decided.json()
             assert decided_code == 401, decided_code
             refusal = (decided_body["code"], decided_body["message"])
