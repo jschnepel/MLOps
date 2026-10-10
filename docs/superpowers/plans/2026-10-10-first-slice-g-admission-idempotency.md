@@ -107,13 +107,15 @@ post-live checkout, which the round-1 dry run found rewritten by every live run)
 
 Plan G additions (they win over the carried text where the two differ):
 
-- **Debt before code, here:** the Plan G debt list ("Declared debt and errata" below) is committed in Task 1 Step 1
+- **Debt before code, here:** the Plan G debt list ("Declared debt and errata" below) is committed in Task 1 Step 1c
   before any code change; Plan G touches no realm, no secret and no Keycloak object, so `bootstrap_dev.py` is never
   run and no realm re-import happens.
 - **Counting characters** (the carried "Comments" rule): print every line over 120 characters in the given files;
   no output means the files pass. It takes files, not directories: a directory in a task's list is given as its
   files (`tests/plan_g/*.py`), while `ruff format` and `ruff check` take the directory itself. The lists never name
   `pyproject.toml`: its line 53 (the `norecursedirs` comment, 121 characters) predates Plan G and is not Python.
+  The evidence file `reports/admission/t12-admission.txt` is exempt as well: its lines are data the live test writes
+  (several are longer than 120 characters), not prose or code, so no list names it.
 
   ```bash
   uv run python - <files> <<'EOF'
@@ -154,7 +156,7 @@ Plan G additions (they win over the carried text where the two differ):
   (the current tree for a file no earlier Plan G task touched).
 - **Counts.** Today (b4e97bc) the dev gate is `679 passed, 95 skipped`; 74 of the 95 skips are live tests, so the
   live gate is `753 passed, 21 skipped` (Plan F's close: dev 663/95, live 737/21; the 16 tests added since are unit
-  tests). Task 1 Step 1 records both before any change; if either differs, every expected count below shifts by the
+  tests). Task 1 Step 1a records both before any change; if either differs, every expected count below shifts by the
   same difference and the report says so.
 
 ## Review Focus
@@ -173,9 +175,10 @@ Plan G additions (they win over the carried text where the two differ):
    `test_a_body_refusal_through_the_app_creates_nothing_and_names_its_request`) and live in Task 6 (R115).
 4. **A text that names the form's asset among others agrees; a text that names only other assets, another window,
    or two windows, asks** (the reader's "Compare B22 with A17" is not a conflict; "Investigate B22" with A17 in the
-   form is, and so are "the last 2 weeks", "the last 30 minutes" and "the last 1000 hours" beside a 24-hour form).
-   Pinned in Task 3 (`test_text_and_fields`, its rows "Compare B22 with A17, last 24 hours.", "Investigate B22 over
-   the last 24 hours." and the six window rows, and `test_questions_name_what_disagreed`) and live in Task 6 (R018).
+   form is, and so are "the last 2 weeks", "the last 30 minutes", "the last 90 seconds" and "the last 6 months"
+   beside a 24-hour form). Pinned in Task 3 (`test_text_and_fields`, its rows "Compare B22 with A17, last 24
+   hours.", "Investigate B22 over the last 24 hours." and the thirteen window rows, and
+   `test_questions_name_what_disagreed`) and live in Task 6 (R018).
 5. **A member whose membership was revoked must not replay a recorded success** (BS:264: an authenticated current
    session): identity runs before the record, and so does the role. Pinned in Task 5
    (`test_a_revoked_member_cannot_replay_a_recorded_success`,
@@ -199,12 +202,13 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
    `POST /api/v1/conversations/{id}/messages`, `POST /api/v1/proposals/{id}/decisions` and the new
    `POST /api/v1/runs/{id}/clarifications` require it; `/auth/logout` (idempotent by construction: a second call
    has no session) and `/auth/backchannel-logout` (Keycloak's, T11 review note 3) stay exempt, and so does the
-   test-only `/internal/faults/{kind}`. A missing or malformed header is 422 `INVALID_INPUT` "Idempotency-Key header
-   is required (8–128 visible ASCII characters)"; the shape is 8-128 characters, each in `0x21-0x7E`. — Why: BS:264
-   says every mutation, and T11 deferred exactly this (Plan F ruling 20); a key that may contain a space or a
-   non-ASCII character can be folded or re-encoded by a proxy, and the replay would miss its record. — Cost if
-   wrong: every client sends one header; R105, `test_auth_live.py` and the Plan D/F unit tests send a `uuid4()`
-   from Task 5 on. Erratum 35 records the `/auth/*` exemption against BS:264's "every mutation".
+   test-only `/internal/faults/{kind}`, from the key only: it keeps identity and the CSRF/origin check of every
+   browser mutation (`browser_mutation`, BS:264). A missing or malformed header is 422 `INVALID_INPUT`
+   "Idempotency-Key header is required (8–128 visible ASCII characters)"; the shape is 8-128 characters, each in
+   `0x21-0x7E`. — Why: BS:264 says every mutation, and T11 deferred exactly this (Plan F ruling 20); a key that may
+   contain a space or a non-ASCII character can be folded or re-encoded by a proxy, and the replay would miss its
+   record. — Cost if wrong: every client sends one header; R105, `test_auth_live.py` and the Plan D/F unit tests
+   send a `uuid4()` from Task 5 on. Erratum 35 records the `/auth/*` exemption against BS:264's "every mutation".
 2. **Scope = (tenant, subject, route template, key); the path parameters are in the fingerprint.** `route` is the
    method plus the template (`POST /api/v1/conversations/{conversation_id}/messages`), so one key reused on another
    conversation is the same scope with another fingerprint: 409 `IDEMPOTENCY_CONFLICT`, as is a changed body. The
@@ -292,25 +296,32 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
     own at its admission. — Why: spike §7 measured the API's wall clock 3 days apart from `create_run`'s
     `app.current_time()` under the test clock, which made R018 untestable; spike §3: `api` may call it. — Cost if
     wrong: none for production (the two clocks are equal outside the test profile).
-12. **Text versus fields: a deterministic parser in `core/src/ops_core/routing.py`.** `TEXT_ASSET` (an upper-case
-    token containing a digit, at most 32 characters); `TEXT_WINDOW`, "last|past" then `\d{1,4}` and a unit
-    (`minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|wks?|w`); `TEXT_WINDOW_WORD` ("last hour" = 1, "last day" = 24,
-    "last week" = 168). Every window is held in minutes (hours × 60, days × 1440, weeks × 10080) and is a whole
-    number of hours only when divisible by 60, so "last 30 minutes" is outside 1-168 like "last 1000 hours"; two
-    mentions of one length ("last 24 hours", "past day") are one window. Asset rules run before interval rules and
-    the first disagreement names the one cause: a form asset among the text's ids agrees, none of them is
-    `asset_conflict`; no form asset and one id fills it, none is `missing_asset`, two or more is `asset_ambiguous`;
-    two or more distinct windows in the text are `interval_ambiguous` ("The request names more than one window
-    ({windows}); which one is meant?"), with or without a form window; one window equal to the form's agrees, any
-    other (outside 1-168 included) is `interval_conflict`; no form window and one window in 1-168 fills it, outside
-    is `interval_out_of_range`, none is `missing_interval`. `kind=status` skips the parser. — Why: BS:297
-    ("structured fields take precedence only when they agree … ask rather than guess"), R018 and T12 DoD 4; a window
-    the parser cannot see would let the form win silently, so every unit a person writes is read, and two windows
-    ask like two assets do; prose and acronyms never match (no digit), and a lower-case id is not an `AssetId`. —
-    Cost if wrong: a stray upper-case token with a digit in prose (a ticket id such as `T12`) asks a question instead
-    of starting work, which is the safe direction; a phrasing the parser does not read at all ("the previous 48
-    hours", "two days", a number of five digits or more) still lets the form's window stand, the accepted limit of
-    a deterministic parser.
+12. **Text versus fields: a deterministic parser in `core/src/ops_core/routing.py`.** `TEXT_ASSET` (an upper-case token
+    containing a digit, at most 32 characters); `TEXT_WINDOW`, "last|past", a number `\d{1,4}(?:\.\d+)?` (a decimal part
+    allowed), spaces or a hyphen between number and unit (`[\s-]*`), and a unit keyed by its full word in the table
+    `UNIT_SECONDS`, one row per family: `seconds?|secs?` (1 s), `minutes?|mins?` (60 s), `hours?|hrs?|h` (1 hour),
+    `days?|d` (24 hours), `weeks?|wks?` (168 hours), `fortnights?` (2 weeks), `months?|mos?` (720 hours), `years?|yrs?`
+    (8760 hours). The only one-letter units are `h` and `d`: a bare `m` or `w` is not read, so "last 3 M" is no window.
+    `TEXT_WINDOW_WORD` reads a unit without a number ("last hour" = 1, "last day" = 24, "last week" = 168, "last
+    fortnight" = 336, "last month" = 720, "last year" = 8760; "the last minute" and "the last second" are idioms and are
+    not read). Every window is held as an exact number of seconds (a `Fraction`, so "last 1.5 days" is 36 hours exactly)
+    and is a whole number of hours only when divisible by 3600; seconds, months and years therefore convert to hours and
+    fall under the 1-168 rule like any other window, and a window that is not whole hours ("last 30 minutes", "last 90
+    seconds", "last 1.5 hours") is out of range or a conflict like "last 1000 hours" or "last 6 months"; two mentions of
+    one length ("last 24 hours", "past day") are one window. Asset rules run before interval rules and the first
+    disagreement names the one cause: a form asset among the text's ids agrees, none of them is `asset_conflict`; no
+    form asset and one id fills it, none is `missing_asset`, two or more is `asset_ambiguous`; two or more distinct
+    windows in the text are `interval_ambiguous` ("The request names more than one window ({windows}); which one is
+    meant?"), with or without a form window; one window equal to the form's agrees, any other (outside 1-168 included)
+    is `interval_conflict`; no form window and one window in 1-168 fills it, outside is `interval_out_of_range`, none is
+    `missing_interval`. `kind=status` skips the parser. — Why: BS:297 ("structured fields take precedence only when they
+    agree … ask rather than guess"), R018 and T12 DoD 4; a window the parser cannot see would let the form win silently,
+    so every unit a person writes, seconds to years, is read, and two windows ask like two assets do; prose and acronyms
+    never match (no digit), and a lower-case id is not an `AssetId`. — Cost if wrong: a stray upper-case token with a
+    digit in prose (a ticket id such as `T12`) asks a question instead of starting work, which is the safe direction; a
+    phrasing the parser does not read at all (a number written as a word: "two days"; "the previous 48 hours";
+    "yesterday", "since Monday" or any absolute date; a number of five digits or more) still lets the form's window
+    stand, the accepted limit of a deterministic parser.
 13. **The `clarify` response.** HTTP 200 `{conversation_id, message_id, question_id, cause, question, status:
     "clarification_needed"}`; two `messages` rows in one unit: the requester's (its request kind, text and context,
     `author` = subject) and the question (`clarification_question`, `author` NULL, the cause's template, `context =
@@ -325,8 +336,8 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
     allowed while the conversation is busy; the parser is not run. — Why: SA:370 ("answered from recorded events and
     state … no run, no job, no run event") and R017. — Cost if wrong: the wording changes with T26.
 15. **`clarification_reply` enters through BS:273's `POST /api/v1/runs/{run_id}/clarifications`** with the existing
-    `ClarificationReply(question_id, expected_version, context)`. After the scope's advisory lock and the record
-    lookup, the unit's first table statement locks the run: `SELECT run_id, state, state_version, requester,
+    `ClarificationReply(question_id, expected_version, context)`. After the scope's advisory lock, the run lock is
+    the unit's first table statement after the record lookup: `SELECT run_id, state, state_version, requester,
     conversation_id FROM app.runs WHERE run_id = %s FOR UPDATE` (SA:186: an API mutation serialises on the run row
     plus `expected_version`; SA:188: runs before messages; `api` holds a column UPDATE on `runs`, Plan E ruling 23).
     Under that lock the run must exist in the caller's tenant (else 404 "no such run", recorded; RLS hides another
@@ -374,17 +385,20 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
     nothing to the queue and is never a 429. — Cost if wrong: the unit test sets the quota to 1; the live test does
     not exercise 429.
 19. **503 and `retryable`.** `retryable: true` only for `psycopg.OperationalError`/`InterfaceError` ("database
-    unavailable"), the identity provider's outages (`AdminUnavailable`, `SigningKeysUnavailable`, the token
-    endpoint: every `ApiError` that carries 503) and the 429 `RATE_LIMITED` of a full tenant queue (its
-    `Retry-After: 5` promises the same request a later success): a 429 is the one client-side retryable refusal.
-    `AuthorityViolation`, `st.Internal`, `PersistenceError`, `IllegalTransition`, `EventRuleViolation`, any other
-    `psycopg.Error` (a 23505 included) and the catch-all
-    `Exception` are 503 `UNAVAILABLE` `retryable: false` "service error", logged once at ERROR with the request id
-    and the exception's class name, never its text. Starlette's `HTTPException`: 404 → `NOT_FOUND` "no such route",
-    405 → `INVALID_INPUT` "method not allowed" with `Allow`, anything else → 422 `INVALID_INPUT` "request refused". —
-    Why: BS:562 ("do not retry … as transient errors") and BS:301; spike §5: FastAPI's 404/405 answer `{"detail": …}`
-    and an unhandled exception a plain-text 500; Starlette re-raises after the catch-all, so uvicorn still logs the
-    traceback through the redaction filter. — Cost if wrong: a client stops retrying a defect a restart would fix.
+    unavailable": a lost connection or a transient server condition, such as a deadlock, a serialization failure or a
+    lock or statement timeout), the identity provider's outages (`AdminUnavailable`, `SigningKeysUnavailable`, the token
+    endpoint: every `ApiError` that carries 503) and the 429 `RATE_LIMITED` of a full tenant queue (its `Retry-After: 5`
+    promises the same request a later success): a 429 is the one client-side retryable refusal. `AuthorityViolation`,
+    `st.Internal`, `PersistenceError`, `IllegalTransition`, `EventRuleViolation`, the two `OperationalError` subclasses
+    of SQLSTATE class 54 (`psycopg.errors.ProgramLimitExceeded` and `StatementTooComplex`: the same statement fails the
+    same way again; their handler is registered before the `OperationalError` one, and Starlette's class walk over the
+    exception's MRO finds them first), any other `psycopg.Error` (a 23505 included) and the catch-all `Exception` are
+    503 `UNAVAILABLE` `retryable: false` "service error", logged once at ERROR with the request id and the exception's
+    class name, never its text. Starlette's `HTTPException`: 404 → `NOT_FOUND` "no such route", 405 → `INVALID_INPUT`
+    "method not allowed" with `Allow`, anything else → 422 `INVALID_INPUT` "request refused". — Why: BS:562 ("do not
+    retry … as transient errors") and BS:301; spike §5: FastAPI's 404/405 answer `{"detail": …}` and an unhandled
+    exception a plain-text 500; Starlette re-raises after the catch-all, so uvicorn still logs the traceback through the
+    redaction filter. — Cost if wrong: a client stops retrying a defect a restart would fix.
 20. **`request_id`.** An ASGI middleware `RequestId` assigns `uuid4()` per request (a client's `X-Request-Id` is
     ignored), keeps it in `scope["state"]` (`request.state.request_id`), echoes it as `X-Request-Id` on every
     response, and every error body carries it (a replayed recorded error too: ruling 4); error log lines include it
@@ -448,7 +462,8 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
 29. **Handoff close-out (Task 7).** T12 → `DONE` with a review note; R015, R016, R017, R018, R115, R129 →
     `IMPLEMENTED_LOCALLY_VERIFIED` / `RECORDED_LOCALLY_LIVE` with evidence paths; `SESSION_STATE.md` (Plan G section:
     rulings made during execution, errata 35-44, the debt lines, the dev database needs 0006); `STATUS.md`;
-    `docs/PROJECT_HISTORY.md` §24 (the closing section becomes §25); `api/README.md`;
+    `docs/PROJECT_HISTORY.md` (execution's findings appended to the section "## 24. The admission plan …", which the
+    review record's commit writes before execution); `api/README.md`;
     `docs/runbooks/walking-skeleton.md` (revision 0006 before `up`); `docs/runbooks/dev-topology.md` (the request flow
     with the key); `handoff/BUILD_BACKLOG.md` (T12 checked); the plan's own checkboxes. Gates: both `check.py` profiles
     GREEN and `verify_handoff.py` exit 0. — Why: the T11 close-out's shape. — Cost if wrong: none.
@@ -458,7 +473,7 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
 
 ## Declared debt and errata
 
-### Debt list (committed in Task 1 Step 1, before coding)
+### Debt list (committed in Task 1 Step 1c, before coding)
 
 Appended to `SESSION_STATE.md` as a new section `## Plan G debt list (T12; committed before coding) [R6-B7]`
 immediately after the `## Plan F debt list …` section (before `## Environment (observed)`), verbatim:
@@ -493,7 +508,8 @@ The spec text stays authoritative until the owner decides; each line names the t
 
 35. **BS:264** ("Every mutation requires … `Idempotency-Key`"): met for every `/api/v1` mutation; `POST /auth/logout`
     (idempotent by construction) and `POST /auth/backchannel-logout` (Keycloak's, T11 review note 3) are exempt by
-    design, and so is the test-profile `POST /internal/faults/{kind}` (ruling 1).
+    design, and the test-profile `POST /internal/faults/{kind}` is exempt from the key only: it keeps identity and
+    the CSRF/origin check of every browser mutation (ruling 1).
 36. **SA:429** (AM-20.2 row `idempotency_request`: `sweeper` "del (expired)"): the sweeper also holds SELECT, because
     a DELETE with a WHERE reads the row (erratum 25 extended; spike §1 measured 42501 without it) (ruling 4).
 37. **SA:188** (the lock order): "idempotency scope advisory lock" is the first entry, before the asset guard
@@ -551,28 +567,28 @@ The spec text stays authoritative until the owner decides; each line names the t
 ## Task overview
 
 - **Task 1:** the debt list; `AdmissionSettings`; `RequestId` and `BodyLimit`; the safe error surface;
-  `tests/plan_g` on `testpaths`. Tests: `test_settings_admission.py` 5, `test_limits.py` 8, `test_error_surface.py` 7.
-  Dev gate after: 699 passed, 95 skipped.
+  `tests/plan_g` on `testpaths`. Tests: `test_settings_admission.py` 5, `test_limits.py` 8, `test_error_surface.py` 8.
+  Dev gate after: 700 passed, 95 skipped.
 - **Task 2:** revision 0006; the matrix row; the sweeper's purge and guard; the API's guard. Tests:
   `test_migration_0006.py` 3, `test_transitions_table.py` +1 (parametrised), `test_sweeper.py` +1; live
-  `test_migration_0006_live.py` 3 and `test_sweeper_live.py` (changed, still 4). Dev gate after: 704 passed, 98
+  `test_migration_0006_live.py` 3 and `test_sweeper_live.py` (changed, still 4). Dev gate after: 705 passed, 98
   skipped.
-- **Task 3:** the router table, the parser, `StoredMessageKind`. Tests: `test_routing_admission.py` 32 (24 of them
-  `test_text_and_fields` rows). Dev gate after: 736 passed, 98 skipped.
+- **Task 3:** the router table, the parser, `StoredMessageKind`. Tests: `test_routing_admission.py` 39 (31 of them
+  `test_text_and_fields` rows). Dev gate after: 744 passed, 98 skipped.
 - **Task 4:** `idempotency.py`; the persistence helpers; `AdmissionStore`/`DbUnit`; the shared fake. Tests:
-  `test_idempotency.py` 8, `test_store_units.py` 14. Dev gate after: 758 passed, 98 skipped.
+  `test_idempotency.py` 8, `test_store_units.py` 14. Dev gate after: 766 passed, 98 skipped.
 - **Task 5:** the key dependency; the routes over the units; the clarifications route; the fault route; the Plan D/F
-  unit tests and the two live callers send keys. Tests: `test_api_admission.py` 22. Dev gate after: 780 passed, 98
+  unit tests and the two live callers send keys. Tests: `test_api_admission.py` 22. Dev gate after: 788 passed, 98
   skipped.
 - **Task 6:** live proof and evidence; the purge helper; the evidence root; R105 re-run. Tests: live
-  `test_admission_live.py` 6. Dev gate after: 780 passed, 104 skipped.
+  `test_admission_live.py` 6. Dev gate after: 788 passed, 104 skipped.
 - **Task 7:** handoff records, errata, documents, final gates. No tests.
 
-The arithmetic, once: the dev gate is 679 + 20 (Task 1: 5 + 8 + 7) = 699, + 5 (Task 2: 3 + 1 + 1) = 704, + 32
-(Task 3: 26 + the six window rows) = 736, + 22 (Task 4: 8 + 14) = 758, + 22 (Task 5) = 780; the skips are 95, + 3
-live = 98, + 6 live = 104. The live gate (`check.py --profile test`) is the dev count plus the live tests (74 today,
-77 after Task 2, 83 after Task 6): after Tasks 1, 2, 4, 5 and 6 it is 773/21, 781/21, 835/21, 857/21 and 863/21
-passed/skipped.
+The arithmetic, once: the dev gate is 679 + 21 (Task 1: 5 + 8 + 8) = 700, + 5 (Task 2: 3 + 1 + 1) = 705, + 39
+(Task 3: 26 + the thirteen window rows) = 744, + 22 (Task 4: 8 + 14) = 766, + 22 (Task 5) = 788; the skips are 95,
++ 3 live = 98, + 6 live = 104. The live gate (`check.py --profile test`) is the dev count plus the live tests (74
+today, 77 after Task 2, 83 after Task 6): after Tasks 1, 2, 4, 5 and 6 it is 774/21, 782/21, 843/21, 865/21 and
+871/21 passed/skipped.
 
 ---
 
@@ -601,19 +617,23 @@ passed/skipped.
   False) -> JSONResponse`; `create_app(verifier, store_factory, auth_factory, *, admission: AdmissionSettings | None
   = None)`.
 
-- [ ] **Step 1: Record the baseline and commit the debt list (before any code)**
+- [ ] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN` with pytest `679 passed, 95 skipped`; with the
 dev stack up and `uv run python scripts/skeleton.py status` showing every process down, run
 `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → `CHECK: GREEN` with `753 passed, 21 skipped`, then
 `git checkout -- reports/bootstrap reports/skeleton reports/auth`. Record both lines in the report (Global
-Constraints, "Counts").
+Constraints, "Counts"). A gate that is not GREEN stops the plan here, before anything is committed.
+
+- [ ] **Step 1b: Record the base**
 
 Before the first commit of this plan's execution, record the base: run `git rev-parse --short HEAD` and write the
 hash it prints as `BASE=<hash>` in the report and in the SDD ledger
 (`.superpowers/sdd/2026-10-10-first-slice-g-admission-idempotency/progress.md`). Task 7's commit span is
 `<base>..<last>` from it, so a commit that revises this plan before execution starts never falls inside the
 executed range.
+
+- [ ] **Step 1c: Commit the debt list (before any code)**
 
 Append the debt-list block from "Declared debt and errata" to `SESSION_STATE.md` as the section
 `## Plan G debt list (T12; committed before coding) [R6-B7]`, immediately after the `## Plan F debt list …` section
@@ -922,7 +942,8 @@ tests/plan_g/test_api_admission.py, which has the recorded verdicts).
 
 Catches: FastAPI's `{"detail": ...}` 404/405 (spike §5), a plain-text 500, a psycopg DETAIL (a 23505 names the
 tenant, the subject and the key, spike §1) or an exception's text reaching the client or the log, a server defect
-marked retryable (a retry storm on a bug, BS:562), and a lost connection marked final.
+marked retryable (a retry storm on a bug, BS:562), a statement too big or too complex for the server (an
+`OperationalError` of SQLSTATE class 54) marked retryable like a lost connection, and a lost connection marked final.
 """
 
 import logging
@@ -1019,6 +1040,26 @@ def test_a_lost_connection_is_a_retryable_503(app_and_store, monkeypatch) -> Non
         r = c.get(f"/api/v1/runs/{uuid4()}", headers=auth("alex"))
     assert r.status_code == 503 and r.json()["retryable"] is True and r.json()["message"] == "database unavailable"
     assert CANARY not in r.text
+
+
+def test_a_statement_the_server_cannot_run_is_a_non_retryable_503(app_and_store, caplog, monkeypatch) -> None:
+    caplog.set_level(logging.ERROR, logger="ops_api")
+    app, fake = app_and_store
+    answers, texts = [], []
+    with TestClient(app) as c:
+        # Both are OperationalError subclasses (class 54): the same statement fails the same way on every retry.
+        for defect in (psycopg.errors.ProgramLimitExceeded, psycopg.errors.StatementTooComplex):
+
+            async def too_big(tenant_id: UUID, run_id: UUID, defect: type[psycopg.Error] = defect) -> None:
+                raise defect(CANARY)
+
+            monkeypatch.setattr(fake, "run", too_big)
+            r = c.get(f"/api/v1/runs/{uuid4()}", headers=auth("alex"))
+            answers.append((r.status_code, r.json()["retryable"], r.json()["message"]))
+            texts.append(r.text)
+    assert answers == [(503, False, "service error")] * 2
+    assert not any(CANARY in text for text in texts) and CANARY not in caplog.text
+    assert "ProgramLimitExceeded" in caplog.text and "StatementTooComplex" in caplog.text
 
 
 def test_the_request_id_header_is_the_body_request_id(app_and_store) -> None:
@@ -1393,18 +1434,10 @@ Edit 10 (old lines 222-227), replace:
 
 ```
 
-with:
+with a blank line (the handler goes: `AuthorityViolation` is a `PersistenceError`, so the server-defect handler of
+Edit 11 answers it, and the outage handler moves below that one, Edit 11):
 
 ```python
-
-    @app.exception_handler(psycopg.OperationalError)
-    @app.exception_handler(psycopg.InterfaceError)
-    async def _database_down(request: Request, exc: psycopg.Error) -> Response:
-        # The connection is gone or refused: nothing committed, so the same request may succeed once the database is
-        # back (BS:564 "do not acknowledge uncommitted work"). Starlette picks the handler by the exception's MRO, so
-        # these two win over the psycopg.Error handler below.
-        failed(request, exc)
-        return safe(request, 503, ErrorCode.UNAVAILABLE, "database unavailable", retryable=True)
 
 ```
 
@@ -1433,16 +1466,25 @@ with:
 ```python
     @app.exception_handler(EventRuleViolation)
     @app.exception_handler(psycopg.Error)
+    @app.exception_handler(psycopg.errors.ProgramLimitExceeded)
+    @app.exception_handler(psycopg.errors.StatementTooComplex)
     async def _server_defect(request: Request, exc: Exception) -> Response:
-        # A defect, a refused deployment (AuthorityViolation is a PersistenceError) or an untranslated SQLSTATE such
-        # as a 23505: retrying the same request meets the same defect, so `retryable` is false (ruling 19).
+        # A defect, a refused deployment (AuthorityViolation is a PersistenceError), an untranslated SQLSTATE (a 23505)
+        # or a statement too big for the server (class 54): a retry meets the same defect, so not retryable (ruling 19).
         failed(request, exc)
         return safe(request, 503, ErrorCode.UNAVAILABLE, "service error")
 
+    @app.exception_handler(psycopg.OperationalError)
+    @app.exception_handler(psycopg.InterfaceError)
+    async def _database_down(request: Request, exc: psycopg.Error) -> Response:
+        # A lost connection or a transient server condition: nothing committed, so a retry may succeed (BS:564). The
+        # class-54 handlers above were registered first and Starlette walks the exception's MRO, so they keep theirs.
+        failed(request, exc)
+        return safe(request, 503, ErrorCode.UNAVAILABLE, "database unavailable", retryable=True)
+
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> Response:
-        # Starlette sends this response and then re-raises (spike §5), so uvicorn still logs the traceback through
-        # the redaction filter; the client only ever sees the safe schema, never a plain-text 500.
+        # Starlette answers, then re-raises (spike §5): uvicorn logs the traceback through the redaction filter.
         failed(request, exc)
         return safe(request, 503, ErrorCode.UNAVAILABLE, "service error")
 
@@ -1540,7 +1582,7 @@ with:
 ```
 
 Run: `uv run python -m pytest tests/plan_g/test_limits.py tests/plan_g/test_error_surface.py -q`
-Expected: `15 passed`.
+Expected: `16 passed`.
 
 Run: `uv run python -m pytest tests/plan_d/test_api.py tests/plan_f -q`
 Expected: `157 passed` (the existing callers of `safe` now pass the request; the 503 of a lost connection stays
@@ -1554,10 +1596,10 @@ directory given to the counting command as `tests/plan_g/*.py` (`pyproject.toml`
 all three; its line 53 predates Plan G).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `699 passed, 95 skipped` (679 + 5 + 8 + 7).
+Expected: `CHECK: GREEN`; pytest `700 passed, 95 skipped` (679 + 5 + 8 + 8).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `773 passed, 21 skipped` (699 + 74 live). Then
+Expected: `CHECK: GREEN`; pytest `774 passed, 21 skipped` (700 + 74 live). Then
 `git checkout -- reports/bootstrap reports/skeleton reports/auth`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
@@ -2258,11 +2300,11 @@ fixture recreates `ops_test` at 0006 first).
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `704 passed, 98 skipped` (699 + 3 + 1 parametrised revision + 1 purge; the 3 new
+Expected: `CHECK: GREEN`; pytest `705 passed, 98 skipped` (700 + 3 + 1 parametrised revision + 1 purge; the 3 new
 live tests skip without `OPS_LIVE`).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `781 passed, 21 skipped` (704 + 77 live: R006's downgrade now passes through 0006,
+Expected: `CHECK: GREEN`; pytest `782 passed, 21 skipped` (705 + 77 live: R006's downgrade now passes through 0006,
 whose guard finds no system message because nothing writes one before Task 5). Then
 `git checkout -- reports/bootstrap reports/skeleton reports/auth`.
 
@@ -2293,9 +2335,10 @@ git commit -m "feat(migrations): revision 0006, the idempotency record and typed
 - Produces: `ops_core.routing.ClarifyCause` (`missing_asset`, `asset_ambiguous`, `asset_conflict`,
   `missing_interval`, `interval_ambiguous`, `interval_out_of_range`, `interval_conflict`, `hint`), `RejectCause`
   (`use_clarifications_route`, `slot_occupied`), `HOURS_MIN = 1`, `HOURS_MAX = 168`, `TEXT_ASSET`, `ASSET_ID`,
-  `TEXT_WINDOW`, `TEXT_WINDOW_WORD`, `UNIT_MINUTES`, `QUESTIONS: dict[ClarifyCause, str]`,
-  `text_assets(text) -> tuple[str, ...]`, `text_windows(text) -> tuple[int, ...]` (distinct windows in minutes,
-  first mention first), `said(minutes) -> str`, `AdmissionFacts(kind, text, asset_id, hours, active_run, hint=None)`,
+  `TEXT_WINDOW`, `TEXT_WINDOW_WORD`, `UNIT_SECONDS`, `unit_seconds(unit) -> int`, `QUESTIONS: dict[ClarifyCause,
+  str]`, `text_assets(text) -> tuple[str, ...]`, `text_windows(text) -> tuple[Fraction, ...]` (distinct windows in
+  seconds, first mention first), `said(seconds: Fraction) -> str`, `AdmissionFacts(kind, text, asset_id, hours,
+  active_run, hint=None)`,
   `Resolution(asset_id, hours, cause=None, question=None)`, `resolve(facts) -> Resolution`,
   `AdmissionDecision(route, cause=None, asset_id=None, hours=None, question=None)`, `AdmissionRule(name, predicate,
   route, cause=None)`, `ADMISSION_RULES`, `REPLY_RULES`, `route_admission(facts) -> AdmissionDecision`,
@@ -2311,9 +2354,10 @@ to match its sample, the six routes are all reachable, the text-versus-fields pa
 (R018), the slot check precedes every question, and a model hint can only produce a clarification.
 
 Catches: a row shadowed by an earlier one (dead routing), a route no input reaches, a text naming another asset
-than the form starting work anyway, a "last 200 hours" window accepted, a window in weeks, in minutes or of four
-digits that the parser cannot see (so the form wins silently), two windows resolved to the first, an acronym (UTC)
-or a lower-case id read as an asset, a busy conversation answered with a question instead of 409, a status question
+than the form starting work anyway, a "last 200 hours" window accepted, a window in seconds, minutes, weeks,
+fortnights, months or years, with a decimal part, a hyphen or four digits, that the parser cannot see (so the form
+wins silently), a bare "M" read as minutes, two windows resolved to the first, an acronym (UTC) or a lower-case id
+read as an asset, a busy conversation answered with a question instead of 409, a status question
 refused while a run is active (R017 says it must not start work, not that it must be refused), a hint that starts or
 rejects work, and a stored-kind vocabulary that drifts from revision 0006's CHECK.
 """
@@ -2490,6 +2534,50 @@ def test_every_row_is_reachable_first_and_the_six_routes_are_all_reachable() -> 
         ),
         ("Investigate A17.", None, None, MessageKind.INVESTIGATE, ("clarify", "missing_interval", None, None)),
         ("What happened recently?", None, None, MessageKind.ASK, ("clarify", "missing_asset", None, None)),
+        # One row per unit family ruling 12 added, and one each for a decimal, a hyphen and a bare "M".
+        (
+            "Investigate A17 over the last 90 seconds.",
+            "A17",
+            24,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_conflict", None, None),
+        ),
+        (
+            "Check A17 over the last fortnight.",
+            None,
+            None,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_out_of_range", None, None),
+        ),
+        (
+            "Investigate A17 over the last 6 months.",
+            "A17",
+            24,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_conflict", None, None),
+        ),
+        (
+            "Investigate A17 over the past 2 yrs.",
+            None,
+            None,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_out_of_range", None, None),
+        ),
+        (
+            "Investigate A17 over the last 1.5 days.",
+            None,
+            None,
+            MessageKind.INVESTIGATE,
+            ("investigate", None, "A17", 36),
+        ),
+        (
+            "Investigate A17 over the last 48-hours.",
+            "A17",
+            24,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_conflict", None, None),
+        ),
+        ("Investigate A17 over the last 3 M.", "A17", 24, MessageKind.INVESTIGATE, ("investigate", None, "A17", 24)),
     ],
 )
 def test_text_and_fields(
@@ -2632,9 +2720,9 @@ a test walks every row (R129). The graph table arrives with T20 and the model ta
 vocabularies so every table, schema and event spells them the same way.
 
 Text versus fields (BS:297, Plan G ruling 12): structured fields win only when the text agrees with them, so a
-small deterministic parser reads asset ids and "last N minutes/hours/days/weeks" windows from the text; a
-disagreement, a missing field the text cannot fill, or an ambiguous text becomes a stored clarification, never a
-guess (R018).
+small deterministic parser reads asset ids and "last N seconds/minutes/hours/days/weeks/fortnights/months/years"
+windows from the text; a disagreement, a missing field the text cannot fill, or an ambiguous text becomes a stored
+clarification, never a guess (R018).
 """
 
 from __future__ import annotations
@@ -2643,6 +2731,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from fractions import Fraction
 from typing import Final, Literal
 from uuid import UUID
 
@@ -2710,14 +2799,36 @@ HOURS_MAX: Final = 168
 # lower-case "a17" is not an asset id (contracts.AssetId requires the upper case too).
 TEXT_ASSET: Final = re.compile(r"\b([A-Z][A-Z0-9_-]*[0-9][A-Z0-9_-]*)\b")
 ASSET_ID: Final = re.compile(r"^[A-Z][A-Z0-9_-]{0,31}$")  # the same bound as contracts.AssetId
-# Every unit a person writes is read (ruling 12): a window the parser could not see would let the form win silently.
+# Every unit a person writes is read, seconds to years (ruling 12): a window the parser could not see would let the
+# form win silently. The number may carry a decimal part and may be joined to its unit by spaces or a hyphen; the
+# only one-letter units are h and d, so a bare "m" (minutes or months?) or "w" is no window at all.
 TEXT_WINDOW: Final = re.compile(
-    r"\b(?:last|past)\s+(\d{1,4})\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|wks?|w)\b", re.IGNORECASE
+    r"\b(?:last|past)\s+(\d{1,4}(?:\.\d+)?)[\s-]*"
+    r"(seconds?|secs?|minutes?|mins?|hours?|hrs?|h|days?|d|weeks?|wks?|fortnights?|months?|mos?|years?|yrs?)\b",
+    re.IGNORECASE,
 )
-TEXT_WINDOW_WORD: Final = re.compile(r"\b(?:last|past)\s+(hour|day|week)\b", re.IGNORECASE)
-# A window's length per unit in minutes, keyed by the unit's first letter: minutes keep a "last 30 minutes" exact
-# instead of rounding it into the 1-168 hour range.
-UNIT_MINUTES: Final = {"m": 1, "h": 60, "d": 1440, "w": 10080}
+# "last minute" and "last second" are idioms ("at the last minute"), so the number-less form reads only periods.
+TEXT_WINDOW_WORD: Final = re.compile(r"\b(?:last|past)\s+(hour|day|week|fortnight|month|year)\b", re.IGNORECASE)
+# One row per unit family, keyed by the full word in the singular: a window's length in seconds. A month is 30 days
+# and a year 365, so both convert to whole hours and meet the 1-168 rule like any other window.
+UNIT_SECONDS: Final[dict[str, int]] = {
+    "second": 1,
+    "sec": 1,
+    "minute": 60,
+    "min": 60,
+    "hour": 3600,
+    "hr": 3600,
+    "h": 3600,
+    "day": 86400,
+    "d": 86400,
+    "week": 604800,
+    "wk": 604800,
+    "fortnight": 1209600,
+    "month": 2592000,
+    "mo": 2592000,
+    "year": 31536000,
+    "yr": 31536000,
+}
 QUESTIONS: Final[dict[ClarifyCause, str]] = {
     ClarifyCause.MISSING_ASSET: "Which asset should be investigated? Name one asset id (for example A17).",
     ClarifyCause.ASSET_AMBIGUOUS: "The request names more than one asset ({ids}); name the one to investigate.",
@@ -2737,20 +2848,31 @@ def text_assets(text: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(m for m in TEXT_ASSET.findall(text) if ASSET_ID.fullmatch(m)))
 
 
-def text_windows(text: str) -> tuple[int, ...]:
-    """The distinct look-back windows the text names, in minutes, first mention first ("last 24 hours", "past 3
-    days", "last 30 minutes", "last week"); two spellings of one length ("last 24 hours", "past day") are one."""
-    found: list[tuple[int, int]] = []
+def unit_seconds(unit: str) -> int:
+    """A unit's length in seconds, whatever its case or plural ("Hrs", "months", "d")."""
+    return UNIT_SECONDS[unit.lower().removesuffix("s")]
+
+
+def text_windows(text: str) -> tuple[Fraction, ...]:
+    """The distinct look-back windows the text names, in seconds, first mention first ("last 24 hours", "past 3
+    days", "last 1.5 days", "last 48-hours", "last week"); two spellings of one length ("last 24 hours", "past day")
+    are one. A Fraction keeps a decimal exact, so "last 0.5 days" is 12 hours and never 11.999."""
+    found: list[tuple[int, Fraction]] = []
     for match in TEXT_WINDOW.finditer(text):
-        found.append((match.start(), int(match.group(1)) * UNIT_MINUTES[match.group(2)[0].lower()]))
+        found.append((match.start(), Fraction(match.group(1)) * unit_seconds(match.group(2))))
     for match in TEXT_WINDOW_WORD.finditer(text):
-        found.append((match.start(), UNIT_MINUTES[match.group(1)[0].lower()]))
-    return tuple(dict.fromkeys(minutes for _, minutes in sorted(found)))
+        found.append((match.start(), Fraction(unit_seconds(match.group(1)))))
+    return tuple(dict.fromkeys(seconds for _, seconds in sorted(found)))
 
 
-def said(minutes: int) -> str:
-    """A window as a question repeats it: in hours when it is whole hours ("48 hours"), else in minutes."""
-    return f"{minutes // 60} hours" if minutes % 60 == 0 else f"{minutes} minutes"
+def said(seconds: Fraction) -> str:
+    """A window as a question repeats it: in hours when it is whole hours ("48 hours"), else in minutes when it is
+    whole minutes ("30 minutes"), else in seconds ("90 seconds", "0.5 seconds")."""
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600} hours"
+    if seconds % 60 == 0:
+        return f"{seconds // 60} minutes"
+    return f"{float(seconds):g} seconds"
 
 
 @dataclass(frozen=True)
@@ -2800,14 +2922,14 @@ def resolve(facts: AdmissionFacts) -> Resolution:
     window = windows[0] if windows else None
     hours = facts.hours
     if hours is not None:
-        if window is not None and window != hours * 60:  # outside 1-168 can never equal a valid form window
+        if window is not None and window != hours * 3600:  # outside 1-168 can never equal a valid form window
             return _ask(ClarifyCause.INTERVAL_CONFLICT, field=hours, given=said(window))
     elif window is None:
         return _ask(ClarifyCause.MISSING_INTERVAL)
-    elif window % 60 != 0 or not HOURS_MIN <= window // 60 <= HOURS_MAX:
+    elif window % 3600 != 0 or not HOURS_MIN <= window // 3600 <= HOURS_MAX:
         return _ask(ClarifyCause.INTERVAL_OUT_OF_RANGE, given=said(window))
     else:
-        hours = window // 60
+        hours = window // 3600
     return Resolution(asset, hours)
 
 
@@ -2911,7 +3033,7 @@ class RunManifest(BaseModel):
 ```
 
 Run: `uv run python -m pytest tests/plan_g/test_routing_admission.py tests/plan_c/test_jobs_routes_outcomes.py -q`
-Expected: `50 passed` (32 new, 18 of Plan C's route and job vocabulary tests unchanged).
+Expected: `57 passed` (39 new, 18 of Plan C's route and job vocabulary tests unchanged).
 
 - [ ] **Step 4: Gates and commit**
 
@@ -2919,7 +3041,7 @@ Format, lint and count characters on the three files. `routing.py` now imports `
 nothing from `routing`, so no cycle exists (check: `uv run python -c "import ops_core.routing"` prints nothing).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `736 passed, 98 skipped` (704 + 32).
+Expected: `CHECK: GREEN`; pytest `744 passed, 98 skipped` (705 + 39).
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
 Expected: exit 0 (no schema or example changed).
@@ -3319,6 +3441,7 @@ class VerdictResponse(JSONResponse):
     """A JSON response rendered by `render`, for first answers and replays alike (ruling 4)."""
 
     def render(self, content: Any) -> bytes:
+        """Every verdict body is serialised by `render`, sorted and compact (ruling 4)."""
         return render(content)
 
 
@@ -4089,7 +4212,8 @@ class RecordingConn:
 def test_the_db_reply_locks_the_run_before_it_checks_or_writes() -> None:
     """SA:186/SA:188 on the real SQL: `DbUnit.record_reply`'s first statement locks the run row, so a run whose version
     moved after the client read it (a cancel, a worker transition), or another requester's run, is refused under that
-    lock and before any message, job or event is inserted."""
+    lock and before any message, job or event is inserted; and an accepted reply takes the same lock first and then
+    writes in SA:188's order, the message, the `resume_input` job, then `append_event`."""
     run_id = uuid4()
     moved = {  # AWAITING_INPUT, but at version 4: the client read version 3
         "run_id": run_id,
@@ -4114,6 +4238,30 @@ def test_the_db_reply_locks_the_run_before_it_checks_or_writes() -> None:
         first = conn.statements[0]
         assert "FROM app.runs" in first and "FOR UPDATE" in first, first
         assert len(conn.statements) == 1 and not any("INSERT" in s for s in conn.statements), conn.statements
+    question_id = uuid4()
+    waiting = {**moved, "state_version": 3}  # the version the client read
+    appended = {"event_id": uuid4(), "sequence": 7, "occurred_at": datetime(2026, 10, 10, tzinfo=UTC)}
+    # The script, statement by statement: the locked run, its one question, the message INSERT, the job INSERT that
+    # queued (a non-empty answer is rowcount 1), and append_event's row.
+    conn = RecordingConn([waiting, {"event_id": question_id}, None, {}, appended])
+    accepted = asyncio.run(
+        DbUnit(conn, ALPHA).record_reply(
+            run_id=run_id,
+            requester=ALEX,
+            question_id=question_id,
+            expected_version=3,
+            text="Clarification: asset -, hours 12",
+            context={"hours": 12},
+        )
+    )
+    assert (accepted.status, accepted.state_version) == ("AWAITING_INPUT", 3)
+    first = conn.statements[0]
+    assert "FROM app.runs" in first and "FOR UPDATE" in first, first
+    writes = [
+        next(i for i, s in enumerate(conn.statements) if marker in s)
+        for marker in ("INSERT INTO app.messages", "INSERT INTO app.jobs", "app.append_event")
+    ]
+    assert 0 < writes[0] < writes[1] < writes[2] == len(conn.statements) - 1, conn.statements
 
 
 def test_only_the_runs_requester_may_answer_its_question() -> None:
@@ -5109,7 +5257,7 @@ class DbUnit:
         """The run locked, then checked, then message, `resume_input` job and `clarification.received` inside a
         savepoint (ruling 15)."""
         # SA:186: an API mutation serialises on the run row (FOR UPDATE plus expected_version), and SA:188 puts runs
-        # before messages, so this lock is the unit's first table statement after the scope's advisory lock: a cancel
+        # before messages, so this lock is the unit's first table statement after the record lookup: a cancel
         # or a worker transition waits for this unit or wins before it, never in between, and `append_event` below
         # re-takes a lock the unit already holds. `api` holds a column UPDATE on runs (Plan E ruling 23).
         cur = await self.conn.execute(
@@ -5460,12 +5608,13 @@ Expected: `158 passed` (the routes still call the pre-T12 methods, kept above wi
 
 Format, lint and count characters on the six files; `uv run mypy core/src api/src --no-incremental` once (the
 `Unit` protocol and `DbUnit` must agree member for member).
+Expected: `Success: no issues found in 23 source files`.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `758 passed, 98 skipped` (736 + 8 + 14).
+Expected: `CHECK: GREEN`; pytest `766 passed, 98 skipped` (744 + 8 + 14).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `835 passed, 21 skipped` (758 + 77; the API's DbStore now inherits
+Expected: `CHECK: GREEN`; pytest `843 passed, 21 skipped` (766 + 77; the API's DbStore now inherits
 `AdmissionStore`, and every live test still drives the pre-T12 methods). Then
 `git checkout -- reports/bootstrap reports/skeleton reports/auth`.
 
@@ -5484,16 +5633,14 @@ git commit -m "feat(api): the scoped Idempotency-Key and the admission units ove
 
 **Files:**
 - Create: `tests/plan_g/test_api_admission.py`
-- Modify: `api/src/ops_api/app.py` as Task 2 left it, `:8-10`, `:28-36`, `:41-42`, `:45-46`, `:67-68`, `:116-117`,
-  `:120-124`, `:128-129`, `:226-227`, `:463-489`, `:492-509`, `:545-562`, `:564-576`, `:589-590`, `:642-643`
+- Modify: `api/src/ops_api/app.py` as Task 2 left it, `:8-10`, `:29`, `:30-36`, `:41-42`, `:45-46`, `:67-68`,
+  `:116-117`, `:120-124`, `:128-129`, `:226-227`, `:463-489`, `:492-509`, `:545-562`, `:564-576`, `:589-590`, `:642-643`
   (docstring, imports, route constants, `FaultRequest`, `create_app(…, profile=…)`, the lifespan's `faults`,
   `requester_mutation`, `reviewer_mutation`, `idempotency_key`, `scoped`, `recorded`, the four mutation routes, the
-  fault route,
-  `production_app`); `api/src/ops_api/store.py` as Task 4 left it, `:688-712`, `:1025-1122` (the pre-T12 mutations
-  go); `tests/plan_d/test_api.py:5-10`, `:19-23`, `:25-26`, `:72-218`, `:228-230`, `:260-265`, `:287-292`,
+  fault route, `production_app`); `api/src/ops_api/store.py` as Task 4 left it, `:688-712`, `:1025-1122` (the pre-T12
+  mutations go); `tests/plan_d/test_api.py:5-10`, `:19-23`, `:25-26`, `:72-218`, `:228-230`, `:260-265`, `:287-292`,
   `:405-411`; `tests/plan_f/test_api_auth.py:36-38`, `:132-134`; `tests/e2e/test_r105_walking_skeleton.py:12-14`,
   `:83-84`, `:118-123`, `:146-156`; `tests/e2e/test_auth_live.py:11-13`, `:115-117`, `:231-233`, `:240-242`
-
 **Interfaces:**
 - Consumes: everything Task 4 produced; `ops_core.testing.faults.Faults`, `FaultKind`; `ops_core.settings.Profile`.
 - Produces: `ops_api.app.ROUTE_CONVERSATIONS`, `ROUTE_MESSAGES`, `ROUTE_CLARIFICATIONS`, `ROUTE_DECISIONS` (the
@@ -5849,11 +5996,12 @@ messages pass the AM-16 admission router (`ops_core.routing`).
 """
 ```
 
-Edit 2 (old lines 28-36), replace:
+The `ops_core.contracts` import line above Edit 2's lines keeps `MessageKind` until Edit 16 in Step 2c, because the
+old `post_message` uses it until Edit 12 replaces it.
+
+Edit 2 (old lines 30-36), replace:
 
 ```python
-from ops_core import keycloak_admin, persistence, settings
-from ops_core.contracts import DecisionRequest, DuplicateKey, ErrorCode, MessageKind, MessageRequest, load
 from ops_core.keycloak_admin import AdminUnavailable
 from ops_core.outcomes import EventRuleViolation
 from ops_core.settings import AdmissionSettings, Role
@@ -5866,8 +6014,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 with:
 
 ```python
-from ops_core import keycloak_admin, persistence, settings
-from ops_core.contracts import ClarificationReply, DecisionRequest, DuplicateKey, ErrorCode, MessageRequest, load
 from ops_core.keycloak_admin import AdminUnavailable
 from ops_core.outcomes import EventRuleViolation
 from ops_core.settings import AdmissionSettings, Profile, Role
@@ -6021,10 +6167,11 @@ with:
 
         @app.post("/internal/faults/{kind}")
         async def arm_fault(
-            kind: FaultKind, request: Request, _: Annotated[Identity, Depends(identity)]
+            kind: FaultKind, request: Request, _: Annotated[Identity, Depends(browser_mutation)]
         ) -> dict[str, dict[str, int]]:
             """Arm a fault for the next `count` admissions (R015's crash before commit, ruling 24); the route exists
-            only under PROFILE=test, like incident-sim's."""
+            only under PROFILE=test, like incident-sim's, and is exempt from the key only: a cookie caller still passes
+            the CSRF and origin check of every browser mutation (BS:264, erratum 35)."""
             if kind is not FaultKind.DROP_BEFORE_COMMIT:
                 raise ApiError(422, ErrorCode.INVALID_INPUT, "the API implements drop_before_commit only")
             armed: FaultRequest = await body(request, FaultRequest)
@@ -6315,6 +6462,21 @@ with:
 ```python
             raise ApiError(403, ErrorCode.FORBIDDEN, "an independent current reviewer is required") from exc
 
+```
+
+Edit 12 removed the old `post_message`, the last user of `MessageKind`, and the clarifications route of Edit 13
+reads `ClarificationReply`, so the import line changes now.
+
+Edit 16 (old line 29), replace:
+
+```python
+from ops_core.contracts import DecisionRequest, DuplicateKey, ErrorCode, MessageKind, MessageRequest, load
+```
+
+with:
+
+```python
+from ops_core.contracts import ClarificationReply, DecisionRequest, DuplicateKey, ErrorCode, MessageRequest, load
 ```
 
 Run: `uv run python -m pytest tests/plan_g/test_api_admission.py -q`
@@ -6695,7 +6857,7 @@ with:
 ```
 
 Run: `uv run python -m pytest tests/plan_g tests/plan_d/test_api.py tests/plan_f -q`
-Expected: `257 passed` (99 Plan G tests, 5 + 8 + 7 + 3 + 32 + 8 + 14 + 22, and the 158 Plan D/F tests).
+Expected: `265 passed` (107 Plan G tests, 5 + 8 + 8 + 3 + 39 + 8 + 14 + 22, and the 158 Plan D/F tests).
 
 - [ ] **Step 4: The pre-T12 store mutations go**
 
@@ -6852,7 +7014,7 @@ Run: `uv run mypy core/src api/src --no-incremental`
 Expected: `Success: no issues found in 23 source files`.
 
 Run: `uv run python -m pytest tests/plan_g tests/plan_d/test_api.py tests/plan_f -q`
-Expected: `257 passed`.
+Expected: `265 passed`.
 
 - [ ] **Step 5: The two live modules that post to the API send keys**
 
@@ -6885,9 +7047,27 @@ with:
 
 ```python
 
+SENT_KEYS: list[str] = []  # every Idempotency-Key this module sent, so its clean-up deletes exactly their records
+
+
+@pytest.fixture(scope="module", autouse=True)
+def forget_sent_keys(migrated: None) -> Iterator[None]:
+    """Delete the idempotency records of this module's keys after it, whatever the outcome (Plan G scratch objects:
+    the run's conversation stays as R105 evidence, but no record of a key this module made outlives it)."""
+    try:
+        yield
+    finally:
+        if SENT_KEYS:
+            with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+                conn.execute("DELETE FROM app.idempotency_request WHERE key = ANY(%s)", (SENT_KEYS,))
+        SENT_KEYS.clear()
+
+
 def keyed(headers: dict[str, str]) -> dict[str, str]:
     """A mutation's headers with a fresh Idempotency-Key (BS:264; required on every /api/v1 mutation since T12)."""
-    return {**headers, "Idempotency-Key": str(uuid4())}
+    key = str(uuid4())
+    SENT_KEYS.append(key)
+    return {**headers, "Idempotency-Key": key}
 
 
 def wait_for(client: httpx2.Client, url: str, headers: dict[str, str], states: set[str], timeout: float = 45.0) -> dict:
@@ -7023,11 +7203,12 @@ with:
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `780 passed, 98 skipped` (758 + 22).
+Expected: `CHECK: GREEN`; pytest `788 passed, 98 skipped` (766 + 22).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `857 passed, 21 skipped` (780 + 77; R105 now admits through the router and the
-units and decides with a key per decision, and the auth module's conversation and decision posts carry keys). Then
+Expected: `CHECK: GREEN`; pytest `865 passed, 21 skipped` (788 + 77; R105 now admits through the router and the
+units and decides with a key per decision, and deletes the records of the keys it sent; the auth module's
+conversation and decision posts carry keys). Then
 `git checkout -- reports/bootstrap reports/skeleton reports/auth`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
@@ -7609,7 +7790,9 @@ Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_admission_l
 Expected: `6 passed`.
 
 `reports/admission/t12-admission.txt` then holds the header `T12 durable admission — <UTC time>` and twelve lines,
-in this order and of these shapes (the counts and statuses are exact; the run-free lines carry no id at all):
+in this order and of these shapes (the counts and statuses are exact; the run-free lines carry no id at all; in the
+R018 line `x` is a seconds digit that varies, 9 or, when the admission's fractional second was above about .99, 8,
+because `end_at` is truncated to whole seconds and the read follows a few milliseconds later):
 
 ```text
 R015 crash before commit: 503 retryable=True, left messages/runs/jobs/records=[0, 0, 0, 0]; retry 202 jobs=1
@@ -7620,7 +7803,7 @@ R016 supersede across conversations: (404, 'no such superseded run'), messages/r
 R017 race, two connections, two keys: [202, 409]; slot holders, messages, loser's 409 records: [1, 1, 1]; one key:
 [202, 202] with one run
 R017 status question while busy: 200, jobs/events unchanged [1, 1]; sequential admission (409, 'SLOT_OCCUPIED')
-R018 window ends 1:59:59.<µs> past the wall clock (test clock +2 h); replay at +3 d: 202, same bytes and interval
+R018 window ends 1:59:5x.<µs> past the wall clock (test clock +2 h); replay at +3 d: 202, same bytes and interval
 R018 new key while active: (409, 'SLOT_OCCUPIED'); text B22 vs form A17: (200, 'asset_conflict'), messages=
 [('investigate', False), ('clarification_question', True)], runs=0
 R129 routes: {'investigate': 202, 'status_question': 200, 'readonly_answer': 202, 'clarify': 200, 'reject': 422,
@@ -7640,17 +7823,17 @@ every id is ALPHA's, and riley's refusal is named by its status only).
 
 Run: `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_r105_walking_skeleton.py -q`
 Expected: `1 passed`; `reports/skeleton/r105-walking-skeleton.txt` is rewritten with the same nine events ending
-`action.confirmed`.
+`action.confirmed`, and the module's clean-up has deleted the idempotency records of every key it sent.
 
 - [ ] **Step 5: Gates and commit**
 
 Format, lint and count characters on the three test files.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `780 passed, 104 skipped` (98 + the 6 live tests skipped).
+Expected: `CHECK: GREEN`; pytest `788 passed, 104 skipped` (98 + the 6 live tests skipped).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `863 passed, 21 skipped` (780 + 83 live). The admission module runs first in
+Expected: `CHECK: GREEN`; pytest `871 passed, 21 skipped` (788 + 83 live). The admission module runs first in
 the e2e directory (alphabetical) and purges every conversation it made, so the R006 downgrade later in the session
 passes revision 0006's guard. Then `git checkout -- reports/bootstrap reports/auth` (the admission and R105 evidence
 files are committed below).
@@ -7669,28 +7852,28 @@ git commit -m "test(e2e): live durable admission: crash, replay, the slot race, 
 ### Task 7: Handoff close-out — records, errata, documentation, final gates
 
 **Files:**
-- Modify: `handoff/tasks.json` (T12 → `DONE`, one review note), `handoff/acceptance-matrix.json` (R015, R016,
-  R017, R018, R115, R129), `handoff/BUILD_BACKLOG.md` (T12 checked, one review note), `SESSION_STATE.md` (the "Next
-  task" line, a "Plan G executed" section, the dev database state, the owner inputs), `STATUS.md` (an update
-  section), `docs/PROJECT_HISTORY.md` (§24 new, the closing section renumbered §25), `README.md:5` (status line),
-  `api/README.md` (the "Runs" section), `sweeper/README.md:7` (the purge it owns),
-  `docs/runbooks/walking-skeleton.md:21`, `:43`, `docs/runbooks/dev-topology.md` (a new last section), this plan (its
-  checkboxes)
+- Modify: `handoff/tasks.json` (T12 → `DONE`, one review note), `handoff/acceptance-matrix.json` (R015, R016, R017,
+  R018, R115, R129), `handoff/BUILD_BACKLOG.md` (T12 checked, one review note), `SESSION_STATE.md` (the "Next task"
+  line, a "Plan G executed" section, the dev database state, the owner inputs, the repository line), `STATUS.md` (an
+  update section), `docs/PROJECT_HISTORY.md` (execution's paragraphs appended to the section headed
+  `## 24. The admission plan …`), `README.md:5` (status line), `api/README.md` (the "Runs" section),
+  `sweeper/README.md:7` (the purge it owns), `docs/runbooks/walking-skeleton.md:21`, `:43`,
+  `docs/runbooks/dev-topology.md` (a new last section), this plan (its checkboxes)
 
 Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-g`, written as two short hashes:
-`<base>` is the `BASE` recorded in Task 1 Step 1 (the commit before the debt list, excluded by the range) and
+`<base>` is the `BASE` recorded in Task 1 Step 1b (the commit before the debt list, excluded by the range) and
 `<last>` the newest commit before this task's own (print it with `LAST=$(git rev-parse --short HEAD)`, run before
 this task commits); a commit that revised this plan before execution started is at or before `<base>` and so never
 falls inside the range. `<date>` is `date -u +%F` on the day of the close-out.
 
 - [ ] **Step 1: Handoff records**
 
-Run this once from the repository root, with `BASE` set to the hash Task 1 Step 1 recorded (it rewrites the two JSON
+Run this once from the repository root, with `BASE` set to the hash Task 1 Step 1b recorded (it rewrites the two JSON
 files in their own format: two-space indent, non-ASCII kept, one trailing newline, which round-trips both files byte
 for byte today):
 
 ```bash
-BASE=<the hash recorded in Task 1 Step 1> uv run python - <<'EOF'
+BASE=<the hash recorded in Task 1 Step 1b> uv run python - <<'EOF'
 import json
 import os
 import subprocess
@@ -7803,12 +7986,13 @@ lease fence; it now also owns the global queue bound), the earliest dependency-s
   Evidence: `tests/e2e/test_admission_live.py` and `reports/admission/t12-admission.txt` (header plus twelve lines),
   `tests/e2e/test_migration_0006_live.py`, `reports/skeleton/r105-walking-skeleton.txt` (R105 with keys); the unit
   half is in `tests/plan_g/`.
-- Gates: `check.py` 780 passed / 104 skipped; `check.py --profile test` 863 passed / 21 skipped; `verify_handoff.py`
-  exit 0 (STATUS.md, "Update - Plan G executed").
+- Gates: `check.py` 788 passed / 104 skipped; `check.py --profile test` 871 passed / 21 skipped; `verify_handoff.py`
+  exit 0 (STATUS.md, "Update — Plan G executed").
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan F's
   thirty-four:
-  35. BS:264: the Idempotency-Key is required on every `/api/v1` mutation; `/auth/logout`, `/auth/backchannel-logout`
-      and the test-profile fault route are exempt by design.
+  35. BS:264: the Idempotency-Key is required on every `/api/v1` mutation; `/auth/logout` and
+      `/auth/backchannel-logout` are exempt by design, and the test-profile fault route from the key only (it keeps
+      identity and the CSRF/origin check).
   36. SA:429 (AM-20.2 `idempotency_request`): the sweeper holds SELECT beside its DELETE (erratum 25 extended).
   37. SA:188: the lock order begins with the idempotency scope's advisory lock, PostgreSQL's two-key form
       `pg_advisory_xact_lock(1, hashtext(<scope>))` (namespace 1, `hashtext`), a lock space distinct from the asset
@@ -7846,6 +8030,9 @@ messages through the new identity column and changes no row.
   errata 35-44 (see "Plan G executed").
 ```
 
+5. In the line that begins `**Repository:**`, replace ``branch `plan-f` (Plan F work on top of `plan-e`,`` with
+   ``branch `plan-g` (Plan G work on top of `plan-f`, on top of `plan-e`,`` (the rest of the line is unchanged).
+
 - [ ] **Step 3: Status, history and the documents**
 
 `STATUS.md`: append
@@ -7856,8 +8043,8 @@ messages through the new identity column and changes no row.
 - Plan G (T12 durable admission, the AM-16 admission router, the scoped Idempotency-Key and the safe error
   surface) executed on branch `plan-g` (`<base>..<last>`, on top of `plan-f`). The plan is
   `docs/superpowers/plans/2026-10-10-first-slice-g-admission-idempotency.md`.
-- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `780 passed, 104 skipped`.
-  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `863 passed, 21 skipped`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `788 passed, 104 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `871 passed, 21 skipped`.
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
 - **Evidenced** (acceptance matrix `RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R015, R016, R017,
   R018, R115 and R129 (the admission half; T20 owns the graph router's). A crash before commit leaves no message,
@@ -7873,49 +8060,24 @@ messages through the new identity column and changes no row.
   `feedback` table -> T21. Ten errata (35-44) are proposed for the owner to decide.
 ```
 
-`docs/PROJECT_HISTORY.md`: rename the heading `## 24. What the process taught` to `## 25. What the process taught`
-(its text is unchanged) and insert before it:
-
-```markdown
-## 24. The admission plan was measured into a different design before a line was written
-
-**Problem.** T12 asks for the API's durable core: a scoped Idempotency-Key, the six AM-16 admission routes as a
-table, one active run per conversation, an interval resolved once, and a safe error for every status code. The fact
-sheet found the obvious shapes wrong before any design existed: the idempotency table the spec names did not exist,
-nothing computed a request's identity, the API resolved "last 24 hours" on the Python wall clock while the run's
-history used the database's, the framework still answered unknown paths and unhandled exceptions in its own
-formats, and no body limit existed at all. The spike then measured each obvious fix and found most of them unsafe.
-Writing the idempotency row last, as the spec's lock order says, made a racing retry of the same key lose to the
-slot index and answer 409 instead of its recorded 202; writing it first made the loser fail with a unique-violation
-whose detail printed the tenant, the subject and the key in clear. Starlette's own body limiter answered a plain-text
-413 after the route had already created a conversation, and never stopped a route that reads no body. Two messages
-written in one transaction shared their timestamp, so a status question and its answer had no order; and the API's
-role could neither lock a conversation nor count queued work across tenants.
-
-**Change.** The plan took the measured shapes instead: an advisory lock on the key's scope as the unit's first
-statement (the loser waits and replays), the record written last and holding the full answer, a pre-reading ASGI
-middleware for the body limit, an identity column for message order (a serial would have needed a grant the role
-lacks), the interval read from `app.current_time()` inside the unit, and a per-tenant quota with the global bound
-declared for T13. The orchestration is written once over a small set of primitive operations, so the unit tests run
-the same lock-lookup-work-record code as PostgreSQL rather than a copy of it. Execution's findings follow, one
-paragraph per task that needed a fix round, in the same Problem/Change form; a task that passed on its first review
-gets no paragraph.
-```
-
-Then, below that section and still before `## 25.`, add one `**Problem.**`/`**Change.**` pair per finding the task
-reviews and the final review recorded (from the SDD ledger), or the single sentence "Execution found nothing the
-plan had not ruled on." when they recorded none.
+`docs/PROJECT_HISTORY.md`: the section whose heading starts `## 24. The admission plan` (the planning story,
+committed with the review record `docs/reviews/plan-review-g-2026-10-10.md` before execution, so at or before
+`<base>`) is addressed by that heading, never by its number. Append to it, after its last paragraph and before the
+next `## ` heading, the execution and final-review paragraphs: one `**Problem.**`/`**Change.**` pair per finding the
+task reviews and the final review recorded (from the SDD ledger), or the single sentence "Execution found nothing
+the plan had not ruled on." when they recorded none. Rename nothing and leave the closing section ("What the process
+taught") alone.
 
 `README.md`, line 5: replace the status sentence's tail "; durable admission is next (Plan G)" (a semicolon, then
-the words) with ", and durable admission with a scoped Idempotency-Key and the AM-16 router (T12)", so the line
-reads (one line in the file; wrapped here):
+the words) with "; durable admission with a scoped Idempotency-Key and the AM-16 router (T12) runs locally", so the
+line reads (one line in the file; wrapped here):
 
 ```markdown
 > **Status: walking skeleton runs locally (T08) under per-service database roles with RLS (T09) and a hardened
 destination (T10), with browser login with server-side sessions, revocation and the membership sync (T11); the dev
-realm now carries the Plan F clients (re-imported on `up`), and durable admission with a scoped Idempotency-Key and
-the AM-16 router (T12)** ([runbook](docs/runbooks/walking-skeleton.md)). Read [STATUS.md](STATUS.md) before
-interpreting any capability below as built. The capabilities described are **targets**.
+realm now carries the Plan F clients (re-imported on `up`); durable admission with a scoped Idempotency-Key and the
+AM-16 router (T12) runs locally** ([runbook](docs/runbooks/walking-skeleton.md)). Read [STATUS.md](STATUS.md)
+before interpreting any capability below as built. The capabilities described are **targets**.
 ```
 
 `api/README.md`: replace the section from `## Runs (T08)` to the end of the file with:
@@ -7982,9 +8144,9 @@ PYTHONUTF8=1 uv run python scripts/check.py --profile test
 uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts
 ```
 
-Expected: `CHECK: GREEN` with `780 passed, 104 skipped`; `CHECK: GREEN` with `863 passed, 21 skipped`; exit 0.
-Then `git checkout -- reports/bootstrap reports/auth`; commit `reports/admission` and `reports/skeleton` only if the
-live run changed them. Tick this plan's checkboxes (`- [ ]` → `- [x]`) for every step executed.
+Expected: `CHECK: GREEN` with `788 passed, 104 skipped`; `CHECK: GREEN` with `871 passed, 21 skipped`; exit 0.
+Then `git checkout -- reports/bootstrap reports/auth`; the live run rewrote `reports/admission` and
+`reports/skeleton`, and Step 5 commits both. Tick this plan's checkboxes (`- [ ]` → `- [x]`) for every step executed.
 
 - [ ] **Step 5: Commit**
 
@@ -8028,7 +8190,7 @@ git commit -m "docs: close T12 - handoff records, acceptance rows, errata 35-44,
    `TODO(T19)`/`TODO(T27)` markers are ownership
    markers `docs/CODE_COMMENTS.md` requires. `<base>..<last>` and `<date>` in Task 7 are defined with the command
    that prints them; the evidence shapes in Task 6 Step 3 are the exact strings the test writes (the timedelta's
-   microseconds vary).
+   seconds and microseconds vary: `1:59:5x.<µs>`).
 3. **Type and name consistency.** `AdmissionSettings` fields are the same in `settings.py`, `create_app(admission=…)`,
    `validate_key(raw, bounds)` and the live test's `WEEK`; `safe(request, status, code, message, *, retryable)` is the
    one builder after Task 1 (every call passes the request); `Scope(tenant_id, subject, route, key)`,
@@ -8152,3 +8314,60 @@ git commit -m "docs: close T12 - handoff records, acceptance rows, errata 35-44,
   `plan-f`, and the block cites "Update - Plan G executed" with a hyphen where the STATUS heading has an em dash
   (item 5); Task 7 Step 4's "only if the live run changed them" is always true (item 6); the global 120-character
   rule reads as covering the evidence file's longer lines (item 7).
+
+## Round 3 changes
+
+- Wording (pre-seeded): ruling 15 and the `DbUnit.record_reply` comment say the run lock is "the unit's first table
+  statement after the record lookup" (340, 5260); the Global Constraints exempt the evidence file's lines from the
+  120-character rule (117-119); Task 7 Step 2 item 5 moves the `**Repository:**` line to `plan-g` (8033-8034) and the
+  SESSION_STATE block cites "Update — Plan G executed" with its em dash (7990); Task 7 Step 4 drops "only if the live
+  run changed them" (8147-8149).
+- M1 and builder item 1: ruling 12 (299-325) with the unit table `UNIT_SECONDS`, decimals, hyphens, `h`/`d` as the
+  only one-letter units, the number-less periods and the widened cost sentence; Review Focus 4 (176-181); Task 3
+  Interfaces (2336-2339), the test docstring, seven new `test_text_and_fields` rows (2537-2580: seconds, fortnight,
+  months, years, a decimal, a hyphen, a bare "M"); `routing.py`'s docstring, `Fraction` import, `TEXT_WINDOW`,
+  `TEXT_WINDOW_WORD`, `UNIT_SECONDS`, `unit_seconds`, `text_windows`, `said` and `resolve` (2805-2900).
+- Counts: Task 1 gains one test and Task 3 seven, so every gate from Task 1 on moves: the overview and the arithmetic
+  (569-591); Task 1 Steps 7-8 (1585, 1599, 1602); Task 2 Step 6 (2303, 2307); Task 3 Steps 3-4 (3036, 3044); Task 4
+  Step 6 (5614, 5617); Task 5 Steps 3, 4 and 6 (6860, 7014-7017, 7206-7209); Task 6 Step 5 (7833, 7836); Task 7
+  (7989, 8046-8047, 8147).
+- M2: `arm_fault` depends on `browser_mutation` (6170-6175); ruling 1 (201-210), erratum 35 (509-512) and its
+  SESSION_STATE copy say the fault route is exempt from the key only.
+- M3: ruling 19 (387-401); Task 1 Edit 10 deletes the deployment handler (1426-1442) and Edit 11 registers
+  `ProgramLimitExceeded` and `StatementTooComplex` on `_server_defect` before `_database_down`, whose comment reads "a
+  lost connection or a transient server condition" (1444-1500, app.py's line count unchanged for Tasks 2 and 5); the
+  test `test_a_statement_the_server_cannot_run_is_a_non_retryable_503` and the module docstring (943-1063).
+- M4: Task 4 Step 6 states `Success: no issues found in 23 source files` (5611).
+- M5: the R018 evidence shape `1:59:5x.<µs>` and why `x` varies (7794-7806); self-review 2 (8192-8193).
+- M6: Task 7 Step 3's README tail "; durable admission with a scoped Idempotency-Key and the AM-16 router (T12) runs
+  locally" and the line it gives (8070-8080).
+- M7: Task 7 Step 3 appends to the section headed `## 24. The admission plan …` by name and renames nothing
+  (8063-8068); the Files list (7853-7856) and ruling 29 (462-469) follow.
+- M8: `VerdictResponse.render` docstring (3444); Task 1 Step 1 split into 1a, 1b and 1c (620-644) and every
+  reference to them (110, 159, 476, 7864, 7871, 7876).
+- Builder item 2: Task 5 Step 2a's Edit 2 now covers old lines 30-36 and leaves the `ops_core.contracts` line alone
+  (5999-6022); Step 2c's new Edit 16 (old line 29) drops `MessageKind` and adds `ClarificationReply` (6466-6481); the
+  Files list (5636-5637).
+- Builder item 3: R105's `SENT_KEYS`, the module fixture `forget_sent_keys` (delete by key in a `finally`) and
+  `keyed` (7050-7070); Task 5 Step 6 (7209-7211) and Task 6 Step 4 (7825-7826) expected text.
+- Builder item 4: `test_the_db_reply_locks_the_run_before_it_checks_or_writes` gains the accepted path (4214-4264).
+- Builder item 5: none (accepted as is).
+
+## Round 3 open points
+
+- M3: Starlette chooses a handler by walking the exception's MRO, so the registration order of the class-54 handlers
+  changes nothing at runtime; the plan still registers them first, as ruled, by moving `_database_down` below
+  `_server_defect` (Edit 10 now deletes the deployment handler and Edit 11 carries both handlers). One unit test
+  covers both classes in one function, so Task 1 adds one test, not two.
+- M1: "the last minute" and "the last second" are not read without a number (idioms such as "at the last minute");
+  with a number every unit is read. A decimal number has no upper bound on its fractional digits (`\.\d+`); the
+  window is held as a `Fraction`, so any decimal is exact. `said()` repeats a window as hours, minutes or seconds,
+  whichever is whole first; a month is 30 days and a year 365, as ruled (720 and 8760 hours).
+- M1: seven `test_text_and_fields` rows were added, one per added family (seconds, fortnight, months, years) plus a
+  decimal ("last 1.5 days" = 36 hours, accepted), a hyphen ("last 48-hours" beside a 24-hour form, a conflict) and a
+  bare "M" (no window, the form's 24 hours stand); the window rows are now thirteen and Task 3 adds 39 tests.
+- Builder item 3: the clean-up is a module-scoped autouse fixture over the session `migrated` fixture, so it runs
+  after the module's one test and skips with it in the dev gate; the run's conversation stays, as before, because it
+  is R105's evidence.
+- Builder item 4: the accepted path is a second scripted run inside the same test function, so `test_store_units.py`
+  keeps 14 tests.
