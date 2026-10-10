@@ -82,14 +82,17 @@ class RejectCause(StrEnum):
 HOURS_MIN: Final = 1  # BS:547: 1-168 hours
 HOURS_MAX: Final = 168
 # An upper-case token that contains a digit (A17, PUMP-2): prose words and acronyms such as UTC never match, and a
-# lower-case "a17" is not an asset id (contracts.AssetId requires the upper case too).
-TEXT_ASSET: Final = re.compile(r"\b([A-Z][A-Z0-9_-]*[0-9][A-Z0-9_-]*)\b")
+# lower-case "a17" is not an asset id (contracts.AssetId requires the upper case too). Both quantifiers around the
+# digit are capped at the AssetId bound so the scan stays linear on a long run of capitals; the exact 32-character
+# limit (the two caps together can reach 64) is still enforced by ASSET_ID in text_assets.
+TEXT_ASSET: Final = re.compile(r"\b([A-Z][A-Z0-9_-]{0,31}[0-9][A-Z0-9_-]{0,31})\b")
 ASSET_ID: Final = re.compile(r"^[A-Z][A-Z0-9_-]{0,31}$")  # the same bound as contracts.AssetId
 # Every unit a person writes is read, seconds to years (ruling 12): a window the parser could not see would let the
-# form win silently. The number may carry a decimal part and may be joined to its unit by spaces or a hyphen; the
-# only one-letter units are h and d, so a bare "m" (minutes or months?) or "w" is no window at all.
+# form win silently. The number is any length, may carry thousands commas ("1,000") and a decimal part (".5" too),
+# and may be joined to its unit by spaces or a hyphen; it is ASCII digits only (a \d would also read other scripts'
+# digits). The only one-letter units are h and d, so a bare "m" (minutes or months?) or "w" is no window at all.
 TEXT_WINDOW: Final = re.compile(
-    r"\b(?:last|past)\s+(\d{1,4}(?:\.\d+)?)[\s-]*"
+    r"\b(?:last|past)\s+([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?|\.[0-9]+)[\s-]*"
     r"(seconds?|secs?|minutes?|mins?|hours?|hrs?|h|days?|d|weeks?|wks?|fortnights?|months?|mos?|years?|yrs?)\b",
     re.IGNORECASE,
 )
@@ -145,7 +148,7 @@ def text_windows(text: str) -> tuple[Fraction, ...]:
     are one. A Fraction keeps a decimal exact, so "last 0.5 days" is 12 hours and never 11.999."""
     found: list[tuple[int, Fraction]] = []
     for match in TEXT_WINDOW.finditer(text):
-        found.append((match.start(), Fraction(match.group(1)) * unit_seconds(match.group(2))))
+        found.append((match.start(), Fraction(match.group(1).replace(",", "")) * unit_seconds(match.group(2))))
     for match in TEXT_WINDOW_WORD.finditer(text):
         found.append((match.start(), Fraction(unit_seconds(match.group(1)))))
     return tuple(dict.fromkeys(seconds for _, seconds in sorted(found)))
@@ -153,12 +156,15 @@ def text_windows(text: str) -> tuple[Fraction, ...]:
 
 def said(seconds: Fraction) -> str:
     """A window as a question repeats it: in hours when it is whole hours ("48 hours"), else in minutes when it is
-    whole minutes ("30 minutes"), else in seconds ("90 seconds", "0.5 seconds")."""
-    if seconds % 3600 == 0:
-        return f"{seconds // 3600} hours"
-    if seconds % 60 == 0:
-        return f"{seconds // 60} minutes"
-    return f"{float(seconds):g} seconds"
+    whole minutes ("30 minutes"), else in seconds ("90 seconds", "0.5 seconds"); a count of one is singular, and a
+    fractional count shows at most two decimals, never scientific notation."""
+    for size, unit in ((3600, "hour"), (60, "minute")):
+        if seconds % size == 0:
+            count = seconds // size
+            return f"{count} {unit}{'' if count == 1 else 's'}"
+    if seconds == 1:
+        return "1 second"
+    return f"{float(seconds):.2f}".rstrip("0").rstrip(".") + " seconds"
 
 
 @dataclass(frozen=True)
@@ -224,7 +230,7 @@ class AdmissionDecision:
     """The route, its cause for a clarify or a reject, the resolved asset and window for a run, the question asked."""
 
     route: AdmissionRoute
-    cause: str | None = None
+    cause: ClarifyCause | RejectCause | None = None
     asset_id: str | None = None
     hours: int | None = None
     question: str | None = None
@@ -237,7 +243,7 @@ class AdmissionRule:
     name: str
     predicate: Callable[[AdmissionFacts, Resolution], bool]
     route: AdmissionRoute
-    cause: str | None = None
+    cause: ClarifyCause | RejectCause | None = None
 
 
 _RUNS: Final = frozenset({MessageKind.INVESTIGATE, MessageKind.ASK})
@@ -274,25 +280,29 @@ def _first(rules: tuple[AdmissionRule, ...], facts: AdmissionFacts, resolution: 
         if rule.route is AdmissionRoute.CLARIFY:
             if rule.cause is None:  # the text-and-fields row carries the parser's own cause and question
                 return AdmissionDecision(rule.route, resolution.cause, question=resolution.question)
-            return AdmissionDecision(rule.route, rule.cause, question=QUESTIONS[ClarifyCause(rule.cause)])
+            assert isinstance(rule.cause, ClarifyCause)  # a fixed clarify row names a clarify cause, never a reject one
+            return AdmissionDecision(rule.route, rule.cause, question=QUESTIONS[rule.cause])
         if rule.route in (AdmissionRoute.INVESTIGATE, AdmissionRoute.READONLY_ANSWER):
             return AdmissionDecision(rule.route, asset_id=resolution.asset_id, hours=resolution.hours)
         return AdmissionDecision(rule.route, rule.cause)
     raise LookupError(f"no admission rule matched kind {facts.kind.value}")  # the tables are total; a test walks them
 
 
+def resolution_for(facts: AdmissionFacts) -> Resolution:
+    """The parser runs only for kinds that would start a run; status and clarification skip it (R017)."""
+    if facts.kind in _RUNS:
+        return resolve(facts)
+    return Resolution(facts.asset_id, facts.hours)
+
+
 def route_admission(facts: AdmissionFacts) -> AdmissionDecision:
     """The messages route's decision (AM-16). The parser runs only for kinds that would start a run."""
-    if facts.kind in _RUNS:
-        resolution = resolve(facts)
-    else:
-        resolution = Resolution(facts.asset_id, facts.hours)  # kind=status and kind=clarification skip the parser
-    return _first(ADMISSION_RULES, facts, resolution)
+    return _first(ADMISSION_RULES, facts, resolution_for(facts))
 
 
 def route_reply(facts: AdmissionFacts) -> AdmissionDecision:
     """The clarifications route's decision: a bound reply is the clarification_reply route."""
-    return _first(REPLY_RULES, facts, Resolution(facts.asset_id, facts.hours))
+    return _first(REPLY_RULES, facts, resolution_for(facts))
 
 
 class RunManifest(BaseModel):

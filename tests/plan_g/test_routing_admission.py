@@ -2,16 +2,17 @@
 to match its sample, the six routes are all reachable, the text-versus-fields parser clarifies instead of guessing
 (R018), the slot check precedes every question, and a model hint can only produce a clarification.
 
-Catches: a row shadowed by an earlier one (dead routing), a route no input reaches, a text naming another asset
-than the form starting work anyway, a "last 200 hours" window accepted, a window in seconds, minutes, weeks,
-fortnights, months or years, with a decimal part, a hyphen or four digits, that the parser cannot see (so the form
-wins silently), a bare "M" read as minutes, two windows resolved to the first, an acronym (UTC) or a lower-case id
-read as an asset, a busy conversation answered with a question instead of 409, a status question
-refused while a run is active (R017 says it must not start work, not that it must be refused), a hint that starts or
-rejects work, and a stored-kind vocabulary that drifts from revision 0006's CHECK.
+Catches: a row shadowed by an earlier one (dead routing), a route no input reaches, a text naming another asset than
+the form starting work anyway, a "last 200 hours" window accepted, a window in seconds, minutes, weeks, fortnights,
+months or years, with a decimal part (or none before the point), a hyphen, a thousands comma or five digits, that the
+parser cannot see (so the form wins silently), a bare "M" read as minutes, two windows resolved to the first, an
+acronym (UTC) or a lower-case id read as an asset, a busy conversation answered with a question instead of 409, a
+status question refused while a run is active (R017 says it must not start work, not that it must be refused), a hint
+that starts or rejects work, and a stored-kind vocabulary that drifts from revision 0006's CHECK.
 """
 
 import importlib.util
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +25,10 @@ from ops_core.routing import (
     AdmissionRoute,
     ClarifyCause,
     RejectCause,
-    Resolution,
-    resolve,
+    resolution_for,
     route_admission,
     route_reply,
+    said,
 )
 
 SAMPLE = "Investigate the alerts on Asset A17 over the last 24 hours."  # BS:287-295
@@ -60,8 +61,7 @@ ROW_SAMPLES = {
 
 def first_rule(sample: AdmissionFacts, rules: Any) -> str:
     """The name of the first row whose predicate holds, computed the way route_admission computes it."""
-    runs = (MessageKind.INVESTIGATE, MessageKind.ASK)
-    resolution = resolve(sample) if sample.kind in runs else Resolution(sample.asset_id, sample.hours)
+    resolution = resolution_for(sample)
     return str(next(rule.name for rule in rules if rule.predicate(sample, resolution)))
 
 
@@ -73,6 +73,8 @@ def test_every_row_is_reachable_first_and_the_six_routes_are_all_reachable() -> 
             assert first_rule(sample, rules) == rule.name, rule.name
             decision = router(sample)
             assert decision.route is rule.route, rule.name
+            if rule.cause is not None:  # a fixed-cause row (reject, hint) reports exactly that cause
+                assert decision.cause == rule.cause, rule.name
             reached.add(decision.route)
     assert reached == set(AdmissionRoute)
     assert len(ROW_SAMPLES) == len(ADMISSION_RULES) + len(REPLY_RULES)
@@ -226,6 +228,34 @@ def test_every_row_is_reachable_first_and_the_six_routes_are_all_reachable() -> 
             MessageKind.INVESTIGATE,
             ("clarify", "interval_conflict", None, None),
         ),
+        (
+            "Investigate A17 over the last 12345 hours.",
+            "A17",
+            24,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_conflict", None, None),
+        ),
+        (
+            "Investigate A17 over the last 12345 hours.",
+            None,
+            None,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_out_of_range", None, None),
+        ),
+        (
+            "Investigate A17 over the last 1,000 hours.",
+            "A17",
+            24,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_conflict", None, None),
+        ),
+        (
+            "Investigate A17 over the last .5 days.",
+            "A17",
+            24,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_conflict", None, None),
+        ),
         ("Investigate A17 over the last 3 M.", "A17", 24, MessageKind.INVESTIGATE, ("investigate", None, "A17", 24)),
     ],
 )
@@ -257,6 +287,17 @@ def test_questions_name_what_disagreed() -> None:
     for cause, sample in asked.items():
         decision = route_admission(sample)
         assert (decision.cause, decision.question) == (cause, expected[cause])
+
+
+def test_windows_are_said_in_the_singular_and_plain_decimals() -> None:
+    assert said(Fraction(3600)) == "1 hour"
+    assert said(Fraction(7200)) == "2 hours"
+    assert said(Fraction(60)) == "1 minute"
+    assert said(Fraction(1)) == "1 second"
+    assert said(Fraction(90)) == "90 seconds"
+    assert said(Fraction(1, 2)) == "0.5 seconds"
+    assert said(Fraction(10, 3)) == "3.33 seconds"
+    assert "e+" not in said(Fraction(10**30, 7))
 
 
 def test_a_busy_conversation_is_rejected_before_any_question() -> None:
