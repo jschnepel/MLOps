@@ -269,7 +269,8 @@ def create_app(
         return who
 
     async def idempotency_key(request: Request) -> str:
-        """BS:264: every /api/v1 mutation carries a key, checked after identity and role and before the body."""
+        """BS:264: every /api/v1 mutation carries a key, checked after identity and, where the route has one, the role,
+        and before the body."""
         try:
             return validate_key(request.headers.get(HEADER), bounds)
         except KeyInvalid as exc:
