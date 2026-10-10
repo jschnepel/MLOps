@@ -148,6 +148,26 @@ class MessageKind(StrEnum):
     CLARIFICATION = "clarification"
 
 
+class StoredMessageKind(StrEnum):
+    """What a `messages` row is (revision 0006's CHECK; Plan G ruling 26): the request kinds that start or ask for a
+    run keep their name, a status request is stored as its question, and the API writes the two system kinds itself.
+
+    Not a request schema: `MessageKind` is what a client may send; this is what the table holds (AM-16, T12 review
+    note 2: status answers and conversation-level clarifications are messages, not events).
+    """
+
+    INVESTIGATE = "investigate"
+    ASK = "ask"
+    CLARIFICATION_REPLY = "clarification_reply"
+    STATUS_QUESTION = "status_question"
+    STATUS_ANSWER = "status_answer"
+    CLARIFICATION_QUESTION = "clarification_question"
+
+
+# The kinds the API writes on its own behalf: the only rows whose `author` is NULL (revision 0006's second CHECK).
+SYSTEM_MESSAGE_KINDS: Final = frozenset({StoredMessageKind.STATUS_ANSWER, StoredMessageKind.CLARIFICATION_QUESTION})
+
+
 class MessageContext(BaseModel):
     """Structured context a requester may attach: the asset and the look-back window in hours."""
 
