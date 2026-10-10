@@ -3,12 +3,13 @@ to match its sample, the six routes are all reachable, the text-versus-fields pa
 (R018), the slot check precedes every question, and a model hint can only produce a clarification.
 
 Catches: a row shadowed by an earlier one (dead routing), a route no input reaches, a text naming another asset than
-the form starting work anyway, a "last 200 hours" window accepted, a window in seconds, minutes, weeks, fortnights,
-months or years, with a decimal part (or none before the point), a hyphen, a thousands comma or five digits, that the
-parser cannot see (so the form wins silently), a bare "M" read as minutes, two windows resolved to the first, an
-acronym (UTC) or a lower-case id read as an asset, a busy conversation answered with a question instead of 409, a
-status question refused while a run is active (R017 says it must not start work, not that it must be refused), a hint
-that starts or rejects work, and a stored-kind vocabulary that drifts from revision 0006's CHECK.
+the form starting work anyway, a form asset among several the text names starting work, a window number past the
+double range raising instead of asking, a "last 200 hours" window accepted, a window in seconds, minutes, weeks,
+fortnights, months or years, with a decimal part (or none before the point), a hyphen, a thousands comma or five
+digits, that the parser cannot see (so the form wins silently), a bare "M" read as minutes, two windows resolved to
+the first, an acronym (UTC) or a lower-case id read as an asset, a busy conversation answered with a question instead
+of 409, a status question refused while a run is active (R017 says it must not start work, not that it must be
+refused), a hint that starts or rejects work, and a stored-kind vocabulary that drifts from revision 0006's CHECK.
 """
 
 import importlib.util
@@ -97,7 +98,22 @@ def test_every_row_is_reachable_first_and_the_six_routes_are_all_reachable() -> 
         ("Check A17, past 6h.", None, None, MessageKind.INVESTIGATE, ("investigate", None, "A17", 6)),
         ("Check A17 over the last week.", None, None, MessageKind.INVESTIGATE, ("investigate", None, "A17", 168)),
         ("Investigate A17.", "A17", 12, MessageKind.INVESTIGATE, ("investigate", None, "A17", 12)),
-        ("Compare B22 with A17, last 24 hours.", "A17", 24, MessageKind.INVESTIGATE, ("investigate", None, "A17", 24)),
+        # Two ids ask even when one is the form's (ruling 12 as amended after the final review, I2).
+        (
+            "Compare B22 with A17, last 24 hours.",
+            "A17",
+            24,
+            MessageKind.INVESTIGATE,
+            ("clarify", "asset_ambiguous", None, None),
+        ),
+        (
+            "B22 is failing, A17 is fine; last 24 hours",
+            "A17",
+            24,
+            MessageKind.INVESTIGATE,
+            ("clarify", "asset_ambiguous", None, None),
+        ),
+        ("Investigate A17, last 24 hours.", "A17", 24, MessageKind.INVESTIGATE, ("investigate", None, "A17", 24)),
         ("What did A17 log in the last 24 hours?", None, None, MessageKind.ASK, ("readonly_answer", None, "A17", 24)),
         (
             "Investigate A17 over the last 200 hours.",
@@ -257,6 +273,35 @@ def test_every_row_is_reachable_first_and_the_six_routes_are_all_reachable() -> 
             ("clarify", "interval_conflict", None, None),
         ),
         ("Investigate A17 over the last 3 M.", "A17", 24, MessageKind.INVESTIGATE, ("investigate", None, "A17", 24)),
+        # A number past 12 integer digits is too large to read, with or without a form window (I1).
+        (
+            "Investigate A17 last 1" + "0" * 400 + ".5 seconds",
+            None,
+            None,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_out_of_range", None, None),
+        ),
+        (
+            "Investigate A17 last 1" + "0" * 400 + ".5 seconds",
+            "A17",
+            24,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_out_of_range", None, None),
+        ),
+        (
+            "Investigate A17 over the last 1234567890123 hours.",
+            "A17",
+            24,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_out_of_range", None, None),
+        ),
+        (
+            "Investigate A17 over the last 1,234,567,890,123 hours.",
+            None,
+            None,
+            MessageKind.INVESTIGATE,
+            ("clarify", "interval_out_of_range", None, None),
+        ),
     ],
 )
 def test_text_and_fields(
@@ -269,14 +314,14 @@ def test_text_and_fields(
 
 def test_questions_name_what_disagreed() -> None:
     asked = {
-        ClarifyCause.ASSET_CONFLICT: facts("Investigate B22 and C3 now.", asset_id="A17", hours=24),
+        ClarifyCause.ASSET_CONFLICT: facts("Investigate B22 now.", asset_id="A17", hours=24),
         ClarifyCause.ASSET_AMBIGUOUS: facts("Compare A17 and B22 over the last 24 hours."),
         ClarifyCause.INTERVAL_AMBIGUOUS: facts("Compare the last 24 hours of A17 with the past 3 days."),
         ClarifyCause.INTERVAL_OUT_OF_RANGE: facts("Investigate A17 over the past 10 days."),
         ClarifyCause.INTERVAL_CONFLICT: facts("Investigate A17 over the last 30 minutes.", asset_id="A17", hours=24),
     }
     expected = {
-        ClarifyCause.ASSET_CONFLICT: "The form names asset A17 but the text names B22, C3; which one is meant?",
+        ClarifyCause.ASSET_CONFLICT: "The form names asset A17 but the text names B22; which one is meant?",
         ClarifyCause.ASSET_AMBIGUOUS: "The request names more than one asset (A17, B22); name the one to investigate.",
         ClarifyCause.INTERVAL_AMBIGUOUS: (
             "The request names more than one window (24 hours, 72 hours); which one is meant?"
@@ -298,6 +343,30 @@ def test_windows_are_said_in_the_singular_and_plain_decimals() -> None:
     assert said(Fraction(1, 2)) == "0.5 seconds"
     assert said(Fraction(10, 3)) == "3.33 seconds"
     assert "e+" not in said(Fraction(10**30, 7))
+    assert said(Fraction(1, 200)) == "0.01 seconds"  # half up, by integer arithmetic
+
+
+def test_a_huge_window_is_said_briefly_and_never_raises() -> None:
+    # I1: a Fraction past the double range made float() raise OverflowError, a 503 for the requester's own typo.
+    for seconds in (Fraction(2 * 10**400 + 1, 2), Fraction(10**4000 * 3600), Fraction(10**400, 7)):
+        rendered = said(seconds)
+        assert rendered == "more than 1,000,000,000,000 hours"
+        assert len(rendered) < 40
+
+
+def test_a_too_large_window_asks_without_echoing_the_number() -> None:
+    text = "Investigate A17 last 1" + "0" * 400 + ".5 seconds"
+    for sample in (facts(text), facts(text, asset_id="A17", hours=24)):
+        decision = route_admission(sample)
+        assert decision.question == (
+            "The window in the text is too large to be a number of hours; give between 1 and 168 hours."
+        )
+    # A decimal part past Python's 4,300-digit int parse limit is still read exactly, not raised on.
+    decision = route_admission(facts("Investigate A17 last 1." + "3" * 9000 + " seconds", asset_id="A17", hours=24))
+    assert (decision.cause, decision.question) == (
+        ClarifyCause.INTERVAL_CONFLICT,
+        "The form says 24 hours but the text says 1.33 seconds; which is meant?",
+    )
 
 
 def test_a_busy_conversation_is_rejected_before_any_question() -> None:

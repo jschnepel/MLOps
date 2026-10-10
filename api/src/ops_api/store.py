@@ -385,13 +385,12 @@ class AdmissionStore:
         request: MessageRequest,
         quota: int,
     ) -> Verdict:
-        """The messages route's unit in ruling 21's order: conversation, quota count, active run, router, effect."""
+        """The messages route's unit in ruling 21's order: conversation, active run, router, quota count, effect."""
         rid = idem.request_id
 
         async def work(unit: Unit) -> Verdict:
             if not await unit.conversation_exists(conversation_id):
                 return error_verdict(404, ErrorCode.NOT_FOUND, "no such conversation", rid)
-            queued = await unit.queued_count()
             context = request.context
             decision = route_admission(
                 AdmissionFacts(
@@ -418,9 +417,10 @@ class AdmissionStore:
                     unit, conversation_id=conversation_id, requester=requester, request=request, decision=decision
                 )
             # Ruling 18: the quota bounds what would start a run; a status question or a clarification adds nothing
-            # to the queue, so the count read above refuses only here. Raised, never recorded (ruling 5): the queue
-            # drains, and the same key must then be admitted.
-            if queued >= quota:
+            # to the queue, so the count is read only once the verdict is a run (ruling 21 as amended by the final
+            # review's M6: one query saved per such message). Raised, never recorded (ruling 5): the queue drains,
+            # and the same key must then be admitted.
+            if await unit.queued_count() >= quota:
                 raise QueueFull
             return await self._start(
                 unit,
@@ -535,10 +535,16 @@ class AdmissionStore:
             )
         except NotFound:
             return error_verdict(404, ErrorCode.NOT_FOUND, "no such superseded run", idem.request_id)
-        except Conflict:
-            # A concurrent admission took the slot after the active-run read: the index is the backstop (ruling 9).
+        except Conflict as exc:
+            if exc.code == ErrorCode.SLOT_OCCUPIED.value:
+                # A concurrent admission took the slot after the active-run read: the index is the backstop (ruling 9).
+                return error_verdict(
+                    409, ErrorCode.SLOT_OCCUPIED, "the conversation already has an active run", idem.request_id
+                )
+            # Any other refusal create_run may learn later is recorded under its own code, never as a busy slot that
+            # would replay for the whole window with the wrong message (the final review's M3).
             return error_verdict(
-                409, ErrorCode.SLOT_OCCUPIED, "the conversation already has an active run", idem.request_id
+                409, ErrorCode.VERSION_CONFLICT, "the run could not be started in the current state", idem.request_id
             )
         if self.faults is not None and self.faults.take(FaultKind.DROP_BEFORE_COMMIT):
             # R015's crash: the message and the run exist inside the transaction, the record and the commit do not.
@@ -910,6 +916,11 @@ class DbUnit:
         # before messages, so this lock is the unit's first table statement after the record lookup: a cancel
         # or a worker transition waits for this unit or wins before it, never in between, and `append_event` below
         # re-takes a lock the unit already holds. `api` holds a column UPDATE on runs (Plan E ruling 23).
+        # The wait is bounded: a worker holding the run row must not stall the API's single connection, and every
+        # request queued behind it (the final review's M4). A timeout is SQLSTATE 55P03, an OperationalError that
+        # the app answers as a retryable 503. SET takes no bind parameter, so the value is a literal.
+        # TODO(T13): keep a per-unit lock_timeout once the connection pool lands.
+        await self.conn.execute("SET LOCAL lock_timeout = '2s'")
         cur = await self.conn.execute(
             "SELECT run_id, state, state_version, requester, conversation_id FROM app.runs"
             " WHERE run_id = %s FOR UPDATE",

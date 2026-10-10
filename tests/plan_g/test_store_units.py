@@ -7,7 +7,9 @@ drains must be admitted), a status answer or a clarification that starts a run, 
 R018), a lost slot race that leaves the loser's message behind, a fault before commit that keeps anything (R015) or
 tells the client not to retry, an expired unpurged key that replays its old answer, a clarification reply bound to a
 stale version, a superseded question or another question, checked before `DbUnit`'s SQL locks the run (or with an
-INSERT before the refusal) or answered by another requester, and a reviewer refusal that gets recorded.
+INSERT before the refusal) or answered by another requester, a run lock taken with no lock_timeout (a worker holding
+the row would stall the API's one connection), another create_run refusal recorded as SLOT_OCCUPIED, a quota count
+read for a message that can never start a run, and a reviewer refusal that gets recorded.
 """
 
 import asyncio
@@ -87,8 +89,12 @@ def test_the_quota_refuses_only_what_would_start_a_run_and_records_nothing() -> 
     with pytest.raises(QueueFull):
         admit(fake, idle, SAMPLE, "key-0002", quota=1)
     assert len(fake.runs) == 1 and len(fake.records) == 1  # transient: the 429 is nobody's record (ruling 5)
+    counted = fake.counts
     status = admit(fake, idle, {"kind": "status", "text": "Anything running?"}, "key-0003", quota=1)
     assert status.status == 200
+    asked = admit(fake, idle, {"kind": "investigate", "text": "Look into it."}, "key-0004", quota=1)
+    assert asked.status == 200 and asked.body["status"] == "clarification_needed"
+    assert fake.counts == counted  # M6: neither a status answer nor a question reads the count
     later = admit(fake, idle, SAMPLE, "key-0002", quota=2)  # the quota allows it now: the same key does the work
     assert later.status == 202 and not later.replayed
 
@@ -144,6 +150,17 @@ def test_a_lost_slot_race_is_a_recorded_409_that_leaves_no_message() -> None:
     lost = admit(fake, cid, SAMPLE, "key-0001")
     assert lost.status == 409 and lost.body["code"] == "SLOT_OCCUPIED"
     assert not fake.messages and not fake.runs and len(fake.records) == 1  # AM-16: only the record is written
+
+
+def test_another_create_run_refusal_is_recorded_under_its_own_code() -> None:
+    # M3: only create_run's SLOT_OCCUPIED is a busy slot; any other Conflict code it may learn is a version conflict.
+    fake = FakeStore()
+    cid = conversation(fake)
+    fake.start_refusal = "SUPERSEDED_RUN_MOVED"
+    refused = admit(fake, cid, SAMPLE, "key-0001")
+    assert refused.status == 409 and refused.body["code"] == "VERSION_CONFLICT"
+    assert refused.body["message"] == "the run could not be started in the current state"
+    assert not fake.messages and not fake.runs and len(fake.records) == 1
 
 
 def test_a_fault_before_commit_leaves_no_message_no_run_and_no_record() -> None:
@@ -245,11 +262,19 @@ class RecordingConn:
 
     async def execute(self, query: str, params: Any = None) -> Cursor:
         self.statements.append(query)
+        if query.startswith("SET "):  # a setting returns no row, so it takes no answer from the script
+            return Cursor(None)
         return Cursor(self.script.pop(0) if self.script else None)
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
         yield  # a savepoint that a refusal before it must never open
+
+
+def assert_locked_first(statements: list[str]) -> None:
+    """The unit's first two statements: the bounded wait (M4), then the run's lock, before any check or write."""
+    assert statements[0] == "SET LOCAL lock_timeout = '2s'", statements
+    assert "FROM app.runs" in statements[1] and "FOR UPDATE" in statements[1], statements
 
 
 def test_the_db_reply_locks_the_run_before_it_checks_or_writes() -> None:
@@ -278,9 +303,8 @@ def test_the_db_reply_locks_the_run_before_it_checks_or_writes() -> None:
                     context={"hours": 12},
                 )
             )
-        first = conn.statements[0]
-        assert "FROM app.runs" in first and "FOR UPDATE" in first, first
-        assert len(conn.statements) == 1 and not any("INSERT" in s for s in conn.statements), conn.statements
+        assert_locked_first(conn.statements)
+        assert len(conn.statements) == 2 and not any("INSERT" in s for s in conn.statements), conn.statements
     question_id = uuid4()
     waiting = {**moved, "state_version": 3}  # the version the client read
     appended = {"event_id": uuid4(), "sequence": 7, "occurred_at": datetime(2026, 10, 10, tzinfo=UTC)}
@@ -298,13 +322,12 @@ def test_the_db_reply_locks_the_run_before_it_checks_or_writes() -> None:
         )
     )
     assert (accepted.status, accepted.state_version) == ("AWAITING_INPUT", 3)
-    first = conn.statements[0]
-    assert "FROM app.runs" in first and "FOR UPDATE" in first, first
+    assert_locked_first(conn.statements)
     writes = [
         next(i for i, s in enumerate(conn.statements) if marker in s)
         for marker in ("INSERT INTO app.messages", "INSERT INTO app.jobs", "app.append_event")
     ]
-    assert 0 < writes[0] < writes[1] < writes[2] == len(conn.statements) - 1, conn.statements
+    assert 1 < writes[0] < writes[1] < writes[2] == len(conn.statements) - 1, conn.statements
     job_insert = conn.statements[writes[1]]
     # The one grant-sensitive statement: `api` holds INSERT only on jobs, so no RETURNING and no conflict target.
     assert "RETURNING" not in job_insert and "ON CONFLICT (" not in job_insert, job_insert
@@ -336,7 +359,8 @@ def test_the_db_reply_refuses_a_wrong_question_after_the_events_read_and_before_
                 )
             )
         assert (refused.value.status, refused.value.message) == (status, message)
-        assert len(conn.statements) == 2 and "app.events" in conn.statements[1], conn.statements
+        assert_locked_first(conn.statements)
+        assert len(conn.statements) == 3 and "app.events" in conn.statements[2], conn.statements
         assert not any("INSERT" in s for s in conn.statements), conn.statements
 
 

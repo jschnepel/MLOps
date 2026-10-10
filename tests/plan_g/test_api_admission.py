@@ -7,7 +7,8 @@ conversations, a recorded 422 for a body that never parsed, an unroutable kind t
 or a demoted reviewer replaying a recorded success (BS:264 "authenticated current session"), a 429 without
 Retry-After or one recorded (the same key must succeed once the queue drains), a fault before commit that keeps
 anything or tells the client not to retry, the fault route reachable outside the test profile, a stale clarification
-reply accepted, another requester answering a run's question, and a replayed error naming the first request's id.
+reply accepted, another requester answering a run's question, a replayed error naming the first request's id, a
+window number too large to read answered with a 503, and a form asset among several in the text starting a run.
 """
 
 import json
@@ -371,4 +372,31 @@ def test_an_investigate_without_an_asset_or_window_is_a_clarification(
     r = c.post(messages(new_conversation(c)), headers=h(), json=payload)
     body = r.json()
     assert r.status_code == 200 and body["status"] == "clarification_needed" and body["cause"] == cause
+    assert not fake.runs
+
+
+def test_a_window_too_large_to_read_is_a_clarification_not_a_503(api, caplog: pytest.LogCaptureFixture) -> None:
+    # I1: a 400-digit window once raised OverflowError in the router: an unrecorded 503 and an ERROR log line.
+    c, fake = api
+    text = "Investigate A17 last 1" + "0" * 400 + ".5 seconds"
+    with caplog.at_level("DEBUG"):
+        r = c.post(messages(new_conversation(c)), headers=h(), json={"kind": "investigate", "text": text})
+    body = r.json()
+    assert r.status_code == 200 and body["status"] == "clarification_needed"
+    assert body["cause"] == "interval_out_of_range" and "1000" not in json.dumps(body)
+    assert not fake.runs
+    assert not [record for record in caplog.records if record.levelname == "ERROR"]
+
+
+def test_a_form_asset_among_several_in_the_text_is_a_clarification(api) -> None:
+    # I2: the form's A17 is one of two ids the text names, so which one is meant is the doubt (BS:297).
+    c, fake = api
+    payload = {
+        "kind": "investigate",
+        "text": "B22 is failing, A17 is fine; last 24 hours",
+        "context": {"asset_id": "A17", "hours": 24},
+    }
+    r = c.post(messages(new_conversation(c)), headers=h(), json=payload)
+    body = r.json()
+    assert r.status_code == 200 and body["status"] == "clarification_needed" and body["cause"] == "asset_ambiguous"
     assert not fake.runs

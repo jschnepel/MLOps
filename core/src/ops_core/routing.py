@@ -118,10 +118,18 @@ UNIT_SECONDS: Final[dict[str, int]] = {
     "year": 31536000,
     "yr": 31536000,
 }
+# A window whose integer part has more digits than this is read as too large rather than as a number: no 1-168
+# hour window needs it, and keeping the parsed value small keeps every rendered question short (execution ruling
+# (c) as amended after the final review, I1).
+WINDOW_DIGITS_MAX: Final = 12
+# The question for such a window repeats nothing of it: the number may be hundreds of digits long.
+TOO_LARGE_QUESTION: Final = "The window in the text is too large to be a number of hours; give between 1 and 168 hours."
+# said() renders a window at or above this many seconds as a bound, never as its digits.
+SAID_MAX_SECONDS: Final = 10**12 * 3600
 QUESTIONS: Final[dict[ClarifyCause, str]] = {
     ClarifyCause.MISSING_ASSET: "Which asset should be investigated? Name one asset id (for example A17).",
     ClarifyCause.ASSET_AMBIGUOUS: "The request names more than one asset ({ids}); name the one to investigate.",
-    ClarifyCause.ASSET_CONFLICT: "The form names asset {field} but the text names {ids}; which one is meant?",
+    ClarifyCause.ASSET_CONFLICT: "The form names asset {field} but the text names {given}; which one is meant?",
     ClarifyCause.MISSING_INTERVAL: (
         'Over which window? Give a number of hours between 1 and 168 (for example "last 24 hours").'
     ),
@@ -142,29 +150,58 @@ def unit_seconds(unit: str) -> int:
     return UNIT_SECONDS[unit.lower().removesuffix("s")]
 
 
-def text_windows(text: str) -> tuple[Fraction, ...]:
+def _digits(digits: str) -> int:
+    """An ASCII digit string as an int, read in slices: a decimal part longer than Python's 4,300-digit parse limit
+    is still read exactly instead of raising. Only a caller that skips the 4,000-character text contract can reach
+    that, but the router must never raise on text."""
+    value = 0
+    for start in range(0, len(digits), 1000):
+        piece = digits[start : start + 1000]
+        value = value * 10 ** len(piece) + int(piece)
+    return value
+
+
+def _window(number: str, unit: str) -> Fraction | None:
+    """One "last N unit" match in seconds, exact; None when the integer part is too long to be a window at all."""
+    whole, _, decimals = number.replace(",", "").partition(".")
+    whole = whole.lstrip("0")
+    if len(whole) > WINDOW_DIGITS_MAX:
+        return None
+    value = Fraction(int(whole or "0"))
+    if decimals:
+        value += Fraction(_digits(decimals), 10 ** len(decimals))
+    return value * unit_seconds(unit)
+
+
+def text_windows(text: str) -> tuple[Fraction | None, ...]:
     """The distinct look-back windows the text names, in seconds, first mention first ("last 24 hours", "past 3
     days", "last 1.5 days", "last 48-hours", "last week"); two spellings of one length ("last 24 hours", "past day")
-    are one. A Fraction keeps a decimal exact, so "last 0.5 days" is 12 hours and never 11.999."""
-    found: list[tuple[int, Fraction]] = []
+    are one. A Fraction keeps a decimal exact, so "last 0.5 days" is 12 hours and never 11.999. None stands for a
+    window whose number is too large to read (WINDOW_DIGITS_MAX)."""
+    found: list[tuple[int, Fraction | None]] = []
     for match in TEXT_WINDOW.finditer(text):
-        found.append((match.start(), Fraction(match.group(1).replace(",", "")) * unit_seconds(match.group(2))))
+        found.append((match.start(), _window(match.group(1), match.group(2))))
     for match in TEXT_WINDOW_WORD.finditer(text):
         found.append((match.start(), Fraction(unit_seconds(match.group(1)))))
-    return tuple(dict.fromkeys(seconds for _, seconds in sorted(found)))
+    return tuple(dict.fromkeys(seconds for _, seconds in sorted(found, key=lambda pair: pair[0])))
 
 
 def said(seconds: Fraction) -> str:
     """A window as a question repeats it: in hours when it is whole hours ("48 hours"), else in minutes when it is
     whole minutes ("30 minutes"), else in seconds ("90 seconds", "0.5 seconds"); a count of one is singular, and a
-    fractional count shows at most two decimals, never scientific notation."""
+    fractional count shows at most two decimals. Integer arithmetic only: a float raises past about 1e308 and
+    prints scientific notation long before that. A window past SAID_MAX_SECONDS is said as a bound, not its digits."""
+    if seconds >= SAID_MAX_SECONDS:
+        return f"more than {SAID_MAX_SECONDS // 3600:,} hours"
     for size, unit in ((3600, "hour"), (60, "minute")):
         if seconds % size == 0:
             count = seconds // size
             return f"{count} {unit}{'' if count == 1 else 's'}"
     if seconds == 1:
         return "1 second"
-    return f"{float(seconds):.2f}".rstrip("0").rstrip(".") + " seconds"
+    hundredths = (seconds * 200 + 1) // 2  # rounded half up to two decimals, still exact
+    whole, part = divmod(hundredths, 100)
+    return f"{whole}.{part:02d}".rstrip("0").rstrip(".") + " seconds"
 
 
 @dataclass(frozen=True)
@@ -198,16 +235,21 @@ def resolve(facts: AdmissionFacts) -> Resolution:
     """Ruling 12's table, asset rules before interval rules; the first disagreement names the one cause asked."""
     ids = text_assets(facts.text)
     asset = facts.asset_id
-    if asset is not None:
-        if ids and asset not in ids:
-            return _ask(ClarifyCause.ASSET_CONFLICT, field=asset, ids=", ".join(ids))
-    elif len(ids) == 1:
-        asset = ids[0]
-    elif not ids:
-        return _ask(ClarifyCause.MISSING_ASSET)
-    else:
+    if len(ids) > 1:
+        # Two ids ask even beside a form asset that equals one of them, as two windows do below: which asset the text
+        # meant is the doubt, and a form left on the last asset is the stale input BS:297 will not trust.
         return _ask(ClarifyCause.ASSET_AMBIGUOUS, ids=", ".join(ids))
-    windows = text_windows(facts.text)
+    if asset is not None:
+        if ids and ids[0] != asset:
+            return _ask(ClarifyCause.ASSET_CONFLICT, field=asset, given=ids[0])
+    elif ids:
+        asset = ids[0]
+    else:
+        return _ask(ClarifyCause.MISSING_ASSET)
+    read = text_windows(facts.text)
+    if None in read:  # with or without a form window: a number that long is no window anyone meant
+        return Resolution(None, None, ClarifyCause.INTERVAL_OUT_OF_RANGE, TOO_LARGE_QUESTION)
+    windows = tuple(window for window in read if window is not None)
     if len(windows) > 1:
         # Two windows ask even beside a form window that equals one of them: which one the text meant is the doubt.
         return _ask(ClarifyCause.INTERVAL_AMBIGUOUS, windows=", ".join(said(w) for w in windows))

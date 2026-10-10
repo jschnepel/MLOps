@@ -298,7 +298,10 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
     wrong: none for production (the two clocks are equal outside the test profile).
 12. **Text versus fields: a deterministic parser in `core/src/ops_core/routing.py`.** `TEXT_ASSET` (an upper-case token
     containing a digit, at most 32 characters); `TEXT_WINDOW`, "last|past", a number `\d{1,4}(?:\.\d+)?` (a decimal part
-    allowed), spaces or a hyphen between number and unit (`[\s-]*`), and a unit keyed by its full word in the table
+    allowed; execution ruling (c) widened it to any run of ASCII digits, and after the final review (I1) an integer
+    part past 12 digits is read as too large, `interval_out_of_range` with a question that repeats no number, and no
+    window is read or said through a float), spaces or a hyphen between number and unit (`[\s-]*`), and a unit keyed
+    by its full word in the table
     `UNIT_SECONDS`, one row per family: `seconds?|secs?` (1 s), `minutes?|mins?` (60 s), `hours?|hrs?|h` (1 hour),
     `days?|d` (24 hours), `weeks?|wks?` (168 hours), `fortnights?` (2 weeks), `months?|mos?` (720 hours), `years?|yrs?`
     (8760 hours). The only one-letter units are `h` and `d`: a bare `m` or `w` is not read, so "last 3 M" is no window.
@@ -309,8 +312,10 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
     fall under the 1-168 rule like any other window, and a window that is not whole hours ("last 30 minutes", "last 90
     seconds", "last 1.5 hours") is out of range or a conflict like "last 1000 hours" or "last 6 months"; two mentions of
     one length ("last 24 hours", "past day") are one window. Asset rules run before interval rules and the first
-    disagreement names the one cause: a form asset among the text's ids agrees, none of them is `asset_conflict`; no
-    form asset and one id fills it, none is `missing_asset`, two or more is `asset_ambiguous`; two or more distinct
+    disagreement names the one cause: two or more ids in the text are `asset_ambiguous` with or without a form asset,
+    even when one of them is the form's (amended after the final review, I2, to mirror the window rule); with a form
+    asset, one id equal to it agrees and one other id is `asset_conflict`; no form asset and one id fills it, none is
+    `missing_asset`; two or more distinct
     windows in the text are `interval_ambiguous` ("The request names more than one window ({windows}); which one is
     meant?"), with or without a form window; one window equal to the form's agrees, any other (outside 1-168 included)
     is `interval_conflict`; no form window and one window in 1-168 fills it, outside is `interval_out_of_range`, none is
@@ -409,10 +414,11 @@ the cost if wrong. Where a ruling reads the spec one of two ways it is proposed 
     none; the header is additive.
 21. **Check order on the messages route.** identity (401) → CSRF/origin (403) → role `requester` (403) →
     Idempotency-Key shape (422) → body parse (422) → fingerprint → unit: advisory lock → record lookup (replay, or 409
-    `IDEMPOTENCY_CONFLICT`) → conversation in tenant (404) → quota count → active-run read → router → effect → record
-    → commit. The body size is checked first of all, because it is middleware (erratum 43). A replay by a subject
-    whose membership was revoked fails at identity (401) and never reaches the record. Conversations: identity →
-    CSRF → key → unit. Decisions: `enabled_identity` → role `reviewer` (403, unrecorded; the `reviewer_mutation`
+    `IDEMPOTENCY_CONFLICT`) → conversation in tenant (404) → active-run read → router → quota count (a run verdict
+    only, after the final review's M6) → effect → record → commit. The body size is checked first of all, because it
+    is middleware (erratum 43). A replay by a subject whose membership was revoked fails at identity (401) and never
+    reaches the record. Conversations: identity → CSRF → key → unit.
+    Decisions: `enabled_identity` → role `reviewer` (403, unrecorded; the `reviewer_mutation`
     dependency, so a member who lost the role cannot replay a recorded decision) → key → body → unit (lock, lookup,
     proposal 404, independence check 403 unrecorded, revision 409, `record_decision(…, idempotency_key=key)`,
     record). Clarifications: identity → CSRF → `requester` → key → body → unit (ruling 15: the run's lock, then the

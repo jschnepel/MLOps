@@ -97,7 +97,9 @@ A client creates a conversation (`POST /api/v1/conversations`, 201) and posts me
 (`POST /api/v1/conversations/{id}/messages`). Every such mutation carries an `Idempotency-Key` header of 8-128
 visible ASCII characters (a UUID is the usual choice), new for each new request and the same for a retry: the API
 records the answer of each key with the request's fingerprint for 24 h (`OPS_IDEMPOTENCY_TTL_SECONDS`), returns that
-answer to a retry, and refuses a reuse with another request (409 `IDEMPOTENCY_CONFLICT`). A message of kind
+answer to a retry, and refuses a reuse with another request (409 `IDEMPOTENCY_CONFLICT`). A recorded refusal (409,
+404 or 422) replays for that whole window too, so a retry after fixing its cause needs a new key; the same key is for
+retrying the same request after a lost response. A message of kind
 `investigate` or `ask` starts a run (202) only when its text agrees with its form fields; otherwise the API stores a
 clarification question and answers 200 with it, and the requester sends a new message. `kind=status` is answered
 from the recorded state (200, no run). A reply to a run's own question goes to
