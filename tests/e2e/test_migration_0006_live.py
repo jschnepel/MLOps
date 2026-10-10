@@ -93,7 +93,9 @@ async def test_upgrade_numbers_existing_messages_and_the_round_trip_restores_000
     assert await has_column(app_conn, "messages", "seq")
 
 
-async def test_the_record_is_write_once_for_api_and_purgeable_by_the_sweeper(role_conn: RoleConn) -> None:
+async def test_the_record_is_write_once_for_api_and_purgeable_by_the_sweeper(
+    app_conn: persistence.Conn, role_conn: RoleConn
+) -> None:
     api, sweeper, worker = await role_conn(Role.API), await role_conn(Role.SWEEPER), await role_conn(Role.WORKER)
     key = f"live-{uuid4()}"
     scope = (ALPHA, ALEX, "POST /api/v1/conversations", key)
@@ -102,21 +104,27 @@ async def test_the_record_is_write_once_for_api_and_purgeable_by_the_sweeper(rol
         " response, expires_at) VALUES (%s, %s, %s, %s, %s, 201, %s, app.current_time() - interval '1 second')",
         (*scope, "0" * 64, Jsonb({"conversation_id": str(uuid4())})),
     )
-    where = " WHERE tenant_id = %s AND subject = %s AND route = %s AND key = %s"
-    cur = await api.execute("SELECT status_code FROM app.idempotency_request" + where, scope)
-    assert (await cur.fetchone())["status_code"] == 201
-    for statement in (
-        "UPDATE app.idempotency_request SET status_code = 200" + where,
-        "DELETE FROM app.idempotency_request" + where,
-    ):
+    try:
+        where = " WHERE tenant_id = %s AND subject = %s AND route = %s AND key = %s"
+        cur = await api.execute("SELECT status_code FROM app.idempotency_request" + where, scope)
+        assert (await cur.fetchone())["status_code"] == 201
+        for statement in (
+            "UPDATE app.idempotency_request SET status_code = 200" + where,
+            "DELETE FROM app.idempotency_request" + where,
+        ):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                await api.execute(statement, scope)
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            await api.execute(statement, scope)
-    with pytest.raises(psycopg.errors.InsufficientPrivilege):
-        await worker.execute("SELECT 1 FROM app.idempotency_request LIMIT 1")
-    cur = await sweeper.execute("DELETE FROM app.idempotency_request WHERE expires_at < app.current_time()")
-    assert cur.rowcount >= 1
-    cur = await sweeper.execute("SELECT count(*) AS n FROM app.idempotency_request" + where, scope)
-    assert (await cur.fetchone())["n"] == 0
+            await worker.execute("SELECT 1 FROM app.idempotency_request LIMIT 1")
+        # Filtered by this test's key, so it never removes another test's record.
+        cur = await sweeper.execute(
+            "DELETE FROM app.idempotency_request WHERE key = %s AND expires_at < app.current_time()", (key,)
+        )
+        assert cur.rowcount == 1
+        cur = await sweeper.execute("SELECT count(*) AS n FROM app.idempotency_request" + where, scope)
+        assert (await cur.fetchone())["n"] == 0
+    finally:  # a failed assertion must not leave the row for the next purge test to count
+        await app_conn.execute("DELETE FROM app.idempotency_request WHERE key = %s", (key,))
 
 
 async def test_api_inserts_numbered_messages_and_the_checks_hold(

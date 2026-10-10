@@ -142,6 +142,11 @@ async def test_purge_expired_deletes_only_what_is_past(app_conn, role_conn) -> N
             assert [r["k"] for r in await cur.fetchall()] == [f"{tag}-live"]
         cur = await app_conn.execute("SELECT count(*) AS n FROM app.idempotency_request")
         assert (await cur.fetchone())["n"] == others  # exactly the seeded record went
+        cur = await app_conn.execute(
+            "SELECT count(*) AS n FROM app.idempotency_request WHERE key = %s", (f"{tag}-expired",)
+        )
+        seeded_left = (await cur.fetchone())["n"]
+        assert seeded_left == 0  # and it is that one, not another row
     finally:
         for table, key in (("sessions", "session_sha256"), ("login_state", "login_sha256"), ("logout_jti", "jti")):
             await app_conn.execute(f"DELETE FROM app.{table} WHERE {key} LIKE %s", (f"{tag}-%",))

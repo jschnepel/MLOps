@@ -59,6 +59,8 @@ SCHEMA_CHANGES = (
     ),
     "CREATE INDEX idempotency_request_expires_idx ON app.idempotency_request (expires_at)",
     "ALTER TABLE app.idempotency_request OWNER TO migrator",
+    # Existing rows are numbered in physical scan order during the rewrite (harmless: 0005-era writers stored only
+    # `investigate` messages); readers needing history order on pre-0006 rows sort by (created_at, seq).
     "ALTER TABLE app.messages ADD COLUMN seq bigint GENERATED ALWAYS AS IDENTITY NOT NULL",
     "ALTER TABLE app.messages ADD CONSTRAINT messages_conversation_seq_key UNIQUE (conversation_id, seq)",
     f"ALTER TABLE app.messages ADD CONSTRAINT messages_kind_check CHECK (kind IN ({KINDS}))",
