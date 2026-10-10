@@ -4,8 +4,9 @@ Identity is the verified persona token's `sub` resolved against seeded membershi
 §9); the tenant and roles come from the membership, never from the request. Bodies are parsed with
 `ops_core.contracts.load`, so a duplicate key or an authority field is a 422 before any handler logic runs.
 Browser sessions (T11): server-side rows, the cookie path beside the bearer path, CSRF and origin checks on browser
-mutations, the admin-API enabled check on decision-class mutations, back-channel logout. Idempotency-Key stays declared
-debt (T12).
+mutations, the admin-API enabled check on decision-class mutations, back-channel logout. Plan G (T12): every response
+carries a server-made request id, every refusal is the SafeError, and no body over the configured limit reaches a
+route.
 """
 
 # No `from __future__ import annotations` here: FastAPI resolves dependency annotations at import time, and a
@@ -16,7 +17,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Protocol
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx2
 import psycopg
@@ -25,15 +26,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from ops_core import keycloak_admin, persistence, settings
-from ops_core.contracts import DecisionRequest, DuplicateKey, ErrorCode, MessageKind, MessageRequest, SafeError, load
+from ops_core.contracts import DecisionRequest, DuplicateKey, ErrorCode, MessageKind, MessageRequest, load
 from ops_core.keycloak_admin import AdminUnavailable
 from ops_core.outcomes import EventRuleViolation
-from ops_core.settings import Role
+from ops_core.settings import AdmissionSettings, Role
 from ops_core.states import IllegalTransition
 from ops_core.tokens import Principal, SigningKeysUnavailable, TokenRejected, TokenVerifier
 from pydantic import ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ops_api import auth as au
+from ops_api import limits
 from ops_api import store as st
 from ops_api.auth import AuthDeps, ExchangeRefused, ExchangeUnavailable
 
@@ -54,11 +57,9 @@ class ApiError(Exception):
         self.clear_session, self.clear_login = clear_session, clear_login
 
 
-def safe(status: int, code: ErrorCode, message: str) -> JSONResponse:
-    """Build a SafeError response (a 401 also names the Bearer scheme)."""
-    body = SafeError(code=code, message=message, retryable=status == 503, request_id=uuid4())
-    headers = {"WWW-Authenticate": "Bearer"} if status == 401 else {}
-    return JSONResponse(status_code=status, content=body.model_dump(mode="json"), headers=headers)
+def safe(request: Request, status: int, code: ErrorCode, message: str, *, retryable: bool = False) -> JSONResponse:
+    """A SafeError response carrying this request's id (ruling 20); `retryable` only for a transient outage."""
+    return limits.safe_response(limits.request_id_of(request.scope), status, code, message, retryable=retryable)
 
 
 def stamp(value: datetime) -> str:
@@ -111,8 +112,15 @@ def create_app(
     verifier: Verifier,
     store_factory: Callable[[], st.Store | Awaitable[st.Store]],
     auth_factory: Callable[[], AuthDeps | Awaitable[AuthDeps]],
+    *,
+    admission: AdmissionSettings | None = None,
 ) -> FastAPI:
-    """Build the application around a verifier, a store factory and an auth-deps factory (the lifespan runs both)."""
+    """Build the application around a verifier, a store factory and an auth-deps factory (the lifespan runs both).
+
+    `admission` carries the body limit and the other T12 bounds; tests pass their own, production passes
+    `settings.admission()`, and the default is the spec's starting values (BUILD_SPEC §17).
+    """
+    bounds = admission or AdmissionSettings()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -138,6 +146,8 @@ def create_app(
                 await app.state.store.session.conn.close()
 
     app = FastAPI(title="ops-api", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(limits.BodyLimit, max_bytes=bounds.max_body_bytes)
+    app.add_middleware(limits.RequestId)  # added last, so outermost: the body refusal carries the request id too
     issuer = settings.keycloak().issuer
 
     async def identity(
@@ -201,7 +211,7 @@ def create_app(
         try:
             enabled = await deps.admin.enabled(who.subject)
         except AdminUnavailable as exc:
-            log.warning("enabled check unavailable: %s", exc)
+            log.warning("request %s: enabled check unavailable: %s", request.state.request_id, exc)
             raise ApiError(503, ErrorCode.UNAVAILABLE, "identity provider unavailable") from exc
         if not enabled:
             if who.session is not None:
@@ -209,9 +219,16 @@ def create_app(
             raise ApiError(401, ErrorCode.UNAUTHENTICATED, "identity disabled", clear_session=who.session is not None)
         return who
 
+    def failed(request: Request, exc: BaseException) -> None:
+        """Log a server-side failure once, with the request id and the class name only: an exception's text may carry
+        SQL, or a psycopg DETAIL naming a tenant, a subject and a key in clear (spike §1)."""
+        log.error("request %s failed: %s", limits.request_id_of(request.scope), exc.__class__.__name__)
+
     @app.exception_handler(ApiError)
     async def _api_error(request: Request, exc: ApiError) -> Response:
-        response = safe(exc.status, exc.code, exc.message)
+        # Every 503 an ApiError carries is an identity-provider outage (admin API, token endpoint, signing keys), the
+        # one kind of refusal a client should retry (ruling 19).
+        response = safe(request, exc.status, exc.code, exc.message, retryable=exc.status == 503)
         if exc.clear_session or exc.clear_login:  # the auth deps exist whenever a route that sets these flags runs
             cookies: au.CookiePolicy = request.app.state.auth.cookies
             if exc.clear_session:
@@ -220,28 +237,49 @@ def create_app(
                 cookies.clear_login(response)
         return response
 
-    @app.exception_handler(persistence.AuthorityViolation)
-    async def _authority(_: Request, exc: persistence.AuthorityViolation) -> Response:
-        log.error("deployment error: %s", exc)  # the API is connected as a role a function does not accept
-        return safe(503, ErrorCode.UNAVAILABLE, "service misconfigured")
-
     @app.exception_handler(st.Internal)
     @app.exception_handler(persistence.PersistenceError)
     @app.exception_handler(IllegalTransition)
     @app.exception_handler(EventRuleViolation)
-    async def _server_defect(_: Request, exc: Exception) -> Response:
-        # Messages carry no handle or secret. FastAPI picks the most specific class, so AuthorityViolation keeps
-        # its own handler.
-        log.error("service error: %r", exc)
-        return safe(503, ErrorCode.UNAVAILABLE, "service error")
-
     @app.exception_handler(psycopg.Error)
-    async def _database(_: Request, __: psycopg.Error) -> Response:
-        return safe(503, ErrorCode.UNAVAILABLE, "database unavailable")
+    @app.exception_handler(psycopg.errors.ProgramLimitExceeded)
+    @app.exception_handler(psycopg.errors.StatementTooComplex)
+    async def _server_defect(request: Request, exc: Exception) -> Response:
+        # A defect, a refused deployment (AuthorityViolation is a PersistenceError), an untranslated SQLSTATE (a 23505)
+        # or a statement too big for the server (class 54): a retry meets the same defect, so not retryable (ruling 19).
+        failed(request, exc)
+        return safe(request, 503, ErrorCode.UNAVAILABLE, "service error")
+
+    @app.exception_handler(psycopg.OperationalError)
+    @app.exception_handler(psycopg.InterfaceError)
+    async def _database_down(request: Request, exc: psycopg.Error) -> Response:
+        # A lost connection or a transient server condition: nothing committed, so a retry may succeed (BS:564). The
+        # class-54 handlers above were registered first and Starlette walks the exception's MRO, so they keep theirs.
+        failed(request, exc)
+        return safe(request, 503, ErrorCode.UNAVAILABLE, "database unavailable", retryable=True)
+
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception) -> Response:
+        # Starlette answers, then re-raises (spike §5): uvicorn logs the traceback through the redaction filter.
+        failed(request, exc)
+        return safe(request, 503, ErrorCode.UNAVAILABLE, "service error")
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http(request: Request, exc: StarletteHTTPException) -> Response:
+        # The router's own refusals (unknown path, wrong method) answer FastAPI's `{"detail": ...}` otherwise.
+        if exc.status_code == 404:
+            return safe(request, 404, ErrorCode.NOT_FOUND, "no such route")
+        if exc.status_code == 405:
+            response = safe(request, 405, ErrorCode.INVALID_INPUT, "method not allowed")
+            allow = (exc.headers or {}).get("Allow")
+            if allow is not None:
+                response.headers["Allow"] = allow  # RFC 9110 §15.5.6: a 405 names the methods that would work
+            return response
+        return safe(request, 422, ErrorCode.INVALID_INPUT, "request refused")
 
     @app.exception_handler(RequestValidationError)
-    async def _validation(_: Request, __: RequestValidationError) -> Response:
-        return safe(422, ErrorCode.INVALID_INPUT, "request is not valid")
+    async def _validation(request: Request, __: RequestValidationError) -> Response:
+        return safe(request, 422, ErrorCode.INVALID_INPUT, "request is not valid")
 
     async def body(request: Request, model: type[Any]) -> Any:
         try:
@@ -260,7 +298,7 @@ def create_app(
             try:
                 await store.session.ping()
             except (psycopg.Error, OSError):  # readiness reports a database failure as not ready
-                return safe(503, ErrorCode.UNAVAILABLE, "database not reachable")
+                return safe(request, 503, ErrorCode.UNAVAILABLE, "database not reachable", retryable=True)
         return JSONResponse({"status": "ready"})
 
     @app.get("/")
@@ -394,10 +432,10 @@ def create_app(
         try:
             claims = await deps.logout_tokens.verify(token)
         except SigningKeysUnavailable as exc:
-            log.warning("back-channel logout not applied: signing keys unavailable")
+            log.warning("request %s: back-channel logout failed: no signing keys", request.state.request_id)
             raise ApiError(503, ErrorCode.UNAVAILABLE, "identity provider unavailable") from exc
         except TokenRejected as exc:
-            log.info("back-channel logout token rejected: %s", exc)
+            log.info("request %s: back-channel logout token rejected: %s", request.state.request_id, exc)
             raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token rejected") from exc
         keep_until = datetime.fromtimestamp(claims.expires_at, UTC) + timedelta(days=1)
         try:
@@ -405,11 +443,11 @@ def create_app(
         except psycopg.Error as exc:
             # Keycloak never retries, so this line is the operator's only trace of a logout that did not take effect
             # (final review M4); the class name only, never the token. The 503 handler answers.
-            log.warning("back-channel logout not applied: %s", exc.__class__.__name__)
+            log.warning("request %s: back-channel logout failed: %s", request.state.request_id, type(exc).__name__)
             raise
         if revoked is None:
             raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token replayed")
-        log.info("back-channel logout revoked %d session(s)", revoked)
+        log.info("request %s: back-channel logout revoked %d session(s)", request.state.request_id, revoked)
         return no_store(Response(status_code=200))
 
     @app.get("/api/v1/me")
@@ -601,4 +639,4 @@ def production_app() -> FastAPI:
                 await close()
             raise
 
-    return create_app(verifier, make_store, make_auth)
+    return create_app(verifier, make_store, make_auth, admission=settings.admission())

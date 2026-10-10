@@ -46,7 +46,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = [
-  "tests/plan_a", "tests/plan_b", "tests/plan_c", "tests/plan_d", "tests/plan_e", "tests/plan_f",
+  "tests/plan_a", "tests/plan_b", "tests/plan_c", "tests/plan_d", "tests/plan_e", "tests/plan_f", "tests/plan_g",
   "tests/e2e",
 ]
 asyncio_default_fixture_loop_scope = "function"
