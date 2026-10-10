@@ -1637,10 +1637,14 @@
       "id": "R103",
       "category": "ci",
       "requirement": "Secret-free CI runs from the first code task",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Lint, type and unit jobs green on push/PR with pinned action SHAs and read-only token.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "reports/ci/t06-first-ci-runs.txt",
+        ".github/workflows/ci.yml",
+        "tests/plan_a/test_ci_workflow.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M01",
       "blocking_for_v1": true,

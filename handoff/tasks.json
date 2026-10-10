@@ -370,7 +370,7 @@
       "requirement_ids": [
         "R103"
       ],
-      "status": "DONE_PENDING_OWNER",
+      "status": "DONE",
       "definition_of_done": [
         "CI runs on push and PR in jschnepel/MLOps and is green.",
         "No secrets or privileged contexts used."
@@ -378,7 +378,8 @@
       "external_approval_required": true,
       "review_notes": [
         "Requires a public repo at M01 while publication approval sits at T34 - owner decides: approve early publication or start private and flip public at T34.",
-        "Plan A (branch plan-a): workflow committed in 289c16a (SHA-pinned actions, read-only token, no secrets). Pending owner step 7: gh auth login, choose visibility, create the remote and push; record the first CI run URL in SESSION_STATE.md."
+        "Plan A (branch plan-a): workflow committed in 289c16a (SHA-pinned actions, read-only token, no secrets). Pending owner step 7: gh auth login, choose visibility, create the remote and push; record the first CI run URL in SESSION_STATE.md.",
+        "2026-10-09: PRs #1-#5 (plan-b -> main ... plan-f -> plan-e) opened; the first runs were red on ruff EXE001 (scripts/verify_handoff.py had a shebang without the executable bit; the rule is skipped on Windows), every test green; fixed by a file-mode commit on each branch; first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516. Record: reports/ci/t06-first-ci-runs.txt. The push-to-main trigger fires when PR #1 merges."
       ]
     },
     {

@@ -129,3 +129,9 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 - The dev `ops` database is at revision 0005 (the owner ran `skeleton.py migrate` on 2026-10-09); all six processes were brought to ready and stopped against it. The shared dev realm already carries the Plan F clients.
 - Deferred, each with its owner in `SESSION_STATE.md`: `Idempotency-Key` -> T12; the enabled check on revisions, cancel and manual proposals -> T21; the SSE identity recheck -> T27; telemetry redaction -> T28; the containerised back-channel URL and the demo realm -> T30; the purge of finished maintenance jobs -> T14. Nine errata (26-34) are proposed for the owner to decide.
 - Still no hardened capability beyond these: admission (T12), leases (T13) and the remaining requirements stay `NOT_RUN`.
+
+## Update — PRs and first CI (2026-10-09)
+
+- PRs #1-#5 opened for the stack (plan-b -> main, plan-c -> plan-b, plan-d -> plan-c, plan-e -> plan-d, plan-f -> plan-e) with plan summaries from this file.
+- The first five CI runs were `CHECK: RED` on a single ruff finding, EXE001 on `scripts/verify_handoff.py` (a shebang without the executable bit; ruff skips the rule on Windows, where every local check had run). Every test passed on the Linux runner (93, 382, 459, 531 and 680 passed; one more than locally, the POSIX-only permissions test). Fixed by a file-mode commit on `plan-b` cherry-picked onto the four branches above it; all five re-runs are green. First green run: https://github.com/jschnepel/MLOps/actions/runs/37962510516; the red one: https://github.com/jschnepel/MLOps/actions/runs/37962039002. Record: `reports/ci/t06-first-ci-runs.txt`.
+- T06 is `DONE` and R103 is evidenced (`RECORDED_LOCALLY_LIVE`, on GitHub-hosted runners with the read-only token and no secrets). The push-to-main trigger fires with the first merge.
