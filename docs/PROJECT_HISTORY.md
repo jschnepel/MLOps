@@ -176,6 +176,62 @@ Executing the reviewed plan still produced findings at every task gate, all in t
 
 **Change.** One commit flipped the file mode on `plan-b`, and the same commit was cherry-picked onto the four branches above it rather than rebased through them, so no commit range the handoff files cite was rewritten. All five re-runs were green. The lesson is the one the walking skeleton taught at a larger scale: a gate that only runs on one platform proves only that platform, and the first run on the other one is a review in its own right. The run URLs, red and green, are kept in `reports/ci/t06-first-ci-runs.txt`.
 
-## 24. What the process taught
+## 24. The admission plan was written from a brief, and three rounds moved it from locks to grammar
+
+**Problem.** Plan G adds durable admission: `Idempotency-Key` on every API mutation with a scoped, write-once record
+that replays the stored response, the AM-16 admission router with its six routes as an enumerable table in `core`,
+conversation-level clarifications and status answers stored as messages, a clarification-reply route, a 64 KiB body
+limit, a per-tenant queue quota, the safe error schema on every path including the framework's own 404/405/500, and
+revision 0006. The fact sheet (28 open questions) and the spike (nine measured sections) came first, as for Plan F,
+and this time the controller wrote a brief of thirty rulings and seven tasks and had a fresh author expand it into
+the 7,426-line plan, so the design decisions and the typing of the code were separate jobs. The spike had settled the
+shape in advance: a same-key race through the real `create_run` ends in a `SLOT_OCCUPIED` 409 instead of the recorded
+202 unless the scope is locked first, and a unique-violation on the record prints the tenant, subject and key in the
+error's DETAIL, so the record is written last under a `pg_advisory_xact_lock` taken before any table; the `api` role
+holds INSERT only on `jobs`, so the `resume_input` insert is a target-less `ON CONFLICT DO NOTHING` with the rowcount
+as its only signal; the API resolved intervals on Python's wall clock while the function stamped rows on
+`app.current_time()`, so the test clock could not have proved "resolved once"; Starlette's own body limit answers a
+plain 413 after the route has already run; and the `api` role cannot count the global queue under RLS at all.
+
+**Round 1 (static critic: 2 Blocking, 6 Important, 9 Minor; builder: all seven tasks executed, six workarounds, every
+gate green).** The plan was executable on its first dry run, which Plans D, E and F were not, and the review found
+the defects that execution would not have: the clarification-reply unit checked the run's state and version and then
+inserted the message and the job before it ever locked the run row, so a run that moved on still got a 202, a job and
+an event (SA:186 wants the lock first; the `api` role holds a column UPDATE on `runs`, so `FOR UPDATE` is permitted);
+the 429 "tenant queue is full" was written to the idempotency record, so a same-key retry would replay the refusal for
+24 hours while its `Retry-After: 5` promised otherwise; any requester of the tenant could answer another requester's
+clarification, which breaks the reviewer-independence rule because the reply's content shapes the proposal; the
+body-limit middleware handed a truncated body to the route when the client disconnected mid-upload; a reviewer who
+had lost the role could still replay a recorded decision because the role check sat inside the unit after the record
+lookup; and a replayed error carried the first request's id in the body under a fresh `X-Request-Id` header. The
+builder's six workarounds were seams the author had not reached: the sweeper's new fourth purge broke the live sweeper
+test that counted three, the close-out's commit span caught the plan commit itself, and the post-live checkouts
+forgot the auth evidence file the live gate rewrites.
+
+**Round 2 (static critic: 0 Blocking, 3 Important, 7 Minor; builder: three workarounds, two of them already ruled).**
+With the locks right, the review moved to the grammar. The window parser read only `last N hours|days`, so "last 2
+weeks", "last 30 minutes" and "last 1000 hours" beside a form window of 24 hours all started a 24-hour investigation,
+and a text naming two windows took the first; the spec says to ask rather than guess, so the parser gained minutes,
+weeks and a four-digit number, out-of-range windows became conflicts, and two windows became a new `interval_ambiguous`
+cause mirroring the asset rule. The 404 given to another requester was the wrong code because that requester can read
+the run through the run and events routes, so a known resource with a disallowed operation answers 403, as BS:301
+says. The two savepoint rollbacks that make "nothing written except the record" true in SQL had no PostgreSQL proof
+(the fake checks before it writes; the live race lost nondeterministically), so two deterministic live proofs were
+added: a second reply to an answered question, and an investigate superseding a run of another conversation. The
+builder's own finding was that the round-1 lock-order test asserted an entry the fake wrote itself, so the real SQL
+unit now runs over a recording connection and the first statement must be the `FOR UPDATE`.
+
+**Round 3 (closure: static critic 0 Blocking, 0 Important, 8 Minor; builder: zero workarounds, every gate green at the
+stated counts, `check.py` 780 passed / 104 skipped and `--profile test` 863 / 21 on the final tree).** The minors were
+of the kind a closure round should find: months, years and seconds still passed the parser silently, the test-only
+fault route skipped the CSRF check, `psycopg.OperationalError` covers disk-full and statement-too-complex as well as
+a lost connection so "retryable" was too broad, one mypy run stated no expected output, and an evidence shape pinned a
+seconds digit that can vary. All were applied in one pass. The record is `docs/reviews/plan-review-g-2026-10-10.md`.
+The lesson that was new this time: separating the rulings from the typing did not reduce the review's yield, it
+changed its shape. The brief's decisions survived every round; what the rounds found was the distance between a
+ruling and its code (a lock named in prose but taken last; a record rule that swept in a transient refusal; a parser
+that read half the units people write), which is exactly the distance a dry run cannot see and a critic can.
+
+## 25. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.
