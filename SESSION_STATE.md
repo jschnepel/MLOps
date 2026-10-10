@@ -281,6 +281,30 @@ Allowed shortcuts in T11, each with its owning task:
 - the sweeper inserts one `sync_memberships` job row per minute and holds no DELETE on `jobs`, so done maintenance rows accumulate; the sweeper's purge of finished jobs (an AM-20.2 cell for `sweeper` `del` on `jobs`, or a definer) → T14;
 - `/auth/login` trusts the request's `Host` header to decide whether to bounce to the public base URL; a reverse proxy that rewrites `Host` needs trusted-proxy handling (`X-Forwarded-Host`) → T30.
 
+## Plan G debt list (T12; committed before coding) [R6-B7]
+
+Allowed shortcuts in T12, each with its owning task:
+- the global queued-work bound (BS:550 "100 total") is not enforced: `api` can count only its own tenant's runs and
+  cannot read `jobs` (Plan G spike §8); a per-tenant quota of QUEUED runs (`OPS_TENANT_QUEUE_QUOTA`) stands in → T13;
+- no producer of a model hint exists: the admission router takes `hint` and the API passes `None` → T19;
+- the 202 body carries no `stream_url` until the stream route exists → T27;
+- the worker finishes a `resume_input` job unhandled and ends an `answer_only` run FAILED (no ANSWERED path yet), so
+  the clarification reply and the read-only admission are proved at the API boundary only → T20 (R042, R114);
+- nothing in the worker asks for clarification yet, so the live test stages `AWAITING_INPUT` through the worker
+  role's `transition_run` → T20;
+- the API reads the active run without a lock before a clarification or a status answer: a concurrent
+  `investigate` may take the slot between the read and a stored clarification, which the reply then meets as a 409
+  (benign; `api` can lock neither `conversations` nor an absent run) → T21, which owns the slot's other doors;
+- `api` may INSERT any job type (the column grant cannot restrict `type`, Plan G spike §2); the API inserts
+  `resume_input` only, by code → T13/T22;
+- the dev database stays at revision 0005 until the owner migrates it to 0006; until then the API and the sweeper
+  refuse to start on it → owner input;
+- `feedback` (named for T12 in `privileges.py` and the Plan E debt list) is not created: its endpoint (BS:282) is in
+  T21's instructions → T21;
+- the clarify, status-answer and accepted bodies have no JSON Schema under `schemas/` (no response has one yet) → T26;
+- the API's fault route implements `drop_before_commit` only; the other BS:405 faults, `lose_after_commit` included
+  (R015's after-commit side is proved meanwhile by R016's replay of the recorded 202) → T13.
+
 ## Environment (observed)
 
 | Item | Observed |
