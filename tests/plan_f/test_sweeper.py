@@ -8,6 +8,8 @@ deactivated because a paging race hid them, and an override that outlives its fi
 """
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -134,6 +136,35 @@ async def test_a_listing_the_guard_refuses_is_not_confirmed_away(sweep: dict[str
     admin = FakeAdmin(listing={uuid4(): True})
     assert await main.run_sync(deps_with(admin)) is False
     assert not admin.asked and sweep["calls"][-1]["users"] == admin.listing
+
+
+class PurgeConn:
+    """A connection that records the purge's statements and answers each DELETE with a fixed rowcount."""
+
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+        self.in_transaction = False
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        self.in_transaction = True
+        yield
+        self.in_transaction = False
+
+    async def execute(self, statement: str) -> Any:
+        assert self.in_transaction  # the four deletes commit together
+        self.statements.append(statement)
+        return type("Cursor", (), {"rowcount": len(self.statements)})()
+
+
+@pytest.mark.asyncio
+async def test_the_purge_covers_the_idempotency_records() -> None:
+    """Plan G ruling 7: expired records leave with the other three tables, on the application clock."""
+    conn = PurgeConn()
+    as_conn: Any = conn  # the purge needs only transaction() and execute()
+    counts = await sync.purge_expired(as_conn)
+    assert counts == {"sessions": 1, "login_state": 2, "logout_jti": 3, "idempotency_request": 4}
+    assert conn.statements[-1] == "DELETE FROM app.idempotency_request WHERE expires_at < app.current_time()"
 
 
 @pytest.mark.asyncio

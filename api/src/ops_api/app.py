@@ -4,8 +4,10 @@ Identity is the verified persona token's `sub` resolved against seeded membershi
 §9); the tenant and roles come from the membership, never from the request. Bodies are parsed with
 `ops_core.contracts.load`, so a duplicate key or an authority field is a 422 before any handler logic runs.
 Browser sessions (T11): server-side rows, the cookie path beside the bearer path, CSRF and origin checks on browser
-mutations, the admin-API enabled check on decision-class mutations, back-channel logout. Idempotency-Key stays declared
-debt (T12).
+mutations, the admin-API enabled check on decision-class mutations, back-channel logout. Plan G (T12): every response
+carries a server-made request id, every refusal is the SafeError, and no body over the configured limit reaches a
+route; every /api/v1 mutation carries a scoped Idempotency-Key and runs as one recorded unit (`ops_api.store`), and
+messages pass the AM-16 admission router (`ops_core.routing`).
 """
 
 # No `from __future__ import annotations` here: FastAPI resolves dependency annotations at import time, and a
@@ -16,7 +18,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Protocol
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx2
 import psycopg
@@ -25,21 +27,42 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from ops_core import keycloak_admin, persistence, settings
-from ops_core.contracts import DecisionRequest, DuplicateKey, ErrorCode, MessageKind, MessageRequest, SafeError, load
+from ops_core.contracts import ClarificationReply, DecisionRequest, DuplicateKey, ErrorCode, MessageRequest, load
 from ops_core.keycloak_admin import AdminUnavailable
 from ops_core.outcomes import EventRuleViolation
-from ops_core.settings import Role
+from ops_core.settings import AdmissionSettings, Profile, Role
 from ops_core.states import IllegalTransition
+from ops_core.testing.faults import FaultKind, Faults
 from ops_core.tokens import Principal, SigningKeysUnavailable, TokenRejected, TokenVerifier
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ops_api import auth as au
+from ops_api import limits
 from ops_api import store as st
 from ops_api.auth import AuthDeps, ExchangeRefused, ExchangeUnavailable
+from ops_api.idempotency import (
+    HEADER,
+    KEY_REFUSAL,
+    Idem,
+    IdempotencyConflict,
+    KeyInvalid,
+    QueueFull,
+    Scope,
+    Verdict,
+    fingerprint,
+    response,
+    validate_key,
+)
 
 log = logging.getLogger("ops_api")
 ERROR_CODE = re.compile(r"[a-z_]{1,64}")  # an OAuth error code, matched whole below
 bearer = HTTPBearer(auto_error=False)  # the 401 body is ours (SafeError), not the SDK's
+# Idempotency scopes name the method and the path template (Plan G ruling 2): the path's ids are in the fingerprint.
+ROUTE_CONVERSATIONS = "POST /api/v1/conversations"
+ROUTE_MESSAGES = "POST /api/v1/conversations/{conversation_id}/messages"
+ROUTE_CLARIFICATIONS = "POST /api/v1/runs/{run_id}/clarifications"
+ROUTE_DECISIONS = "POST /api/v1/proposals/{proposal_id}/decisions"
 
 
 class ApiError(Exception):
@@ -54,16 +77,21 @@ class ApiError(Exception):
         self.clear_session, self.clear_login = clear_session, clear_login
 
 
-def safe(status: int, code: ErrorCode, message: str) -> JSONResponse:
-    """Build a SafeError response (a 401 also names the Bearer scheme)."""
-    body = SafeError(code=code, message=message, retryable=status == 503, request_id=uuid4())
-    headers = {"WWW-Authenticate": "Bearer"} if status == 401 else {}
-    return JSONResponse(status_code=status, content=body.model_dump(mode="json"), headers=headers)
+def safe(request: Request, status: int, code: ErrorCode, message: str, *, retryable: bool = False) -> JSONResponse:
+    """A SafeError response carrying this request's id (ruling 20); `retryable` only for a transient outage."""
+    return limits.safe_response(limits.request_id_of(request.scope), status, code, message, retryable=retryable)
 
 
 def stamp(value: datetime) -> str:
     """Spell a timestamp as UTC `...Z` with whole seconds (ruling 10)."""
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class FaultRequest(BaseModel):
+    """How many occurrences of a fault to arm (the test profile's fault route, ruling 24)."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    count: int = Field(ge=1, le=100)
 
 
 class Verifier(Protocol):  # the unit tests stub it
@@ -111,17 +139,29 @@ def create_app(
     verifier: Verifier,
     store_factory: Callable[[], st.Store | Awaitable[st.Store]],
     auth_factory: Callable[[], AuthDeps | Awaitable[AuthDeps]],
+    *,
+    admission: AdmissionSettings | None = None,
+    profile: Profile = Profile.DEV,
 ) -> FastAPI:
-    """Build the application around a verifier, a store factory and an auth-deps factory (the lifespan runs both)."""
+    """Build the application around a verifier, a store factory and an auth-deps factory (the lifespan runs both).
+
+    `admission` carries the body limit and the other T12 bounds; tests pass their own, production passes
+    `settings.admission()`, and the default is the spec's starting values (BUILD_SPEC §17). Under the test profile
+    the app also arms faults (R098: the hooks do not exist in dev or demo, so the route is the safe 404 there).
+    """
+    bounds = admission or AdmissionSettings()
+    faults = Faults(profile) if profile is Profile.TEST else None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         made = store_factory()
         app.state.store = await made if isinstance(made, Awaitable) else made
+        app.state.store.faults = faults
         try:
             if isinstance(app.state.store, st.DbStore):
                 await persistence.assert_clock_profile(app.state.store.session.conn, settings.profile())
-                await persistence.assert_relation(app.state.store.session.conn, "app.login_state")  # revision 0005
+                # Revision 0006: admission writes the record table and the message columns it adds.
+                await persistence.assert_relation(app.state.store.session.conn, "app.idempotency_request")
             if not verifier.ready:
                 await verifier.load_keys()
             deps = auth_factory()
@@ -138,6 +178,9 @@ def create_app(
                 await app.state.store.session.conn.close()
 
     app = FastAPI(title="ops-api", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(limits.BodyLimit, max_bytes=bounds.max_body_bytes)
+    app.add_middleware(limits.RequestId)  # the body refusal carries the request id too
+    app.add_middleware(limits.SafeErrors)  # added last, so outermost: the catch-all sees every other layer's failure
     issuer = settings.keycloak().issuer
 
     async def identity(
@@ -201,7 +244,7 @@ def create_app(
         try:
             enabled = await deps.admin.enabled(who.subject)
         except AdminUnavailable as exc:
-            log.warning("enabled check unavailable: %s", exc)
+            log.warning("request %s: enabled check unavailable: %s", limits.request_id_of(request.scope), exc)
             raise ApiError(503, ErrorCode.UNAVAILABLE, "identity provider unavailable") from exc
         if not enabled:
             if who.session is not None:
@@ -209,9 +252,65 @@ def create_app(
             raise ApiError(401, ErrorCode.UNAUTHENTICATED, "identity disabled", clear_session=who.session is not None)
         return who
 
+    def failed(request: Request, exc: BaseException) -> None:
+        """Log a server-side failure once, with the request id and the class name only: an exception's text may carry
+        SQL, or a psycopg DETAIL naming a tenant, a subject and a key in clear (spike §1)."""
+        log.error("request %s failed: %s", limits.request_id_of(request.scope), exc.__class__.__name__)
+
+    async def requester_mutation(who: Annotated[Identity, Depends(browser_mutation)]) -> Identity:
+        """A browser-safe mutation by a requester: the role check precedes the key and the body (ruling 21)."""
+        who.require("requester")
+        return who
+
+    async def reviewer_mutation(who: Annotated[Identity, Depends(enabled_identity)]) -> Identity:
+        """A decision by a current reviewer: the role check precedes the key and the record (ruling 21), so a member
+        who lost the role cannot replay a recorded decision; independence stays the unit's check (it needs the row)."""
+        who.require("reviewer")
+        return who
+
+    async def idempotency_key(request: Request) -> str:
+        """BS:264: every /api/v1 mutation carries a key, checked after identity and, where the route has one, the role,
+        and before the body."""
+        try:
+            return validate_key(request.headers.get(HEADER), bounds)
+        except KeyInvalid as exc:
+            raise ApiError(422, ErrorCode.INVALID_INPUT, KEY_REFUSAL) from exc
+
+    def scoped(
+        request: Request, who: Identity, route: str, key: str, path: dict[str, str], parsed: BaseModel | None
+    ) -> Idem:
+        """The unit's scope and fingerprint: the person (bearer or cookie, ruling 2), the route, the key, and what
+        the request says once validated (ruling 3)."""
+        return Idem(
+            Scope(who.tenant_id, who.subject, route, key),
+            fingerprint(path, None if parsed is None else parsed.model_dump(mode="json")),
+            bounds.idempotency_ttl_seconds,
+            limits.request_id_of(request.scope),
+        )
+
+    async def recorded(request: Request, unit: Awaitable[Verdict]) -> Response:
+        """The verdict as the response. Two refusals are nobody's record (ruling 5): a key reused for another request
+        (409) and a full tenant queue (429 with Retry-After: transient, so the same key succeeds once it drains, which
+        is why it is the one client-side refusal marked retryable, ruling 19)."""
+        try:
+            return response(await unit)
+        except IdempotencyConflict as exc:
+            raise ApiError(409, ErrorCode.IDEMPOTENCY_CONFLICT, exc.message) from exc
+        except QueueFull:
+            return limits.safe_response(
+                limits.request_id_of(request.scope),
+                429,
+                ErrorCode.RATE_LIMITED,
+                "tenant queue is full",
+                retryable=True,
+                headers={"Retry-After": "5"},
+            )
+
     @app.exception_handler(ApiError)
     async def _api_error(request: Request, exc: ApiError) -> Response:
-        response = safe(exc.status, exc.code, exc.message)
+        # Every 503 an ApiError carries is an identity-provider outage (admin API, token endpoint, signing keys), the
+        # one kind of refusal a client should retry (ruling 19).
+        response = safe(request, exc.status, exc.code, exc.message, retryable=exc.status == 503)
         if exc.clear_session or exc.clear_login:  # the auth deps exist whenever a route that sets these flags runs
             cookies: au.CookiePolicy = request.app.state.auth.cookies
             if exc.clear_session:
@@ -220,28 +319,45 @@ def create_app(
                 cookies.clear_login(response)
         return response
 
-    @app.exception_handler(persistence.AuthorityViolation)
-    async def _authority(_: Request, exc: persistence.AuthorityViolation) -> Response:
-        log.error("deployment error: %s", exc)  # the API is connected as a role a function does not accept
-        return safe(503, ErrorCode.UNAVAILABLE, "service misconfigured")
-
     @app.exception_handler(st.Internal)
     @app.exception_handler(persistence.PersistenceError)
     @app.exception_handler(IllegalTransition)
     @app.exception_handler(EventRuleViolation)
-    async def _server_defect(_: Request, exc: Exception) -> Response:
-        # Messages carry no handle or secret. FastAPI picks the most specific class, so AuthorityViolation keeps
-        # its own handler.
-        log.error("service error: %r", exc)
-        return safe(503, ErrorCode.UNAVAILABLE, "service error")
-
     @app.exception_handler(psycopg.Error)
-    async def _database(_: Request, __: psycopg.Error) -> Response:
-        return safe(503, ErrorCode.UNAVAILABLE, "database unavailable")
+    async def _server_defect(request: Request, exc: Exception) -> Response:
+        # A defect, a refused deployment (AuthorityViolation is a PersistenceError), an untranslated SQLSTATE (a 23505)
+        # or a statement too big for the server: a retry meets the same defect, so not retryable (ruling 19).
+        failed(request, exc)
+        return safe(request, 503, ErrorCode.UNAVAILABLE, "service error")
+
+    @app.exception_handler(psycopg.OperationalError)
+    @app.exception_handler(psycopg.InterfaceError)
+    async def _database_down(request: Request, exc: psycopg.Error) -> Response:
+        # A lost connection or a transient server condition: nothing committed, so a retry may succeed (BS:564). The
+        # limit classes (54xxx, 53400) are siblings of the transient ones under OperationalError, not a hierarchy, so
+        # the SQLSTATE is the only reliable key: BS:562 says never retry what is not transient.
+        code = getattr(exc, "sqlstate", None) or ""
+        failed(request, exc)
+        if code[:2] == "54" or code == "53400":
+            return safe(request, 503, ErrorCode.UNAVAILABLE, "service error")
+        return safe(request, 503, ErrorCode.UNAVAILABLE, "database unavailable", retryable=True)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http(request: Request, exc: StarletteHTTPException) -> Response:
+        # The router's own refusals (unknown path, wrong method) answer FastAPI's `{"detail": ...}` otherwise.
+        if exc.status_code == 404:
+            return safe(request, 404, ErrorCode.NOT_FOUND, "no such route")
+        if exc.status_code == 405:
+            response = safe(request, 405, ErrorCode.INVALID_INPUT, "method not allowed")
+            allow = (exc.headers or {}).get("Allow")
+            if allow is not None:
+                response.headers["Allow"] = allow  # RFC 9110 §15.5.6: a 405 names the methods that would work
+            return response
+        return safe(request, 422, ErrorCode.INVALID_INPUT, "request refused")
 
     @app.exception_handler(RequestValidationError)
-    async def _validation(_: Request, __: RequestValidationError) -> Response:
-        return safe(422, ErrorCode.INVALID_INPUT, "request is not valid")
+    async def _validation(request: Request, __: RequestValidationError) -> Response:
+        return safe(request, 422, ErrorCode.INVALID_INPUT, "request is not valid")
 
     async def body(request: Request, model: type[Any]) -> Any:
         try:
@@ -260,7 +376,7 @@ def create_app(
             try:
                 await store.session.ping()
             except (psycopg.Error, OSError):  # readiness reports a database failure as not ready
-                return safe(503, ErrorCode.UNAVAILABLE, "database not reachable")
+                return safe(request, 503, ErrorCode.UNAVAILABLE, "database not reachable", retryable=True)
         return JSONResponse({"status": "ready"})
 
     @app.get("/")
@@ -394,10 +510,10 @@ def create_app(
         try:
             claims = await deps.logout_tokens.verify(token)
         except SigningKeysUnavailable as exc:
-            log.warning("back-channel logout not applied: signing keys unavailable")
+            log.warning("request %s: back-channel logout failed: no signing keys", limits.request_id_of(request.scope))
             raise ApiError(503, ErrorCode.UNAVAILABLE, "identity provider unavailable") from exc
         except TokenRejected as exc:
-            log.info("back-channel logout token rejected: %s", exc)
+            log.info("request %s: back-channel logout token rejected: %s", limits.request_id_of(request.scope), exc)
             raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token rejected") from exc
         keep_until = datetime.fromtimestamp(claims.expires_at, UTC) + timedelta(days=1)
         try:
@@ -405,11 +521,13 @@ def create_app(
         except psycopg.Error as exc:
             # Keycloak never retries, so this line is the operator's only trace of a logout that did not take effect
             # (final review M4); the class name only, never the token. The 503 handler answers.
-            log.warning("back-channel logout not applied: %s", exc.__class__.__name__)
+            log.warning(
+                "request %s: back-channel logout failed: %s", limits.request_id_of(request.scope), type(exc).__name__
+            )
             raise
         if revoked is None:
             raise ApiError(400, ErrorCode.INVALID_INPUT, "logout token replayed")
-        log.info("back-channel logout revoked %d session(s)", revoked)
+        log.info("request %s: back-channel logout revoked %d session(s)", limits.request_id_of(request.scope), revoked)
         return no_store(Response(status_code=200))
 
     @app.get("/api/v1/me")
@@ -422,51 +540,65 @@ def create_app(
             "auth": who.auth,
         }
 
-    @app.post("/api/v1/conversations", status_code=201)
+    @app.post("/api/v1/conversations")
     async def create_conversation(
-        request: Request, who: Annotated[Identity, Depends(browser_mutation)]
-    ) -> dict[str, str]:
-        cid = await request.app.state.store.create_conversation(who.tenant_id, who.subject)
-        return {"conversation_id": str(cid)}
+        request: Request,
+        who: Annotated[Identity, Depends(browser_mutation)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> Response:
+        """BS:270: 201 `{conversation_id}`; no body, so the fingerprint is an empty path and a null body (ruling 22)."""
+        store: st.Store = request.app.state.store
+        idem = scoped(request, who, ROUTE_CONVERSATIONS, key, {}, None)
+        return await recorded(
+            request, store.open_conversation(idem=idem, tenant_id=who.tenant_id, created_by=who.subject)
+        )
 
-    @app.post("/api/v1/conversations/{conversation_id}/messages", status_code=202)
+    @app.post("/api/v1/conversations/{conversation_id}/messages")
     async def post_message(
-        conversation_id: UUID, request: Request, who: Annotated[Identity, Depends(browser_mutation)]
-    ) -> dict[str, Any]:
-        who.require("requester")
+        conversation_id: UUID,
+        request: Request,
+        who: Annotated[Identity, Depends(requester_mutation)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> Response:
+        """BS:271 through the AM-16 router: 202 for a run, 200 for a clarification or a status answer, 409 for a busy
+        conversation, 422 for an unroutable kind, 429 for a full tenant queue (ruling 21's order)."""
         message: MessageRequest = await body(request, MessageRequest)
-        # T08 routes only `investigate` with a resolvable asset and interval; the admission router (T12) adds the rest.
-        if (
-            message.kind is not MessageKind.INVESTIGATE
-            or message.context is None
-            or (message.context.asset_id is None or message.context.hours is None)
-        ):
-            raise ApiError(
-                422, ErrorCode.INVALID_INPUT, "only an investigate request with asset_id and hours is routed"
-            )
-        start_at, end_at = st.resolve_interval(message.context.hours, datetime.now(UTC))
-        try:
-            accepted = await request.app.state.store.admit(
+        store: st.Store = request.app.state.store
+        idem = scoped(request, who, ROUTE_MESSAGES, key, {"conversation_id": str(conversation_id)}, message)
+        return await recorded(
+            request,
+            store.admit_message(
+                idem=idem,
                 tenant_id=who.tenant_id,
                 conversation_id=conversation_id,
                 requester=who.subject,
                 request=message,
-                start_at=start_at,
-                end_at=end_at,
+                quota=bounds.tenant_queue_quota,
+            ),
+        )
+
+    @app.post("/api/v1/runs/{run_id}/clarifications")
+    async def post_clarification(
+        run_id: UUID,
+        request: Request,
+        who: Annotated[Identity, Depends(requester_mutation)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> Response:
+        """BS:273, the clarification_reply route: bound to the run's outstanding question and expected version."""
+        reply: ClarificationReply = await body(request, ClarificationReply)
+        store: st.Store = request.app.state.store
+        idem = scoped(request, who, ROUTE_CLARIFICATIONS, key, {"run_id": str(run_id)}, reply)
+        try:
+            return await recorded(
+                request,
+                store.reply_clarification(
+                    idem=idem, tenant_id=who.tenant_id, run_id=run_id, requester=who.subject, reply=reply
+                ),
             )
-        except st.NotFound as exc:
-            raise ApiError(404, ErrorCode.NOT_FOUND, "no such conversation or superseded run") from exc
-        except st.Conflict as exc:
-            raise ApiError(409, ErrorCode(exc.code), "the conversation already has an active run") from exc
-        return {
-            "conversation_id": str(accepted.conversation_id),
-            "message_id": str(accepted.message_id),
-            "run_id": str(accepted.run_id),
-            "status": accepted.status,
-            "state_version": accepted.state_version,
-            "status_url": f"/api/v1/runs/{accepted.run_id}",
-            "events_url": f"/api/v1/runs/{accepted.run_id}/events",
-        }
+        except st.Forbidden as exc:
+            # Another requester of the tenant, who may read the run (BS:301: a known resource, a disallowed
+            # operation); like every 403 it is decided before the work and never recorded (ruling 5).
+            raise ApiError(403, ErrorCode.FORBIDDEN, "only the run's requester may answer its question") from exc
 
     @app.get("/api/v1/runs/{run_id}")
     async def get_run(run_id: UUID, request: Request, who: Annotated[Identity, Depends(identity)]) -> dict[str, Any]:
@@ -504,36 +636,30 @@ def create_app(
 
     @app.post("/api/v1/proposals/{proposal_id}/decisions")
     async def post_decision(
-        proposal_id: UUID, request: Request, who: Annotated[Identity, Depends(enabled_identity)]
-    ) -> dict[str, Any]:
+        proposal_id: UUID,
+        request: Request,
+        who: Annotated[Identity, Depends(reviewer_mutation)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> Response:
+        """BS:466: the first decision wins and a replay of the same key returns its recorded result; the enabled check
+        and the reviewer role run first (ruling 21)."""
         decision: DecisionRequest = await body(request, DecisionRequest)
         store: st.Store = request.app.state.store
-        row = await store.proposal(who.tenant_id, proposal_id)
-        if row is None:
-            raise ApiError(404, ErrorCode.NOT_FOUND, "no such proposal")
+        idem = scoped(request, who, ROUTE_DECISIONS, key, {"proposal_id": str(proposal_id)}, decision)
         try:
-            st.check_reviewer(
-                st.Membership(who.tenant_id, who.roles),
-                requester=row["requester"],
-                authored_by=list(row["authored_by"]),
-                reviewer=who.subject,
-            )
-            decided = await store.decide(
-                tenant_id=who.tenant_id, proposal_id=proposal_id, reviewer=who.subject, request=decision
+            return await recorded(
+                request,
+                store.decide_once(
+                    idem=idem,
+                    tenant_id=who.tenant_id,
+                    proposal_id=proposal_id,
+                    reviewer=who.subject,
+                    roles=who.roles,
+                    request=decision,
+                ),
             )
         except st.Forbidden as exc:
             raise ApiError(403, ErrorCode.FORBIDDEN, "an independent current reviewer is required") from exc
-        except st.NotFound as exc:
-            raise ApiError(404, ErrorCode.NOT_FOUND, "no such proposal") from exc
-        except st.Conflict as exc:
-            raise ApiError(409, ErrorCode(exc.code), "the proposal is not the active, undecided revision") from exc
-        return {
-            "proposal_id": str(decided.proposal_id),
-            "run_id": str(decided.run_id),
-            "decision": decided.decision,
-            "status": decided.status,
-            "state_version": decided.state_version,
-        }
 
     @app.get("/api/v1/runs/{run_id}/events")
     async def get_events(
@@ -548,6 +674,22 @@ def create_app(
             raise ApiError(404, ErrorCode.NOT_FOUND, "no such run")
         rows = await store.events(who.tenant_id, run_id, after=after, limit=limit)
         return {"events": [{**r, "occurred_at": stamp(r["occurred_at"])} if "occurred_at" in r else r for r in rows]}
+
+    if faults is not None:
+        armable = faults  # a local the closure can rely on: `faults` is narrowed to non-None only here
+
+        @app.post("/internal/faults/{kind}")
+        async def arm_fault(
+            kind: FaultKind, request: Request, _: Annotated[Identity, Depends(browser_mutation)]
+        ) -> dict[str, dict[str, int]]:
+            """Arm a fault for the next `count` admissions (R015's crash before commit, ruling 24); the route exists
+            only under PROFILE=test, like incident-sim's, and is exempt from the key only: a cookie caller still passes
+            the CSRF and origin check of every browser mutation (BS:264, erratum 35)."""
+            if kind is not FaultKind.DROP_BEFORE_COMMIT:
+                raise ApiError(422, ErrorCode.INVALID_INPUT, "the API implements drop_before_commit only")
+            armed: FaultRequest = await body(request, FaultRequest)
+            armable.arm(kind, armed.count)
+            return {"armed": armable.armed()}
 
     return app
 
@@ -601,4 +743,4 @@ def production_app() -> FastAPI:
                 await close()
             raise
 
-    return create_app(verifier, make_store, make_auth)
+    return create_app(verifier, make_store, make_auth, admission=settings.admission(), profile=settings.profile())

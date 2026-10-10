@@ -186,7 +186,7 @@ async def _main() -> None:
         probe = await persistence.connect(settings.app_postgres(Role.SWEEPER))
         opened.append(probe)
         await persistence.assert_clock_profile(probe, settings.profile())
-        await persistence.assert_relation(probe, "app.logout_jti")  # revision 0005 (the purge touches all 3 tables)
+        await persistence.assert_relation(probe, "app.idempotency_request")  # revision 0006: the newest purged table
     except BaseException:  # close what was built before the tasks exist (a refused start must not leak sockets)
         await admin.aclose()
         for opened_conn in opened:
