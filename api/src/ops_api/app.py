@@ -129,7 +129,8 @@ def create_app(
         try:
             if isinstance(app.state.store, st.DbStore):
                 await persistence.assert_clock_profile(app.state.store.session.conn, settings.profile())
-                await persistence.assert_relation(app.state.store.session.conn, "app.login_state")  # revision 0005
+                # Revision 0006: admission writes the record table and the message columns it adds.
+                await persistence.assert_relation(app.state.store.session.conn, "app.idempotency_request")
             if not verifier.ready:
                 await verifier.load_keys()
             deps = auth_factory()
