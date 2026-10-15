@@ -297,6 +297,63 @@ a fix that widens what the system reads must be paired with a check on what the 
 and a rule written for one input class (windows) has to be re-applied to its siblings (assets) or the two
 will disagree in exactly the case the spec forbids guessing.
 
-## 25. What the process taught
+## 25. The leases plan put the fence in front of every write, and the heartbeat beside the loop
+
+**Problem.** Plan H adds the run lease (T13): one owner per run, a fence that moves on every takeover, a heartbeat that
+renews the lease from its own thread, a local deadline after which the worker starts nothing, a model permit, the
+sweeper's hand-back of a dead owner's jobs, one published lock order, and the remaining BS:405 faults. As for Plan G,
+a fact sheet with 31 open questions came first and the controller answered them in a brief of 31 rulings that a
+fresh author expanded into the plan. The author refined nine rulings against the code and flagged each: the lease row
+is locked before it is inserted, because an `INSERT … ON CONFLICT` waits for an in-progress update of the row and a
+NOWAIT claim must not wait; the fenced check is a MATERIALIZED CTE so the expiry is compared after the lock, not
+before a lock wait; and the re-fence after `mark_unknown` needed a "pending" flag so the heartbeat would not mistake
+the owner's own fence bump for a takeover.
+
+**Round 1 (static critic: 1 Blocking, 5 Important, 8 Minor; builder: every task executed, four workarounds, the live
+half blocked).** The blocking finding was the cancellation itself. The brief had the heartbeat cancel the whole job
+task when the lease was lost; psycopg's `transaction()` sends BEGIN before its first await, so a cancellation landing
+there finishes the BEGIN, raises, and never reaches the rollback: the loop connection stays inside a transaction for
+good, every later unit becomes a savepoint that only ever releases, and the worker holds its job and lease rows while
+looking healthy. The design changed: only effects (the MCP call, the model call, the permit's back-off sleep) run as
+cancellable child tasks registered on the lease, a database unit is never interrupted, and the hand-back first checks
+that the connection is idle and closes it if not. The other findings were smaller and concrete: three lint and type
+rules the gates would have failed on, a waiting acquisition that reported a 10 s lock wait as "busy" so the stress test
+could not see it, a stress mix that never committed a re-fence and dropped the brief's "never two owners" check, and a
+settings check that let a 10 s lease with a 4 s heartbeat through although the 5 s deadline margin made one slow
+renewal fatal. The builder could not run the live half: copying `.env` into the dry-run worktree was refused by the
+permission classifier, and that was left for the owner rather than worked around.
+
+**Round 2 (static critic: 0 Blocking, 3 Important, 6 Minor; builder: every dev gate equal to the plan).** Round 1's
+fix for the stuck transaction held, but three of its other repairs were wrong: a blocked-loop bound that ignored the
+thread's one-second sampling would have failed half the time, a narrowed NOWAIT mapping let a claim racing a first
+insert escape as an error, and the "never two owners" monitor compared fences the database hands out only once, so it
+could not fail. The bound became the sampling window, both lock statements now share one helper, and the monitor
+compares each worker's own belief that it holds the lease with the row the database holds.
+
+**Round 3 (static critic: approve with small fixes, 1 Important).** The end-to-end pass found what three rounds had
+missed: a handed-back investigate job whose run was already RETRIEVING or DRAFTING closed without work and left the
+run holding its conversation slot for good, so the job's next owner now fails such a run as interrupted, and resuming
+it is T20's.
+
+**Execution (eight tasks, each reviewed once, no fix round).** Every task passed its review with minor findings only,
+so no fix wave was needed. The live half, which the dry runs could never run because the permission policy refused
+copying `.env` into a scratch worktree, passed on its first run in every task: the blocked-loop, slow-drafter and
+forced-renewal heartbeat tests gave the same result on four runs, the stress test was green on three runs, and the
+interleaving module on three. Execution made three rulings the plan had not.
+
+**Problem.** The plan capped a handle's expiry at the lease's end when it was minted; that froze the lease end, so a
+long write under a lease the heartbeat had renewed would have been refused. **Change.** The expiry is mint time plus
+60 s and the bound by the current lease is enforced at use, where the handle function compares fences and requires a
+live lease (erratum 58).
+
+**Problem.** AM-15 says authorization failures return a plain error without an `action_id`, but after SENT the only
+honest answers are a recorded outcome or UNKNOWN. **Change.** A stale-fence refusal after SENT is answered UNKNOWN
+with the `action_id` (erratum 59).
+
+**Problem.** The planned stress mix never moved a lease between holders, so takeovers went unexercised. **Change.** A
+"drop" step, in which a holder stops renewing after about two seconds as a hung worker would, was added and the test
+asserts more than three acquisitions.
+
+## 26. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.

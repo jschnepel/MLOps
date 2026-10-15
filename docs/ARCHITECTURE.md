@@ -194,6 +194,31 @@ All three demos cross the MCP boundary.
 
 ---
 
+## 5. Leases, fences and the lock order (built in T13)
+
+**Claim.** At most one worker writes for a run at a time, and a worker that has lost the run cannot write anything,
+even if it does not know yet.
+
+- **One lease per run, fenced.** The claim and the lease commit together; every write unit locks the lease row first
+  and checks owner, fence and expiry on the database clock; MCP handles carry the fence, are refused once it moves or
+  the lease lapses, and are checked at use rather than at mint; the definer functions behind both MCP servers check
+  it in one helper (`_resolve_handle`).
+- **A heartbeat that cannot be starved and cannot keep a corpse alive.** It runs on its own thread and connection,
+  renews only while the event loop shows signs of life and the job is within its compute budget, and when renewal
+  fails cancels the job's MCP or model call in flight (never a database unit).
+- **One lock order.** `core/src/ops_core/locking.py` lists it; a unit test places every table and every transaction
+  in it, and a live stress test hammers it.
+
+| Requirement | What its test shows |
+|---|---|
+| R019 | A killed owner's job is reclaimed after expiry and taken at fence + 1 |
+| R020 | A stale fence's unit, mint, release and handle all refuse after a takeover |
+| R087 | A resume job waits behind the original job's lease, then writes alone |
+| R088 | A 25 s blocked loop and a 35 s drafter keep the lease; a forced renewal failure cancels and revokes |
+| R107 | Interleavings and an 8-connection stress test: no deadlock, no stale write, expiry after the lock |
+
+---
+
 ## Where the code will live (not yet written)
 
 | Directory | What to look at first |

@@ -161,3 +161,27 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   number; two asset ids in the text ask even when the form names one of them; the `create_run` refusal mapping
   is explicit; the reply unit bounds its row lock with `lock_timeout = 2s`; the quota count runs only for run
   verdicts. Record: `docs/reviews/plan-g-final-review-2026-10-10.md`.
+
+
+## Update — Plan H executed (2026-10-15, branch `plan-h`)
+
+- Plan H (T13: the run lease, fence locking, the heartbeat thread and the fault factory) executed on branch `plan-h`
+  (`c5eeb89..6c9e8f8`, on top of `plan-g`). The plan is
+  `docs/superpowers/plans/2026-10-15-first-slice-h-leases-fences-heartbeat.md`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `930 passed, 133
+  skipped`. `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1042
+  passed, 21 skipped` (four `slow_live` tests add about 2.5 minutes). `uv run python -I scripts/verify_handoff.py
+  --reference-code --manifest --contracts` exits 0.
+- **Evidenced** (acceptance matrix `RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R019, R020, R087, R088
+  and R107; R098 extended (unit-level, every service under `PROFILE=test` in the live suite). A stale worker's
+  write, mint, release and handle all refuse after a takeover; a takeover waits for an open fenced unit; expiry is
+  compared on the database clock after the lock; a resume job waits behind the original job's lease and then writes
+  alone; a 25 s blocked loop and a 35 s drafter keep the lease while a forced renewal failure cancels the call and
+  revokes the handle; eight workers and the sweeper hammering three runs for 20 s never deadlock and never write
+  under an older fence after a newer one; a killed owner's job is reclaimed after expiry and taken at the next fence
+  (`reports/leases/`).
+- The dev `ops` database needs revisions 0006 and 0007 (an owner input); the API, the sweeper, the worker and
+  mcp-write refuse to start until then.
+- Deferred, each with its owner in `SESSION_STATE.md`: the permit's idle release rule -> T19; compute accounting and
+  per-requester leases -> T29; bounded retries, the AM-13 timeout path and recover jobs -> T22; wake-ups -> T14; the
+  asset guard -> T21; checkpoints -> T20/T38; pools and reconnects -> T30. Fifteen errata (45-59) are proposed.

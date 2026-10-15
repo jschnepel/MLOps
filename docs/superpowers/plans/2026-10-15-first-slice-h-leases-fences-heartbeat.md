@@ -484,7 +484,7 @@ BS:550 global bound's setting; brief rulings 13, 14, 20.
   (frozensets of table names), `OBSERVED_UNITS`, `OWN_UNITS` (`dict[str, tuple[str, ...]]`),
   `table_of(entry: str) -> str | None`, `rank(entry: str) -> int`, `follows_order(entries: Sequence[str]) -> bool`.
 
-- [ ] **Step 1a: Record both baselines**
+- [x] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN` with pytest `816 passed, 104 skipped`; with the
 dev stack up and `uv run python scripts/skeleton.py status` showing every process down, run
@@ -492,13 +492,13 @@ dev stack up and `uv run python scripts/skeleton.py status` showing every proces
 `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission`. Record both lines in the report
 (Global Constraints, "Counts"). A gate that is not GREEN stops the plan here, before anything is committed.
 
-- [ ] **Step 1b: Record the base**
+- [x] **Step 1b: Record the base**
 
 Run `git rev-parse --short HEAD` and write the hash it prints as `BASE=<hash>` in the report and in the SDD ledger
 (`.superpowers/sdd/2026-10-15-first-slice-h-leases-fences-heartbeat/progress.md`). Task 8's commit span is
 `<base>..<last>`, so a commit that revises this plan before execution never falls inside the executed range.
 
-- [ ] **Step 1c: Commit the debt list (before any code)**
+- [x] **Step 1c: Commit the debt list (before any code)**
 
 Append the debt-list block from "Declared debt and errata" to `SESSION_STATE.md` as the section
 `## Plan H debt list (T13; committed before coding) [R6-B7]`, immediately after the `## Plan G debt list …` section
@@ -509,7 +509,7 @@ git add SESSION_STATE.md
 git commit -m "docs: declare Plan H's shortcuts before coding (T13 debt list)"
 ```
 
-- [ ] **Step 2: Put `tests/plan_h` on the test path and register the slow marker**
+- [x] **Step 2: Put `tests/plan_h` on the test path and register the slow marker**
 
 In `pyproject.toml` replace
 
@@ -548,7 +548,7 @@ markers = [
 
 Create `tests/plan_h/__init__.py` as an empty file.
 
-- [ ] **Step 3: Write the failing settings test**
+- [x] **Step 3: Write the failing settings test**
 
 Create `tests/plan_h/test_settings_leases.py`:
 
@@ -689,7 +689,7 @@ def test_the_slow_live_marker_is_registered_and_the_live_gate_runs_every_test() 
 Run: `uv run python -m pytest tests/plan_h/test_settings_leases.py -q`
 Expected: `1 error in` (`ImportError: cannot import name 'LeaseSettings' from 'ops_core.settings'`).
 
-- [ ] **Step 4: Add the lease settings and the global queue limit**
+- [x] **Step 4: Add the lease settings and the global queue limit**
 
 In `core/src/ops_core/settings.py`:
 
@@ -797,7 +797,7 @@ Run: `uv run python -m pytest tests/plan_h/test_settings_leases.py tests/plan_g/
 Expected: `16 passed` (11 new; Plan G's 5 unchanged: its default comparison now includes the new field's default on
 both sides).
 
-- [ ] **Step 5: Write the failing lock-order test**
+- [x] **Step 5: Write the failing lock-order test**
 
 Create `tests/plan_h/test_locking.py`:
 
@@ -859,7 +859,7 @@ def test_not_yet_created_tables_are_absent_from_the_matrix() -> None:
 Run: `uv run python -m pytest tests/plan_h/test_locking.py -q`
 Expected: `1 error in` (`ImportError: cannot import name 'locking' from 'ops_core'`).
 
-- [ ] **Step 6: Publish the order**
+- [x] **Step 6: Publish the order**
 
 Create `core/src/ops_core/locking.py`:
 
@@ -977,7 +977,7 @@ def follows_order(entries: Sequence[str]) -> bool:
 Run: `uv run python -m pytest tests/plan_h/test_locking.py -q`
 Expected: `30 passed`.
 
-- [ ] **Step 7: Gates and commit**
+- [x] **Step 7: Gates and commit**
 
 Format, lint and count characters on `core/src/ops_core/settings.py`, `core/src/ops_core/locking.py`,
 `tests/plan_h/test_settings_leases.py`, `tests/plan_h/test_locking.py`.
@@ -1021,7 +1021,7 @@ global bound's definer; brief rulings 1, 12, 13, 15, 21 (`PURGE_ORDER`), 27, 30,
   `QUEUED_RUNS_TOTAL`, `FUNCTIONS`, `REPLACED`, `CREATED`, `RESTORED`, `DOWNGRADE` (Task 4 extends the last four and
   `FUNCTIONS`); `tc_0001_test_clock.TEST_ONLY_ROLES_TC`, `GRANTEES_TC`.
 
-- [ ] **Step 1: Write the failing revision tests**
+- [x] **Step 1: Write the failing revision tests**
 
 Create `tests/plan_h/test_migration_0007.py`:
 
@@ -1159,7 +1159,7 @@ Run: `uv run python -m pytest tests/plan_h/test_migration_0007.py tests/plan_e/t
 Expected: `1 error in` (collection stops at the module-level `assert` on `REVISIONS` in the transitions module: the
 file `0007_leases_fences.py` does not exist yet).
 
-- [ ] **Step 2: Write the revision**
+- [x] **Step 2: Write the revision**
 
 Create `migrations/app/versions/0007_leases_fences.py`:
 
@@ -1312,7 +1312,7 @@ newest-revision walk meets `run_lease` first); `test_upgrade_creates_the_permit_
 known definer function or helper'` (`function_grant_statements` refuses a name the matrix lacks); and
 `test_the_testclock_branch_renders_from_frozen_tuples` with `AttributeError` (`TEST_ONLY_ROLES_TC`).
 
-- [ ] **Step 3: The matrix rows**
+- [x] **Step 3: The matrix rows**
 
 In `core/src/ops_core/privileges.py`:
 
@@ -1412,7 +1412,7 @@ with:
 NOT_YET_CREATED: Final = frozenset({"operator_resolutions", "outbox"})
 ```
 
-- [ ] **Step 4: Freeze the testclock branch's grantee tuples**
+- [x] **Step 4: Freeze the testclock branch's grantee tuples**
 
 In `migrations/app/versions/tc_0001_test_clock.py`:
 
@@ -1489,7 +1489,7 @@ uv run python -m pytest tests/plan_h/test_migration_0007.py tests/plan_e/test_tr
 Expected: `53 passed` (the new module's 5, the transitions module's 12 with one more parametrised revision, Plan E's
 privileges 6, the lock-order 30).
 
-- [ ] **Step 5: Keep the live fixtures and the r009 test in step with the revision**
+- [x] **Step 5: Keep the live fixtures and the r009 test in step with the revision**
 
 In `tests/e2e/conftest.py`:
 
@@ -1524,7 +1524,7 @@ with:
                 " VALUES (gen_random_uuid(), 'investigate', %s, %s, %s)",  # a valid type: only the key may refuse it
 ```
 
-- [ ] **Step 6: The live revision test**
+- [x] **Step 6: The live revision test**
 
 Create `tests/e2e/test_migration_0007_live.py`:
 
@@ -1689,7 +1689,7 @@ OPS_LIVE=1 PROFILE=test PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migr
 Expected: `22 passed` (the new 5; the roles module's 7, R124 now with the permit row and the fence cell; the
 persistence module's 7, R006 now through 0007's downgrade; the 0006 module's 3, whose downgrade passes through 0007).
 
-- [ ] **Step 7: Gates and commit**
+- [x] **Step 7: Gates and commit**
 
 Format, lint and count characters on every file of this task (the revision after the ISC004 pass).
 
@@ -1762,7 +1762,7 @@ writes lock the lease row; expiry on the database clock after the lock), DoD 1; 
   `expire_lease(conn, run_id)`, `backend_pid(conn) -> int`, `wait_until_blocked(conn, pid, *, timeout=5.0) ->
   list[int]`.
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Create `tests/plan_h/test_lease.py`:
 
@@ -2398,7 +2398,7 @@ Run: `uv run python -m pytest tests/plan_h/test_lease.py tests/plan_h/test_worke
 Expected: `3 errors in` (`ModuleNotFoundError: No module named 'ops_core.lease'` while collecting each of the three
 modules).
 
-- [ ] **Step 2: The lease module**
+- [x] **Step 2: The lease module**
 
 Create `core/src/ops_core/lease.py`:
 
@@ -2614,7 +2614,7 @@ class Lease:
             return self._refencing or self._fence != used
 ```
 
-- [ ] **Step 3: The lease helpers in `persistence`**
+- [x] **Step 3: The lease helpers in `persistence`**
 
 In `core/src/ops_core/persistence.py`:
 
@@ -3022,7 +3022,7 @@ async def mint_handle(
     return handle
 ```
 
-- [ ] **Step 4: The worker under its lease**
+- [x] **Step 4: The worker under its lease**
 
 Replace the whole of `worker/src/ops_worker/handlers.py` with:
 
@@ -3492,7 +3492,7 @@ Run: `uv run python -m pytest tests/plan_h/test_lease.py tests/plan_h/test_worke
 Expected: `45 passed` (`test_lease.py` 12, `test_worker_units.py` 8, Plan F's 3, the rotation module's 17, Plan D's
 worker module 5). Format and lint `worker/src`, `core/src` and the test files.
 
-- [ ] **Step 5: The live helpers and the evidence root**
+- [x] **Step 5: The live helpers and the evidence root**
 
 In `tests/e2e/conftest.py`:
 
@@ -3636,7 +3636,7 @@ EVIDENCE_ROOTS = (
 )
 ```
 
-- [ ] **Step 6: The existing live callers take a lease before they mint or handle**
+- [x] **Step 6: The existing live callers take a lease before they mint or handle**
 
 `mint_handle` now needs a live lease at the fence it is given, and a handler needs the lease its claim took. Each
 existing caller takes one through `lease_for`.
@@ -3920,7 +3920,7 @@ OPS_LIVE=1 PROFILE=test PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_work
 Expected: `18 passed` (worker 4, persistence 7, mcp-read 1, mcp-write 6: three tests plus one parametrised three
 ways).
 
-- [ ] **Step 7: The live interleaving tests**
+- [x] **Step 7: The live interleaving tests**
 
 Create `tests/e2e/test_leases_live.py`:
 
@@ -4307,7 +4307,7 @@ OPS_LIVE=1 PROFILE=test PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_leas
 Expected: `10 passed` (about 15 s: three tests wait 2.5 s on purpose); `reports/leases/t13-leases.txt` holds the header
 and ten lines.
 
-- [ ] **Step 8: Gates and commit**
+- [x] **Step 8: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
@@ -4365,7 +4365,7 @@ lease), R107 (the definers lock the lease row first), R006 (exact downgrade); br
   `REV0003`, `REV0004`, `REV0005` (the applied modules), `RESOLVE_HANDLE`, `GRANT_EXECUTION`, `MARK_SENT`,
   `RECORD_OUTCOME`, `MARK_UNKNOWN`, `REVOKE_HANDLES`.
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 In `tests/plan_h/test_migration_0007.py` (as Task 2 wrote it), append after two blank lines:
 
@@ -4634,7 +4634,7 @@ new ones; the deferral test and the abandon test pass);
 both write-path tests fail with `TypeError`, because `execution.py` still passes the action id positionally to the
 keyword-only fakes.
 
-- [ ] **Step 2: The fenced bodies in revision 0007**
+- [x] **Step 2: The fenced bodies in revision 0007**
 
 In `migrations/app/versions/0007_leases_fences.py` (as Task 2 wrote it):
 
@@ -5081,7 +5081,7 @@ with:
     "record_outcome": ("text, uuid, text, jsonb", ("mcp_exec",)),  # likewise
 ```
 
-- [ ] **Step 3: The Python callers**
+- [x] **Step 3: The Python callers**
 
 In `core/src/ops_core/persistence.py` (as Task 3 left it):
 
@@ -5276,7 +5276,7 @@ Run: `uv run python -m pytest tests/plan_h tests/plan_e/test_transitions_table.p
 Expected: `94 passed` (Plan H's 73: settings 11, lock order 30, revision 8, lease 12, worker units 10, write path 2;
 the transitions module 12, Plan E's privileges 6, Plan F's grant module 3).
 
-- [ ] **Step 4: The live callers**
+- [x] **Step 4: The live callers**
 
 In `tests/e2e/conftest.py`, append after `wait_until_blocked` (two blank lines before the block):
 
@@ -5691,7 +5691,7 @@ with:
     assert await exists(app_conn, "app.mark_sent(text, uuid)") and not await exists(app_conn, "app.mark_sent(uuid)")
 ```
 
-- [ ] **Step 5: The live fence tests**
+- [x] **Step 5: The live fence tests**
 
 Create `tests/e2e/test_fenced_definers_live.py`:
 
@@ -5916,7 +5916,7 @@ OPS_LIVE=1 PROFILE=test PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_fenc
 
 Expected: `49 passed` (5 new, write path 11, run path 8, worker 4, mcp-write 6, revision 0007 5, leases 10).
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
@@ -5970,7 +5970,7 @@ git commit -m "feat(definers): the lease fence in every handle function; mark_un
   run_id, ttl_seconds) -> int | None`, `persistence.release_model_permit(conn, *, slot, holder) -> None`;
   `handlers.Deps.heartbeat: Heartbeat | None = None`; `FakeDraftGenerator(delay_seconds: float = 0.0)`.
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Create `tests/plan_h/test_heartbeat.py`:
 
@@ -6530,7 +6530,7 @@ Expected: `10 failed, 3 passed`: every worker test that installs the fakes fails
 exist); the deferral test, the abandon test and the real-MCP test, which install none, pass (the last two already
 hold with Task 3's `Lease.effect`).
 
-- [ ] **Step 2: The renewal unit, the thread and the permit**
+- [x] **Step 2: The renewal unit, the thread and the permit**
 
 In `core/src/ops_core/lease.py` (as Task 3 wrote it):
 
@@ -7171,7 +7171,7 @@ Run: `uv run python -m pytest tests/plan_h tests/plan_d/test_worker.py tests/pla
 Expected: `100 passed` (Plan H's 92: settings 11, lock order 30, revision 8, lease 12, worker units 13, write path 2,
 heartbeat 10, permit 6; Plan D's worker module 5; Plan F's grant module 3).
 
-- [ ] **Step 3: The live DoD-3 tests**
+- [x] **Step 3: The live DoD-3 tests**
 
 Create `tests/e2e/test_heartbeat_live.py`:
 
@@ -7450,7 +7450,7 @@ OPS_LIVE=1 PROFILE=test PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_hear
 Expected: `18 passed` (4 new, worker 4, leases 10); `reports/leases/t13-heartbeat.txt` holds the header and four
 lines. While iterating, `-m "not slow_live"` leaves the three DoD tests out (`3 deselected`); the gate never does.
 
-- [ ] **Step 4: Gates and commit**
+- [x] **Step 4: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
@@ -7498,7 +7498,7 @@ DoD 2, BS:550's global bound; brief rulings 11, 13, 14, 21, 25.
   `AdmissionStore.admit_message(..., quota: int, queue_limit: int = 100)` (and the `Store` protocol's); `FakeUnit.
   queued_total()`.
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Create `tests/plan_h/test_reclaim.py`:
 
@@ -7690,7 +7690,7 @@ Run: `uv run python -m pytest tests/plan_h/test_global_queue.py -q`
 Expected: `3 failed`, each with `TypeError: AdmissionStore.admit_message() got an unexpected keyword argument
 'queue_limit'`.
 
-- [ ] **Step 2: The reclaim, the count and the bound**
+- [x] **Step 2: The reclaim, the count and the bound**
 
 Create `sweeper/src/ops_sweeper/leases.py`:
 
@@ -8030,7 +8030,7 @@ with:
 Run: `uv run python -m pytest tests/plan_h/test_reclaim.py tests/plan_h/test_global_queue.py tests/plan_g tests/plan_f/test_sweeper.py -q`
 Expected: `149 passed` (the new 2 and 3; Plan G's 135, Plan F's sweeper module 9).
 
-- [ ] **Step 3: The stress test and R019 end to end**
+- [x] **Step 3: The stress test and R019 end to end**
 
 Create `tests/e2e/test_lease_stress_live.py`:
 
@@ -8408,7 +8408,7 @@ OPS_LIVE=1 PROFILE=test PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_leas
 Expected: `14 passed` (3 new; the admission module's 7; the sweeper module's 4); `reports/leases/t13-stress.txt`
 holds the header and three lines.
 
-- [ ] **Step 4: Gates and commit**
+- [x] **Step 4: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
@@ -8454,7 +8454,7 @@ PROFILE=test), R015's after-commit side, BS:405's nine faults; brief ruling 22.
   count=1, *, seconds=None)`, `Faults.seconds(kind) -> int`; `ops_api.app.create_app(..., faults: Faults | None =
   None)`, `API_FAULTS`; `ops_api.store.DbStore(conn, *, faults=None)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_h/test_faults_t13.py`:
 
@@ -8664,7 +8664,7 @@ Expected: `10 failed, 2 passed`: the five incident-sim tests that arm a new kind
 tests pass: outside the test profile every fault route is 404 already); every API test fails with `TypeError:
 create_app() got an unexpected keyword argument 'faults'`.
 
-- [ ] **Step 2: The factory, the destination's hooks and the API's**
+- [x] **Step 2: The factory, the destination's hooks and the API's**
 
 Replace the whole of `core/src/ops_core/testing/faults.py` with:
 
@@ -9217,7 +9217,7 @@ Run: `uv run python -m pytest tests/plan_h tests/plan_g tests/plan_e/test_faults
 Expected: `425 passed` (Plan H's 113; Plan G's 135; Plan E's fault and incident-sim modules 3 and 6; Plan D's
 incident-sim and API modules 10 and 11; Plan F's 147).
 
-- [ ] **Step 3: Gates and commit**
+- [x] **Step 3: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
@@ -9265,7 +9265,7 @@ Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-
 task's own (`LAST=$(git rev-parse --short HEAD)`, run before this task commits). `<date>` is `date -u +%F` on the day
 of the close-out.
 
-- [ ] **Step 1: No `TODO(T13)` is left in live code**
+- [x] **Step 1: No `TODO(T13)` is left in live code**
 
 Run:
 
@@ -9281,7 +9281,7 @@ applied revision is never edited, and every function body those comments sit in 
 the first command prints a line, give that TODO its new owner from the debt list (T14, T19, T20, T21, T22, T29 or
 T30) in a separate commit before continuing.
 
-- [ ] **Step 2: Handoff records**
+- [x] **Step 2: Handoff records**
 
 Run this once from the repository root, with `BASE` set to the hash Task 1 Step 1b recorded (it rewrites the two JSON
 files in their own format: two-space indent, non-ASCII kept, one trailing newline):
@@ -9429,7 +9429,7 @@ EOF
 Expected: it prints the span (for example `1a2b3c4..5d6e7f8`). `git diff --stat handoff` shows three files changed;
 `git diff handoff/acceptance-matrix.json` shows only seven rows: R015, R019, R020, R087, R088, R098 and R107.
 
-- [ ] **Step 3: Project state**
+- [x] **Step 3: Project state**
 
 In `SESSION_STATE.md`:
 
@@ -9536,7 +9536,7 @@ with:
 5. In the line that begins `**Repository:**`, replace ``branch `plan-g` (Plan G work on top of `plan-f`,`` with
    ``branch `plan-h` (Plan H work on top of `plan-g`, on top of `plan-f`,`` (the rest of the line is unchanged).
 
-- [ ] **Step 4: Status, history, the runbook and the documents**
+- [x] **Step 4: Status, history, the runbook and the documents**
 
 `STATUS.md`: append, after two blank lines,
 
@@ -9825,7 +9825,7 @@ with:
 Wake-ups, the outbox and proposal expiry: T14/T21.
 ```
 
-- [ ] **Step 5: Final gates**
+- [x] **Step 5: Final gates**
 
 ```bash
 PYTHONUTF8=1 uv run python scripts/check.py
@@ -9838,7 +9838,7 @@ the `<dev passed>`, `<dev skipped>` and `<live passed>` placeholders of Steps 3 
 `git checkout -- reports/bootstrap reports/auth`; the live run rewrote `reports/admission`, `reports/skeleton` and
 `reports/leases`, and Step 6 commits them. Tick this plan's checkboxes (`- [ ]` → `- [x]`) for every step executed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add handoff SESSION_STATE.md STATUS.md README.md worker/README.md sweeper/README.md docs/ARCHITECTURE.md
