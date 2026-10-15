@@ -18,7 +18,7 @@ from ops_core.settings import Profile, Role
 from ops_core.states import IllegalTransition, Intent, RunState
 from psycopg.types.json import Jsonb
 
-from tests.e2e.conftest import purge_run, purge_tenant
+from tests.e2e.conftest import lease_for, purge_run, purge_tenant
 
 pytestmark = pytest.mark.asyncio
 
@@ -146,15 +146,16 @@ async def test_jobs_dedup_and_single_claim(app_conn: persistence.Conn, role_conn
         )
         with pytest.raises(persistence.NotFound):  # an unknown run is not "already queued"
             await persistence.insert_job(app_conn, job_type=JobType.INVESTIGATE, run_id=uuid4(), revision=1)
-        first, second = await role_conn(Role.WORKER), await role_conn(Role.WORKER)
-        # Both claims stay open (uncommitted), so SKIP LOCKED must hand the second worker the other job.
+        first, second, third = [await role_conn(Role.WORKER) for _ in range(3)]
+        # Both picks stay open (uncommitted), so SKIP LOCKED must hand the second worker the other job and a third
+        # worker none; the claim proper, with its lease, is proved in test_leases_live.py (T13).
         async with first.transaction(force_rollback=True), second.transaction(force_rollback=True):
-            one = await persistence.claim_job(first, worker_name="w1", tenant_ids=[tenant])
-            two = await persistence.claim_job(second, worker_name="w2", tenant_ids=[tenant])
-            assert one is not None and one["claimed_by"] == "w1" and one["attempts"] == 1
-            assert two is not None and two["id"] != one["id"] and two["tenant_id"] == tenant
-            assert await persistence.claim_job(first, worker_name="w3", tenant_ids=[tenant]) is None  # none left
-            theirs = await persistence.claim_job(first, worker_name="w4", tenant_ids=[other])
+            one = await persistence.pick_job(first, tenant_ids=[tenant])
+            two = await persistence.pick_job(second, tenant_ids=[tenant])
+            assert one is not None and two is not None and two["id"] != one["id"] and two["tenant_id"] == tenant
+            async with third.transaction(force_rollback=True):
+                assert await persistence.pick_job(third, tenant_ids=[tenant]) is None  # both are locked by others
+            theirs = await persistence.pick_job(first, tenant_ids=[other])
             assert theirs is not None and theirs["tenant_id"] == other and theirs["run_id"] == other_run
     finally:
         for r, t in ((run, tenant), (other_run, other)):
@@ -169,9 +170,12 @@ async def test_handles_bind_to_one_server(app_conn: persistence.Conn, role_conn:
     try:
         cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s", (run,))
         job = (await cur.fetchone())["id"]
+        lease = await lease_for(worker, run)  # T13: a handle carries the fence of the lease it was minted under
         async with worker.transaction():  # invocation_context has no RLS; the transaction is for set_tenant's own check
             await persistence.set_tenant(worker, tenant)
-            handle = await persistence.mint_handle(worker, run_id=run, job_id=job, server=Server.READ, azp="ops-worker")
+            handle = await persistence.mint_handle(
+                worker, run_id=run, job_id=job, server=Server.READ, azp="ops-worker", fence=lease.fence
+            )
         cur = await app_conn.execute("SELECT handle_sha256 FROM app.invocation_context WHERE run_id = %s", (run,))
         assert [r["handle_sha256"] for r in await cur.fetchall()] == [persistence.handle_hash(handle)]  # never raw
         inv = await persistence.resolve_invocation(
@@ -396,10 +400,11 @@ async def test_r006_populated_revision_1_database_upgrades_in_place(
             api, run_id=awaiting, type=EventType.TOOL_STARTED, payload={"message": "after the upgrade"}
         )
         assert appended.sequence == 3  # next_event_seq was backfilled from the two Plan-D events
+        lease = await lease_for(worker, succeeded)  # a migrated run's first lease: the row is created at fence 1
         async with worker.transaction():
             await persistence.set_tenant(worker, UUID(ALPHA))
             handle = await persistence.mint_handle(
-                worker, run_id=succeeded, job_id=execute_job, server=Server.WRITE, azp="ops-worker"
+                worker, run_id=succeeded, job_id=execute_job, server=Server.WRITE, azp="ops-worker", fence=lease.fence
             )
         grant = await persistence.lookup_action(mcp_exec, handle=handle)
         assert grant.action_id == action and grant.attempt_state == "RESOLVED"

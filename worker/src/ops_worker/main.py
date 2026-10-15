@@ -1,5 +1,8 @@
 """The worker process: a polling loop beside a health server, two connections (the loop's and the probe's),
-SelectorEventLoop on Windows (psycopg async refuses the Proactor loop; measured in the Plan D spike)."""
+SelectorEventLoop on Windows (psycopg async refuses the Proactor loop; measured in the Plan D spike).
+
+Each poll claims the next job together with its run's lease (`persistence.claim_next`, Plan H ruling 3) and runs the
+handler under that lease; a lost lease hands the job back (`handlers.abandon`, ruling 19) and the loop moves on."""
 
 from __future__ import annotations
 
@@ -14,6 +17,7 @@ from uuid import UUID
 import psycopg
 import uvicorn
 from ops_core import persistence, redaction, settings
+from ops_core.lease import LeaseLost
 from ops_core.settings import Role
 from ops_core.tokens import WorkloadTokenSource
 from starlette.applications import Starlette
@@ -26,6 +30,9 @@ from ops_worker.drafting import make_generator
 from ops_worker.mcp import HttpMcpCaller
 
 POLL_SECONDS = 0.5
+MAX_DEFERRALS = 16  # busy-lease deferrals one poll makes before it sleeps (each moves one job behind its lease)
+# Bounds every unit's lock wait on the loop connection (review round 2, m1); SET takes no bind parameter.
+LOOP_LOCK_TIMEOUT = "SET lock_timeout = '10s'"
 log = logging.getLogger("ops_worker")
 
 
@@ -37,25 +44,47 @@ def rotate(tenants: list[UUID], start: int) -> list[UUID]:
     return tenants[k:] + tenants[:k]
 
 
+async def claim(deps: handlers.Deps, order: list[UUID]) -> persistence.Claimed | None:
+    """The next job with its run's lease, past at most MAX_DEFERRALS jobs whose run lease was busy (ruling 3)."""
+    for _ in range(MAX_DEFERRALS):
+        got = await persistence.claim_next(
+            deps.conn, worker_name=deps.worker_name, tenant_ids=order, lease_seconds=deps.leases.lease_seconds
+        )
+        if not isinstance(got, persistence.Deferred):
+            return got
+    return None
+
+
+async def run_job(deps: handlers.Deps, claimed: persistence.Claimed) -> None:
+    """Run one claimed job under its lease; a lost lease hands the job back instead of failing the run (ruling 19).
+    Any other exception propagates: the poll loop logs it, the job stays claimed, its lease lapses within one lease
+    and the sweeper reclaims it."""
+    job = dict(claimed.job)
+    try:
+        await handlers.handle(deps, job, claimed.lease)
+    except LeaseLost:
+        log.warning("job %s: run lease lost (%s); handles revoked, job handed back", job["id"], claimed.lease.lost)
+        await handlers.abandon(deps, job, claimed.lease)
+
+
 async def run_forever(deps: handlers.Deps, stop: asyncio.Event) -> None:
-    """Claim, handle, repeat. A failed handler is logged and its job stays claimed (T13 reclaims); a broken
-    connection ends the loop, and readiness follows it (see health_app)."""
+    """Claim, handle, repeat. A crashed handler is logged and keeps its job claimed until the lease lapses and the
+    sweeper reclaims it; a broken connection ends the loop, and readiness follows it (see health_app)."""
     polls = 0
     while not stop.is_set():
         try:
-            async with deps.conn.transaction():
-                order = rotate(await persistence.tenants(deps.conn), polls)
-                job = await persistence.claim_job(deps.conn, worker_name=deps.worker_name, tenant_ids=order)
+            order = rotate(await persistence.tenants(deps.conn), polls)
             polls += 1
-            if job is not None:
-                await handlers.handle(deps, dict(job))
+            claimed = await claim(deps, order)
+            if claimed is not None:
+                await run_job(deps, claimed)
                 continue
         except psycopg.OperationalError:
             if deps.conn.broken or deps.conn.closed:
                 log.exception("database connection lost; the poll loop stops and the process exits non-zero")
                 raise
             log.exception("transient database error (deadlock, serialization); the loop continues")
-        except Exception:  # a crashed handler leaves the job claimed for T13's reclaim; the loop lives on
+        except Exception:  # a crashed handler keeps its job until the lease lapses and the sweeper reclaims it
             log.exception("poll iteration failed")
         try:
             await asyncio.wait_for(stop.wait(), timeout=POLL_SECONDS)
@@ -86,6 +115,7 @@ async def _main() -> None:
     # The redaction filter must sit on the root handler before the first log line (T11 note 4).
     redaction.install()
     generator = make_generator(settings.env("MODEL_MODE"))  # unset or any other route: refuse to start (R130)
+    leases = settings.leases()  # an unsafe lease, heartbeat, stall or budget combination refuses to start
     kc = settings.keycloak()
     tokens = WorkloadTokenSource(
         token_url=kc.token_url,
@@ -93,6 +123,9 @@ async def _main() -> None:
         client_secret=settings.read_secret("kc_client_secret_ops_worker"),
     )
     conn = await persistence.connect(settings.app_postgres(Role.WORKER))
+    # No unit is ever cancelled, so a unit stuck behind another transaction's lock ends after 10 s with 55P03, which
+    # run_forever logs as transient; its job keeps the claim until the lease lapses and the sweeper reclaims it.
+    await conn.execute(LOOP_LOCK_TIMEOUT)
     # The health server's own connection (see health_app).
     probe = await persistence.connect(settings.app_postgres(Role.WORKER))
     await persistence.assert_clock_profile(probe, settings.profile())
@@ -102,6 +135,7 @@ async def _main() -> None:
         generator=generator,
         urls=settings.urls(),
         worker_name=f"{socket.gethostname()}:{os.getpid()}",
+        leases=leases,
     )
     stop = asyncio.Event()
     polling = asyncio.create_task(run_forever(deps, stop), name="poll-loop")

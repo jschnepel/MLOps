@@ -2,8 +2,9 @@
 
 Locally the generated secret values are read from the secrets directory (`.env`'s OPS_SECRETS_DIR, else the default)
 and must not appear in any evidence file; in CI no secrets exist, so only the JWT-shape check applies.
-`reports/auth` (T11's session and revocation evidence), `reports/ci` (T06's CI run record) and
-`reports/admission` (T12's durable-admission evidence) are scanned the same way.
+`reports/auth` (T11's session and revocation evidence), `reports/ci` (T06's CI run record),
+`reports/admission` (T12's durable-admission evidence) and `reports/leases` (T13's lease, heartbeat and stress
+evidence) are scanned the same way.
 """
 
 import re
@@ -20,6 +21,7 @@ EVIDENCE_ROOTS = (
     Path("reports/auth"),
     Path("reports/ci"),
     Path("reports/admission"),
+    Path("reports/leases"),
 )
 JWT = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
 

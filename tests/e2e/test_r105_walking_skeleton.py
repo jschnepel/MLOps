@@ -23,6 +23,7 @@ from ops_core.settings import Role
 from ops_worker.mcp import failure_leaf
 
 from scripts.skeleton import Skeleton, orphan_keys
+from tests.e2e.conftest import lease_for
 from tests.plan_b.live import kc
 
 API = "http://127.0.0.1:8000"
@@ -207,10 +208,18 @@ async def test_r105_walking_skeleton(
     cur = await app_conn.execute("SELECT tenant_id FROM app.run_directory WHERE run_id = %s", (UUID(run_id),))
     tenant = (await cur.fetchone())["tenant_id"]
     worker_conn = await role_conn(Role.WORKER)
+    # The skeleton's worker released the run's lease with the execute job; the replay takes the next fence, as a new
+    # job of the run would (T13), and its handle carries that fence.
+    lease = await lease_for(worker_conn, UUID(run_id), owner="r105-replay")
     async with worker_conn.transaction():  # the worker role under the run's tenant; set_tenant is transaction-local
         await persistence.set_tenant(worker_conn, tenant)
         handle = await persistence.mint_handle(
-            worker_conn, run_id=UUID(run_id), job_id=execute_job, server=Server.WRITE, azp="ops-worker"
+            worker_conn,
+            run_id=UUID(run_id),
+            job_id=execute_job,
+            server=Server.WRITE,
+            azp="ops-worker",
+            fence=lease.fence,
         )
     replay = await mcp_call(urls.mcp_write, worker, handle, "create_incident", {"proposal_id": pid})
     assert replay is not None and replay["status"] == "ok" and replay["data"]["action_id"] == action_id

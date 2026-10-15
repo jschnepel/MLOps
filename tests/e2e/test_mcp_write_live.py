@@ -21,7 +21,7 @@ from ops_incident_sim.app import production_app as incident_sim_app
 from ops_mcp_write import destination, execution
 from ops_mcp_write.server import outcome_envelope
 
-from tests.e2e.conftest import purge_run
+from tests.e2e.conftest import lease_for, purge_run
 from tests.e2e.test_migrations_and_persistence import new_run
 
 pytestmark = pytest.mark.asyncio
@@ -83,9 +83,12 @@ async def approved_run(app_conn: persistence.Conn, *, api: persistence.Conn, wor
         )
     cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s AND type = 'execute'", (run,))
     job = (await cur.fetchone())["id"]
+    lease = await lease_for(worker, run)  # T13: a write handle is minted under the run's lease and carries its fence
     async with worker.transaction():
         await persistence.set_tenant(worker, tenant)
-        handle = await persistence.mint_handle(worker, run_id=run, job_id=job, server=Server.WRITE, azp="ops-worker")
+        handle = await persistence.mint_handle(
+            worker, run_id=run, job_id=job, server=Server.WRITE, azp="ops-worker", fence=lease.fence
+        )
     return tenant, run, proposal, handle
 
 

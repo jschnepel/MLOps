@@ -15,12 +15,13 @@ import pytest_asyncio
 from ops_core import persistence, settings
 from ops_core.canonical import canonical_json, canonical_sha256
 from ops_core.jobs import Server, Tool
+from ops_core.lease import Lease
 from ops_core.settings import Role
 from ops_worker import handlers
 from ops_worker.drafting import FakeDraftGenerator
 from ops_worker.mcp import McpCallFailed
 
-from tests.e2e.conftest import purge_run
+from tests.e2e.conftest import lease_for, purge_run
 from tests.e2e.test_migrations_and_persistence import new_run
 
 pytestmark = pytest.mark.asyncio
@@ -100,9 +101,13 @@ async def worker_deps(role_conn: RoleConn) -> WorkerDeps:
     return build
 
 
-async def own_job(conn: persistence.Conn, run: UUID, job_type: str) -> dict[str, Any]:
-    """The run's own job, claimed by this test (claim_job takes the oldest available job of any run, so a leftover
-    from another test would be claimed instead). Superuser, so it returns the tenant `handlers.handle` reads."""
+async def own_job(
+    conn: persistence.Conn, worker: persistence.Conn, run: UUID, job_type: str
+) -> tuple[dict[str, Any], Lease]:
+    """The run's own job, claimed by this test (claim_next takes the oldest available job of any run, so a leftover
+    from another test would be claimed instead), and the run's lease taken on the worker's connection under the Deps'
+    worker name "t", which the job's final unit checks (T13). Superuser for the claim, so it returns the tenant
+    `handlers.handle` reads."""
     cur = await conn.execute(
         "UPDATE app.jobs SET claimed_by = 't', claimed_at = now(), attempts = attempts + 1"
         " WHERE run_id = %s AND type = %s AND done_at IS NULL RETURNING *",
@@ -110,7 +115,7 @@ async def own_job(conn: persistence.Conn, run: UUID, job_type: str) -> dict[str,
     )
     row = await cur.fetchone()
     assert row is not None, (run, job_type)
-    return dict(row)
+    return dict(row), await lease_for(worker, run, owner="t")
 
 
 async def event_types(conn: persistence.Conn, run: UUID) -> list[tuple[str, str]]:
@@ -149,7 +154,7 @@ async def test_investigate_then_execute(
     run = None
     try:
         _, _, run = await new_run(app_conn, ALPHA, api=api)
-        await handlers.handle(deps, await own_job(app_conn, run, "investigate"))
+        await handlers.handle(deps, *await own_job(app_conn, deps.conn, run, "investigate"))
         row = await persistence.run_row(app_conn, run)
         assert row["state"] == "AWAITING_APPROVAL" and row["active_proposal_id"] is not None
         proposal = await proposal_of(app_conn, run)
@@ -174,8 +179,8 @@ async def test_investigate_then_execute(
         ]
         await approve(api, proposal)
         assert (await event_types(app_conn, run))[-1] == ("approval.recorded", "application")
-        job = await own_job(app_conn, run, "execute")
-        await handlers.handle(deps, job)
+        job, lease = await own_job(app_conn, deps.conn, run, "execute")
+        await handlers.handle(deps, job, lease)
         assert [c[1] for c in mcp.calls] == ["search_procedures", "create_incident"]
         assert mcp.calls[1][2] == {"proposal_id": str(proposal["proposal_id"])}
         cur = await app_conn.execute("SELECT done_at IS NOT NULL AS done FROM app.jobs WHERE id = %s", (job["id"],))
@@ -201,8 +206,8 @@ async def test_drafting_failure_fails_the_run(
     run = None
     try:
         _, _, run = await new_run(app_conn, ALPHA, api=api)
-        job = await own_job(app_conn, run, "investigate")
-        await handlers.handle(deps, job)
+        job, lease = await own_job(app_conn, deps.conn, run, "investigate")
+        await handlers.handle(deps, job, lease)
         row = await persistence.run_row(app_conn, run)
         assert row["state"] == "FAILED" and row["active_proposal_id"] is None
         cur = await app_conn.execute("SELECT type FROM app.events WHERE run_id = %s ORDER BY sequence", (run,))
@@ -284,10 +289,10 @@ async def test_unreachable_write_server_requeues_the_execute_job(
     run = None
     try:
         _, _, run = await new_run(app_conn, ALPHA, api=api)
-        await handlers.handle(deps, await own_job(app_conn, run, "investigate"))
+        await handlers.handle(deps, *await own_job(app_conn, deps.conn, run, "investigate"))
         await approve(api, await proposal_of(app_conn, run))
-        job = await own_job(app_conn, run, "execute")
-        await handlers.handle(deps, job)
+        job, lease = await own_job(app_conn, deps.conn, run, "execute")
+        await handlers.handle(deps, job, lease)
         assert (await persistence.run_row(app_conn, run))["state"] == "APPROVED"
         cur = await app_conn.execute(
             "SELECT done_at IS NULL AS open, claimed_by IS NULL AS free, available_at > now() AS later"
@@ -298,16 +303,16 @@ async def test_unreachable_write_server_requeues_the_execute_job(
         # Once the delay has passed the same job can be claimed again; this time the write server grants and marks
         # SENT before the connection drops, which leaves the run EXECUTING.
         await app_conn.execute("UPDATE app.jobs SET available_at = now() WHERE id = %s", (job["id"],))
-        job = await own_job(app_conn, run, "execute")
+        job, lease = await own_job(app_conn, deps.conn, run, "execute")
         grant_mcp = GrantThenDownMcp(mcp.read, mcp.write)
         deps.mcp = grant_mcp
-        await handlers.handle(deps, job)
+        await handlers.handle(deps, job, lease)
         assert (await persistence.run_row(app_conn, run))["state"] == "EXECUTING"
         assert [c[1] for c in grant_mcp.calls] == ["create_incident"]
         # A re-queued job of an EXECUTING run must be dispatched again (same action id), not finished unsent.
         await app_conn.execute("UPDATE app.jobs SET available_at = now() WHERE id = %s", (job["id"],))
-        job = await own_job(app_conn, run, "execute")
-        await handlers.handle(deps, job)
+        job, lease = await own_job(app_conn, deps.conn, run, "execute")
+        await handlers.handle(deps, job, lease)
         assert [c[1] for c in grant_mcp.calls] == ["create_incident", "create_incident"]
         cur = await app_conn.execute("SELECT done_at IS NULL AS open FROM app.jobs WHERE id = %s", (job["id"],))
         assert (await cur.fetchone())["open"]  # re-queued again, not finished
@@ -325,10 +330,10 @@ async def test_unknown_envelope_is_recorded_by_the_worker(
     run = None
     try:
         _, _, run = await new_run(app_conn, ALPHA, api=api)
-        await handlers.handle(deps, await own_job(app_conn, run, "investigate"))
+        await handlers.handle(deps, *await own_job(app_conn, deps.conn, run, "investigate"))
         await approve(api, await proposal_of(app_conn, run))
-        job = await own_job(app_conn, run, "execute")
-        await handlers.handle(deps, job)
+        job, lease = await own_job(app_conn, deps.conn, run, "execute")
+        await handlers.handle(deps, job, lease)
         assert (await persistence.run_row(app_conn, run))["state"] == "OUTCOME_UNKNOWN"
         assert (await event_types(app_conn, run))[-1][0] == "action.uncertain"
         cur = await app_conn.execute("SELECT 1 FROM app.jobs WHERE run_id = %s AND type = 'recover'", (run,))
