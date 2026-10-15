@@ -8,7 +8,8 @@ transaction that claims a job (`FOR UPDATE NOWAIT`; a busy run's job is deferred
 that writes for the run with a `FOR SHARE` check of owner, fence and expiry on `app.current_time()` after the lock,
 starts no effect past a local monotonic deadline, and releases the lease with the job in one final unit; the MCP
 definers refuse a handle whose fence moved or whose lease lapsed; a heartbeat thread on its own connection renews
-the lease while the event loop is alive and the 90 s budget lasts, and cancels the work when renewal fails; a
+the lease while the event loop is alive and the 90 s budget lasts, and when renewal fails cancels the job's effects
+in flight (its MCP or model call, never a database unit); a
 `model_permit` row bounds model concurrency; the sweeper hands back jobs whose lease died; one published lock order
 holds everywhere, and a stress test shows it never deadlocks; the API enforces a global queue bound; and the fault
 factory implements all nine BS:405 faults (T13; R019, R020, R087, R088, R098, R107).
@@ -22,8 +23,9 @@ exactly by re-executing the applied revisions' own bodies. `core/src/ops_core/le
 loop and the heartbeat thread share (one `threading.Lock`), `LeaseLost`, the lock statements and the synchronous
 renewal; `core/src/ops_core/locking.py` publishes the lock order as data a test checks; `ops_core.persistence` gains
 `acquire_lease`, `claim_next`, `fenced`, `release_lease`, `unclaim_job`, the permit SQL and `queued_runs_total`. The
-worker runs each job as a task under its lease with `worker/src/ops_worker/heartbeat.py` (thread, liveness gate,
-compute gate, cancellation) and `worker/src/ops_worker/permit.py` (the model permit around drafting); the sweeper's
+worker runs each job under its lease, every MCP and model call as a cancellable lease effect (`Lease.effect`), with
+`worker/src/ops_worker/heartbeat.py` (thread, liveness gate, compute gate, cancelling effects on loss) and
+`worker/src/ops_worker/permit.py` (the model permit around drafting); the sweeper's
 `ops_sweeper/leases.py` reclaims; incident-sim and the API gain the remaining fault kinds.
 
 **Tech Stack:** as Plan G; no new dependency. psycopg 3.3.6 (its synchronous `psycopg.Connection` for the heartbeat
@@ -72,8 +74,8 @@ Plan H additions below win where the two differ:
 - **Comments** per `docs/CODE_COMMENTS.md`; ≤120 characters per line (Plan G's counting command below); no
   `type: ignore`; ruff + mypy strict clean; UTF-8 without BOM, LF; no `noqa: BLE001` and no new broad
   `except Exception` (the two existing ones in the worker and sweeper loops stay; the heartbeat thread's tick guard is
-  the one new catch-all, and `main.run_job`'s `except BaseException` re-raises everything but a lease loss; both
-  carry their reason).
+  the one new catch-all, and `Lease.effect`'s `except BaseException` re-raises everything, as LeaseLost when the
+  lease's loss cancelled the effect; both carry their reason).
 - **Gates:** `uv run ruff format <files> && uv run ruff check --fix <files>` (then
   `uv run ruff check --select ISC004 --fix --unsafe-fixes migrations/app/versions/0007_leases_fences.py` after writing
   or extending the revision), `PYTHONUTF8=1 uv run python scripts/check.py` GREEN after every task,
@@ -126,8 +128,8 @@ Plan H additions below win where the two differ:
 
 1. **Two jobs of one run claimed in the same instant by two workers, before any lease row exists** (an `investigate`
    and a `resume_input` arriving together): exactly one claims with fence 1, the other is deferred, and neither waits
-   for ever. Pinned in Task 3 (`test_two_first_acquisitions_of_one_run_give_one_lease`, two connections through
-   `asyncio.gather`).
+   for ever. Pinned in Task 3 (`test_two_first_acquisitions_of_one_run_give_one_lease`, stepped: the first claim stays
+   open until `pg_blocking_pids` shows the second claim's insert waiting on it).
 2. **A renewal that meets the owner's own re-fence** (`mark_unknown` bumped the fence between the thread's read of the
    fence and its renewal) must retry, not declare the lease lost and cancel a job that is fine. Pinned in Task 5
    (`test_a_renewal_that_meets_its_own_refence_retries`) on the shared `Lease`.
@@ -136,8 +138,8 @@ Plan H additions below win where the two differ:
    (`test_a_handle_is_capped_at_its_lease_and_bound_to_its_fence`) and Task 4
    (`test_a_handle_is_refused_after_its_fence_moves_and_after_its_lease_expires`).
 4. **The heartbeat's database connection drops** (a database restart): renewal errors reopen the connection on the
-   next tick and count as a loss only once the local deadline has passed. Pinned in Task 5
-   (`test_transient_errors_are_retried_until_the_deadline`).
+   next tick and count as a loss only once the local deadline has passed; a connect that hangs gives up after 5 s.
+   Pinned in Task 5 (`test_transient_errors_are_retried_until_the_deadline`).
 5. **The sweeper un-claims a job whose owner is alive** (a reclaim racing a slow heartbeat): the job is only a
    wake-up, so the owner's fenced units keep working while its lease is live, and a second claimer is deferred by the
    lease, never let in. Pinned in Task 6 (`test_the_reclaim_leaves_a_live_lease_alone`) and by the R087 test in
@@ -186,8 +188,9 @@ ruling and, where the plan had to refine one against the code, says how (all ref
     (Task 6); erratum 49.
 12. **`model_permit`** — revision 0007 creates it (slot 1 seeded; worker `sel, upd(all)`, nobody else; erratum 50);
     `persistence.take_model_permit` / `release_model_permit`; `ops_worker.permit.model_permit` polls with 0.25 s
-    doubling to 2 s plus jitter while `lease.check()` passes, holds it around the draft call, releases in `finally`;
-    TTL 65 s (Tasks 2, 5); the "hold until idle" rule is a debt line → T19.
+    doubling to 2 s plus jitter while `lease.check()` passes (the back-off sleep is a lease effect), holds it around
+    the draft call, releases in `finally` exactly the slot a take returned (take and release are database units and
+    are never cancelled; review round 1, I2); TTL 65 s (Tasks 2, 5); the "hold until idle" rule is a debt line → T19.
 13. **Global queue bound** — `app.queued_runs_total()` (api only; Task 2), `OPS_GLOBAL_QUEUE_LIMIT` (default 100,
     1-100000; Task 1), checked after the tenant quota, same unrecorded 429 with `Retry-After: 5` (Task 6); soft by
     the number of concurrent admissions (comment, runbook); erratum 51 replaces erratum 39's forward reference.
@@ -204,19 +207,30 @@ ruling and, where the plan had to refine one against the code, says how (all ref
     thread renews only while the stamp is younger than `OPS_LOOP_STALL_SECONDS` (28) and the lease has been held less
     than `OPS_COMPUTE_BUDGET_SECONDS` (90); either gate closing is a loss (Task 5). Budget accounting is T29's.
 18. **Local monotonic deadline** — `deadline = monotonic before the acquiring or renewing statement + lease − 5 s`;
-    `Lease.check()` raises `LeaseLost` past it and runs before every MCP call, model call and fenced unit (Tasks 3, 5).
-19. **Renewal failure** — the thread marks the lease lost and calls `loop.call_soon_threadsafe(work.cancel)`; the loop
-    revokes the job's handles with `revoke_handles(run_id, fence)` and un-claims the job (`available_at` now) in one
-    unit, with no run transition; the permit is released in `finally` (Tasks 3, 5); erratum 57.
-20. **DoD 3** — validated settings with the exact checks `2 × heartbeat < lease`, `stall < lease + heartbeat`,
-    `budget ≥ lease` (Task 1); scaled unit tests with a fake clock and renewer; live tests at the real defaults: a
+    `Lease.check()` raises `LeaseLost` past it and runs before every fenced unit, and `Lease.effect` runs the same
+    check before every MCP call and model call (Tasks 3, 5).
+19. **Renewal failure** (amended by the controller in review round 1, B1) — only effects are cancelled: every MCP call,
+    model call and permit back-off sleep runs through `Lease.effect` as a child task registered on the lease, and on
+    a loss the thread marks the lease lost and cancels just those (`Lease.cancel_effects`, through
+    `loop.call_soon_threadsafe`); a cancelled effect surfaces as `LeaseLost`. A database unit is never cancelled (a
+    cancellation inside psycopg's BEGIN would leave the loop connection in a transaction for good); a loss during one
+    is caught by the next `fenced()`/`check()`. The loop then revokes the job's handles with `revoke_handles(run_id,
+    fence)` and un-claims the job (`available_at` now) in one unit, with no run transition, after `abandon` has
+    checked that the connection is idle (if not, it closes it and the loop exits non-zero for the supervisor to
+    restart); the permit is released in `finally` (Tasks 3, 5); erratum 57.
+20. **DoD 3** — validated settings with the exact checks `2 × heartbeat + 6 < lease` (the 5 s deadline margin and the
+    thread's 1 s tick; review round 1, I5), `stall < lease + heartbeat`, `budget ≥ lease` (Task 1); scaled unit tests
+    with a fake clock and renewer; live tests at the real defaults: a
     25 s `time.sleep` inside the draft call, a 35 s fake drafter, and a forced renewal failure (expire, then take the
     lease from a second `worker` connection) that cancels a never-answering MCP call and revokes its handle (Task 5).
 21. **DoD 1-2** — stepped two-connection interleavings with `pg_blocking_pids` and the stress test (8 connections,
     3 runs, 20 s, acquire/renew/fenced writes/mint/revoke/`mark_unknown`/reclaim; zero 40P01, zero 55P03 under a
     10 s `lock_timeout`, fences never decrease, stale writes never land after newer ones) (Tasks 3, 6). Refined: the
     in-flight variant's waiting acquisition uses `acquire_lease(wait=True)`, a form only the tests use (the claim path
-    is NOWAIT by ruling 3). `PURGE_ORDER` gains the lease row and the permit reset (Task 2).
+    is NOWAIT by ruling 3). Review round 1 (I3, I4): a waiting acquisition's lock wait past `lock_timeout` raises
+    55P03 (counted, must be zero) instead of returning Busy; one stressed run is EXECUTING with a grant, so
+    `mark_unknown` re-fences commit under load; a monitor checks at every sample that no run has two actors holding
+    its current fence and that fences only increase. `PURGE_ORDER` gains the lease row and the permit reset (Task 2).
 22. **Fault factory** — `Faults` keeps its shape, gains `seconds` (for `timeout_before_accept` only) and the BS:405
     mapping `faults.BS405`; incident-sim implements `timeout_before_accept`, `rate_limit`, `malformed_response`,
     `receipt_hash_mismatch`, `delay_receipt`; the API implements `lose_after_commit` and receives `faults` from its
@@ -317,6 +331,10 @@ Allowed shortcuts in T13, each with its owning task:
   verifier's injected-fetch exception → T30; the untested definer branches (Plan E list) → T22; the pre-SENT
   `STALE_RUN`/`HASH_MISMATCH` envelopes → T47;
 - the worker still polls every 0.5 s and claims per tenant → T14 (wake-ups);
+- a handle's expiry is capped at the lease's end when it is minted and a renewal does not extend it, so a handle lives
+  20-30 s in practice and an MCP call slower than that ends with the handle refused, not a timeout (per-call minting
+  under the renewed lease) → T22/T47;
+- the global queue count costs one scan per tenant inside every run admission → T29;
 - the dev database stays at revision 0005 until the owner migrates it (0006 and 0007 pending); until then the API,
   the sweeper, the worker and mcp-write refuse to start on it → owner input.
 ```
@@ -350,7 +368,9 @@ The spec text stays authoritative until the owner decides; each line names the t
     SKIP LOCKED only) → `run_lease` → `runs` → `messages` → `drafts` → `proposals` → `decisions` → `memberships` →
     `execution_grant` → `action_attempt` → `action_attempt_state` → `operator_resolutions` → `invocation_context` →
     `run_state_history` → `events` → `outbox` → `jobs` (finish, re-queue or hand-back of the transaction's own job)
-    → `idempotency_request`; fresh-row INSERTs, `SKIP LOCKED` and `NOWAIT` never wait and may appear anywhere;
+    → `idempotency_request`; `SKIP LOCKED` and `NOWAIT` never wait and may appear anywhere; a fresh-row INSERT
+    never waits on its own table but its foreign-key check takes FOR KEY SHARE on the parent row, so it ranks at the
+    parent's position;
     `model_permit`, `sessions`, `login_state`, `logout_jti`, `test_clock`, `tenants`, `run_directory` are locked only
     in their own units (the sweeper's purge adds `idempotency_request`), `conversations` and `transitions` never
     (ruling 14).
@@ -368,9 +388,10 @@ The spec text stays authoritative until the owner decides; each line names the t
     `malformed_response`, `receipt_hash_mismatch` (mismatching receipt hash), `delay_receipt` (delayed receipt
     visibility: the next `count` lookups of a committed key answer 404); concurrent same-key submission is a harness
     behaviour (two submissions raced with `asyncio.gather`, R047), not a hook (ruling 22).
-57. **SA:196-198** ("when renewal fails, the worker … exits the run"): exiting the run means revoking the job's
-    handles and handing the job back (un-claimed, claimable at once) with no run transition; the next owner re-reads
-    the run (ruling 19).
+57. **SA:196-198** ("when renewal fails, the worker … exits the run"): exiting the run means cancelling the job's
+    effects in flight (MCP and model calls; no database unit is interrupted), revoking the job's handles and handing
+    the job back (un-claimed, claimable at once) with no run transition; the next owner re-reads the run (ruling 19
+    as amended in review round 1).
 
 ## File structure
 
@@ -401,33 +422,34 @@ The spec text stays authoritative until the owner decides; each line names the t
 ## Task overview
 
 - **Task 1:** the debt list; `LeaseSettings` and the global queue limit; `core/locking.py`; `tests/plan_h` and the
-  `slow_live` marker. Tests: `test_settings_leases.py` 10, `test_locking.py` 30. Dev gate after: 856 passed, 104
+  `slow_live` marker. Tests: `test_settings_leases.py` 11, `test_locking.py` 30. Dev gate after: 857 passed, 104
   skipped (no live change; the live gate is not run).
 - **Task 2:** revision 0007 (schema, cells, CHECK, `queued_runs_total`), the matrix, `PURGE_ORDER`, the frozen
   testclock tuples. Tests: `test_migration_0007.py` 5, `test_transitions_table.py` +1 (parametrised); live
-  `test_migration_0007_live.py` 5. Dev 862/109, live 950/21.
+  `test_migration_0007_live.py` 5. Dev 863/109, live 951/21.
 - **Task 3:** `core/lease.py`; the lease helpers in `persistence`; the worker claims under a lease, fences every
-  writing unit, releases with the job and abandons on loss; the minting tests take leases. Tests: `test_lease.py` 8,
-  `test_worker_units.py` 5; live `test_leases_live.py` 10. Dev 875/119, live 973/21.
+  writing unit, runs every MCP and model call as a cancellable lease effect, releases with the job and abandons on
+  loss; the minting tests take leases. Tests: `test_lease.py` 11, `test_worker_units.py` 6; live
+  `test_leases_live.py` 10. Dev 880/119, live 978/21.
 - **Task 4:** the fenced definers in 0007; `mark_sent`/`record_outcome` with the handle; `mark_unknown`'s new fence
   handed to the lease; mcp-write; the definer tests. Tests: `test_migration_0007.py` +3, `test_worker_units.py` +2,
-  `test_write_path_fence.py` 2; live `test_fenced_definers_live.py` 5. Dev 882/124, live 985/21.
-- **Task 5:** `lease.renew`, the heartbeat thread, the liveness ticker, the cancellation path, the model permit, the
-  slow fake drafter. Tests: `test_heartbeat.py` 9, `test_permit.py` 5, `test_worker_units.py` +1; live
-  `test_heartbeat_live.py` 4 (three `slow_live`). Dev 897/128, live 1004/21.
+  `test_write_path_fence.py` 2; live `test_fenced_definers_live.py` 5. Dev 887/124, live 990/21.
+- **Task 5:** `lease.renew`, the heartbeat thread, the liveness ticker, cancelling effects on loss, the model permit,
+  the slow fake drafter. Tests: `test_heartbeat.py` 9, `test_permit.py` 6, `test_worker_units.py` +3; live
+  `test_heartbeat_live.py` 4 (three `slow_live`). Dev 905/128, live 1012/21.
 - **Task 6:** the sweeper's reclaim; the stress test and R019; the global queue bound in the API. Tests:
   `test_reclaim.py` 2, `test_global_queue.py` 3; live `test_lease_stress_live.py` 3 (one `slow_live`),
-  `test_admission_live.py` +1. Dev 902/132, live 1013/21.
+  `test_admission_live.py` +1. Dev 910/132, live 1021/21.
 - **Task 7:** the fault factory: five incident-sim kinds, `lose_after_commit` in the API, faults from the store
   factory. Tests: `test_faults_t13.py` 4, `test_incident_sim_faults.py` 7, `test_api_faults.py` 5; live
-  `test_admission_live.py` +1. Dev 918/133, live 1030/21.
+  `test_admission_live.py` +1. Dev 926/133, live 1038/21.
 - **Task 8:** handoff records, acceptance rows, errata 45-57, runbook, history, READMEs, final gates. No tests.
 
-The arithmetic, once: dev passed 816 + 40 (Task 1: 10 + 30) = 856, + 6 (Task 2: 5 + 1 parametrised revision) =
-862, + 13 (Task 3: 8 + 5) = 875, + 7 (Task 4: 3 + 2 + 2) = 882, + 15 (Task 5: 9 + 5 + 1) = 897, + 5 (Task 6: 2 + 3) =
-902, + 16 (Task 7: 4 + 7 + 5) = 918; dev skipped 104, + 5 = 109, + 10 = 119, + 5 = 124, + 4 = 128, + 4 = 132, + 1 =
+The arithmetic, once: dev passed 816 + 41 (Task 1: 11 + 30) = 857, + 6 (Task 2: 5 + 1 parametrised revision) =
+863, + 17 (Task 3: 11 + 6) = 880, + 7 (Task 4: 3 + 2 + 2) = 887, + 18 (Task 5: 9 + 6 + 3) = 905, + 5 (Task 6: 2 + 3)
+= 910, + 16 (Task 7: 4 + 7 + 5) = 926; dev skipped 104, + 5 = 109, + 10 = 119, + 5 = 124, + 4 = 128, + 4 = 132, + 1 =
 133. The live gate's passed count is the dev count plus the live tests (83 today; 88, 98, 103, 107, 111, 112 after
-Tasks 2-7), so 950, 973, 985, 1004, 1013, 1030, always with 21 skipped.
+Tasks 2-7), so 951, 978, 990, 1012, 1021, 1038, always with 21 skipped.
 
 ---
 
@@ -525,7 +547,8 @@ Create `tests/plan_h/test_settings_leases.py`:
 above DoD 3's 25 s blocked loop, the 90 s compute budget and the 100-run global queue bound, each read, bounded and
 checked together (BS:542 "validated configuration").
 
-Catches: a heartbeat that leaves room for only one renewal per lease (one slow renewal would lose it), a stall gate
+Catches: a heartbeat that leaves room for only one renewal per lease once the 5 s local-deadline margin and the
+thread's 1 s tick are counted (one slow renewal would lose it), a stall gate
 so long that a dead loop keeps a run, a budget shorter than one lease (every job would end before its first renewal),
 a bound that names the value instead of the rule, and a slow live test that the gate silently stops running.
 """
@@ -568,7 +591,7 @@ def test_lease_defaults_are_the_spec_values() -> None:
             "OPS_LEASE_SECONDS",
             10,
             900,
-            {"OPS_HEARTBEAT_SECONDS": "4", "OPS_LOOP_STALL_SECONDS": "5", "OPS_COMPUTE_BUDGET_SECONDS": "10"},
+            {"OPS_HEARTBEAT_SECONDS": "1", "OPS_LOOP_STALL_SECONDS": "5", "OPS_COMPUTE_BUDGET_SECONDS": "10"},
             {"OPS_COMPUTE_BUDGET_SECONDS": "900"},
         ),
         ("OPS_HEARTBEAT_SECONDS", 1, 300, {}, {"OPS_LEASE_SECONDS": "900", "OPS_COMPUTE_BUDGET_SECONDS": "900"}),
@@ -577,7 +600,7 @@ def test_lease_defaults_are_the_spec_values() -> None:
             "OPS_COMPUTE_BUDGET_SECONDS",
             10,
             3600,
-            {"OPS_LEASE_SECONDS": "10", "OPS_HEARTBEAT_SECONDS": "4", "OPS_LOOP_STALL_SECONDS": "5"},
+            {"OPS_LEASE_SECONDS": "10", "OPS_HEARTBEAT_SECONDS": "1", "OPS_LOOP_STALL_SECONDS": "5"},
             {},
         ),
     ],
@@ -607,7 +630,7 @@ def test_each_lease_variable_is_read_and_bounded(
 @pytest.mark.parametrize(
     ("name", "raw", "rule"),
     [
-        ("OPS_HEARTBEAT_SECONDS", "15", "less than half of OPS_LEASE_SECONDS"),
+        ("OPS_HEARTBEAT_SECONDS", "12", "less than half of (OPS_LEASE_SECONDS - 6)"),
         ("OPS_LOOP_STALL_SECONDS", "40", "less than OPS_LEASE_SECONDS plus OPS_HEARTBEAT_SECONDS"),
         ("OPS_COMPUTE_BUDGET_SECONDS", "20", "at least OPS_LEASE_SECONDS"),
     ],
@@ -617,6 +640,21 @@ def test_unsafe_combinations_are_refused(monkeypatch: pytest.MonkeyPatch, name: 
     with pytest.raises(SettingsError) as refused:
         settings.leases()
     assert str(refused.value) == f"{name} must be {rule}"
+
+
+def test_two_renewals_and_the_margins_fit_in_one_lease(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1, I5: the local deadline is the last renewal's start plus the lease minus 5 s (SA:195) and the
+    thread looks once a second, so a lease must hold two heartbeats plus 6 s, or one slow renewal loses it."""
+    monkeypatch.setenv("OPS_LEASE_SECONDS", "30")
+    monkeypatch.setenv("OPS_HEARTBEAT_SECONDS", "10")
+    assert settings.leases().heartbeat_seconds == 10  # 2 x 10 + 6 < 30
+    monkeypatch.setenv("OPS_LEASE_SECONDS", "10")
+    monkeypatch.setenv("OPS_HEARTBEAT_SECONDS", "4")
+    monkeypatch.setenv("OPS_LOOP_STALL_SECONDS", "5")
+    monkeypatch.setenv("OPS_COMPUTE_BUDGET_SECONDS", "10")
+    with pytest.raises(SettingsError) as refused:  # 2 x 4 + 6 >= 10: the old "less than half" rule let this through
+        settings.leases()
+    assert str(refused.value) == "OPS_HEARTBEAT_SECONDS must be less than half of (OPS_LEASE_SECONDS - 6)"
 
 
 def test_the_global_queue_limit_is_read_and_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -705,18 +743,23 @@ class LeaseSettings:
     compute_budget_seconds: int = 90  # BS:555: active compute per run
 
 
-def check_leases(chosen: LeaseSettings) -> None:
-    """Refuse a combination that would lose healthy leases or keep dead ones (Plan H ruling 20).
+# The worker stops starting effects 5 s before its lease ends (SA:195) and its heartbeat thread looks once a second.
+RENEWAL_MARGIN_SECONDS = 6
 
-    Two renewals must fit in one lease, so one failed renewal never loses it; a loop silent for a whole lease plus a
-    heartbeat is treated as dead, so the stall gate stays below that; a budget shorter than one lease would end every
-    job before its first renewal.
+
+def check_leases(chosen: LeaseSettings) -> None:
+    """Refuse a combination that would lose healthy leases or keep dead ones (Plan H ruling 20, review round 1 I5).
+
+    Two heartbeats plus RENEWAL_MARGIN_SECONDS must fit in one lease: the local deadline is the last renewal's start
+    plus the lease minus 5 s, so with less room one failed or slow renewal passes it and a healthy job is abandoned.
+    A loop silent for a whole lease plus a heartbeat is treated as dead, so the stall gate stays below that; a budget
+    shorter than one lease would end every job before its first renewal.
 
     Raises:
         SettingsError: naming the rule, never a value.
     """
-    if chosen.heartbeat_seconds * 2 >= chosen.lease_seconds:
-        raise SettingsError("OPS_HEARTBEAT_SECONDS must be less than half of OPS_LEASE_SECONDS")
+    if chosen.heartbeat_seconds * 2 + RENEWAL_MARGIN_SECONDS >= chosen.lease_seconds:
+        raise SettingsError("OPS_HEARTBEAT_SECONDS must be less than half of (OPS_LEASE_SECONDS - 6)")
     if chosen.loop_stall_seconds >= chosen.lease_seconds + chosen.heartbeat_seconds:
         raise SettingsError("OPS_LOOP_STALL_SECONDS must be less than OPS_LEASE_SECONDS plus OPS_HEARTBEAT_SECONDS")
     if chosen.compute_budget_seconds < chosen.lease_seconds:
@@ -741,7 +784,7 @@ class Urls:
 ```
 
 Run: `uv run python -m pytest tests/plan_h/test_settings_leases.py tests/plan_g/test_settings_admission.py -q`
-Expected: `15 passed` (10 new; Plan G's 5 unchanged: its default comparison now includes the new field's default on
+Expected: `16 passed` (11 new; Plan G's 5 unchanged: its default comparison now includes the new field's default on
 both sides).
 
 - [ ] **Step 5: Write the failing lock-order test**
@@ -788,7 +831,7 @@ def test_follows_order_allows_repeats_and_refuses_a_step_back() -> None:
 
 
 @pytest.mark.parametrize("unit", sorted(locking.OBSERVED_UNITS))
-def test_every_documented_unit_follows_the_order(unit: str) -> None:
+def test_the_documented_units_are_consistent_with_the_order(unit: str) -> None:
     assert locking.follows_order(locking.OBSERVED_UNITS[unit]), unit
 
 
@@ -815,22 +858,28 @@ Create `core/src/ops_core/locking.py`:
 
 The order constrains waits: row locks on rows that already exist (`SELECT … FOR UPDATE` or `FOR SHARE`, `UPDATE`,
 `DELETE`) and advisory locks. A transaction takes them in this order and never goes back to an earlier entry for a
-row it does not already hold. Three kinds of statement are outside the order because they never wait on another
-transaction's lock: an INSERT of a fresh row with a new key (it may appear anywhere; two inserts of the same new key
-make the second wait for the first inserter alone, which holds nothing later in the order), a `SKIP LOCKED` read, and
-a `NOWAIT` lock (it fails with SQLSTATE 55P03 instead of waiting). Plain reads take no lock.
+row it does not already hold. Two kinds of statement are outside the order because they never wait on another
+transaction's lock: a `SKIP LOCKED` read, and a `NOWAIT` lock (it fails with SQLSTATE 55P03 instead of waiting). Plain
+reads take no lock. An INSERT of a fresh row with a new key never waits on the table it inserts into (two inserts of
+the same new key make the second wait for the first inserter alone), but its foreign-key check takes FOR KEY SHARE on
+the referenced parent row, and that waits for any FOR UPDATE holder of the parent: the first `run_lease` row of a run
+locks its `runs` row, and an `invocation_context` row its `runs` and `jobs` rows. Such an insert therefore ranks at its
+parent's position; the entries below include those parents.
 
 `jobs` appears twice: a claim picks its job with SKIP LOCKED before anything else, and a transaction that finishes,
 re-queues or hands back its own claimed job does so after everything but the idempotency record. Tables in `OWN_UNIT`
 are only locked in transactions that lock no run table; `NEVER_LOCKED` tables are inserted or read, never locked.
-`OBSERVED_UNITS` lists every transaction of the system after T13 as the entries it locks, in order (reads and fresh
-inserts left out); tests/plan_h/test_locking.py checks each, and fails when a table in the privilege matrix has no
-place here, so a new table or transaction is placed before it ships.
+`OBSERVED_UNITS` lists every transaction of the system after T13 as the entries it locks, in order (reads left out,
+foreign-key parents of fresh inserts included). It is written by hand: tests/plan_h/test_locking.py checks that the
+documented units are consistent with the order and fails when a table in the privilege matrix has no place here, so a
+new table or transaction is placed before it ships; it cannot discover a transaction nobody listed (the live stress
+test hunts for those).
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import pairwise
 from typing import Final
 
 LOCK_ORDER: Final = (
@@ -862,12 +911,12 @@ NEVER_LOCKED: Final = frozenset({"conversations", "transitions"})
 NOT_YET_CREATED: Final = frozenset({"operator_resolutions", "outbox", "model_permit"})
 
 OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
-    "worker claim (persistence.claim_next)": ("jobs:claim", "run_lease"),
-    "worker investigate start": ("run_lease", "runs"),
+    "worker claim (persistence.claim_next)": ("jobs:claim", "run_lease", "runs"),  # a first lease's FK key share
+    "worker investigate start": ("run_lease", "runs", "jobs:finish"),  # the minted handle's FK key share on its job
     "worker tool event (append_event)": ("run_lease", "runs"),
     "worker failure (transition_run)": ("run_lease", "runs"),
     "worker draft and freeze": ("run_lease", "runs"),
-    "worker execute start": ("run_lease", "runs"),
+    "worker execute start": ("run_lease", "runs", "jobs:finish"),
     "worker mark_unknown": ("run_lease", "runs", "invocation_context"),
     "worker release (persistence.release_lease)": ("run_lease", "invocation_context", "jobs:finish"),
     "worker abandon (lease lost)": ("run_lease", "invocation_context", "jobs:finish"),
@@ -912,7 +961,7 @@ def follows_order(entries: Sequence[str]) -> bool:
     """True when a transaction taking `entries` in this sequence never steps back in the order; repeating an entry is
     allowed (the lock is already held)."""
     ranks = [rank(entry) for entry in entries]
-    return all(earlier <= later for earlier, later in zip(ranks, ranks[1:], strict=False))
+    return all(earlier <= later for earlier, later in pairwise(ranks))
 ```
 
 Run: `uv run python -m pytest tests/plan_h/test_locking.py -q`
@@ -924,7 +973,7 @@ Format, lint and count characters on `core/src/ops_core/settings.py`, `core/src/
 `tests/plan_h/test_settings_leases.py`, `tests/plan_h/test_locking.py`.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `856 passed, 104 skipped`.
+Expected: `CHECK: GREEN`; pytest `857 passed, 104 skipped`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
 Expected: exit 0. (No migration, service or live test changed: the live gate is not run in this task.)
@@ -1198,9 +1247,7 @@ ALTER FUNCTION app.queued_runs_total() OWNER TO app_definer;
 """
 
 # (name, argument types, callers, body): frozen here (N1); the newest-revision test reads this tuple.
-FUNCTIONS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
-    ("queued_runs_total", "", ("api",), QUEUED_RUNS_TOTAL),
-)
+FUNCTIONS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (("queued_runs_total", "", ("api",), QUEUED_RUNS_TOTAL),)
 # Signatures upgrade() drops before FUNCTIONS re-creates them with another signature or return type.
 REPLACED: tuple[str, ...] = ()
 # Signatures downgrade() drops: the functions 0006 does not have in the form FUNCTIONS created.
@@ -1247,9 +1294,10 @@ Then `uv run ruff check --select ISC004 --fix --unsafe-fixes migrations/app/vers
 expected: every implicit concatenation is already inside its own parentheses).
 
 Run: `uv run python -m pytest tests/plan_h/test_migration_0007.py tests/plan_e/test_transitions_table.py -q`
-Expected: `5 failed, 12 passed`: `test_the_frozen_cells_are_the_live_matrix` and
-`test_the_newest_revision_of_every_cell_equals_the_live_matrix` fail with `KeyError: 'model_permit'` (the matrix has no
-row yet); `test_upgrade_creates_the_permit_the_check_and_the_count` and
+Expected: `5 failed, 12 passed`: `test_the_frozen_cells_are_the_live_matrix` fails with `KeyError: 'model_permit'`
+(the matrix has no row yet) and `test_the_newest_revision_of_every_cell_equals_the_live_matrix` with
+`AssertionError: run_lease` (the revision's `app_definer` cell `upd=('fence',)` against the matrix's `upd=False`; the
+newest-revision walk meets `run_lease` first); `test_upgrade_creates_the_permit_the_check_and_the_count` and
 `test_no_op_execute_string_carries_a_sqlalchemy_bind[0007_leases_fences]` with `KeyError: 'queued_runs_total is not a
 known definer function or helper'` (`function_grant_statements` refuses a name the matrix lacks); and
 `test_the_testclock_branch_renders_from_frozen_tuples` with `AttributeError` (`TEST_ONLY_ROLES_TC`).
@@ -1636,11 +1684,11 @@ persistence module's 7, R006 now through 0007's downgrade; the 0006 module's 3, 
 Format, lint and count characters on every file of this task (the revision after the ISC004 pass).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `862 passed, 109 skipped` (856 + 5 + 1 parametrised revision; the 5 new live tests
+Expected: `CHECK: GREEN`; pytest `863 passed, 109 skipped` (857 + 5 + 1 parametrised revision; the 5 new live tests
 skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `950 passed, 21 skipped`. Then
+Expected: `CHECK: GREEN`; pytest `951 passed, 21 skipped`. Then
 `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
@@ -1668,7 +1716,7 @@ git commit -m "feat(migrations): revision 0007, the model permit, the definer fe
   `:17-23`; `tests/plan_f/test_grant_deferred.py:1-15`, `:54-101`; `tests/e2e/test_worker_live.py:9-24`, `:103-113`
   and the call sites; `tests/e2e/test_migrations_and_persistence.py:21`, `:136-162`, `:172-174`, `:398-403`;
   `tests/e2e/test_mcp_read_live.py:19`, `:43-48`; `tests/e2e/test_mcp_write_live.py:24`, `:83-89`;
-  `tests/e2e/test_r105_walking_skeleton.py:24-25`, `:207-214`
+  `tests/e2e/test_r105_walking_skeleton.py:25-26`, `:209-214`
 
 **Requirements:** R020 (a stale worker cannot mutate), R087 (lease and fence per run across job types), R107 (fenced
 writes lock the lease row; expiry on the database clock after the lock), DoD 1; brief rulings 2, 3, 4, 5, 8, 18, 19,
@@ -1683,10 +1731,12 @@ writes lock the lease row; expiry on the database clock after the lock), DoD 1; 
   class Busy(locked: bool)`, `class Lease(*, run_id: UUID, owner: str, fence: int, lease_seconds: int, started:
   float, clock: Callable[[], float] = time.monotonic)` with properties `fence`, `deadline`, `renewed_at`, `lost`,
   `refencing`, attributes `run_id`, `owner`, `lease_seconds`, `held_since`, and methods `check() -> None`,
+  `async effect[T](call: Coroutine[Any, Any, T]) -> T` (raises LeaseLost), `cancel_effects() -> int` (thread-safe),
   `renewed(started: float) -> None`, `mark_lost(reason: str) -> bool`, `begin_refence() -> None`,
   `end_refence(fence: int | None) -> None`, `fence_moved_by_owner(used: int) -> bool`.
 - Produces (`ops_core.persistence`): `Claimed(job: DictRow, lease: Lease)`, `Deferred(job_id: UUID)`,
-  `acquire_lease(conn, *, run_id, owner, lease_seconds, wait=False, clock=time.monotonic) -> Lease | Busy`,
+  `acquire_lease(conn, *, run_id, owner, lease_seconds, wait=False, clock=time.monotonic) -> Lease | Busy` (with
+  `wait=True` a lock wait past `lock_timeout` raises `psycopg.errors.LockNotAvailable`),
   `pick_job(conn, *, tenant_ids) -> DictRow | None`, `claim_next(conn, *, worker_name, tenant_ids, lease_seconds,
   clock=time.monotonic) -> Claimed | Deferred | None`, `fenced(conn, lease) -> None`, `release_lease(conn, lease, *,
   job, requeue_seconds=None) -> None`, `unclaim_job(conn, job_id, *, worker_name) -> None`,
@@ -1694,7 +1744,8 @@ writes lock the lease row; expiry on the database clock after the lock), DoD 1; 
   ttl_seconds=60) -> str`. `claim_job` is removed (its one caller, the worker loop, uses `claim_next`).
 - Produces (`ops_worker`): `handlers.Deps(conn, mcp, generator, urls, worker_name, leases=LeaseSettings())`,
   `handlers.investigate(deps, job, lease)`, `handlers.execute(deps, job, lease) -> bool`,
-  `handlers.handle(deps, job, lease)`, `handlers.abandon(deps, job, lease)`; `main.MAX_DEFERRALS = 16`,
+  `handlers.handle(deps, job, lease)`, `handlers.abandon(deps, job, lease)` (raises `psycopg.OperationalError`
+  after closing a loop connection that is not idle); `main.MAX_DEFERRALS = 16`,
   `main.claim(deps, order) -> persistence.Claimed | None`, `main.run_job(deps, claimed) -> None`.
 - Produces (`tests.e2e.conftest`): `lease_for(conn, run_id, *, owner="live-test", seconds=120, wait=False) -> Lease`,
   `expire_lease(conn, run_id)`, `backend_pid(conn) -> int`, `wait_until_blocked(conn, pid, *, timeout=5.0) ->
@@ -1710,10 +1761,13 @@ lease check runs (SA:157), without a database.
 
 Catches: a local deadline that is not the lease minus SA:195's five seconds, an effect allowed after the deadline or
 after a loss, a renewal that does not move the deadline, a second loss reason overwriting the first, a re-fence that
-a concurrent renewal would read as a takeover (T13 review note 2), and a lock statement that compares expiry before
-its lock instead of after it.
+a concurrent renewal would read as a takeover (T13 review note 2), a lock statement that compares expiry before its
+lock instead of after it, and a loss that cancels anything but the effects in flight or does not reach them from
+another thread (review round 1, B1: a cancelled database unit would leave the loop connection in a transaction).
 """
 
+import asyncio
+import threading
 from uuid import UUID
 
 import pytest
@@ -1785,6 +1839,67 @@ def test_the_lock_statements_compare_after_the_lock(statement: str) -> None:
     assert locking.startswith("WITH l AS MATERIALIZED (") and "app.current_time()" not in locking
     assert "l.lease_until > app.current_time() AS live" in comparing  # evaluated once the CTE returned the row
     assert ("FOR UPDATE" in locking) != ("FOR SHARE" in locking)
+
+
+def test_an_effect_starts_only_while_the_lease_is_held() -> None:
+    clock = [124.9]
+    held = lease(clock)
+    started: list[str] = []
+
+    async def call(name: str) -> str:
+        started.append(name)
+        return name
+
+    async def scenario() -> None:
+        assert await held.effect(call("first")) == "first"
+        clock[0] = 125.0
+        with pytest.raises(LeaseLost):
+            await held.effect(call("late"))  # refused unstarted (and closed, so never "never awaited")
+
+    asyncio.run(scenario())
+    assert started == ["first"] and held.lost == "local deadline passed"
+
+
+def test_a_loss_cancels_the_effect_in_flight_from_another_thread_and_nothing_else() -> None:
+    held = lease([100.0])
+    unit_finished: list[bool] = []
+    cancelled: list[int] = []
+
+    async def unit() -> None:  # stands for a database unit: never registered, so a loss cannot interrupt it
+        await asyncio.sleep(0.05)
+        unit_finished.append(True)
+
+    def lose() -> None:  # what the heartbeat thread does (ruling 19 as amended in review round 1)
+        held.mark_lost("another owner took the lease")
+        cancelled.append(held.cancel_effects())
+
+    async def scenario() -> None:
+        running = asyncio.create_task(unit())
+        effect = asyncio.create_task(held.effect(asyncio.Event().wait()))
+        await asyncio.sleep(0)  # the effect is registered and waiting
+        thread = threading.Thread(target=lose)
+        thread.start()
+        thread.join()
+        with pytest.raises(LeaseLost):
+            await effect
+        await running
+
+    asyncio.run(scenario())
+    assert cancelled == [1] and unit_finished == [True] and held.lost == "another owner took the lease"
+
+
+def test_stopping_the_worker_is_not_a_lost_lease() -> None:
+    held = lease([100.0])
+
+    async def scenario() -> None:
+        caller = asyncio.create_task(held.effect(asyncio.Event().wait()))
+        await asyncio.sleep(0)
+        caller.cancel()  # the worker shuts down: the caller's own task is cancelled
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+
+    asyncio.run(scenario())
+    assert held.lost is None
 ```
 
 Create `tests/plan_h/test_worker_units.py`:
@@ -1797,7 +1912,8 @@ bounded number of times per poll.
 
 Catches: a unit that writes before its fence check (a stale worker's write would land), an MCP call started past the
 deadline, a job closed by one unit and its lease released by another (a crash between them strands the run), a lost
-lease turned into FAILED (the next owner must re-read the run instead), and a deferral loop that never ends.
+lease turned into FAILED (the next owner must re-read the run instead), a deferral loop that never ends, and a hand-
+back attempted on a connection left inside a transaction (it would never commit).
 """
 
 import asyncio
@@ -1805,14 +1921,17 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
+import psycopg
 import pytest
 from ops_core import persistence, settings
 from ops_core.lease import Lease, LeaseLost
 from ops_worker import handlers, main
 from ops_worker.drafting import FakeDraftGenerator
+from psycopg.pq import TransactionStatus
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 TENANT, RUN_ID = uuid4(), uuid4()
@@ -1882,10 +2001,17 @@ class FakeCursor:
 
 
 class FakeConn:
-    """A connection whose transactions are logged; the handlers' own SQL (the message read, the drafts INSERT) too."""
+    """A connection whose transactions are logged; the handlers' own SQL (the message read, the drafts INSERT) too.
+    It reports itself idle between units, as psycopg's `info.transaction_status` does."""
 
     def __init__(self, log: Log) -> None:
         self.log = log
+        self.info = SimpleNamespace(transaction_status=TransactionStatus.IDLE)
+        self.closed = False
+        self.broken = False
+
+    async def close(self) -> None:
+        self.closed = True
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
@@ -2031,6 +2157,19 @@ def test_no_call_starts_past_the_local_deadline(monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(LeaseLost):
         asyncio.run(handlers.investigate(deps, dict(JOB), lease))
     assert "mcp:search_procedures" not in log.entries  # SA:195: the call never started
+
+
+def test_abandon_closes_a_loop_connection_left_in_a_transaction() -> None:
+    """Review round 1, B1: no unit is ever cancelled, but should the loop connection not be idle when a lease is
+    lost, handing the job back on it would nest in that transaction and never commit. `abandon` closes it instead,
+    so the poll loop ends and the supervisor restarts the worker."""
+    log = Log()
+    deps, lease = make(log)
+    conn: Any = deps.conn
+    conn.info.transaction_status = TransactionStatus.INTRANS
+    with pytest.raises(psycopg.OperationalError):
+        asyncio.run(handlers.abandon(deps, dict(JOB), lease))
+    assert conn.closed and log.entries == []  # nothing ran on it
 ```
 
 In `tests/plan_f/test_grant_deferred.py` (the deferred branch now re-queues through the job's final unit):
@@ -2195,15 +2334,22 @@ lock wait and re-checked afterwards only if the row changed, so a lease that lap
 renewal that then rolled back would pass (tests/e2e/test_leases_live.py measures the difference). Python never
 compares database instants; the local deadline is the monotonic instant taken before the statement that acquired or
 renewed the lease, plus the lease, minus the five seconds SA:195 keeps in hand.
+
+A lost lease stops the job in two ways (ruling 19 as amended in review round 1, B1). An effect (an MCP call, a model
+call, the model permit's back-off sleep) runs through `Lease.effect` as a child task registered on the lease, and
+the heartbeat thread cancels exactly those (`cancel_effects`). A database unit is never registered and never
+cancelled: a cancellation landing inside psycopg's BEGIN would leave the loop connection in a transaction that never
+commits. A loss during a unit is caught by the unit's own fence check or by the next `fenced()` or `check()`.
 """
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 from uuid import UUID
 
 DEADLINE_MARGIN_SECONDS: Final = 5.0  # SA:195: stop starting effects at lease_until - 5 s
@@ -2217,9 +2363,7 @@ _LOCK = (
 LOCK_FOR_UPDATE: Final = _LOCK.format(mode="FOR UPDATE")  # writes the row: acquisition, renewal, release (SA:191)
 LOCK_FOR_UPDATE_NOWAIT: Final = _LOCK.format(mode="FOR UPDATE NOWAIT")  # the claim's acquisition (ruling 3)
 LOCK_FOR_SHARE: Final = _LOCK.format(mode="FOR SHARE")  # every other writing unit (SA:176-184)
-RENEW: Final = (
-    "UPDATE app.run_lease SET lease_until = app.current_time() + make_interval(secs => %s) WHERE run_id = %s"
-)
+RENEW: Final = "UPDATE app.run_lease SET lease_until = app.current_time() + make_interval(secs => %s) WHERE run_id = %s"
 
 
 class LeaseLost(Exception):
@@ -2260,6 +2404,8 @@ class Lease:
         self._renewed_at = started
         self._refencing = False
         self._lost: str | None = None
+        self._effects: dict[asyncio.Task[Any], asyncio.AbstractEventLoop] = {}
+        self._effects_cancelled = False
 
     @property
     def fence(self) -> int:
@@ -2292,13 +2438,67 @@ class Lease:
             return self._refencing
 
     def check(self) -> None:
-        """Raise LeaseLost unless the lease is held and its local deadline is still ahead; called before every MCP
-        call, model call and fenced unit (ruling 18)."""
+        """Raise LeaseLost unless the lease is held and its local deadline is still ahead; called before every fenced
+        unit, and by `effect` before every MCP call and model call (ruling 18)."""
         with self._lock:
-            if self._lost is None and self._clock() >= self._deadline:
-                self._lost = "local deadline passed"
-            if self._lost is not None:
-                raise LeaseLost(self._lost)
+            reason = self._why_not_held()
+        if reason is not None:
+            raise LeaseLost(reason)
+
+    def _why_not_held(self) -> str | None:
+        """Why nothing may start now, or None while the lease is held; the caller holds `_lock`."""
+        if self._lost is None and self._clock() >= self._deadline:
+            self._lost = "local deadline passed"
+        return self._lost
+
+    async def effect[T](self, call: Coroutine[Any, Any, T]) -> T:
+        """Run one effect (an MCP call, a model call, the permit's back-off sleep; never a database unit) as a child
+        task the heartbeat thread may cancel (ruling 19 as amended in review round 1, B1).
+
+        The check and the registration happen under the lease's lock, so `cancel_effects` either sees the task or the
+        task sees the loss; a refused `call` is closed unstarted. A cancellation by `cancel_effects`, in whatever form
+        the call surfaces it (an MCP client may wrap it in an exception group), reaches the caller as LeaseLost; a
+        cancellation of the caller's own task (the worker stopping) propagates unchanged.
+
+        Raises:
+            LeaseLost: the lease was lost or its local deadline passed, before the effect started or while it ran.
+        """
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            reason = self._why_not_held()
+            task = None if reason is not None else loop.create_task(call)
+            if task is not None:
+                self._effects[task] = loop
+        if task is None:
+            call.close()  # never started, so never awaited
+            raise LeaseLost(reason)
+        try:
+            return await task
+        except BaseException:  # re-raised as it came unless this lease's loss cancelled the effect
+            current = asyncio.current_task()
+            stopping = current is not None and current.cancelling() > 0
+            with self._lock:
+                cancelled_for_loss = self._effects_cancelled
+            if cancelled_for_loss and not stopping:
+                raise LeaseLost(self.lost or "run lease lost") from None
+            raise
+        finally:
+            with self._lock:
+                self._effects.pop(task, None)
+
+    def cancel_effects(self) -> int:
+        """Cancel every effect in flight, from any thread (the heartbeat calls it after `mark_lost`): each child task
+        is cancelled on its own loop through `call_soon_threadsafe`. Database units are never registered here, so a
+        loss never interrupts one. Returns how many effects it cancelled."""
+        with self._lock:
+            self._effects_cancelled = True
+            effects = list(self._effects.items())
+        for task, loop in effects:
+            try:
+                loop.call_soon_threadsafe(task.cancel)
+            except RuntimeError:  # that loop has already closed (shutdown): nothing is left to cancel
+                pass
+        return len(effects)
 
     def renewed(self, started: float) -> None:
         """A renewal that began at `started` (monotonic) committed: the deadline moves with it."""
@@ -2480,6 +2680,10 @@ class _Held(Exception):
     """Raised inside the acquisition savepoint to roll it back when the lease is live under another claim."""
 
 
+class _Locked(Exception):
+    """Raised inside the acquisition savepoint to roll it back when NOWAIT met a row another transaction holds."""
+
+
 _CREATE_LEASE = (
     "INSERT INTO app.run_lease (run_id, owner, lease_until, fence) VALUES (%s, '', '-infinity', 0)"
     " ON CONFLICT (run_id) DO NOTHING"
@@ -2502,7 +2706,9 @@ async def acquire_lease(
     """Take the run's lease inside the caller's transaction (AM-12 SA:173-174, Plan H rulings 2 and 3).
 
     In a savepoint, so a busy lease rolls back alone and the caller's claim survives: the lease row FOR UPDATE NOWAIT
-    (plain FOR UPDATE with `wait=True`, which only the interleaving and stress tests use), free when `lease_until <=
+    (plain FOR UPDATE with `wait=True`, which only the interleaving and stress tests use; there a lock wait past the
+    connection's `lock_timeout` raises 55P03 instead of looking like a busy lease, review round 1 I3), free when
+    `lease_until <=
     app.current_time()` compared after the lock, then `fence + 1`, the new owner and a fresh `lease_until`. The row is
     locked before anything is inserted, because an `INSERT … ON CONFLICT` waits for an in-progress update of an
     existing row (a renewal, a release) and NOWAIT exists to avoid waits; it is created released (fence 0, so the
@@ -2511,14 +2717,24 @@ async def acquire_lease(
 
     Returns:
         The Lease, whose local deadline counts from the monotonic instant before the first statement (ruling 18);
-        `Busy(locked=True)` when another transaction holds the row, `Busy(locked=False)` when the lease is live.
+        `Busy(locked=True)` when NOWAIT met a row another transaction holds, `Busy(locked=False)` when the lease is
+        live.
+
+    Raises:
+        psycopg.errors.LockNotAvailable: a wait (`wait=True`, or the first-row INSERT racing another first insert)
+            outlasted the connection's `lock_timeout`.
     """
     started = clock()
     lock = LOCK_FOR_UPDATE if wait else LOCK_FOR_UPDATE_NOWAIT
     taken: DictRow | None = None
     try:
         async with conn.transaction():
-            cur = await conn.execute(lock, (run_id,))
+            try:
+                cur = await conn.execute(lock, (run_id,))
+            except psycopg.errors.LockNotAvailable:
+                if wait:
+                    raise  # a long lock wait, which the stress test counts, never a busy lease
+                raise _Locked from None  # NOWAIT met a held row: busy (ruling 3)
             row = await cur.fetchone()
             if row is None:
                 await conn.execute(_CREATE_LEASE, (run_id,))
@@ -2532,7 +2748,7 @@ async def acquire_lease(
             taken = await cur.fetchone()
     except _Held:
         return Busy(locked=False)
-    except psycopg.errors.LockNotAvailable:
+    except _Locked:
         return Busy(locked=True)
     if taken is None:
         raise PersistenceError("the lease update returned nothing")
@@ -2629,9 +2845,7 @@ async def fenced(conn: Conn, lease: Lease) -> None:
         raise LeaseLost("run lease lost")
 
 
-async def release_lease(
-    conn: Conn, lease: Lease, *, job: dict[str, Any], requeue_seconds: int | None = None
-) -> None:
+async def release_lease(conn: Conn, lease: Lease, *, job: dict[str, Any], requeue_seconds: int | None = None) -> None:
     """The job's final unit (Plan H ruling 28): the lease row FOR UPDATE (this unit writes it, SA:191), owner and fence
     compared, the handles minted under this fence revoked, the job finished (or re-queued after `requeue_seconds`)
     and the lease released (`lease_until = '-infinity'`; owner and fence stay, so the run's next acquisition takes
@@ -2734,10 +2948,10 @@ Replace the whole of `worker/src/ops_worker/handlers.py` with:
 a write handle and call `create_incident`; mcp-write performs the grant, the dispatch and the outcome, while the
 worker records an UNKNOWN envelope through `mark_unknown`. Every handler runs under the run lease its claim took
 (AM-12, T13): each unit that writes for the run opens with `persistence.fenced` (the lease row FOR SHARE; owner, fence
-and expiry compared after the lock), no MCP or model call starts past the lease's local deadline (`Lease.check`,
-SA:195), and the job's final unit revokes the job's handles, closes the job and releases the lease together
-(`persistence.release_lease`). A lost lease raises LeaseLost to the caller, which hands the job back (`abandon`).
-No LangGraph (→ T20).
+and expiry compared after the lock), every MCP and model call runs as a lease effect (`Lease.effect`: none starts past
+the lease's local deadline, SA:195, and a lost lease cancels it; database units are never cancelled), and the job's
+final unit revokes the job's handles, closes the job and releases the lease together (`persistence.release_lease`). A
+lost lease raises LeaseLost to the caller, which hands the job back (`abandon`). No LangGraph (→ T20).
 """
 
 from __future__ import annotations
@@ -2748,12 +2962,14 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+import psycopg
 from ops_core import persistence
 from ops_core.jobs import JOB_RULES, JobType, Server
 from ops_core.lease import Lease, LeaseLost
 from ops_core.outcomes import EventSource, EventType
 from ops_core.settings import LeaseSettings, Urls
 from ops_core.states import Intent, RunState, freeze_allowed
+from psycopg.pq import TransactionStatus
 
 from ops_worker import proposals
 from ops_worker.drafting import DraftGenerator, DraftRequest, EvidenceItem
@@ -2825,13 +3041,15 @@ async def investigate(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
         )
     await _event(deps, lease, EventType.TOOL_STARTED, {"message": "search_procedures"})
     try:
-        lease.check()  # an MCP call is an effect: none starts past the local deadline (SA:195)
+        # An MCP call is an effect: none starts past the local deadline (SA:195), and a lost lease cancels it.
         # The tool input caps `query` at 500 characters (schemas/tools); the message itself may be 4,000.
-        doc = await deps.mcp.call(
-            deps.urls.mcp_read,
-            handle=handle,
-            tool="search_procedures",
-            arguments={"query": text[:QUERY_CHARS], "limit": 3, "mode": "lexical"},
+        doc = await lease.effect(
+            deps.mcp.call(
+                deps.urls.mcp_read,
+                handle=handle,
+                tool="search_procedures",
+                arguments={"query": text[:QUERY_CHARS], "limit": 3, "mode": "lexical"},
+            )
         )
         evidence = proposals.evidence_from_search(doc)
     except (McpCallFailed, ValueError) as exc:
@@ -2863,8 +3081,7 @@ async def _draft_and_freeze(
 ) -> None:
     """Draft from the evidence and freeze the proposal; any failure here is the caller's to turn into FAILED."""
     request = DraftRequest(asset_id=run["asset_id"], text=text, start_at=run["start_at"], end_at=run["end_at"])
-    lease.check()  # a model call is an effect too (SA:195)
-    draft = await deps.generator.generate(request, evidence)
+    draft = await lease.effect(deps.generator.generate(request, evidence))  # a model call is an effect too (SA:195)
     freeze_allowed(Intent(run["intent"]))  # an answer_only run never freezes a proposal (SA:453)
     now = datetime.now(UTC).replace(microsecond=0)
     proposal_id, draft_id = uuid4(), uuid4()
@@ -2931,9 +3148,10 @@ async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
             deps.conn, run_id=run["run_id"], job_id=job["id"], server=Server.WRITE, azp="ops-worker", fence=lease.fence
         )
     try:
-        lease.check()
-        doc = await deps.mcp.call(
-            deps.urls.mcp_write, handle=handle, tool="create_incident", arguments={"proposal_id": str(proposal_id)}
+        doc = await lease.effect(
+            deps.mcp.call(
+                deps.urls.mcp_write, handle=handle, tool="create_incident", arguments={"proposal_id": str(proposal_id)}
+            )
         )
     except McpCallFailed as exc:
         # mcp-write owns the grant and the outcome. Before a grant the run is still APPROVED; after one it is EXECUTING
@@ -2978,7 +3196,17 @@ async def handle(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
 async def abandon(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
     """The lease is lost (Plan H ruling 19): revoke the handles minted under this fence and hand the job back, in one
     unit, with no transition (the next owner re-reads the run). `revoke_handles` never refuses a stale fence (ruling
-    8), so this works whoever holds the lease now."""
+    8), so this works whoever holds the lease now.
+
+    Raises:
+        psycopg.OperationalError: the loop connection was not idle. Only effects are ever cancelled, so this should
+            not happen; if it does, a hand-back on that connection would nest in the open transaction and never
+            commit, so the connection is closed instead, the poll loop ends and the supervisor restarts the worker
+            (review round 1, B1).
+    """
+    if deps.conn.info.transaction_status is not TransactionStatus.IDLE:
+        await deps.conn.close()
+        raise psycopg.OperationalError("the loop connection was not idle when its lease was lost; it was closed")
     async with deps.conn.transaction():
         await persistence.set_tenant(deps.conn, job["tenant_id"])  # jobs is under RLS
         await persistence.revoke_handles(deps.conn, lease.run_id, lease.fence)
@@ -3158,7 +3386,7 @@ def main() -> None:
 ```
 
 Run: `uv run python -m pytest tests/plan_h/test_lease.py tests/plan_h/test_worker_units.py tests/plan_f/test_grant_deferred.py tests/plan_e/test_worker_rotate.py tests/plan_d/test_worker.py -q`
-Expected: `38 passed` (`test_lease.py` 8, `test_worker_units.py` 5, Plan F's 3, the rotation module's 17, Plan D's
+Expected: `42 passed` (`test_lease.py` 11, `test_worker_units.py` 6, Plan F's 3, the rotation module's 17, Plan D's
 worker module 5). Format and lint `worker/src`, `core/src` and the test files.
 
 - [ ] **Step 5: The live helpers and the evidence root**
@@ -3405,7 +3633,7 @@ with:
 from tests.e2e.conftest import lease_for, purge_run, purge_tenant
 ```
 
-Edit 2 (old lines 147-157), replace:
+Edit 2 (old lines 148-158), replace:
 
 ```python
         first, second = await role_conn(Role.WORKER), await role_conn(Role.WORKER)
@@ -3534,7 +3762,7 @@ with:
 
 In `tests/e2e/test_r105_walking_skeleton.py`:
 
-Edit 1 (old lines 24-25), replace:
+Edit 1 (old lines 25-26), replace:
 
 ```python
 from scripts.skeleton import Skeleton, orphan_keys
@@ -3549,7 +3777,7 @@ from tests.e2e.conftest import lease_for
 from tests.plan_b.live import kc
 ```
 
-Edit 2 (old lines 207-212), replace:
+Edit 2 (old lines 209-214), replace:
 
 ```python
     worker_conn = await role_conn(Role.WORKER)
@@ -3663,8 +3891,7 @@ async def job_of(app_conn: persistence.Conn, run: UUID) -> UUID:
 async def tool_events(app_conn: persistence.Conn, run: UUID) -> list[str]:
     """The run's tool.started messages in sequence order (each fenced test write names its writer)."""
     cur = await app_conn.execute(
-        "SELECT payload->>'message' AS m FROM app.events WHERE run_id = %s AND type = 'tool.started'"
-        " ORDER BY sequence",
+        "SELECT payload->>'message' AS m FROM app.events WHERE run_id = %s AND type = 'tool.started' ORDER BY sequence",
         (run,),
     )
     return [row["m"] for row in await cur.fetchall()]
@@ -3713,17 +3940,22 @@ async def test_two_first_acquisitions_of_one_run_give_one_lease(
     await persistence.insert_job(app_conn, job_type=JobType.RESUME_INPUT, run_id=run, clarification_event_id=uuid4())
     a, b = await role_conn(Role.WORKER), await role_conn(Role.WORKER)
     try:
-        got = await asyncio.wait_for(  # neither claim may wait for ever (Review Focus 1)
-            asyncio.gather(
-                persistence.claim_next(a, worker_name="wa", tenant_ids=[tenant], lease_seconds=30),
-                persistence.claim_next(b, worker_name="wb", tenant_ids=[tenant], lease_seconds=30),
-            ),
-            timeout=10,
-        )
-        assert sorted(type(g).__name__ for g in got) == ["Claimed", "Deferred"]
+        a_pid, b_pid = await backend_pid(a), await backend_pid(b)
+        # Stepped (review round 1, M5): A's claim stays uncommitted while B claims, so B's first-row INSERT really
+        # meets A's and waits for A alone (the one wait left in a claim, Review Focus 1).
+        async with a.transaction():
+            first = await persistence.claim_next(a, worker_name="wa", tenant_ids=[tenant], lease_seconds=30)
+            assert isinstance(first, persistence.Claimed) and first.lease.fence == 1
+            second = asyncio.create_task(
+                persistence.claim_next(b, worker_name="wb", tenant_ids=[tenant], lease_seconds=30)
+            )
+            assert a_pid in await wait_until_blocked(app_conn, b_pid)
+            assert not second.done()
+        got = await asyncio.wait_for(second, timeout=5)  # once A commits, B sees the live lease and defers
+        assert isinstance(got, persistence.Deferred), got
         cur = await app_conn.execute("SELECT fence FROM app.run_lease WHERE run_id = %s", (run,))
         assert [row["fence"] for row in await cur.fetchall()] == [1]
-        lines.append("two first claims of one run at once: one claimed at fence 1, one deferred, no wait")
+        lines.append("two first claims of one run: B's insert waited on A's alone, then deferred; one lease, fence 1")
     finally:
         await forget(app_conn, tenant, run)
 
@@ -3977,10 +4209,10 @@ and ten lines.
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `875 passed, 119 skipped` (862 + 8 + 5; the 10 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `880 passed, 119 skipped` (863 + 11 + 6; the 10 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `973 passed, 21 skipped` (R105's skeleton now runs the leasing worker). Then
+Expected: `CHECK: GREEN`; pytest `978 passed, 21 skipped` (R105's skeleton now runs the leasing worker). Then
 `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission` (keep `reports/leases`; Task 8
 commits it after the final run).
 
@@ -4053,7 +4285,9 @@ def test_upgrade_replaces_the_handle_functions_with_fenced_ones(monkeypatch: pyt
     for body in (module.MARK_SENT, module.RECORD_OUTCOME):
         assert body.index("app._resolve_handle(p_raw_handle") < body.index("FOR UPDATE")  # run_lease before runs
         assert "g.run_id = v_handle.run_id" in body  # the action must be the handle's run's
-    assert module.GRANT_EXECUTION != module.REV0005.GRANT_EXECUTION and "TODO(T13)" not in module.GRANT_EXECUTION
+    assert module.GRANT_EXECUTION != module.REV0005.GRANT_EXECUTION
+    assert module.GRANT_TODO_0005 in module.REV0005.GRANT_EXECUTION
+    assert module.GRANT_TODO_0005 not in module.GRANT_EXECUTION  # the reworded line is gone
 
 
 def test_mark_unknown_bumps_under_the_lock_and_locks_the_run_before_the_handles() -> None:
@@ -4288,10 +4522,12 @@ def test_a_moved_fence_after_sent_is_unknown_never_an_error(monkeypatch: pytest.
 ```
 
 Run: `uv run python -m pytest tests/plan_h/test_migration_0007.py tests/plan_h/test_worker_units.py tests/plan_h/test_write_path_fence.py -q`
-Expected: `11 failed, 6 passed`. The three new revision tests fail (`AttributeError: module 'rev_0007_leases_fences'
-has no attribute 'RESOLVE_HANDLE'` and `'MARK_UNKNOWN'`, and an `AssertionError` on the downgrade's first four
-statements); every worker test that installs the fakes fails with `AttributeError: module 'ops_core.persistence' has
-no attribute 'Unknown'` (six: the four from Task 3 that call `patch` and the two new ones; the deferral test passes);
+Expected: `11 failed, 7 passed`. The three new revision tests fail (the first with `ValueError: 'DROP FUNCTION
+app.mark_sent(uuid)' is not in list`, because `seen.index` runs before any body is read; the second with
+`AttributeError: module 'rev_0007_leases_fences' has no attribute 'MARK_UNKNOWN'`; the third with an `AssertionError`
+on the downgrade's first four statements); every worker test that installs the fakes fails with `AttributeError:
+module 'ops_core.persistence' has no attribute 'Unknown'` (six: the four from Task 3 that call `patch` and the two new
+ones; the deferral test and the abandon test pass);
 both write-path tests fail with `TypeError`, because `execution.py` still passes the action id positionally to the
 keyword-only fakes.
 
@@ -4348,9 +4584,11 @@ from alembic import op
 from ops_core import privileges
 ```
 
-Edit 3, replace:
+Edit 3 (two blank lines before the new function, as `ruff format` wants), replace:
 
 ```python
+depends_on = None
+
 HEADER = "LANGUAGE plpgsql SECURITY DEFINER SET search_path = app, pg_temp SET app.tenant_id = ''"
 TABLES = ("run_lease", "model_permit")
 ```
@@ -4358,6 +4596,9 @@ TABLES = ("run_lease", "model_permit")
 with:
 
 ```python
+depends_on = None
+
+
 def _applied(name: str) -> ModuleType:
     """An applied revision's module, loaded by path (the versions directory is not a package)."""
     spec = importlib.util.spec_from_file_location(f"applied_{name}", Path(__file__).with_name(f"{name}.py"))
@@ -4381,9 +4622,7 @@ Edit 4, replace:
 
 ```python
 # (name, argument types, callers, body): frozen here (N1); the newest-revision test reads this tuple.
-FUNCTIONS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
-    ("queued_runs_total", "", ("api",), QUEUED_RUNS_TOTAL),
-)
+FUNCTIONS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (("queued_runs_total", "", ("api",), QUEUED_RUNS_TOTAL),)
 # Signatures upgrade() drops before FUNCTIONS re-creates them with another signature or return type.
 REPLACED: tuple[str, ...] = ()
 # Signatures downgrade() drops: the functions 0006 does not have in the form FUNCTIONS created.
@@ -4446,16 +4685,15 @@ $fn$;
 ALTER FUNCTION app._resolve_handle(text, text, text) OWNER TO app_definer;
 """
 
-# grant_execution as 0005 installed it, its TODO(T13) answered: the fence is _resolve_handle's (ruling 31). The only
-# change is the comment, which lives in the stored body; a unit test checks nothing else differs.
-_GRANT_TODO_0005 = "    -- TODO(T21): asset freshness (5 min) and the asset guard; TODO(T13): the lease fence.\n"
+# grant_execution as 0005 installed it, with its lease to-do answered: the fence is _resolve_handle's (ruling 31).
+# The only change is the comment, which lives in the stored body. GRANT_TODO_0005 quotes revision 0005's line
+# verbatim (the one place outside the applied revisions that carries T13's old TODO marker).
+GRANT_TODO_0005 = "    -- TODO(T21): asset freshness (5 min) and the asset guard; TODO(T13): the lease fence.\n"
 GRANT_EXECUTION = REV0005.GRANT_EXECUTION.replace(
-    _GRANT_TODO_0005,
+    GRANT_TODO_0005,
     "    -- The lease fence was checked by _resolve_handle above (run_lease FOR SHARE, T13). TODO(T21): asset\n"
     "    -- freshness (5 min) and the asset guard advisory lock, first in the lock order (SA:189).\n",
 )
-if GRANT_EXECUTION == REV0005.GRANT_EXECUTION:
-    raise RuntimeError("revision 0005's grant_execution no longer carries the TODO line this revision rewords")
 
 MARK_SENT = f"""
 CREATE OR REPLACE FUNCTION app.mark_sent(p_raw_handle text, p_action_id uuid) RETURNS text
@@ -4697,7 +4935,31 @@ RESTORED: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
 
 Edit 4 puts the six bodies between Task 2's `QUEUED_RUNS_TOTAL` and the four tuples, so the file reads: the cells and
 the vocabulary, `SCHEMA_CHANGES`, `QUEUED_RUNS_TOTAL`, the six bodies, the four tuples, `DOWNGRADE`, `upgrade`,
-`downgrade` (the two functions unchanged).
+`downgrade`.
+
+Edit 5 (review round 1, M3: the check that revision 0005 still carries the line `GRANT_EXECUTION` rewords runs when
+the revision is applied, not when Alembic loads the revision graph, so a drifted file fails this upgrade instead of
+every Alembic command), replace:
+
+```python
+def upgrade() -> None:
+    """Schema, then the frozen cells, then the functions (body first, then its grants, so REVOKE lands on it)."""
+    for statement in SCHEMA_CHANGES:
+```
+
+with:
+
+```python
+def upgrade() -> None:
+    """Schema, then the frozen cells, then the functions (body first, then its grants, so REVOKE lands on it).
+
+    Raises:
+        RuntimeError: revision 0005's grant_execution no longer carries the TODO line this revision rewords.
+    """
+    if GRANT_EXECUTION == REV0005.GRANT_EXECUTION:
+        raise RuntimeError("revision 0005's grant_execution no longer carries the TODO line this revision rewords")
+    for statement in SCHEMA_CHANGES:
+```
 
 Then `uv run ruff check --select ISC004 --fix --unsafe-fixes migrations/app/versions/0007_leases_fences.py` (no change
 expected).
@@ -4839,9 +5101,7 @@ Edit 3 (old line 117), replace:
 with:
 
 ```python
-            standing = await persistence.record_outcome(
-                conn, handle=handle, action_id=grant.action_id, outcome=outcome
-            )
+            standing = await persistence.record_outcome(conn, handle=handle, action_id=grant.action_id, outcome=outcome)
 ```
 
 In `mcp-write/src/ops_mcp_write/server.py` (old lines 223-225), replace:
@@ -4910,8 +5170,8 @@ async def _mark_unknown(deps: Deps, lease: Lease) -> None:
 ```
 
 Run: `uv run python -m pytest tests/plan_h tests/plan_e/test_transitions_table.py tests/plan_e/test_privileges.py tests/plan_f/test_grant_deferred.py -q`
-Expected: `86 passed` (Plan H's 65: settings 10, lock order 30, revision 8, lease 8, worker units 7, write path 2; the
-transitions module 12, Plan E's privileges 6, Plan F's grant module 3).
+Expected: `91 passed` (Plan H's 70: settings 11, lock order 30, revision 8, lease 11, worker units 8, write path 2;
+the transitions module 12, Plan E's privileges 6, Plan F's grant module 3).
 
 - [ ] **Step 4: The live callers**
 
@@ -5146,7 +5406,8 @@ with:
 ```
 
 Edit 12 (replace all, 3 occurrences): `(cancelled, "FAILED_NO_COMMIT", Jsonb(` →
-`(cancelled_handle, cancelled, "FAILED_NO_COMMIT", Jsonb(`.
+`(cancelled_handle, cancelled, "FAILED_NO_COMMIT", Jsonb(`. The three lines grow past 120 characters; the task's
+`ruff format` wraps them, and no later edit quotes them.
 
 Afterwards `grep -c "mark_sent(%s)\|record_outcome(%s, '\|mark_unknown(%s, 1) AS s" tests/e2e/test_definers_write_path_live.py`
 prints `0`.
@@ -5210,6 +5471,11 @@ Edit 1, replace:
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
+
+import psycopg
+import pytest
+from ops_core import persistence, settings
+from ops_core.settings import Profile, Role
 ```
 
 with:
@@ -5220,6 +5486,13 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
+
+import psycopg
+import pytest
+from ops_core import persistence, settings
+from ops_core.settings import Profile, Role
+from psycopg import sql
+from psycopg.rows import dict_row
 ```
 
 Edit 2, replace:
@@ -5233,6 +5506,10 @@ with:
 ```python
 FREE_PERMIT = "UPDATE app.model_permit SET holder = NULL, leased_until = '-infinity' WHERE slot = 1"
 VERSIONS = Path(__file__).resolve().parents[2] / "migrations" / "app" / "versions"
+FUNCTION_DETAILS = (
+    "SELECT pg_get_functiondef(p.oid) AS body, p.proacl::text AS acl, p.proowner::regrole::text AS owner,"
+    " p.proconfig::text AS config FROM pg_proc p WHERE p.oid = %s::regprocedure"
+)
 
 
 def revision_0007() -> Any:
@@ -5242,6 +5519,25 @@ def revision_0007() -> Any:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def built_to_0006(superuser: settings.Postgres, signatures: list[str]) -> dict[str, dict[str, Any]]:
+    """The functions named, as a database built straight to 0006 holds them (review round 1, M3): definition, ACL,
+    owner and settings. A scratch database is created, upgraded to 0006 by the applied revisions alone, read and
+    dropped; the roles are cluster-wide, so its ACLs name the same roles as the test database's."""
+    from scripts.skeleton import upgrade
+
+    scratch = f"r006_{uuid4().hex[:12]}"
+    with psycopg.connect(superuser.conninfo(), autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(scratch)))
+    try:
+        target = settings.Postgres(superuser.host, superuser.port, superuser.user, scratch, superuser.password)
+        upgrade("app", target, "0006_admission_idempotency")
+        with psycopg.connect(target.conninfo(), row_factory=dict_row) as conn:
+            return {name: dict(conn.execute(FUNCTION_DETAILS, (name,)).fetchone() or {}) for name in signatures}
+    finally:
+        with psycopg.connect(superuser.conninfo(), autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(scratch)))
 ```
 
 Edit 3, replace:
@@ -5267,6 +5563,12 @@ with:
                 "SELECT prosrc FROM pg_proc WHERE oid = %s::regprocedure", (f"app.{name}({args})",)
             )
             assert (await cur.fetchone())["prosrc"] == body.split("$fn$")[1], name
+        # ...and so are their definitions, ACLs, owners and settings, against a database that never saw 0007.
+        restored = [f"app.{name}({args})" for name, args, _, _ in revision_0007().RESTORED]
+        reference = built_to_0006(superuser, restored)
+        for signature in restored:
+            cur = await app_conn.execute(FUNCTION_DETAILS, (signature,))
+            assert dict(await cur.fetchone()) == reference[signature], signature
     finally:
         assert migrate(Profile.TEST) == 0  # every later test needs the head
     assert await snapshot(app_conn) == head  # the upgrade brings back exactly what the downgrade took
@@ -5503,10 +5805,10 @@ Expected: `49 passed` (5 new, write path 11, run path 8, worker 4, mcp-write 6, 
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `882 passed, 124 skipped` (875 + 3 + 2 + 2; the 5 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `887 passed, 124 skipped` (880 + 3 + 2 + 2; the 5 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `985 passed, 21 skipped` (R105's mcp-write now checks the fence through the handle).
+Expected: `CHECK: GREEN`; pytest `990 passed, 21 skipped` (R105's mcp-write now checks the fence through the handle).
 Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
@@ -5522,7 +5824,7 @@ git commit -m "feat(definers): the lease fence in every handle function; mark_un
 
 ---
 
-### Task 5: The heartbeat thread, the liveness and budget gates, cancellation on loss, and the model permit
+### Task 5: The heartbeat thread, the liveness and budget gates, cancelling effects on loss, and the model permit
 
 **Files:**
 - Create: `worker/src/ops_worker/heartbeat.py`, `worker/src/ops_worker/permit.py`, `tests/plan_h/test_heartbeat.py`,
@@ -5531,23 +5833,24 @@ git commit -m "feat(definers): the lease fence in every handle function; mark_un
   (`take_model_permit`, `release_model_permit` after `unclaim_job`); `worker/src/ops_worker/handlers.py` (imports,
   `Deps`, the draft call); `worker/src/ops_worker/main.py` (docstring, imports, `run_job`, `_main`);
   `worker/src/ops_worker/drafting.py:85-89` (imports), `:132-138` (`FakeDraftGenerator`);
-  `tests/plan_h/test_worker_units.py` (the permit fakes, the unit count, one test)
+  `tests/plan_h/test_worker_units.py` (an import, the permit fakes, the unit count, three tests)
 
-**Requirements:** R088 (the heartbeat survives long or blocking work; a lease loss cancels it), DoD 3, the model
-permit (SA:203-205); brief rulings 10, 12, 16, 17, 18, 19, 20.
+**Requirements:** R088 (the heartbeat survives long or blocking work; a lease loss cancels the effect in flight), DoD
+3, the model permit (SA:203-205); brief rulings 10, 12, 16, 17, 18, 19 (as amended in review round 1, B1), 20.
 
 **Interfaces:**
-- Consumes: `Lease` (`renewed`, `mark_lost`, `fence_moved_by_owner`, `lost`, `held_since`, `renewed_at`, `deadline`),
-  `LOCK_FOR_UPDATE`, `RENEW`, `RELEASED` (Task 3); `LeaseSettings` (Task 1); `persistence.Claimed`, `claim_next`,
-  `handlers.abandon` (Task 3); `settings.Postgres.conninfo()`.
+- Consumes: `Lease` (`renewed`, `mark_lost`, `cancel_effects`, `effect`, `fence_moved_by_owner`, `lost`,
+  `held_since`, `renewed_at`, `deadline`), `LOCK_FOR_UPDATE`, `RENEW`, `RELEASED` (Task 3); `LeaseSettings` (Task 1);
+  `persistence.Claimed`, `claim_next`, `handlers.abandon` (Task 3); `settings.Postgres.conninfo()`.
 - Produces: `ops_core.lease.Renewal` (`RENEWED`, `RELEASED`, `MOVED`, `EXPIRED`), `renew(conn:
   psycopg.Connection[DictRow], lease: Lease, fence: int) -> Renewal`; `ops_worker.heartbeat.TICK_SECONDS`,
   `STAMP_SECONDS`, `Liveness(clock=time.monotonic)` with `stamp()`, `age(now) -> float`; `keep_stamping(liveness,
   stop) -> None` (coroutine); `connector(pg: Postgres) -> Callable[[], SyncConn]`; `Heartbeat(*, connect, settings,
   liveness, clock=time.monotonic, renewer=renew, tick_seconds=TICK_SECONDS)`, a `threading.Thread` with
-  `hold(lease, cancel)`, `drop(lease)`, `stop()`, `tick()`, `renewals: int`; `ops_worker.permit.PERMIT_TTL_SECONDS =
-  65`, `backoff(attempt, rand=random.random) -> float`, `model_permit(conn, *, holder, lease, sleep=asyncio.sleep,
-  rand=random.random)` (async context manager yielding the slot); `persistence.take_model_permit(conn, *, holder,
+  `hold(lease)`, `drop(lease)`, `stop()`, `tick()`, `renewals: int`, `max_loop_age: float`;
+  `ops_worker.permit.PERMIT_TTL_SECONDS = 65`, `backoff(attempt, rand=random.random) -> float`, `model_permit(conn, *,
+  holder, lease, sleep=asyncio.sleep, rand=random.random)` (async context manager yielding the slot; `sleep` returns a
+  coroutine, run as a lease effect); `persistence.take_model_permit(conn, *, holder,
   run_id, ttl_seconds) -> int | None`, `persistence.release_model_permit(conn, *, slot, holder) -> None`;
   `handlers.Deps.heartbeat: Heartbeat | None = None`; `FakeDraftGenerator(delay_seconds: float = 0.0)`.
 
@@ -5562,8 +5865,8 @@ of the real thread against a real event loop.
 Catches: a renewal more or less often than once per heartbeat, a loop blocked for 25 s that loses its lease (DoD 3), a
 dead loop or a job past its 90 s budget that keeps renewing (T13 review note 4), a renewal that meets the owner's own
 re-fence and cancels a healthy job (review note 2), another owner's fence or an expired lease that is not a loss, a
-transient error that loses the lease before the local deadline or never loses it after, a released lease that is
-cancelled, and a cancellation that cannot cross from the thread to the event loop.
+transient error that loses the lease before the local deadline or never loses it after, a released lease whose effects
+are cancelled, and a cancellation that cannot cross from the thread to the effect on the event loop.
 """
 
 import asyncio
@@ -5572,7 +5875,7 @@ from uuid import UUID
 
 import psycopg
 import pytest
-from ops_core.lease import Lease, Renewal
+from ops_core.lease import Lease, LeaseLost, Renewal
 from ops_core.settings import LeaseSettings
 from ops_worker.heartbeat import Heartbeat, Liveness
 
@@ -5615,13 +5918,24 @@ class Renewer:
         return step
 
 
+class CountingLease(Lease):
+    """A Lease that counts how often the heartbeat cancels its effects."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.cancels = 0
+
+    def cancel_effects(self) -> int:
+        self.cancels += 1
+        return super().cancel_effects()
+
+
 class Setup:
     def __init__(self, *script: Any) -> None:
         self.clock = Clock()
         self.liveness = Liveness(self.clock)
         self.renewer = Renewer(*script)
         self.connects = 0
-        self.cancels = 0
         self.heartbeat = Heartbeat(
             connect=self.connect,
             settings=LeaseSettings(),  # the real defaults: the clock is fake, so nothing waits
@@ -5629,15 +5943,17 @@ class Setup:
             clock=self.clock,
             renewer=self.renewer,
         )
-        self.lease = Lease(run_id=RUN, owner="w:test", fence=3, lease_seconds=30, started=0.0, clock=self.clock)
-        self.heartbeat.hold(self.lease, cancel=self.cancel)
+        self.lease = CountingLease(run_id=RUN, owner="w:test", fence=3, lease_seconds=30, started=0.0, clock=self.clock)
+        self.heartbeat.hold(self.lease)
+
+    @property
+    def cancels(self) -> int:
+        """How often the thread cancelled the lease's effects (once per loss)."""
+        return self.lease.cancels
 
     def connect(self) -> Any:
         self.connects += 1
         return FakeConn()
-
-    def cancel(self) -> None:
-        self.cancels += 1
 
     def at(self, now: float, *, alive: bool = True) -> None:
         """Move the clock, let a live loop stamp, and tick once."""
@@ -5660,6 +5976,7 @@ def test_a_blocked_loop_keeps_its_lease_until_the_stall_gate_then_loses_it() -> 
     for now in (10.0, 20.0, 25.0, 27.9):  # the loop stamped at 0 and is blocked since (DoD 3: 25 s keeps the lease)
         s.at(now, alive=False)
     assert s.heartbeat.renewals == 2 and s.cancels == 0 and s.lease.lost is None
+    assert s.heartbeat.max_loop_age == 27.9  # the longest silence it saw, for the DoD-3 evidence line
     s.at(28.0, alive=False)  # OPS_LOOP_STALL_SECONDS
     assert (s.lease.lost, s.cancels) == ("event loop stalled", 1)
     s.at(40.0, alive=False)
@@ -5727,7 +6044,7 @@ def test_a_released_lease_is_dropped_quietly() -> None:
     assert s.cancels == 0 and s.renewer.fences == [3]  # dropped after the first answer
 
 
-def test_the_thread_cancels_the_loops_task_and_stops() -> None:
+def test_the_thread_cancels_the_effect_on_the_loop_and_stops() -> None:
     s = Setup(Renewal.MOVED)
     conn = FakeConn()
     thread = Heartbeat(
@@ -5740,18 +6057,12 @@ def test_the_thread_cancels_the_loops_task_and_stops() -> None:
     )
 
     async def scenario() -> None:
-        loop = asyncio.get_running_loop()
-        work = asyncio.create_task(asyncio.Event().wait())
-
-        def cancel() -> None:  # what main.run_job passes: thread-safe by construction
-            loop.call_soon_threadsafe(work.cancel)
-
-        thread.hold(s.lease, cancel=cancel)
+        thread.hold(s.lease)
         thread.start()
         s.clock.now = 10.0
         s.liveness.stamp()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(work, timeout=2)
+        with pytest.raises(LeaseLost):  # the effect in flight, cancelled from the thread (ruling 19, round 1 B1)
+            await asyncio.wait_for(s.lease.effect(asyncio.Event().wait()), timeout=2)
 
     asyncio.run(scenario())
     thread.stop()
@@ -5766,8 +6077,9 @@ Create `tests/plan_h/test_permit.py`:
 database.
 
 Catches: a backoff that does not double or exceeds 2 s, jitter that can drop to zero (two waiters hammering one row),
-a permit kept after the block or after a cancelled call (one stuck permit stops every draft for 65 s), a waiter that
-outlives its lease, and a slow drafter that blocks the event loop.
+a permit kept after the block or after a lost lease cancelled the call (one stuck permit stops every draft for 65 s),
+a permit taken or released by a loss during the back-off (review round 1, I2), a waiter that outlives its lease, and a
+slow drafter that blocks the event loop.
 """
 
 import asyncio
@@ -5816,6 +6128,12 @@ def lease(clock: list[float]) -> Lease:
     return Lease(run_id=RUN, owner="w:test", fence=1, lease_seconds=30, started=0.0, clock=lambda: clock[0])
 
 
+def lose(held: Lease) -> None:
+    """What the heartbeat thread does on a loss: record why, then cancel the effects in flight."""
+    held.mark_lost("another owner took the lease")
+    held.cancel_effects()
+
+
 def test_the_backoff_doubles_to_two_seconds_with_jitter_in_the_upper_half() -> None:
     assert [backoff(i, lambda: 1.0) for i in range(6)] == [0.25, 0.5, 1.0, 2.0, 2.0, 2.0]
     assert [backoff(i, lambda: 0.0) for i in range(4)] == [0.125, 0.25, 0.5, 1.0]
@@ -5823,21 +6141,43 @@ def test_the_backoff_doubles_to_two_seconds_with_jitter_in_the_upper_half() -> N
     assert PERMIT_TTL_SECONDS == 65  # a 60 s model attempt plus 5 s (SA:596, ruling 12)
 
 
-def test_the_permit_is_released_after_the_block_and_after_a_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_permit_is_released_after_the_block_and_after_a_lost_lease(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = permits(monkeypatch, [1])
     conn: Any = FakeConn()
 
-    async def draft_then(raise_cancel: bool) -> None:
-        async with model_permit(conn, holder="w:test", lease=lease([1.0])) as slot:
+    async def draft_then(lost: bool) -> None:
+        held = lease([1.0])
+        async with model_permit(conn, holder="w:test", lease=held) as slot:
             assert slot == 1
-            if raise_cancel:
-                raise asyncio.CancelledError  # the heartbeat cancelled the call mid-draft (ruling 19)
+            if lost:  # the heartbeat loses the lease mid-draft and cancels the model call (ruling 19)
+                asyncio.get_running_loop().call_later(0.01, lose, held)
+                await held.effect(asyncio.Event().wait())
 
     asyncio.run(draft_then(False))
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(LeaseLost):
         asyncio.run(draft_then(True))
     assert [name for name, _ in calls] == ["take", "release", "take", "release"]
     assert calls[0][1] == ("w:test", RUN, PERMIT_TTL_SECONDS) and calls[1][1] == (1, "w:test")
+
+
+def test_a_loss_during_the_backoff_takes_and_keeps_no_permit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1, I2: the take and the release are database units and are never cancelled; the back-off sleep
+    is the one effect, so a loss there leaves nothing taken and nothing to release."""
+    calls = permits(monkeypatch, [None])
+
+    async def hang(_seconds: float) -> None:
+        await asyncio.Event().wait()
+
+    async def draft() -> None:
+        held = lease([1.0])
+        conn: Any = FakeConn()
+        asyncio.get_running_loop().call_later(0.01, lose, held)
+        async with model_permit(conn, holder="w:test", lease=held, sleep=hang):
+            pass
+
+    with pytest.raises(LeaseLost):
+        asyncio.run(draft())
+    assert [name for name, _ in calls] == ["take"]
 
 
 def test_a_busy_permit_is_polled_with_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5896,6 +6236,21 @@ def test_the_fake_drafter_can_be_slow_without_blocking_the_loop() -> None:
 
 In `tests/plan_h/test_worker_units.py` (as Task 4 left it):
 
+Edit 0, replace:
+
+```python
+from ops_worker.drafting import FakeDraftGenerator
+from psycopg.pq import TransactionStatus
+```
+
+with:
+
+```python
+from ops_worker.drafting import FakeDraftGenerator
+from ops_worker.mcp import HttpMcpCaller
+from psycopg.pq import TransactionStatus
+```
+
 Edit 1, replace:
 
 ```python
@@ -5920,16 +6275,25 @@ with:
 
 ```python
     assert len(units) == 7, log.entries  # start, tool.started, tool.completed, DRAFTING, permit, release, freeze
-    assert log.entries.index("take_model_permit") < log.entries.index("release_model_permit") < log.entries.index(
-        "freeze_proposal"
+    assert (
+        log.entries.index("take_model_permit")
+        < log.entries.index("release_model_permit")
+        < log.entries.index("freeze_proposal")
     )  # the permit is held around the draft call only (ruling 12)
 ```
 
 Append:
 
 ```python
+def lose(lease: Lease) -> int:
+    """What the heartbeat thread does on a loss: record why, then cancel the effects in flight."""
+    lease.mark_lost("another owner took the lease")
+    return lease.cancel_effects()
+
+
 def test_a_heartbeat_cancel_hands_the_job_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ruling 19: the thread marks the lease lost and cancels the job's task; the loop revokes and hands back."""
+    """Ruling 19 (as amended in review round 1, B1): the thread marks the lease lost and cancels the MCP call in
+    flight; the handler sees LeaseLost and the loop revokes and hands the job back."""
     log = Log()
     patch(monkeypatch, log)
     deps, lease = make(log)
@@ -5942,11 +6306,11 @@ def test_a_heartbeat_cancel_hands_the_job_back(monkeypatch: pytest.MonkeyPatch) 
 
     class FakeHeartbeat:
         def __init__(self) -> None:
-            self.cancel: Callable[[], None] | None = None
+            self.held: Lease | None = None
             self.dropped = False
 
-        def hold(self, _lease: Lease, cancel: Callable[[], None]) -> None:
-            self.cancel = cancel
+        def hold(self, held: Lease) -> None:
+            self.held = held
 
         def drop(self, _lease: Lease) -> None:
             self.dropped = True
@@ -5954,27 +6318,95 @@ def test_a_heartbeat_cancel_hands_the_job_back(monkeypatch: pytest.MonkeyPatch) 
     heartbeat = FakeHeartbeat()
     deps.mcp = Hanging()
     deps.heartbeat = heartbeat  # duck-typed stand-ins (the test modules are not type-checked)
+    cancelled: list[int] = []
 
     async def scenario() -> None:
         claimed: Any = persistence.Claimed(dict(JOB), lease)
         job = asyncio.create_task(main.run_job(deps, claimed))
         while "mcp:search_procedures" not in log.entries:
             await asyncio.sleep(0)
-        lease.mark_lost("another owner took the lease")  # what the thread records before it cancels
-        assert heartbeat.cancel is not None
-        heartbeat.cancel()
+        assert heartbeat.held is lease
+        cancelled.append(lose(lease))
         await job
 
     asyncio.run(scenario())
-    assert log.units()[-1] == ["set_tenant", "revoke_handles", "unclaim_job"] and heartbeat.dropped
+    assert cancelled == [1] and heartbeat.dropped  # exactly the one effect in flight
+    assert log.units()[-1] == ["set_tenant", "revoke_handles", "unclaim_job"]
     assert "release_lease" not in log.entries and log.entries.count("transition_run") == 1
+
+
+def test_a_loss_during_a_unit_never_interrupts_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1, B1: the heartbeat may lose the lease while a database unit runs. Nothing cancels the unit, which
+    commits whole; the handler stops at its next check, before the MCP call, and hands the job back."""
+    log = Log()
+    patch(monkeypatch, log)
+    deps, lease = make(log)
+    cancelled: list[int] = []
+
+    async def fenced(_conn: Any, held: Lease) -> None:  # the real fenced checks the local state first
+        log.entries.append("fenced")
+        held.check()
+
+    async def transition_then_lose(*_: Any, **__: Any) -> int:
+        log.entries.append("transition_run")
+        cancelled.append(lose(lease))  # the thread, mid-unit
+        await asyncio.sleep(0.01)  # still inside the unit when a cancellation would land
+        return 2
+
+    monkeypatch.setattr(persistence, "fenced", fenced)
+    monkeypatch.setattr(persistence, "transition_run", transition_then_lose)
+    claimed: Any = persistence.Claimed(dict(JOB), lease)
+    asyncio.run(main.run_job(deps, claimed))
+    first = log.entries[: log.entries.index("COMMIT") + 1]
+    assert first[0] == "BEGIN" and "mint_handle" in first and "ROLLBACK" not in first  # the unit committed whole
+    assert cancelled == [0] and "mcp:search_procedures" not in log.entries  # no effect was in flight to cancel
+    assert log.units()[-1] == ["set_tenant", "revoke_handles", "unclaim_job"]
+
+
+def test_a_lost_lease_cancels_a_real_mcp_call() -> None:
+    """Review round 1, M7: the real client (httpx2 inside the MCP SDK's anyio task groups) against a local server that
+    accepts the request and never answers. The loss reaches the caller as LeaseLost, whatever wrapper the client puts
+    around the cancellation, long before the client's 60 s read timeout."""
+    _, lease = make(Log())
+
+    class Token:
+        async def token(self) -> str:
+            return "workload-token"
+
+    async def silent(reader: asyncio.StreamReader, _writer: asyncio.StreamWriter) -> None:
+        await reader.read(65536)  # the request arrives; no answer ever leaves
+        await asyncio.Event().wait()
+
+    async def scenario() -> float:
+        server = await asyncio.start_server(silent, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        loop.call_later(0.5, lose, lease)
+        try:
+            with pytest.raises(LeaseLost):
+                await lease.effect(
+                    HttpMcpCaller(Token()).call(
+                        f"http://127.0.0.1:{port}/mcp", handle="h", tool="search_procedures", arguments={}
+                    )
+                )
+        finally:
+            server.close()
+        return loop.time() - started
+
+    assert asyncio.run(scenario()) < 10
 ```
 
-Run: `uv run python -m pytest tests/plan_h/test_heartbeat.py tests/plan_h/test_permit.py tests/plan_h/test_worker_units.py -q`
-Expected: `7 failed, 1 passed, 2 errors`: the two new modules fail to collect (`ModuleNotFoundError: No module named
-'ops_worker.heartbeat'`, `'ops_worker.permit'`), and every worker test that installs the fakes fails with
-`AttributeError: <module 'ops_core.persistence'> has no attribute 'take_model_permit'` (monkeypatch refuses to set an
-attribute that does not exist); only the deferral test, which installs none, passes.
+Run: `uv run python -m pytest tests/plan_h/test_heartbeat.py tests/plan_h/test_permit.py -q`
+Expected: `2 errors in` (pytest stops at collection errors: `Interrupted: 2 errors during collection`): the heartbeat
+module with `ImportError: cannot import name 'Renewal' from 'ops_core.lease'`, the permit module with
+`ModuleNotFoundError: No module named 'ops_worker.permit'`.
+
+Run: `uv run python -m pytest tests/plan_h/test_worker_units.py -q`
+Expected: `8 failed, 3 passed`: every worker test that installs the fakes fails with `AttributeError: <module
+'ops_core.persistence'> has no attribute 'take_model_permit'` (monkeypatch refuses to set an attribute that does not
+exist); the deferral test, the abandon test and the real-MCP test, which install none, pass (the last two already
+hold with Task 3's `Lease.effect`).
 
 - [ ] **Step 2: The renewal unit, the thread and the permit**
 
@@ -5985,11 +6417,12 @@ Edit 1, replace:
 ```python
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 from uuid import UUID
 ```
 
@@ -5998,12 +6431,13 @@ with:
 ```python
 from __future__ import annotations
 
+import asyncio
 import enum
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 from uuid import UUID
 
 import psycopg
@@ -6079,8 +6513,10 @@ Proactor loop (Plan D ruling 23). This thread uses psycopg's *synchronous* conne
 loop, so that constraint does not apply to it.
 
 When renewal fails (another owner or fence, an expired lease, a gate closing, or errors until the local deadline) the
-thread marks the lease lost and cancels the handler task through `loop.call_soon_threadsafe` (ruling 19); the loop
-then revokes the job's handles and hands the job back. A broken connection is reopened on the next tick (ruling 16).
+thread marks the lease lost and cancels the job's effects in flight (`Lease.cancel_effects`, through
+`loop.call_soon_threadsafe`; ruling 19 as amended in review round 1, B1). It never cancels a database unit: a loss
+during one is caught by the next fence check. The loop then revokes the job's handles and hands the job back. A
+broken connection is reopened on the next tick (ruling 16).
 """
 
 from __future__ import annotations
@@ -6090,7 +6526,6 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 
 import psycopg
 from ops_core.lease import Lease, Renewal, renew
@@ -6137,20 +6572,15 @@ async def keep_stamping(liveness: Liveness, stop: asyncio.Event) -> None:
 
 def connector(pg: Postgres) -> Callable[[], SyncConn]:
     """How the thread opens its connection: role `worker` through the same conninfo builder as the loop's (it pins
-    `-c timezone=UTC`), autocommit with explicit units, and a 5 s lock timeout so one renewal never waits for ever."""
+    `-c timezone=UTC`), autocommit with explicit units, a 5 s connect timeout (a server that accepts and never answers
+    must not hold the tick past the local deadline) and a 5 s lock timeout so one renewal never waits for ever."""
 
     def connect() -> SyncConn:
-        conn = psycopg.connect(pg.conninfo(), autocommit=True, row_factory=dict_row)
+        conn = psycopg.connect(pg.conninfo(), autocommit=True, row_factory=dict_row, connect_timeout=5)
         conn.execute("SET lock_timeout = '5s'")  # SET takes no bind parameter; the value is a constant
         return conn
 
     return connect
-
-
-@dataclass
-class _Held:
-    lease: Lease
-    cancel: Callable[[], None]
 
 
 class Heartbeat(threading.Thread):
@@ -6174,21 +6604,21 @@ class Heartbeat(threading.Thread):
         self._renew = renewer
         self._tick_seconds = tick_seconds
         self._lock = threading.Lock()
-        self._held: _Held | None = None
+        self._held: Lease | None = None
         self._stopping = threading.Event()
         self._conn: SyncConn | None = None
         self.renewals = 0  # successful renewals, for the logs and the live tests
+        self.max_loop_age = 0.0  # the longest event-loop silence a tick saw, for the DoD-3 evidence (review M4)
 
-    def hold(self, lease: Lease, cancel: Callable[[], None]) -> None:
-        """Start renewing `lease`; `cancel` stops the job's work when the lease is lost (called from this thread, so
-        it must be thread-safe: the worker passes `loop.call_soon_threadsafe(task.cancel)`)."""
+    def hold(self, lease: Lease) -> None:
+        """Start renewing `lease`; on a loss the thread cancels the lease's effects in flight."""
         with self._lock:
-            self._held = _Held(lease, cancel)
+            self._held = lease
 
     def drop(self, lease: Lease) -> None:
         """Stop renewing `lease` (its job ended or it was lost); a lease held after it is untouched."""
         with self._lock:
-            if self._held is not None and self._held.lease is lease:
+            if self._held is lease:
                 self._held = None
 
     def stop(self) -> None:
@@ -6209,19 +6639,20 @@ class Heartbeat(threading.Thread):
     def tick(self) -> None:
         """One look at the held lease: a closed gate is a loss; otherwise renew when a heartbeat is due."""
         with self._lock:
-            held = self._held
-        if held is None:
+            lease = self._held
+        if lease is None:
             return
-        lease = held.lease
         if lease.lost is not None:
             self.drop(lease)
             return
         now = self._clock()
-        if self._liveness.age(now) >= self._settings.loop_stall_seconds:
-            self._lose(held, "event loop stalled")
+        silence = self._liveness.age(now)
+        self.max_loop_age = max(self.max_loop_age, silence)
+        if silence >= self._settings.loop_stall_seconds:
+            self._lose(lease, "event loop stalled")
             return
         if now - lease.held_since >= self._settings.compute_budget_seconds:
-            self._lose(held, "compute budget spent")
+            self._lose(lease, "compute budget spent")
             return
         if now - lease.renewed_at < self._settings.heartbeat_seconds:
             return
@@ -6232,7 +6663,7 @@ class Heartbeat(threading.Thread):
             log.warning("renewing the lease of run %s failed; the connection is reopened next tick", lease.run_id)
             self._close()
             if now >= lease.deadline:
-                self._lose(held, "renewals failed until the local deadline")
+                self._lose(lease, "renewals failed until the local deadline")
             return
         if verdict is Renewal.RENEWED:
             lease.renewed(now)  # `now` was taken before the renewing statement (ruling 18)
@@ -6242,16 +6673,13 @@ class Heartbeat(threading.Thread):
         elif verdict is Renewal.MOVED and lease.fence_moved_by_owner(fence):
             return  # the owner re-fenced (mark_unknown): the next tick renews under the new fence (ruling 10)
         else:
-            self._lose(held, "another owner took the lease" if verdict is Renewal.MOVED else "the lease expired")
+            self._lose(lease, "another owner took the lease" if verdict is Renewal.MOVED else "the lease expired")
 
-    def _lose(self, held: _Held, reason: str) -> None:
-        if held.lease.mark_lost(reason):
-            log.warning("run %s: lease lost (%s); cancelling its job", held.lease.run_id, reason)
-            try:
-                held.cancel()
-            except RuntimeError:  # the event loop has already closed (shutdown): nothing is left to cancel
-                pass
-        self.drop(held.lease)
+    def _lose(self, lease: Lease, reason: str) -> None:
+        if lease.mark_lost(reason):
+            cancelled = lease.cancel_effects()  # effects only; a database unit in progress runs to its end
+            log.warning("run %s: lease lost (%s); %d effect(s) cancelled", lease.run_id, reason, cancelled)
+        self.drop(lease)
 
     def _connection(self) -> SyncConn:
         if self._conn is None or self._conn.closed or self._conn.broken:
@@ -6273,17 +6701,20 @@ Create `worker/src/ops_worker/permit.py`:
 """The model permit around every model call (AM-12 SA:203-205, Plan H ruling 12): one row of `app.model_permit` per
 unit of global model concurrency (one, BS:549), taken with SKIP LOCKED in its own short transaction and released in
 another, so a waiting worker never holds a database transaction. A busy permit is polled with capped exponential
-backoff and jitter while the caller's lease lasts; a cancelled call releases it in `finally`, and a 65 s TTL (one 60 s
-model attempt plus 5 s) frees a permit whose holder died. TODO(T19): SA:205's stricter release ("hold until `ollama
-ps` shows idle"), once T02 has measured whether a cancelled request stops Ollama's generation.
+backoff and jitter while the caller's lease lasts. The take and the release are database units and are never
+cancelled; the back-off sleep is the one effect a lost lease cancels (review round 1, I2), so the `finally` releases
+exactly the slot a take returned, also when the lease is lost during the model call. A 65 s TTL (one 60 s model
+attempt plus 5 s) frees a permit whose holder died. TODO(T19): SA:205's stricter release ("hold until `ollama ps`
+shows idle"), once T02 has measured whether a cancelled request stops Ollama's generation.
 """
 
 from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
+from typing import Any
 
 from ops_core import persistence
 from ops_core.lease import Lease
@@ -6291,12 +6722,13 @@ from ops_core.lease import Lease
 PERMIT_TTL_SECONDS = 65  # SA:596: a model attempt is capped at 60 s; 5 s more for the call around it
 FIRST_BACKOFF_SECONDS = 0.25
 MAX_BACKOFF_SECONDS = 2.0
+Sleep = Callable[[float], Coroutine[Any, Any, None]]
 
 
 def backoff(attempt: int, rand: Callable[[], float] = random.random) -> float:
     """The wait after failed poll number `attempt` (from 0): 0.25 s doubling to 2 s, scaled at random into its upper
     half, so two waiting workers drift apart without a near-zero wait that would hammer the row."""
-    base = min(MAX_BACKOFF_SECONDS, FIRST_BACKOFF_SECONDS * 2 ** min(attempt, 3))
+    base = min(MAX_BACKOFF_SECONDS, FIRST_BACKOFF_SECONDS * 2.0 ** min(attempt, 3))
     return base * (0.5 + 0.5 * rand())
 
 
@@ -6305,10 +6737,11 @@ async def _wait_for_permit(
     *,
     holder: str,
     lease: Lease,
-    sleep: Callable[[float], Awaitable[None]],
+    sleep: Sleep,
     rand: Callable[[], float],
 ) -> int:
-    """Poll until a permit slot is free, each try its own short transaction; LeaseLost once the lease is gone."""
+    """Poll until a permit slot is free, each try its own short transaction; LeaseLost once the lease is gone (at the
+    check before a take, or by the back-off sleep, which runs as a lease effect)."""
     attempt = 0
     while True:
         lease.check()
@@ -6318,7 +6751,7 @@ async def _wait_for_permit(
             )
         if slot is not None:
             return slot
-        await sleep(backoff(attempt, rand))
+        await lease.effect(sleep(backoff(attempt, rand)))
         attempt += 1
 
 
@@ -6328,7 +6761,7 @@ async def model_permit(
     *,
     holder: str,
     lease: Lease,
-    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    sleep: Sleep = asyncio.sleep,
     rand: Callable[[], float] = random.random,
 ) -> AsyncIterator[int]:
     """Hold one model permit for the block, waiting for it while the lease lasts (`lease.check()` raises LeaseLost)."""
@@ -6444,16 +6877,14 @@ with:
 Edit 3, replace:
 
 ```python
-    lease.check()  # a model call is an effect too (SA:195)
-    draft = await deps.generator.generate(request, evidence)
+    draft = await lease.effect(deps.generator.generate(request, evidence))  # a model call is an effect too (SA:195)
 ```
 
 with:
 
 ```python
-    lease.check()  # a model call is an effect too (SA:195)
     async with permit.model_permit(deps.conn, holder=deps.worker_name, lease=lease):  # model concurrency 1 (BS:549)
-        draft = await deps.generator.generate(request, evidence)
+        draft = await lease.effect(deps.generator.generate(request, evidence))  # a lease effect (SA:195)
 ```
 
 In `worker/src/ops_worker/main.py` (as Task 3 wrote it):
@@ -6476,23 +6907,11 @@ loop's, the probe's and the heartbeat's synchronous one), SelectorEventLoop on W
 Proactor loop; measured in the Plan D spike; the heartbeat's synchronous connection is not bound by that).
 
 Each poll claims the next job together with its run's lease (`persistence.claim_next`, Plan H ruling 3) and runs the
-handler as a task under that lease while the heartbeat renews it; a lost lease hands the job back
-(`handlers.abandon`, ruling 19) and the loop moves on."""
+handler under that lease while the heartbeat renews it; a lost lease cancels the job's effects in flight and hands the
+job back (`handlers.abandon`, ruling 19) and the loop moves on."""
 ```
 
 Edit 2, replace:
-
-```python
-from ops_core.lease import LeaseLost
-```
-
-with:
-
-```python
-from ops_core.lease import RELEASED, LeaseLost
-```
-
-and replace:
 
 ```python
 from ops_worker.drafting import make_generator
@@ -6526,27 +6945,17 @@ with:
 
 ```python
 async def run_job(deps: handlers.Deps, claimed: persistence.Claimed) -> None:
-    """Run one claimed job as its own task under its lease while the heartbeat renews it. A lost lease, raised by a
-    fenced unit or signalled by the heartbeat cancelling the task (whatever exception the cancelled call surfaces
-    as), hands the job back instead of failing the run (ruling 19). Anything else propagates: the poll loop logs it,
-    the job stays claimed, its lease lapses within one lease and the sweeper reclaims it."""
-    loop = asyncio.get_running_loop()
+    """Run one claimed job under its lease while the heartbeat renews it. A lost lease, raised by a fenced unit or by
+    an effect the heartbeat cancelled (`Lease.effect`), hands the job back instead of failing the run (ruling 19 as
+    amended in review round 1, B1: only effects are cancelled, never a database unit, so the loop connection is idle
+    when `abandon` runs, and `abandon` checks that). Anything else propagates: the poll loop logs it, the job stays
+    claimed, its lease lapses within one lease and the sweeper reclaims it."""
     job, lease = dict(claimed.job), claimed.lease
-    work = asyncio.create_task(handlers.handle(deps, job, lease), name=f"job-{job['id']}")
-
-    def cancel() -> None:  # called on the heartbeat thread, so it only schedules the cancellation on the loop
-        loop.call_soon_threadsafe(work.cancel)
-
     if deps.heartbeat is not None:
-        deps.heartbeat.hold(lease, cancel=cancel)
+        deps.heartbeat.hold(lease)
     try:
-        await work
-    except BaseException as exc:  # re-raised below unless it is a lease loss
-        current = asyncio.current_task()
-        if current is not None and current.cancelling():
-            raise  # the worker is stopping, not losing a lease
-        if not isinstance(exc, LeaseLost) and lease.lost in (None, RELEASED):
-            raise
+        await handlers.handle(deps, job, lease)
+    except LeaseLost:
         log.warning("job %s: run lease lost (%s); handles revoked, job handed back", job["id"], lease.lost)
         await handlers.abandon(deps, job, lease)
     finally:
@@ -6611,8 +7020,8 @@ with:
 ```
 
 Run: `uv run python -m pytest tests/plan_h tests/plan_d/test_worker.py tests/plan_f/test_grant_deferred.py -q`
-Expected: `88 passed` (Plan H's 80: settings 10, lock order 30, revision 8, lease 8, worker units 8, write path 2,
-heartbeat 9, permit 5; Plan D's worker module 5; Plan F's grant module 3).
+Expected: `96 passed` (Plan H's 88: settings 11, lock order 30, revision 8, lease 11, worker units 11, write path 2,
+heartbeat 9, permit 6; Plan D's worker module 5; Plan F's grant module 3).
 
 - [ ] **Step 3: The live DoD-3 tests**
 
@@ -6630,7 +7039,8 @@ scripted MCP caller, so no skeleton process is needed. Evidence: reports/leases/
 
 Catches: a heartbeat that runs on the event loop (a 25 s block would starve it and lose the lease), a lease lost to a
 long model call, a renewal failure that leaves the call running or its handle live, a job failed rather than handed
-back on a lost lease, and a model permit held past the draft or never taken.
+back on a lost lease, and a model permit held past the draft or never taken. The first test records the longest loop
+silence the thread saw, so the margin to the 28 s stall gate is in the evidence (review round 1, M4).
 """
 
 import asyncio
@@ -6673,12 +7083,17 @@ def lines() -> Iterator[list[str]]:
     EVIDENCE.write_text("\n".join(out) + "\n", encoding="utf-8", newline="\n")
 
 
+def block_the_loop(seconds: float) -> None:
+    """A synchronous call where an async one belongs: called from a coroutine, it blocks the event loop (DoD 3)."""
+    time.sleep(seconds)
+
+
 class BlockingGenerator(FakeDraftGenerator):
-    """A model route that blocks the event loop itself (a synchronous call where an async one belongs): only a
-    heartbeat on its own thread can keep the lease alive meanwhile."""
+    """A model route that blocks the event loop itself: only a heartbeat on its own thread can keep the lease alive
+    meanwhile."""
 
     async def generate(self, request: Any, evidence: Any) -> Any:
-        time.sleep(BLOCK_SECONDS)  # on purpose: DoD 3's blocked loop
+        block_the_loop(BLOCK_SECONDS)
         return await super().generate(request, evidence)
 
 
@@ -6764,9 +7179,14 @@ async def test_r088_a_loop_blocked_for_25_seconds_keeps_its_lease(
         async with heartbeat_running(deps) as heartbeat:
             await main.run_job(deps, claimed)
         assert claimed.lease.lost == RELEASED and heartbeat.renewals >= 2  # at about 10 s and 20 s, mid-block
+        assert BLOCK_SECONDS <= heartbeat.max_loop_age < settings.leases().loop_stall_seconds
         assert (await persistence.run_row(app_conn, run))["state"] == "AWAITING_APPROVAL"
         assert await lease_row(app_conn, run) == {"owner": WORKER, "fence": claimed.lease.fence, "released": True}
-        lines.append(f"R088 loop blocked {BLOCK_SECONDS:.0f} s: {heartbeat.renewals} renewals, fence kept, run drafted")
+        # The longest silence the thread saw goes into the evidence, so a near miss of the stall gate is visible.
+        lines.append(
+            f"R088 loop blocked {BLOCK_SECONDS:.0f} s: {heartbeat.renewals} renewals, longest loop silence"
+            f" {heartbeat.max_loop_age:.1f} s of {settings.leases().loop_stall_seconds} s, fence kept, run drafted"
+        )
     finally:
         await purge_run(app_conn, run)
         await purge_tenant(app_conn, tenant)
@@ -6876,10 +7296,10 @@ lines. While iterating, `-m "not slow_live"` leaves the three DoD tests out (`3 
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `897 passed, 128 skipped` (882 + 9 + 5 + 1; the 4 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `905 passed, 128 skipped` (887 + 9 + 6 + 3; the 4 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1004 passed, 21 skipped` (R105's skeleton worker now runs the heartbeat thread; the
+Expected: `CHECK: GREEN`; pytest `1012 passed, 21 skipped` (R105's skeleton worker now runs the heartbeat thread; the
 live gate takes about 95 s longer than before this task). Then
 `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission`.
 
@@ -7103,10 +7523,13 @@ def test_the_global_refusal_is_an_unrecorded_429_with_retry_after() -> None:
         assert again.status_code == 202  # the same key is admitted now
 ```
 
-Run: `uv run python -m pytest tests/plan_h/test_reclaim.py tests/plan_h/test_global_queue.py -q`
-Expected: `3 failed, 1 error`: the reclaim module fails to collect (`ImportError: cannot import name 'leases' from
-'ops_sweeper'`), and the three queue tests fail with `TypeError: AdmissionStore.admit_message() got an unexpected
-keyword argument 'queue_limit'`.
+Run: `uv run python -m pytest tests/plan_h/test_reclaim.py -q`
+Expected: `1 error in` (`ImportError: cannot import name 'leases' from 'ops_sweeper'`; pytest stops at the collection
+error, so the queue tests run on their own below).
+
+Run: `uv run python -m pytest tests/plan_h/test_global_queue.py -q`
+Expected: `3 failed`, each with `TypeError: AdmissionStore.admit_message() got an unexpected keyword argument
+'queue_limit'`.
 
 - [ ] **Step 2: The reclaim, the count and the bound**
 
@@ -7458,15 +7881,18 @@ job is reclaimed once its lease has expired on the database clock, and the next 
 (Plan H rulings 11, 14, 21).
 
 The stress mix, one random operation on one random run per step: a claim (`claim_next`: SKIP LOCKED, NOWAIT, defer),
-a waiting acquisition (`acquire_lease(wait=True)`: the form that would deadlock if the order were wrong), a renewal
-(the heartbeat's synchronous unit, on each actor's own synchronous connection), a fenced event, a mint, a revoke, and
-a `mark_unknown` attempt (refused on a QUEUED run after it has taken its locks: the locks are the point), while the
-sweeper reclaims every 0.2 s and a monitor reads the fences every 50 ms. Every connection runs with
-`lock_timeout = 10s`, so a wait that never ends shows up as SQLSTATE 55P03. Evidence: reports/leases/t13-stress.txt.
+a waiting acquisition (`acquire_lease(wait=True)`: the form that would deadlock if the order were wrong; its lock
+waits surface as 55P03, never as a busy lease), a renewal (the heartbeat's synchronous unit, on each actor's own
+synchronous connection), a fenced event, a mint, a revoke, and a `mark_unknown` re-fence. Two of the three runs are
+QUEUED, where `mark_unknown` is refused after it has taken its locks (the locks are the point); the third is EXECUTING
+with a grant, so a re-fence commits under load and its holder hands the new fence to its Lease (review round 1, I4).
+The sweeper reclaims every 0.2 s, and a monitor samples the lease rows every 50 ms: fences only increase, and no run
+ever has two actors holding its current fence. Every connection runs with `lock_timeout = 10s`, so a wait that never
+ends shows up as SQLSTATE 55P03. Evidence: reports/leases/t13-stress.txt.
 
 Catches: a deadlock (40P01) or a lock wait past 10 s (55P03) anywhere in the mix, a fence that goes backwards or is
-handed out twice, a stale writer whose event lands after a newer fence's event, a reclaim that takes a live owner's
-job, and an expiry decided by anything but the database clock.
+handed out twice, two owners of one run at once, a stale writer whose event lands after a newer fence's event, a
+reclaim that takes a live owner's job, and an expiry decided by anything but the database clock.
 """
 
 import asyncio
@@ -7488,7 +7914,8 @@ from ops_core.settings import Role
 from ops_sweeper import leases
 from psycopg.rows import dict_row
 
-from tests.e2e.conftest import purge_run, purge_tenant
+from tests.e2e.conftest import expire_lease, purge_run, purge_tenant
+from tests.e2e.test_mcp_write_live import approved_run
 from tests.e2e.test_migrations_and_persistence import new_run
 
 pytestmark = pytest.mark.asyncio
@@ -7498,7 +7925,7 @@ EVIDENCE = Path("reports/leases/t13-stress.txt")
 EXPECTED_LINES = 3  # one per test
 STRESS_SECONDS = 20.0
 ACTORS = 8
-RUNS = 3
+RUNS = 3  # two QUEUED, one EXECUTING
 OPS = ("claim", "acquire", "renew", "write", "mint", "revoke", "bump")
 
 
@@ -7522,9 +7949,7 @@ async def patient(conn: persistence.Conn) -> persistence.Conn:
 class Actor:
     """One worker connection pair doing random lease work on the shared runs, tallying what happened."""
 
-    def __init__(
-        self, name: str, conn: persistence.Conn, sync_conn: Any, tenant: UUID, jobs: dict[UUID, UUID]
-    ) -> None:
+    def __init__(self, name: str, conn: persistence.Conn, sync_conn: Any, tenant: UUID, jobs: dict[UUID, UUID]) -> None:
         self.name = name
         self.conn = conn
         self.sync_conn = sync_conn
@@ -7550,7 +7975,9 @@ class Actor:
                     taken = await persistence.acquire_lease(
                         self.conn, run_id=run, owner=self.name, lease_seconds=self.rng.choice((6, 8, 10)), wait=True
                     )
-                if not isinstance(taken, Busy):
+                if taken == Busy(locked=True):
+                    tally["55P03"] += 1  # a waiting acquisition never answers "locked" (review round 1, I3)
+                elif not isinstance(taken, Busy):
                     self.held[run] = taken
                     acquired.setdefault(run, []).append(taken.fence)
                 op = "acquire"
@@ -7582,8 +8009,16 @@ class Actor:
                 async with self.conn.transaction():
                     await persistence.revoke_handles(self.conn, run, lease.fence)
             else:
-                async with self.conn.transaction():
-                    await persistence.mark_unknown(self.conn, run, lease.fence)
+                lease.begin_refence()  # as the worker brackets its re-fence (ruling 10)
+                try:
+                    async with self.conn.transaction():
+                        unknown = await persistence.mark_unknown(self.conn, run, lease.fence)
+                except BaseException:
+                    lease.end_refence(None)
+                    raise
+                lease.end_refence(unknown.fence)
+                acquired.setdefault(run, []).append(unknown.fence)
+                tally["bumped"] += 1
             tally[op] += 1
         except LeaseLost:
             self.held.pop(run, None)
@@ -7600,11 +8035,18 @@ class Actor:
 async def test_r107_eight_workers_and_the_sweeper_never_deadlock_and_fences_never_go_back(
     app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
 ) -> None:
-    api = await role_conn(Role.API)
+    api, seeder, mcp_exec = await role_conn(Role.API), await role_conn(Role.WORKER), await role_conn(Role.MCP_EXEC)
     tenant, _, first = await new_run(app_conn, api=api)
-    runs = [first] + [(await new_run(app_conn, tenant, api=api))[2] for _ in range(RUNS - 1)]
+    runs = [first, (await new_run(app_conn, tenant, api=api))[2]]
     sync_conns: list[Any] = []
     try:
+        # The EXECUTING run: approved and granted through the definers (on the seeded tenant), then its seeding lease
+        # expired, so the actors compete for it from the next fence.
+        _, executing, proposal, handle = await approved_run(app_conn, api=api, worker=seeder)
+        runs.append(executing)
+        async with mcp_exec.transaction():
+            await persistence.grant_execution(mcp_exec, handle=handle, proposal_id=proposal)
+        await expire_lease(app_conn, executing)
         cur = await app_conn.execute("SELECT run_id, id FROM app.jobs WHERE run_id = ANY(%s)", (runs,))
         jobs = {UUID(str(row["run_id"])): UUID(str(row["id"])) for row in await cur.fetchall()}
         conninfo = settings.app_postgres(Role.WORKER).conninfo()
@@ -7619,6 +8061,7 @@ async def test_r107_eight_workers_and_the_sweeper_never_deadlock_and_fences_neve
         tally: Counter[str] = Counter()
         acquired: dict[UUID, list[int]] = {}
         seen: dict[UUID, list[int]] = {run: [] for run in runs}
+        two_owners: list[str] = []
         deadline = time.monotonic() + STRESS_SECONDS
 
         async def act(actor: Actor) -> None:
@@ -7638,16 +8081,28 @@ async def test_r107_eight_workers_and_the_sweeper_never_deadlock_and_fences_neve
                 await asyncio.sleep(0.2)
 
         async def monitor() -> None:
+            """Ruling 21's observation: at each sample, at most one actor holds a run's current fence, and when the
+            lease is live that actor is the row's owner (an actor's held Lease may lag the row, never lead it)."""
             while time.monotonic() < deadline:
-                cur = await app_conn.execute("SELECT run_id, fence FROM app.run_lease WHERE run_id = ANY(%s)", (runs,))
+                cur = await app_conn.execute(
+                    "SELECT run_id, owner, fence, lease_until > app.current_time() AS live FROM app.run_lease"
+                    " WHERE run_id = ANY(%s)",
+                    (runs,),
+                )
                 for row in await cur.fetchall():
-                    seen[UUID(str(row["run_id"]))].append(int(row["fence"]))
+                    run, fence = UUID(str(row["run_id"])), int(row["fence"])
+                    seen[run].append(fence)
+                    holders = [a.name for a in actors if (held := a.held.get(run)) is not None and held.fence == fence]
+                    if len(holders) > 1 or (row["live"] and holders and holders != [row["owner"]]):
+                        two_owners.append(f"{run} fence {fence}: {holders} vs owner {row['owner']}")
                 await asyncio.sleep(0.05)
 
         await asyncio.gather(*(act(actor) for actor in actors), reclaim(), monitor())
 
         assert tally["40P01"] == 0 and tally["55P03"] == 0, dict(tally)  # DoD 2: no deadlock, no endless wait
         assert sum(tally[op] for op in OPS) >= 200, dict(tally)  # it really ran
+        assert tally["bumped"] >= 1, dict(tally)  # a re-fence committed under load (review round 1, I4)
+        assert two_owners == [], two_owners[:5]
         for run in runs:
             fences = acquired.get(run, [])
             assert len(fences) == len(set(fences)), run  # no fence handed out twice
@@ -7662,7 +8117,8 @@ async def test_r107_eight_workers_and_the_sweeper_never_deadlock_and_fences_neve
         top = max(max(fences) for fences in acquired.values())
         lines.append(
             f"R107 stress {ACTORS} workers x {STRESS_SECONDS:.0f} s on {RUNS} runs: {sum(tally.values())} operations,"
-            f" 40P01=0, 55P03=0, highest fence {top}, refused {tally['refused']}, lost {tally['lost']}"
+            f" 40P01=0, 55P03=0, highest fence {top}, re-fences {tally['bumped']}, refused {tally['refused']},"
+            f" lost {tally['lost']}, never two owners"
         )
     finally:
         for sync_conn in sync_conns:
@@ -7778,10 +8234,10 @@ holds the header and three lines.
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `902 passed, 132 skipped` (897 + 2 + 3; the 4 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `910 passed, 132 skipped` (905 + 2 + 3; the 4 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1013 passed, 21 skipped` (R105's skeleton sweeper now reclaims every tick). Then
+Expected: `CHECK: GREEN`; pytest `1021 passed, 21 skipped` (R105's skeleton sweeper now reclaims every tick). Then
 `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
@@ -8017,12 +8473,15 @@ def test_the_store_must_hold_the_apps_faults() -> None:
         pass
 ```
 
-Run: `uv run python -m pytest tests/plan_h/test_faults_t13.py tests/plan_h/test_incident_sim_faults.py tests/plan_h/test_api_faults.py -q`
-Expected: `10 failed, 2 passed, 1 error`. `test_faults_t13.py` fails to collect (`ImportError: cannot import name
-'BS405'`); the five incident-sim tests that arm a new kind fail because the route's `FaultKind` path parameter does
-not know the kind yet (422) and the hot path behaves as before (only the two profile tests pass: outside the test
-profile every fault route is 404 already); every API test fails with `TypeError: create_app() got an unexpected
-keyword argument 'faults'`.
+Run: `uv run python -m pytest tests/plan_h/test_faults_t13.py -q`
+Expected: `1 error in` (`ImportError: cannot import name 'BS405'`; pytest stops at the collection error, so the other
+two modules run on their own below).
+
+Run: `uv run python -m pytest tests/plan_h/test_incident_sim_faults.py tests/plan_h/test_api_faults.py -q`
+Expected: `10 failed, 2 passed`: the five incident-sim tests that arm a new kind fail because the route's
+`FaultKind` path parameter does not know the kind yet (422) and the hot path behaves as before (only the two profile
+tests pass: outside the test profile every fault route is 404 already); every API test fails with `TypeError:
+create_app() got an unexpected keyword argument 'faults'`.
 
 - [ ] **Step 2: The factory, the destination's hooks and the API's**
 
@@ -8574,7 +9033,7 @@ async def test_r015_a_response_lost_after_commit_replays_the_recorded_202(
 ```
 
 Run: `uv run python -m pytest tests/plan_h tests/plan_g tests/plan_e/test_faults.py tests/plan_e/test_incident_sim_t10.py tests/plan_d/test_incident_sim.py tests/plan_d/test_api.py tests/plan_f -q`
-Expected: `413 passed` (Plan H's 101; Plan G's 135; Plan E's fault and incident-sim modules 3 and 6; Plan D's
+Expected: `421 passed` (Plan H's 109; Plan G's 135; Plan E's fault and incident-sim modules 3 and 6; Plan D's
 incident-sim and API modules 10 and 11; Plan F's 147).
 
 - [ ] **Step 3: Gates and commit**
@@ -8586,10 +9045,10 @@ Expected: `13 passed` (the admission module's 8, the incident-sim module's 5); `
 holds the header and sixteen lines.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `918 passed, 133 skipped` (902 + 4 + 7 + 5; the 1 new live test skips).
+Expected: `CHECK: GREEN`; pytest `926 passed, 133 skipped` (910 + 4 + 7 + 5; the 1 new live test skips).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1030 passed, 21 skipped` (R105's skeleton API now builds its faults in
+Expected: `CHECK: GREEN`; pytest `1038 passed, 21 skipped` (R105's skeleton API now builds its faults in
 `production_app`). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
@@ -8630,15 +9089,16 @@ of the close-out.
 Run:
 
 ```bash
-git grep -n "T13" -- core api worker sweeper mcp-write mcp-read incident-sim scripts tests
+git grep -n "TODO(T13" -- core api worker sweeper mcp-write mcp-read incident-sim scripts tests
+grep -c "TODO(T13" migrations/app/versions/0007_leases_fences.py
 ```
 
-Expected: only lines that name T13 as the task that did something (docstrings and comments such as "(T13)", "T13
-review note", "Plan H"), no `TODO(T13` anywhere. The applied revisions `migrations/app/versions/0002`-`0005` keep their
-historical `TODO(T13)` comments: an applied revision is never edited, and every function body those comments sit in
-is superseded by revision 0007 (whose bodies carry no `TODO(T13)`; `grep -c "TODO(T13" migrations/app/versions/
-0007_leases_fences.py` prints `0`). If the first command shows a `TODO(T13)` outside the migrations, give it its new
-owner from the debt list (T14, T19, T20, T21, T22, T29 or T30) in a separate commit before continuing.
+Expected: the first command prints nothing; the second prints `1`, the `GRANT_TODO_0005` literal, which quotes
+revision 0005's comment line verbatim so the rewording can find it (no function body 0007 installs carries the
+marker). The applied revisions `migrations/app/versions/0002`-`0005` keep their historical `TODO(T13)` comments: an
+applied revision is never edited, and every function body those comments sit in is superseded by revision 0007. If
+the first command prints a line, give that TODO its new owner from the debt list (T14, T19, T20, T21, T22, T29 or
+T30) in a separate commit before continuing.
 
 - [ ] **Step 2: Handoff records**
 
@@ -8666,8 +9126,9 @@ note = (
     "moved fence or a lapsed lease for resolve_invocation, grant_execution, lookup_action and the new "
     "mark_sent(raw_handle, action_id) and record_outcome(raw_handle, ...); mark_unknown bumps and returns the fence, "
     "handed to the shared Lease; revoke_handles revokes by fence; the heartbeat thread on its own synchronous "
-    "connection with the event-loop liveness and 90 s compute gates, cancelling the job's task through "
-    "loop.call_soon_threadsafe on loss; the local monotonic deadline; the model_permit row around drafting "
+    "connection with the event-loop liveness and 90 s compute gates, cancelling only the job's effects in flight "
+    "(MCP and model calls, never a database unit) through loop.call_soon_threadsafe on loss; the local monotonic "
+    "deadline; the model_permit row around drafting "
     "(SKIP LOCKED, backoff, 65 s TTL); the sweeper's reclaim of dead leases' jobs; the published lock order "
     "(core/locking.py, checked by a test); the global queue bound (queued_runs_total, OPS_GLOBAL_QUEUE_LIMIT); the "
     "jobs.type CHECK; the nine BS:405 faults (incident-sim's five new hooks, lose_after_commit in the API, faults "
@@ -8731,9 +9192,11 @@ notes = {
     "renewal failure (expiry and a second worker's takeover) cancels the in-flight MCP call, revokes its handle and "
     "hands the job back with no transition. The three tests are slow_live and run in check.py --profile test.",
     "R107": "Plan H (T13): two- and three-connection interleavings (stale write aborts; takeover waits on the share "
-    "lock; expiry compared after the lock) and an 8-connection, 20 s stress mix with the sweeper: no 40P01, no 55P03 "
-    "under lock_timeout 10 s, fences never backwards, no stale event after a newer fence; the published order is "
-    "core/locking.py with a test over every transaction.",
+    "lock; expiry compared after the lock; two first claims, the second waiting on the first's insert) and an "
+    "8-connection, 20 s stress mix with the sweeper and committed re-fences: no 40P01, no 55P03 under lock_timeout "
+    "10 s (a waiting acquisition's long wait counts as 55P03), fences never backwards, never two owners of a run, no "
+    "stale event after a newer fence; the published order is core/locking.py with a test over every documented "
+    "transaction.",
 }
 for row in matrix["requirements"]:
     if row["id"] in evidence:
@@ -8770,10 +9233,13 @@ backlog = backlog_path.read_text(encoding="utf-8")
 head = "- [ ] **T13 Run lease, fence locking, heartbeat thread and fault factory**"
 assert backlog.count(head) == 1
 backlog = backlog.replace(head, "- [x] **T13 Run lease, fence locking, heartbeat thread and fault factory**")
-start = backlog.index("- [x] **T13 Run lease, fence locking, heartbeat thread and fault factory**")
-end = backlog.index("\n", start) + 1
-backlog = backlog[:end] + f"  - *Review note:* {note}\n" + backlog[end:]
-backlog_path.write_text(backlog, encoding="utf-8", newline="\n")
+lines = backlog.split("\n")
+at = next(i for i, line in enumerate(lines) if line.startswith("- [x] **T13 "))
+end = at + 1
+while end < len(lines) and lines[end].startswith("  - "):
+    end += 1
+lines.insert(end, f"  - *Review note:* {note}")  # after the task's other notes, as tasks.json appends it
+backlog_path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
 print(span)
 EOF
 ```
@@ -8815,7 +9281,7 @@ the outbox; T15 also became unblocked).
   `test_migration_0007_live.py`, `test_admission_live.py` (the global bound and R015's after-commit side) and
   `reports/leases/t13-leases.txt`, `t13-heartbeat.txt`, `t13-stress.txt`; the unit half is in `tests/plan_h/`.
 - Gates: `check.py` <dev passed> passed / <dev skipped> skipped; `check.py --profile test` <live passed> passed / 21
-  skipped (the plan's tails are 918/133 and 1030/21); `verify_handoff.py` exit 0 (STATUS.md, "Update — Plan H
+  skipped (the plan's tails are 926/133 and 1038/21); `verify_handoff.py` exit 0 (STATUS.md, "Update — Plan H
   executed"). The live gate is about 2.5 minutes longer than Plan G's: the four `slow_live` tests.
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan G's
   forty-four:
@@ -8834,8 +9300,8 @@ the outbox; T15 also became unblocked).
       default), the global one through the api-only definer `queued_runs_total()` and soft by the number of
       concurrent admissions; a full queue is an unrecorded 429 with `Retry-After`.
   52. SA:188: the extended lock order of `ops_core/locking.py` (advisory locks, `jobs` claim, `run_lease` … `outbox`,
-      `jobs` finish, `idempotency_request`), with fresh-row INSERTs, SKIP LOCKED and NOWAIT outside it and the
-      own-unit tables named.
+      `jobs` finish, `idempotency_request`), with SKIP LOCKED and NOWAIT outside it, a fresh-row INSERT ranked at
+      its foreign-key parent, and the own-unit tables named.
   53. SA:459: `resolve_invocation` reads `invocation_context` without a lock; `run_lease FOR SHARE` in
       `_resolve_handle` is the one lock, shared by every handle function.
   54. SA:467: `mark_unknown` refuses OC003 unless the caller's fence is current and its lease live, bumps the fence,
@@ -8844,7 +9310,8 @@ the outbox; T15 also became unblocked).
   56. BS:405: the nine faults map to eight hooks (`reject_next`, `drop_before_commit`, `lose_after_commit`,
       `timeout_before_accept`, `rate_limit`, `malformed_response`, `receipt_hash_mismatch`, `delay_receipt`) and one
       harness race (concurrent same-key submission, R047).
-  57. SA:196-198: "exits the run" means revoking the job's handles and handing the job back with no transition.
+  57. SA:196-198: "exits the run" means cancelling the job's effects in flight (MCP and model calls; no database unit
+      is interrupted), revoking the job's handles and handing the job back with no transition.
 - Earlier debt lines that named T13 and what became of them: the lease, fence, heartbeat and model permit
   (walking-skeleton debt, Plan E debt) are done; reclaim of a crashed handler's job is done (the sweeper's reclaim);
   `reclaim_leases` is done as erratum 49; the raw-handle binding of `mark_sent`/`record_outcome` is done; the six
@@ -8932,8 +9399,13 @@ Who this is for: whoever runs the worker, reads its logs, or debugs a run that s
   A worker that lost its lease writes nothing.
 - **The heartbeat** is a thread in the worker with its own database connection. It renews the held lease every
   `OPS_HEARTBEAT_SECONDS` while the event loop stamps signs of life (`OPS_LOOP_STALL_SECONDS`) and the job is within
-  `OPS_COMPUTE_BUDGET_SECONDS`. When renewal fails it cancels the job's work; the worker revokes the job's handles
-  and hands the job back with no state change.
+  `OPS_COMPUTE_BUDGET_SECONDS`. When renewal fails it cancels the job's MCP or model call in flight (never a
+  database unit, which finishes and then meets the fence check); the worker revokes the job's handles and hands the
+  job back with no state change.
+- **Handles live 20-30 s in practice, not 60.** A handle's expiry is capped at the lease's end when it is minted, and
+  a renewal does not extend a handle already minted. An MCP call slower than that (the worker's read timeout is 60 s)
+  ends with the handle refused (OC008, `INVALID_HANDLE` before SENT) rather than a timeout; per-call minting under the
+  renewed lease is T22/T47's (debt list).
 - **The model permit** (`app.model_permit`, one slot) is held around each model call; a waiting worker polls with
   backoff; a holder that died frees it after 65 s.
 - **The sweeper** hands back, every tick, the jobs claimed by a worker whose lease is no longer live.
@@ -8943,14 +9415,15 @@ Who this is for: whoever runs the worker, reads its logs, or debugs a run that s
 | Variable | Default | Bounds | Rule |
 |---|---|---|---|
 | `OPS_LEASE_SECONDS` | 30 | 10-900 | BS:557 |
-| `OPS_HEARTBEAT_SECONDS` | 10 | 1-300 | twice it must stay below the lease |
+| `OPS_HEARTBEAT_SECONDS` | 10 | 1-300 | twice it plus 6 s (the 5 s deadline margin and the 1 s tick) below the lease |
 | `OPS_LOOP_STALL_SECONDS` | 28 | 2-900 | below the lease plus one heartbeat; above 25 for DoD 3 |
 | `OPS_COMPUTE_BUDGET_SECONDS` | 90 | 10-3600 | at least one lease (BS:555) |
 | `OPS_GLOBAL_QUEUE_LIMIT` | 100 | 1-100000 | API: QUEUED runs across tenants (BS:550) |
 
 The global queue bound is soft: two admissions in different tenants can both pass a count one below the limit, so it
 can be exceeded by the number of admissions in flight at once. The per-tenant quota (`OPS_TENANT_QUEUE_QUOTA`) still
-applies first.
+applies first. The count costs one indexed scan per tenant inside every run admission (`app.queued_runs_total()`
+sums the tenants' QUEUED runs); a cheaper counter is T29's with the rest of the budget accounting.
 
 ## Looking at it
 
@@ -9003,8 +9476,8 @@ even if it does not know yet.
   and checks owner, fence and expiry on the database clock; MCP handles carry the fence and die with it; the
   definer functions behind both MCP servers check it in one helper (`_resolve_handle`).
 - **A heartbeat that cannot be starved and cannot keep a corpse alive.** It runs on its own thread and connection,
-  renews only while the event loop shows signs of life and the job is within its compute budget, and cancels the job
-  when renewal fails.
+  renews only while the event loop shows signs of life and the job is within its compute budget, and when renewal
+  fails cancels the job's MCP or model call in flight (never a database unit).
 - **One lock order.** `core/src/ops_core/locking.py` lists it; a unit test places every table and every transaction
   in it, and a live stress test hammers it.
 
@@ -9020,18 +9493,62 @@ even if it does not know yet.
 
 ```
 
-`docs/PROJECT_HISTORY.md`: if a section whose heading contains `The leases plan` exists (the planning story, written
-with the review record before execution), append to it, after its last paragraph and before the next `## ` heading,
-one `**Problem.**`/`**Change.**` pair per finding the task reviews and the final review recorded (from the SDD
-ledger), or the sentence "Execution found nothing the plan had not ruled on." when they recorded none. If no such
-section exists, insert before the heading `## 25. What the process taught` a section headed `## 25. The leases plan
-put the fence in front of every write, and the heartbeat beside the loop` holding a short planning story (the brief's
-31 rulings, the plan's refinements (a)-(i)) and the execution pairs, and renumber the following heading to
-`## 26. What the process taught`. Rename nothing else.
+`docs/PROJECT_HISTORY.md`: if a section whose heading contains `The leases plan` exists (the controller may commit
+the planning story with the review record before execution, as for Plan G), skip the next paragraph. Otherwise insert,
+immediately before the heading `## 25. What the process taught`, the block below and renumber that heading to
+`## 26. What the process taught` (rename nothing else):
 
-`README.md`, line 5: replace the status sentence's tail "durable admission with a scoped Idempotency-Key and the AM-16
-router (T12) runs locally**" with "durable admission with a scoped Idempotency-Key and the AM-16 router (T12) and
-fenced run leases with a heartbeat (T13) run locally**" (one line in the file; the rest unchanged).
+```markdown
+## 25. The leases plan put the fence in front of every write, and the heartbeat beside the loop
+
+**Problem.** Plan H adds the run lease (T13): one owner per run, a fence that moves on every takeover, a heartbeat that
+renews the lease from its own thread, a local deadline after which the worker starts nothing, a model permit, the
+sweeper's hand-back of a dead owner's jobs, one published lock order, and the remaining BS:405 faults. As for Plan G,
+a fact sheet with 31 open questions came first and the controller answered them in a brief of 31 rulings that a
+fresh author expanded into the plan. The author refined nine rulings against the code and flagged each: the lease row
+is locked before it is inserted, because an `INSERT … ON CONFLICT` waits for an in-progress update of the row and a
+NOWAIT claim must not wait; the fenced check is a MATERIALIZED CTE so the expiry is compared after the lock, not
+before a lock wait; and the re-fence after `mark_unknown` needed a "pending" flag so the heartbeat would not mistake
+the owner's own fence bump for a takeover.
+
+**Round 1 (static critic: 1 Blocking, 5 Important, 8 Minor; builder: every task executed, four workarounds, the live
+half blocked).** The blocking finding was the cancellation itself. The brief had the heartbeat cancel the whole job
+task when the lease was lost; psycopg's `transaction()` sends BEGIN before its first await, so a cancellation landing
+there finishes the BEGIN, raises, and never reaches the rollback: the loop connection stays inside a transaction for
+good, every later unit becomes a savepoint that only ever releases, and the worker holds its job and lease rows while
+looking healthy. The design changed: only effects (the MCP call, the model call, the permit's back-off sleep) run as
+cancellable child tasks registered on the lease, a database unit is never interrupted, and the hand-back first checks
+that the connection is idle and closes it if not. The other findings were smaller and concrete: three lint and type
+rules the gates would have failed on, a waiting acquisition that reported a 10 s lock wait as "busy" so the stress test
+could not see it, a stress mix that never committed a re-fence and dropped the brief's "never two owners" check, and a
+settings check that let a 10 s lease with a 4 s heartbeat through although the 5 s deadline margin made one slow
+renewal fatal. The builder could not run the live half: copying `.env` into the dry-run worktree was refused by the
+permission classifier, and that was left for the owner rather than worked around.
+```
+
+Then append to that section (after its last paragraph, before the next `## ` heading) one
+`**Problem.**`/`**Change.**` pair per finding the task reviews and the final review recorded (from the SDD ledger), or
+the sentence "Execution found nothing the plan had not ruled on." when they recorded none. Later review rounds of this
+plan, if any, add their own paragraph before execution, as round 1's above.
+
+`README.md`: line 5 is one long line; change its tail with this script (the old and new texts are each part of
+that one line; the Python string literals only wrap for width):
+
+```bash
+uv run python - <<'EOF'
+from pathlib import Path
+
+path = Path("README.md")
+text = path.read_text(encoding="utf-8")
+old = "durable admission with a scoped Idempotency-Key and the AM-16 router (T12) runs locally**"
+new = (
+    "durable admission with a scoped Idempotency-Key and the AM-16 router (T12) and fenced run leases with a "
+    "heartbeat (T13) run locally**"
+)
+assert text.count(old) == 1
+path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
+EOF
+```
 
 `worker/README.md`: replace the section from `## Runs (T08)` to the end of the file with:
 
@@ -9042,19 +9559,63 @@ fenced run leases with a heartbeat (T13) run locally**" (one line in the file; t
 LOCKED`, then the lease `FOR UPDATE NOWAIT`; a busy run's job is deferred behind the lease), health on 127.0.0.1:8070
 (`OPS_WORKER_HEALTH_PORT`). Every unit it commits for a run is fenced by the lease; a heartbeat thread with its own
 connection renews the lease while the event loop is alive and the job is within its compute budget, and cancels the
-job when renewal fails; the job's final unit closes the job and releases the lease. `investigate`: read tool on
-mcp-read → fake draft under the model permit (`MODEL_MODE=fake`, the only route until T19) → frozen proposal →
-AWAITING_APPROVAL. `execute`: `create_incident` on mcp-write. One `ops-worker` token carries both MCP audiences; one
+job's MCP or model call in flight when renewal fails; the job's final unit closes the job and releases the lease.
+`investigate`: read tool on mcp-read → fake draft under the model permit (`MODEL_MODE=fake`, the only route until
+T19) → frozen proposal → AWAITING_APPROVAL. `execute`: `create_incident` on mcp-write. One `ops-worker` token carries both MCP audiences; one
 handle per call, bound to the lease's fence. Settings: `OPS_LEASE_SECONDS` (30), `OPS_HEARTBEAT_SECONDS` (10),
 `OPS_LOOP_STALL_SECONDS` (28), `OPS_COMPUTE_BUDGET_SECONDS` (90); see `docs/runbooks/leases.md`. LangGraph: T20.
 ```
 
-`sweeper/README.md`: in the "Owns" paragraph replace
-`purge of expired sessions, login state, logout-token ids and idempotency records past their replay window (T12)` with
-`purge of expired sessions, login state, logout-token ids and idempotency records past their replay window (T12),
-the hand-back of jobs whose run lease died with their worker (T13)`, and in the "Runs (T11)" section replace the
-sentence `Leases, wake-ups, the outbox and proposal expiry: T13/T14/T21.` with `Every tick also hands back the jobs
-whose run lease is no longer live (T13). Wake-ups, the outbox and proposal expiry: T14/T21.`
+`sweeper/README.md` (three replacements; each block is the file's exact lines):
+
+Line 3, replace:
+
+```markdown
+Scheduler process (AM-20.1): membership sync, expiry purges; later leases, wake-ups, outbox
+```
+
+with:
+
+```markdown
+Scheduler process (AM-20.1): membership sync, expiry purges, the hand-back of jobs whose run lease died; later
+wake-ups, outbox
+```
+
+The "Owns" paragraph (lines 6-7), replace:
+
+```markdown
+The membership sync (deactivation of disabled or deleted users, `synced_at`), the per-minute maintenance job rows, the
+purge of expired sessions, login state, logout-token ids and idempotency records past their replay window (T12)
+```
+
+with:
+
+```markdown
+The membership sync (deactivation of disabled or deleted users, `synced_at`), the per-minute maintenance job rows, the
+purge of expired sessions, login state, logout-token ids and idempotency records past their replay window (T12), and
+the hand-back of jobs whose run lease died with their worker (T13)
+```
+
+The "Runs" section (lines 16-20), replace:
+
+```markdown
+## Runs (T11)
+
+`python -m ops_sweeper`: every 30 s syncs memberships against the realm, records the sync as this minute's
+`sync_memberships` job, purges expired rows; health on 127.0.0.1:8071 (`OPS_SWEEPER_HEALTH_PORT`), ready only while the
+last successful sync is younger than 120 s. Leases, wake-ups, the outbox and proposal expiry: T13/T14/T21.
+```
+
+with:
+
+```markdown
+## Runs (T11, T13)
+
+`python -m ops_sweeper`: every 30 s syncs memberships against the realm, records the sync as this minute's
+`sync_memberships` job, purges expired rows and hands back the jobs whose run lease is no longer live (T13); health on
+127.0.0.1:8071 (`OPS_SWEEPER_HEALTH_PORT`), ready only while the last successful sync is younger than 120 s.
+Wake-ups, the outbox and proposal expiry: T14/T21.
+```
 
 - [ ] **Step 5: Final gates**
 
@@ -9064,7 +9625,7 @@ PYTHONUTF8=1 uv run python scripts/check.py --profile test
 uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts
 ```
 
-Expected: `CHECK: GREEN` with `918 passed, 133 skipped`; `CHECK: GREEN` with `1030 passed, 21 skipped`; exit 0. Fill
+Expected: `CHECK: GREEN` with `926 passed, 133 skipped`; `CHECK: GREEN` with `1038 passed, 21 skipped`; exit 0. Fill
 the `<dev passed>`, `<dev skipped>` and `<live passed>` placeholders of Steps 3 and 4 with the printed numbers. Then
 `git checkout -- reports/bootstrap reports/auth`; the live run rewrote `reports/admission`, `reports/skeleton` and
 `reports/leases`, and Step 6 commits them. Tick this plan's checkboxes (`- [ ]` → `- [x]`) for every step executed.
@@ -9073,8 +9634,11 @@ the `<dev passed>`, `<dev skipped>` and `<live passed>` placeholders of Steps 3 
 
 ```bash
 git add handoff SESSION_STATE.md STATUS.md README.md worker/README.md sweeper/README.md docs/ARCHITECTURE.md
-git add docs/PROJECT_HISTORY.md docs/runbooks/leases.md reports/leases reports/admission reports/skeleton
+git add docs/PROJECT_HISTORY.md docs/runbooks/leases.md reports/admission reports/skeleton
 git add docs/superpowers/plans/2026-10-15-first-slice-h-leases-fences-heartbeat.md
+# reports/leases/ is written by Step 5's live gate: test_leases_live.py, test_heartbeat_live.py and
+# test_lease_stress_live.py each write their file only when all of their tests passed.
+if [ -d reports/leases ]; then git add reports/leases; else echo "reports/leases missing: rerun Step 5"; fi
 git commit -m "docs: close T13 - handoff records, acceptance rows, errata 45-57, the leases runbook (Plan H)"
 ```
 
@@ -9119,7 +9683,8 @@ git commit -m "docs: close T13 - handoff records, acceptance rows, errata 45-57,
      (Task 7), beside Plan E's.
    - **R107** "Two-connection interleaving and stress tests: stale writes abort, no deadlocks, clock_timestamp-based
      expiry." → Task 3's interleavings (two and three connections, `pg_blocking_pids`), Task 6's stress test (zero
-     40P01, zero 55P03, fences never backwards, no stale event after a newer fence), Task 3's
+     40P01, zero 55P03 including a waiting acquisition's long wait, fences never backwards, never two owners,
+     committed re-fences, no stale event after a newer fence), Task 3's
      `test_r107_expiry_is_compared_after_the_lock` and Task 6's R019 (expiry by the database clock).
    The brief's 31 rulings map to tasks in "Rulings" above; every refinement is listed under "Rulings needing
    controller attention".
@@ -9130,8 +9695,9 @@ git commit -m "docs: close T13 - handoff records, acceptance rows, errata 45-57,
 3. **Type and name consistency.** `Lease(run_id, owner, fence, lease_seconds, started, clock)` is built the same way in
    `acquire_lease`, `test_lease.py`, `test_worker_units.py`, `test_heartbeat.py`, `test_permit.py` and
    `test_grant_deferred.py`; its members (`fence`, `deadline`, `renewed_at`, `held_since`, `lost`, `refencing`,
-   `check`, `renewed`, `mark_lost`, `begin_refence`, `end_refence`, `fence_moved_by_owner`) are the ones the heartbeat,
-   `fenced`, `release_lease`, `_mark_unknown`, `model_permit` and `run_job` call. `persistence.Claimed(job, lease)`,
+   `check`, `effect`, `cancel_effects`, `renewed`, `mark_lost`, `begin_refence`, `end_refence`,
+   `fence_moved_by_owner`) are the ones the heartbeat, `fenced`, the handlers, `release_lease`, `_mark_unknown`,
+   `model_permit`, the stress test and `run_job` call; `Heartbeat.hold(lease)` takes no callback anywhere. `persistence.Claimed(job, lease)`,
    `Deferred(job_id)`, `Unknown(state, fence)` are used with those field names everywhere. `mark_sent(conn, *, handle,
    action_id)` and `record_outcome(conn, *, handle, action_id, outcome)` match in `persistence`, `execution.py`,
    `test_worker_live.py`, `test_fenced_definers_live.py` and the write-path unit test; `mark_unknown(conn, run_id,
@@ -9149,16 +9715,119 @@ git commit -m "docs: close T13 - handoff records, acceptance rows, errata 45-57,
    → Task 5 `test_transient_errors_are_retried_until_the_deadline`; (5) a reclaim racing a live owner → Task 6
    `test_the_reclaim_leaves_a_live_lease_alone` and Task 3's R087 test.
 5. **Known risks the executor should watch** (none changes a ruling):
-   - Cancelling the handler task while psycopg's async connection is mid-statement: psycopg cancels the query and
-     the unit's transaction context rolls back, but a cancellation landing between `COMMIT` and its result could leave
-     the loop connection in an unexpected state; `abandon` then fails and the poll loop's existing handler logs it (a
-     broken connection still ends the process). The live cancellation test cancels during an MCP call (outside any
-     transaction), the common case.
-   - The slow live tests depend on wall-clock timing on the dev machine (a 25 s block against a 28 s gate leaves 3 s
-     of margin; the heartbeat ticks every second). A machine under heavy load could close the stall gate; the test
-     then fails loudly rather than passing by luck.
+   - Cancellation (review round 1, B1, resolved by design): only effects registered through `Lease.effect` are ever
+     cancelled, so psycopg never meets a cancellation inside a unit; `abandon` refuses a connection that is not idle
+     and closes it, so the worst case is a restart, never a wedged connection. The one remaining cancellation of a
+     unit is the worker's own shutdown (its task cancelled by the signal), after which the process ends anyway.
+   - The slow live tests depend on wall-clock timing on the dev machine (the loop's last stamp can be up to 1 s old,
+     so a 25 s block peaks at about 26 s against the 28 s gate). A machine under heavy load could close the stall gate;
+     the test then fails loudly rather than passing by luck, and the evidence line records the longest silence seen.
+   - `test_a_lost_lease_cancels_a_real_mcp_call` runs the real MCP client against a socket that never answers; the
+     dry run of round 1's fixes passed it on Windows, but an SDK upgrade that swallowed cancellation would hang it to
+     the client's 60 s read timeout (the assertion allows 10 s).
    - The stress test's assertions are statistical in coverage (a random mix over 20 s) but exact in what they check;
      a seeded `random.Random(name)` per actor keeps each actor's choices reproducible, though the interleaving is not.
    - Loading applied revisions by path inside revision 0007 is new in this repository; it relies on those files never
      being edited, which the project already promises (round-3 finding N1 of Plan E) and the downgrade test proves on
      every live run.
+
+## Round 1 changes
+
+Inputs: the controller's rulings on the static review (REVISE: 1 Blocking, 5 Important, 8 Minor) and the dry run (47
+steps, 10 DIFFERS, 4 workarounds, the live half blocked). Every ruling is applied in this text; nothing was declined.
+Where a finding offered alternatives, the smaller one was taken, as ruled.
+
+- **B1, ruling 19 replaced (Tasks 3, 5).** `Lease.effect(coro)` runs one effect (an MCP call, a model call, the
+  permit's back-off sleep) as a child task registered on the lease under its lock; `Lease.cancel_effects()` (thread
+  safe) cancels exactly those through `loop.call_soon_threadsafe`; a cancelled effect surfaces as `LeaseLost`, a
+  cancellation of the caller itself (shutdown) propagates unchanged. Database units are never registered or
+  cancelled. Task 3 writes `effect`/`cancel_effects` and routes the handlers' three calls through them (the
+  `lease.check()` before each call moved into `effect`); `handlers.abandon` first checks
+  `conn.info.transaction_status is IDLE`, else closes the connection and raises `psycopg.OperationalError`, which the
+  poll loop already turns into a non-zero exit. Task 5's `Heartbeat.hold(lease)` lost its `cancel` callback,
+  `_lose` calls `cancel_effects`, and `main.run_job` no longer wraps the handler in a task (it catches `LeaseLost`
+  only). Tests: `test_lease.py` +3 (an effect starts only while held; a loss from another thread cancels the effect and
+  not a concurrent "unit"; stopping the worker is not a loss), `test_worker_units.py` +1 in Task 3 (the non-idle
+  `abandon`) and, in Task 5, the effect-cancellation test rewritten plus
+  `test_a_loss_during_a_unit_never_interrupts_it`. Erratum 57, ruling 19's text, the Goal, the Architecture, the Global Constraints' catch-all note, the runbook, the
+  ARCHITECTURE section, the worker README and the handoff note now say "effects only".
+- **I1.** `itertools.pairwise` in `locking.follows_order`; `block_the_loop()`, a module-level synchronous helper the
+  async test calls (no `noqa`); `2.0 **` in `permit.backoff`.
+- **I2.** Resolved by B1: the take and the release are units, the back-off sleep is the one effect, and the `finally`
+  releases exactly the slot a take returned. `test_permit.py`: the cancellation test now loses the lease through
+  `cancel_effects` mid-draft (release still happens) and `test_a_loss_during_the_backoff_takes_and_keeps_no_permit`
+  is new (+1).
+- **I3.** `acquire_lease(wait=True)` lets 55P03 propagate; with NOWAIT only the lock statement's 55P03 is `Busy(locked=
+  True)` (a first-row INSERT that outlasts `lock_timeout` propagates too). The stress test counts a `Busy(locked=True)`
+  from a waiting acquisition as 55P03.
+- **I4.** The stress test's third run is EXECUTING with a grant (`approved_run` + `grant_execution`, then its seeding
+  lease expired); `mark_unknown` commits there under load (a second UNKNOWN only moves the fence, so re-fences keep
+  committing) and the actor hands the new fence to its Lease inside `begin_refence`/`end_refence`. The monitor reads
+  `owner, fence, live` and records any sample where two actors hold a run's current fence or a live row's owner is not
+  the actor holding its fence; the test asserts none, at least one committed re-fence, and the evidence line says so.
+- **I5.** `check_leases` requires `2 × heartbeat + 6 < lease` (`settings.RENEWAL_MARGIN_SECONDS = 6`: SA:195's 5 s plus
+  the 1 s tick, kept in `settings` so the settings module imports nothing from the worker); the message is
+  "OPS_HEARTBEAT_SECONDS must be less than half of (OPS_LEASE_SECONDS - 6)". The bounds test's low companions moved to
+  heartbeat 1 (lease 10 needs it); the unsafe-combination row uses 12 (the old rule's blind spot); a new test pins
+  30/10 valid and 10/4 invalid (+1).
+- **M1.** `locking.py`'s docstring states that a fresh INSERT's foreign-key check takes FOR KEY SHARE on the parent and
+  ranks the insert at the parent; the claim and the two minting units list those parents; the test is renamed
+  `test_the_documented_units_are_consistent_with_the_order`, and the docstring says the list is hand-written. Erratum
+  52's wording follows.
+- **M2** (the smaller alternative). The 20-30 s practical handle lifetime is a debt line (→ T22/T47) and a runbook
+  paragraph; minting per call is not done.
+- **M3** (both parts). The import-time drift check of revision 0005's line moved into `upgrade()` (Task 4 Edit 5); the
+  live round trip now also compares each restored function's `pg_get_functiondef`, ACL, owner and settings with a
+  scratch database built straight to 0006 (`built_to_0006`, created and dropped by the test).
+- **M4.** `Heartbeat.max_loop_age` records the longest loop silence a tick saw; the DoD-3 blocked-loop test asserts it
+  stays below the stall gate and writes it into the evidence line.
+- **M5.** The two-first-acquisitions test is stepped: A's claim stays open until `pg_blocking_pids` shows B's insert
+  waiting on A, then B defers.
+- **M6.** The heartbeat's connect passes `connect_timeout=5`.
+- **M7.** `test_a_lost_lease_cancels_a_real_mcp_call` (Task 5, +1): the real `HttpMcpCaller` against a local socket
+  that never answers, cancelled through the lease, ends as `LeaseLost` within 10 s.
+- **M8.** The per-tenant scan in `queued_runs_total` is in the runbook and on the debt list (→ T29).
+- **Dry run.** WA-1 to WA-4 are folded in (WA-2: 0007's one-element `FUNCTIONS` tuple is written, and quoted by Task
+  4 Edit 4, in its formatted one-line form; WA-3 per I1). Every code block is now stable under `ruff format`
+  (`lease.RENEW`, `release_lease`'s signature, `tool_events`, `execution.py` Edit 3, the Task 5 assertion, the stress
+  `Actor.__init__`, the new `CountingLease` call, and 0007's `_applied`, which needed two blank lines before it); the
+  only text `ruff format` still rewrites is Task 4's three replace-all lines in `test_definers_write_path_live.py`,
+  which the plan now says and nothing later quotes. Red steps whose module fails to collect are split into separate
+  runs with pytest's real output (`N errors in`; Tasks 5, 6, 7), and the T2 S2 and T4 S1 reasons are the observed
+  ones. Task 8: the TODO grep is exact (`TODO(T13` prints nothing in code; 0007 holds one, the verbatim quote of
+  0005's line, now the public `GRANT_TODO_0005`, which the unit test uses instead of the literal), the PROJECT_HISTORY
+  section text is given in full, `sweeper/README.md`'s line 3, "Owns" paragraph and "Runs" section are exact blocks,
+  the README edit is a script, `reports/leases` is added only if Step 5's live gate wrote it (and the three tests that
+  write it are named), the line cites are corrected (148-158; r105 25-26 and 209-214), and the BACKLOG note is
+  appended after T13's existing notes.
+- **Counts.** Dev passed/skipped after each task: 857/104, 863/109, 880/119, 887/124, 905/128, 910/132, 926/133
+  (+1 in Task 1, +4 in Task 3, +3 in Task 5 against the first version); live 951, 978, 990, 1012, 1021, 1038, always
+  with 21 skipped. Checked on scratch copies of 03e2636 with every step applied by script: the splice check prints
+  "not found: 0"; each task's dev gate gives exactly these counts (plus the 12 tests that need `.git` and the
+  reference zip, as in the dry run); `ruff check` and `mypy` are clean after each task; and every red step's
+  "Expected" line was reproduced.
+
+## Round 1 open points
+
+- **The live half is still unproven.** Nothing here touched a database. Each of these new or changed live
+  behaviours needs its first run in the main checkout:
+  - the stepped first-acquisition race;
+  - the stress test's EXECUTING run and its committed re-fences (the grant needs a fresh membership sync, as in
+    `test_fenced_definers_live.py`), the two-owner monitor, and the 55P03 accounting;
+  - `built_to_0006` (CREATE DATABASE as the superuser, revisions 0001-0006 on an empty database whose roles already
+    exist);
+  - the DoD-3 evidence line with `max_loop_age`.
+
+  The dry run's `.env` blocker (the permission classifier refused copying it into a worktree) is for the owner to
+  decide.
+- **One unit test leans on the MCP SDK's cancellation behaviour.** `test_a_lost_lease_cancels_a_real_mcp_call` passed
+  on Windows in the scratch run. If a future SDK swallowed cancellation, it would fail after 10 s rather than hang.
+- **The rulings changed by round 1 are recorded in "Rulings" (19, 20, 21) and erratum 57.** The controller has
+  decided them, so they are not repeated under "Rulings needing controller attention". The owner still decides the
+  errata.
+- **Not taken, as ruled.** The static review also proposed:
+  - an abandon-time permit release keyed by holder and run (I2's second fix; ruled resolved by B1);
+  - a fake-connection test that cancels at every await point of a full `handle()` run (B1's suggestion; the controller
+    named three tests instead, which are in).
+
+  Neither is in the plan. Either can be added in a later round if the controller wants it.
