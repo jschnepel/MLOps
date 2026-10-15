@@ -29,8 +29,9 @@ from ops_core.settings import LeaseSettings, Urls
 from ops_core.states import Intent, RunState, freeze_allowed
 from psycopg.pq import TransactionStatus
 
-from ops_worker import proposals
+from ops_worker import permit, proposals
 from ops_worker.drafting import DraftGenerator, DraftRequest, EvidenceItem
+from ops_worker.heartbeat import Heartbeat
 from ops_worker.mcp import McpCaller, McpCallFailed
 
 log = logging.getLogger("ops_worker")
@@ -49,7 +50,7 @@ def is_deferred(doc: dict[str, Any]) -> bool:
 @dataclass
 class Deps:
     """What a handler needs: the loop's connection, the MCP client, the model route, the server URLs, the worker's
-    name (the lease owner) and the lease settings."""
+    name (the lease owner), the lease settings and the heartbeat that renews the lease while a job runs."""
 
     conn: persistence.Conn
     mcp: McpCaller
@@ -57,6 +58,7 @@ class Deps:
     urls: Urls
     worker_name: str
     leases: LeaseSettings = field(default_factory=LeaseSettings)
+    heartbeat: Heartbeat | None = None  # main.run_job hands it each claimed lease; tests may run without one
 
 
 async def _event(
@@ -149,7 +151,8 @@ async def _draft_and_freeze(
 ) -> None:
     """Draft from the evidence and freeze the proposal; any failure here is the caller's to turn into FAILED."""
     request = DraftRequest(asset_id=run["asset_id"], text=text, start_at=run["start_at"], end_at=run["end_at"])
-    draft = await lease.effect(deps.generator.generate(request, evidence))  # a model call is an effect too (SA:195)
+    async with permit.model_permit(deps.conn, holder=deps.worker_name, lease=lease):  # model concurrency 1 (BS:549)
+        draft = await lease.effect(deps.generator.generate(request, evidence))  # a lease effect (SA:195)
     freeze_allowed(Intent(run["intent"]))  # an answer_only run never freezes a proposal (SA:453)
     now = datetime.now(UTC).replace(microsecond=0)
     proposal_id, draft_id = uuid4(), uuid4()

@@ -776,6 +776,29 @@ async def unclaim_job(conn: Conn, job_id: UUID, *, worker_name: str) -> None:
     )
 
 
+async def take_model_permit(conn: Conn, *, holder: str, run_id: UUID, ttl_seconds: int) -> int | None:
+    """One free model permit slot for `ttl_seconds` (Plan H ruling 12), or None while every slot is held. SKIP LOCKED
+    never waits, and a slot whose TTL passed counts as free on the application clock, so nobody needs to reclaim it."""
+    cur = await conn.execute(
+        "UPDATE app.model_permit SET holder = %s, run_id = %s,"
+        " leased_until = app.current_time() + make_interval(secs => %s)"
+        " WHERE slot = (SELECT slot FROM app.model_permit WHERE leased_until <= app.current_time()"
+        " ORDER BY slot FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING slot",
+        (holder, run_id, ttl_seconds),
+    )
+    row = await cur.fetchone()
+    return None if row is None else int(row["slot"])
+
+
+async def release_model_permit(conn: Conn, *, slot: int, holder: str) -> None:
+    """Give the permit back, unless its TTL passed and another holder took it meanwhile."""
+    await conn.execute(
+        "UPDATE app.model_permit SET holder = NULL, run_id = NULL, leased_until = '-infinity'"
+        " WHERE slot = %s AND holder = %s",
+        (slot, holder),
+    )
+
+
 async def finish_job(conn: Conn, job_id: UUID) -> None:
     """Mark a claimed job done."""
     await conn.execute("UPDATE app.jobs SET done_at = app.current_time() WHERE id = %s", (job_id,))

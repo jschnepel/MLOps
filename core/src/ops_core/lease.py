@@ -20,12 +20,16 @@ commits. A loss during a unit is caught by the unit's own fence check or by the 
 from __future__ import annotations
 
 import asyncio
+import enum
 import threading
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any, Final
 from uuid import UUID
+
+import psycopg
+from psycopg.rows import DictRow
 
 DEADLINE_MARGIN_SECONDS: Final = 5.0  # SA:195: stop starting effects at lease_until - 5 s
 RELEASED: Final = "released"  # the end a lease meets when its job's final unit gives it back
@@ -207,3 +211,29 @@ class Lease:
         pending, or the shared fence already differs from `used`), so the renewal retries with the current fence."""
         with self._lock:
             return self._refencing or self._fence != used
+
+
+class Renewal(enum.Enum):
+    """What one renewal unit found (Plan H ruling 16)."""
+
+    RENEWED = "renewed"  # owner and fence matched, the lease was live, lease_until moved on
+    RELEASED = "released"  # the job's final unit gave the lease back: nothing left to renew
+    MOVED = "moved"  # another owner or another fence holds the row
+    EXPIRED = "expired"  # still this owner and fence, but the lease lapsed on the database clock
+
+
+def renew(conn: psycopg.Connection[DictRow], lease: Lease, fence: int) -> Renewal:
+    """One renewal unit on the heartbeat's own synchronous connection (SA:193-194, ruling 16): the lease row FOR
+    UPDATE from the start (the unit writes it, SA:191), owner and fence compared, liveness read on the database clock
+    after the lock, then `lease_until` moved on by one lease. `fence` is the value the caller read from the shared
+    Lease before the call, so a mismatch can be told apart from the owner's own re-fence (ruling 10)."""
+    with conn.transaction():
+        row = conn.execute(LOCK_FOR_UPDATE, (lease.run_id,)).fetchone()
+        if row is None or row["owner"] != lease.owner or row["fence"] != fence:
+            return Renewal.MOVED
+        if row["released"]:
+            return Renewal.RELEASED
+        if not row["live"]:
+            return Renewal.EXPIRED
+        conn.execute(RENEW, (lease.lease_seconds, lease.run_id))
+    return Renewal.RENEWED

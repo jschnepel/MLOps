@@ -26,6 +26,7 @@ from ops_core.lease import Lease, LeaseLost
 from ops_core.states import RunState
 from ops_worker import handlers, main
 from ops_worker.drafting import FakeDraftGenerator
+from ops_worker.mcp import HttpMcpCaller
 from psycopg.pq import TransactionStatus
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
@@ -168,6 +169,8 @@ def patch(monkeypatch: pytest.MonkeyPatch, log: Log, *, lost_at: int | None = No
         "revoke_handles": recorder("revoke_handles", 1),
         "unclaim_job": recorder("unclaim_job"),
         "mark_unknown": recorder("mark_unknown", persistence.Unknown(RunState.OUTCOME_UNKNOWN, 4)),
+        "take_model_permit": recorder("take_model_permit", 1),
+        "release_model_permit": recorder("release_model_permit"),
     }
     for name, fn in replaced.items():
         monkeypatch.setattr(persistence, name, fn)
@@ -187,7 +190,12 @@ def test_every_unit_that_writes_opens_with_the_fence(monkeypatch: pytest.MonkeyP
     deps, lease = make(log)
     asyncio.run(handlers.handle(deps, dict(JOB), lease))
     units = log.units()
-    assert len(units) == 5, log.entries  # start, tool.started, tool.completed, DRAFTING, draft and freeze
+    assert len(units) == 7, log.entries  # start, tool.started, tool.completed, DRAFTING, permit, release, freeze
+    assert (
+        log.entries.index("take_model_permit")
+        < log.entries.index("release_model_permit")
+        < log.entries.index("freeze_proposal")
+    )  # the permit is held around the draft call only (ruling 12)
     for unit in units:
         if WRITES & set(unit):
             assert next(entry for entry in unit if entry != "set_tenant") == "fenced", unit  # set_config is no lock
@@ -343,3 +351,115 @@ def test_a_stale_fence_at_mark_unknown_is_a_lost_lease(monkeypatch: pytest.Monke
         with pytest.raises(raised):
             asyncio.run(handlers.execute(deps, {**JOB, "type": "execute"}, lease))
         assert (lease.fence, lease.refencing) == (3, False)
+
+
+def lose(lease: Lease) -> int:
+    """What the heartbeat thread does on a loss: record why, then cancel the effects in flight."""
+    lease.mark_lost("another owner took the lease")
+    return lease.cancel_effects()
+
+
+def test_a_heartbeat_cancel_hands_the_job_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ruling 19 (as amended in review round 1, B1): the thread marks the lease lost and cancels the MCP call in
+    flight; the handler sees LeaseLost and the loop revokes and hands the job back."""
+    log = Log()
+    patch(monkeypatch, log)
+    deps, lease = make(log)
+
+    class Hanging:
+        async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            log.entries.append(f"mcp:{tool}")
+            await asyncio.Event().wait()  # an MCP call that never answers
+            return {}
+
+    class FakeHeartbeat:
+        def __init__(self) -> None:
+            self.held: Lease | None = None
+            self.dropped = False
+
+        def hold(self, held: Lease) -> None:
+            self.held = held
+
+        def drop(self, _lease: Lease) -> None:
+            self.dropped = True
+
+    heartbeat = FakeHeartbeat()
+    deps.mcp = Hanging()
+    deps.heartbeat = heartbeat  # duck-typed stand-ins (the test modules are not type-checked)
+    cancelled: list[int] = []
+
+    async def scenario() -> None:
+        claimed: Any = persistence.Claimed(dict(JOB), lease)
+        job = asyncio.create_task(main.run_job(deps, claimed))
+        while "mcp:search_procedures" not in log.entries:
+            await asyncio.sleep(0)
+        assert heartbeat.held is lease
+        cancelled.append(lose(lease))
+        await job
+
+    asyncio.run(scenario())
+    assert cancelled == [1] and heartbeat.dropped  # exactly the one effect in flight
+    assert log.units()[-1] == ["set_tenant", "revoke_handles", "unclaim_job"]
+    assert "release_lease" not in log.entries and log.entries.count("transition_run") == 1
+
+
+def test_a_loss_during_a_unit_never_interrupts_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1, B1: the heartbeat may lose the lease while a database unit runs. Nothing cancels the unit, which
+    commits whole; the handler stops at its next check, before the MCP call, and hands the job back."""
+    log = Log()
+    patch(monkeypatch, log)
+    deps, lease = make(log)
+    cancelled: list[int] = []
+
+    async def fenced(_conn: Any, held: Lease) -> None:  # the real fenced checks the local state first
+        log.entries.append("fenced")
+        held.check()
+
+    async def transition_then_lose(*_: Any, **__: Any) -> int:
+        log.entries.append("transition_run")
+        cancelled.append(lose(lease))  # the thread, mid-unit
+        await asyncio.sleep(0.01)  # still inside the unit when a cancellation would land
+        return 2
+
+    monkeypatch.setattr(persistence, "fenced", fenced)
+    monkeypatch.setattr(persistence, "transition_run", transition_then_lose)
+    claimed: Any = persistence.Claimed(dict(JOB), lease)
+    asyncio.run(main.run_job(deps, claimed))
+    first = log.entries[: log.entries.index("COMMIT") + 1]
+    assert first[0] == "BEGIN" and "mint_handle" in first and "ROLLBACK" not in first  # the unit committed whole
+    assert cancelled == [0] and "mcp:search_procedures" not in log.entries  # no effect was in flight to cancel
+    assert log.units()[-1] == ["set_tenant", "revoke_handles", "unclaim_job"]
+
+
+def test_a_lost_lease_cancels_a_real_mcp_call() -> None:
+    """Review round 1, M7: the real client (httpx2 inside the MCP SDK's anyio task groups) against a local server that
+    accepts the request and never answers. The loss reaches the caller as LeaseLost, whatever wrapper the client puts
+    around the cancellation, long before the client's 60 s read timeout."""
+    _, lease = make(Log())
+
+    class Token:
+        async def token(self) -> str:
+            return "workload-token"
+
+    async def silent(reader: asyncio.StreamReader, _writer: asyncio.StreamWriter) -> None:
+        await reader.read(65536)  # the request arrives; no answer ever leaves
+        await asyncio.Event().wait()
+
+    async def scenario() -> float:
+        server = await asyncio.start_server(silent, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        loop.call_later(0.5, lose, lease)
+        try:
+            with pytest.raises(LeaseLost):
+                await lease.effect(
+                    HttpMcpCaller(Token()).call(
+                        f"http://127.0.0.1:{port}/mcp", handle="h", tool="search_procedures", arguments={}
+                    )
+                )
+        finally:
+            server.close()
+        return loop.time() - started
+
+    assert asyncio.run(scenario()) < 10
