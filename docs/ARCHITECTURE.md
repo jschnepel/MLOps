@@ -215,7 +215,7 @@ even if it does not know yet.
 | R020 | A stale fence's unit, mint, release and handle all refuse after a takeover |
 | R087 | A resume job waits behind the original job's lease, then writes alone |
 | R088 | A 25 s blocked loop and a 35 s drafter keep the lease; a forced renewal failure cancels and revokes |
-| R107 | Interleavings and an 8-connection stress test: no deadlock, no stale write, expiry after the lock |
+| R107 | An 8-connection stress test: no deadlock; the interleavings, fenced-definer and R019 tests: no stale write; expiry after the lock |
 
 ---
 

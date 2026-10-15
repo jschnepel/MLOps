@@ -54,8 +54,13 @@ SELECT id, type, run_id, claimed_by, claimed_at, available_at FROM app.jobs WHER
 ```
 
 Log lines to know (worker): `run lease lost (event loop stalled)`, `(compute budget spent)`, `(another owner took the
-lease)`, `(the lease expired)`, `(renewals failed until the local deadline)` — each followed by the job being handed
-back. Sweeper: `reclaimed N job(s) whose run lease was not live`.
+lease)`, `(the lease expired)`, `(renewals failed until the local deadline)`, `(heartbeat ticks failed until the local
+deadline)`, and from the job's final unit `(another owner holds the lease, or it lapsed)` — each followed by the job
+being handed back. A lost lease shows only in these lines: no run event, reason or metric records it yet (T28).
+Sweeper: `reclaimed N job(s) whose run lease was not live`.
+
+Readiness (`/health/ready` on `OPS_WORKER_HEALTH_PORT`) answers 503 with `poll loop stopped` or `heartbeat thread
+stopped` when either has died; a supervisor should restart that worker.
 
 ## When something looks stuck
 
@@ -66,7 +71,12 @@ back. Sweeper: `reclaimed N job(s) whose run lease was not live`.
   conversation's slot. Resuming such a run is T20's (the graph's node resume).
 - A worker logs repeated `event loop stalled`: something blocks its event loop for longer than the stall gate (a
   synchronous call on the loop). The lease is lost on purpose; fix the blocking call.
-- `compute budget spent` on every draft: the model is slower than the budget; the budget is BS:555's 90 s.
+- `compute budget spent` on every draft: the model is slower than the budget, or the run waited for the model permit
+  behind another worker's draft (until T29 the wait counts against the budget; with one worker it never happens). The
+  budget is BS:555's 90 s.
+- A run fails as `interrupted` after every worker restart on Linux: SIGTERM is not drained. uvicorn re-raises it once
+  the health server has shut down, so the process ends mid-job; the open unit rolls back, the lease lapses and the
+  sweeper hands the job back. SIGINT lets the current job finish. Draining on SIGTERM is T30's.
 - A worker logs `transient database error` with `LockNotAvailable` (SQLSTATE 55P03): one of its units waited more than
   the loop connection's 10 s `lock_timeout` (`main.LOOP_LOCK_TIMEOUT`) behind another transaction. Units are never
   cancelled, so this is the bound on a stuck one: the unit rolls back, the job keeps its claim but its lease is no

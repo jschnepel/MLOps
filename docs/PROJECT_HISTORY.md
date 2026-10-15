@@ -335,11 +335,11 @@ missed: a handed-back investigate job whose run was already RETRIEVING or DRAFTI
 run holding its conversation slot for good, so the job's next owner now fails such a run as interrupted, and resuming
 it is T20's.
 
-**Execution (eight tasks, each reviewed once, no fix round).** Every task passed its review with minor findings only,
-so no fix wave was needed. The live half, which the dry runs could never run because the permission policy refused
-copying `.env` into a scratch worktree, passed on its first run in every task: the blocked-loop, slow-drafter and
-forced-renewal heartbeat tests gave the same result on four runs, the stress test was green on three runs, and the
-interleaving module on three. Execution made three rulings the plan had not.
+**Execution (eight tasks, each reviewed once; one wording fix round, in Task 8).** Every task passed its review with
+minor findings only, and no code fix wave was needed. The live half, which the dry runs could never run because the
+permission policy refused copying `.env` into a scratch worktree, passed on its first run in every task: the
+blocked-loop, slow-drafter and forced-renewal heartbeat tests gave the same result on four runs, the stress test was
+green on three runs, and the interleaving module on three. Execution made three rulings the plan had not.
 
 **Problem.** The plan capped a handle's expiry at the lease's end when it was minted; that froze the lease end, so a
 long write under a lease the heartbeat had renewed would have been refused. **Change.** The expiry is mint time plus
@@ -353,6 +353,32 @@ with the `action_id` (erratum 59).
 **Problem.** The planned stress mix never moved a lease between holders, so takeovers went unexercised. **Change.** A
 "drop" step, in which a holder stops renewing after about two seconds as a hung worker would, was added and the test
 asserts more than three acquisitions.
+
+**Problem.** Task 8's review found that the close-out documents credited the 20 s stress run with proving that no
+stale write lands. The run's own evidence says no lease was lost and no job handed back during it, so no stale writer
+ever existed in the run to be refused. **Change.** A wording round (`6fd1ec3`) credited the refusal to the tests that
+do produce a stale writer (the stepped interleavings, the fenced definers and R019) and said what the stress run does
+show: no deadlock, no lock timeout, fences only rising and at most one believing owner per run.
+
+**Final review (whole branch: 0 Critical, 1 Important, 7 Minor; one fix wave).**
+
+**Problem.** The Important finding was a gap in the one unit on the job path that did not check liveness. The job's
+final unit, `release_lease`, compared owner and fence but not whether the lease was still live, and it skipped the
+local deadline check. Suppose the lease lapsed on the database clock while `create_incident` was in flight, before the
+heartbeat noticed. mcp-write would refuse the handle before SENT and answer `INVALID_HANDLE`. The worker treats that
+answer as final, so the release would close the execute job and leave the approved run in APPROVED with no grant and
+no job: an approval silently dropped. The heartbeat made the gap wider. Its error branch judged the deadline on the
+clock reading taken before the failed call, which may have spent its 5 s timeouts, and its catch-all never applied
+the deadline rule at all. **Change.** The release checks the local deadline first and requires a live lease after its
+row lock, so this case becomes a lost lease: the job is handed back and its next owner mints a fresh handle and asks
+for the grant again. The heartbeat now judges a failed renewal, and any error its catch-all logs, on a fresh clock
+reading. Readiness also requires the heartbeat thread to be alive. A unit test traces the whole path, and a live test
+shows a release under a lapsed lease closes nothing. Three minors were parked with owners instead of fixed: SIGTERM
+is not drained, because uvicorn re-raises it after shutdown (T30); waiting for the model permit counts against the
+90 s compute budget, which matters once two workers share one model (T29); and a lost lease is visible only in the
+logs (T28). Erratum 59, which answers a stale-fence refusal after SENT with UNKNOWN instead of AM-15's plain error,
+was judged sound. The lesson: a check that every other unit makes has to be made by the last unit too, because the
+last unit is the one that decides whether the work is ever done again.
 
 ## 26. What the process taught
 

@@ -1615,7 +1615,7 @@
         "T13"
       ],
       "suggested_test": "tests/acceptance/test_r098_fault_injection_hooks_are_unreachable_outside_th.py",
-      "note": "Plan E (T10) and Plan H (T13): every fault route (incident-sim's eight kinds, the API's two) is 404 in the dev and demo profiles; the factory refuses any profile but test, and the API refuses to build with faults outside it or without them inside it; BS:405's nine faults map to the hooks in core.testing.faults.BS405 (concurrent same-key submission is a harness race). Unit-level evidence; the live suite runs every service under PROFILE=test."
+      "note": "Plan E (T10) and Plan H (T13): every fault route (incident-sim's eight kinds, the API's two) is 404 in the dev and demo profiles, because the route is registered only when faults exist, which only PROFILE=test allows; the factory refuses any profile but test, and the API refuses to build with faults outside it or without them inside it; BS:405's nine faults map to the hooks in core.testing.faults.BS405 (concurrent same-key submission is a harness race). Unit-level evidence; the live suite runs every service under PROFILE=test."
     },
     {
       "id": "R099",

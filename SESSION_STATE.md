@@ -2,7 +2,7 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan H (T13) is executed on branch `plan-h` (`c5eeb89..6c9e8f8`, on top of `plan-g`: the eight tasks; the close-out commit follows). Owner inputs: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) merge the stacked PRs in order and open the plan-h -> plan-g PR; (3) T44 step 10 (`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F, G and H (H: 45-59 below); (5) migrate the dev database to revision 0007 (`uv run python scripts/skeleton.py migrate`, dev profile: from 0005 it applies 0006 and 0007 together; 0007 adds `app.model_permit` and the `jobs.type` CHECK, re-creates the handle functions and deletes nothing). Next is the earliest dependency-satisfied task in `handoff/tasks.json` after T13 (T14: gap-free event journal, wake-ups and the outbox; T15 also became unblocked).
+**Next task:** Plan H (T13) is executed on branch `plan-h` (`c5eeb89..06e961a`, on top of `plan-g`: the eight tasks, the close-out `e9d624d` and `6fd1ec3`, and the final-review fix `06e961a`; the docs commit recording that fix sits on top). Owner inputs: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) merge the stacked PRs in order and open the plan-h -> plan-g PR; (3) T44 step 10 (`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F, G and H (H: 45-59 below); (5) migrate the dev database to revision 0007 (`uv run python scripts/skeleton.py migrate`, dev profile: from 0005 it applies 0006 and 0007 together; 0007 adds `app.model_permit` and the `jobs.type` CHECK, re-creates the handle functions and deletes nothing). Next is the earliest dependency-satisfied task in `handoff/tasks.json` after T13 (T14: gap-free event journal, wake-ups and the outbox; T15 also became unblocked).
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-h` (Plan H work on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09 (`origin/plan-e` is two docs commits behind local `plan-e`; a `git push origin plan-e` brings it level before the plan-f -> plan-e PR). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`). Merging them in order is the owner's call.
 
@@ -322,16 +322,26 @@
 
 ## Plan H executed (2026-10-15, branch `plan-h`)
 
-- T13 = `c5eeb89..6c9e8f8` (the debt list first, then the eight tasks). The plan
+- T13 = `c5eeb89..06e961a` (the debt list first, then the eight tasks, the close-out `e9d624d` and `6fd1ec3`, and the
+  final-review fix `06e961a`; the docs commit recording that fix sits on top). The plan
   (`docs/superpowers/plans/2026-10-15-first-slice-h-leases-fences-heartbeat.md`) holds the 31 rulings of the
   controller's brief as implemented; the input is `docs/superpowers/research/2026-10-15-plan-h-inputs.md`.
   Evidence: `tests/e2e/test_leases_live.py`, `test_fenced_definers_live.py`, `test_heartbeat_live.py` (three
   `slow_live` DoD-3 tests), `test_lease_stress_live.py` (the `slow_live` stress test and R019),
   `test_migration_0007_live.py`, `test_admission_live.py` (the global bound and R015's after-commit side) and
   `reports/leases/t13-leases.txt`, `t13-heartbeat.txt`, `t13-stress.txt`; the unit half is in `tests/plan_h/`.
-- Gates: `check.py` 930 passed / 133 skipped; `check.py --profile test` 1042 passed / 21
-  skipped (the plan's tails are 930/133 and 1042/21); `verify_handoff.py` exit 0 (STATUS.md, "Update — Plan H
-  executed"). The live gate is about 2.5 minutes longer than Plan G's: the four `slow_live` tests.
+- Gates: `check.py` 939 passed / 134 skipped; `check.py --profile test` 1052 passed / 21 skipped (the plan's tails
+  are 930/133 and 1042/21; the final-review fix wave added nine unit tests and one live test); `verify_handoff.py`
+  exit 0 (STATUS.md, "Update — Plan H executed"). The live gate is about 2.5 minutes longer than Plan G's: the four
+  `slow_live` tests.
+- **Final review** (whole branch: 0 Critical, 1 Important, 7 Minor; one fix wave, `06e961a`). I1: `release_lease`, the
+  job's final unit, compared owner and fence but not liveness and skipped the local deadline, so an execute job whose
+  lease lapsed during `create_incident` (answered `INVALID_HANDLE` before SENT) could be closed and its approved run
+  stranded in APPROVED with no job. The release now checks the local deadline first and requires a live lease after
+  its row lock, so that case hands the job back and the next owner runs it again. M1: the heartbeat judges a failed
+  renewal, and any error its catch-all logs, on a fresh clock reading against the local deadline. M4: readiness
+  requires the heartbeat thread to be alive. M5/M6: the R107 wording in ARCHITECTURE, the history entry, these spans
+  and the stress test's "Catches" list. M2, M3 and M7 are debt lines (Plan H debt list). Erratum 59 was judged sound.
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan G's
   forty-four:
   45. SA:418: `app_definer` holds `sel, upd(fence)` on `run_lease`.
@@ -396,22 +406,16 @@
     were not exercised. It relaxes nothing; its cost is a longer or flakier run.
 - **Open items for later** (from the SDD ledger; each task's review was clean, so these are minors and the notes the
   final review should look at):
-  - Heartbeat error branch (`heartbeat.py`): it compares the time before the call with the local deadline and retries
-    once more, so under repeated renewal timeouts a loss can be signalled about 5-10 s past the deadline (effects are
-    not cancelled meanwhile; writes stay fenced), and a non-psycopg error in the catch-all never applies the deadline
-    rule.
   - Model permit TTL: 65 s with no cap on the hold until T19's 60 s attempt cap; a hold over 65 s would let a second
     worker take the slot (only the fake drafter exists today).
-  - The stress test's docstring "Catches" list overclaims: the stale-writer event order is vacuous (no worker loses its
-    lease in the run) and a reclaim never fires under load (reclaimed 0 every run); coverage for those is in R019,
-    `test_the_reclaim_leaves_a_live_lease_alone` and the interleaving module. Trim the docstring or make the reclaim
-    fire under load.
   - Smaller: the stress takeover count does not require distinct owners and no-op drops count toward its 200-operation
     floor; `asyncio.gather` rather than a TaskGroup; no test pins the quota-before-global order with both full; no live
     test refuses on the fence alone (same owner, higher fence); `test_definers_write_path_live.py:443` asserts OC003,
     which now also means a stale fence; the `take_model_permit` and `mint_handle` lock-precondition comments; faults:
-    `_seconds` persists across `arm()` calls without `seconds`, the dev/demo 404 test omits `receipt_hash_mismatch`,
-    and `malformed_response` on a CONFLICT row answers 200.
+    `_seconds` persists across `arm()` calls without `seconds`, the dev/demo 404 test omits `receipt_hash_mismatch`
+    (closed: the final review found the 404 holds for every kind, because the route is registered only when faults
+    exist, which only `PROFILE=test` allows; the R098 note says so), and `malformed_response` on a CONFLICT row
+    answers 200.
 
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
@@ -537,7 +541,16 @@ Allowed shortcuts in T13, each with its owning task:
   renewal keeps a handle usable and nothing is owed;
 - the global queue count costs one scan per tenant inside every run admission → T29;
 - the dev database stays at revision 0005 until the owner migrates it (0006 and 0007 pending); until then the API,
-  the sweeper, the worker and mcp-write refuse to start on it → owner input.
+  the sweeper, the worker and mcp-write refuse to start on it → owner input;
+- (added by the final review, M2) SIGTERM is not drained: uvicorn 0.54 re-raises it after the health server shuts
+  down, so the worker ends mid-job; the open unit rolls back, the lease lapses and the sweeper hands the job back,
+  and an investigate run is failed as interrupted (SIGINT lets the job finish) → T30;
+- (added by the final review, M3) the wait for the model permit counts against the 90 s compute budget, because the
+  budget runs from the claim; with more than one worker on one model, a run queued behind another worker's draft can
+  lose its lease to "compute budget spent" and be failed as interrupted → T29;
+- (added by the final review, M7) a lost lease is visible only in the worker's logs: a loss, a crash, a lock timeout
+  and a spent budget all end as the same FAILED reason, and no run event, distinct reason or metric records a loss or
+  a reclaim → T28.
 
 ## Environment (observed)
 
