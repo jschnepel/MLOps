@@ -73,7 +73,7 @@ def connector(pg: Postgres) -> Callable[[], SyncConn]:
     20 s on Linux, about 60 s on Windows, where libpq ignores `keepalives_count`), and 5 s lock and statement timeouts
     so one renewal never waits on the server for ever (review round 2, m3). Neither keepalives nor the statement
     timeout bound a renewal sent to a peer that vanished (TCP retransmission does); the local deadline does: the
-    loop's own `check()` stops the job then, and the renewal error becomes a loss at the next tick past it. Every
+    loop's own `check()` stops the job then, and a renewal error that returns past it is a loss at once. Every
     failure here is a psycopg error, which the tick treats as transient: the connection is reopened, and the lease is
     lost only once its local deadline has passed. The two timeouts are SET after connecting because the conninfo's
     `options` already carries the time zone; a failed SET closes the new connection (review round 3)."""
@@ -146,12 +146,21 @@ class Heartbeat(threading.Thread):
         """Tick until stopped, then close the connection."""
         try:
             while not self._stopping.wait(self._tick_seconds):
-                try:
-                    self.tick()
-                except Exception:  # the one catch-all here: a dead thread would silently stop every renewal
-                    log.exception("heartbeat tick failed; the next tick tries again")
+                self.guarded_tick()
         finally:
             self._close()
+
+    def guarded_tick(self) -> None:
+        """One tick that never raises. An unexpected error is logged and the next tick tries again, but a failed
+        renewal's deadline rule applies to it too: past the local deadline the lease is lost (final review, M1)."""
+        try:
+            self.tick()
+        except Exception:  # the one catch-all here: a dead thread would silently stop every renewal
+            log.exception("heartbeat tick failed; the next tick tries again")
+            with self._lock:
+                lease = self._held
+            if lease is not None and self._clock() >= lease.deadline:
+                self._lose(lease, "heartbeat ticks failed until the local deadline")
 
     def tick(self) -> None:
         """One look at the held lease: a closed gate is a loss; otherwise renew when a heartbeat is due."""
@@ -179,7 +188,8 @@ class Heartbeat(threading.Thread):
         except psycopg.Error:
             log.warning("renewing the lease of run %s failed; the connection is reopened next tick", lease.run_id)
             self._close()
-            if now >= lease.deadline:
+            # A fresh reading: `now` predates the failed call, which may have spent its 5 s timeouts (final review, M1).
+            if self._clock() >= lease.deadline:
                 self._lose(lease, "renewals failed until the local deadline")
             return
         if verdict is Renewal.RENEWED:

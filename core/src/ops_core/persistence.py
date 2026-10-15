@@ -749,20 +749,28 @@ async def fenced(conn: Conn, lease: Lease) -> None:
 
 
 async def release_lease(conn: Conn, lease: Lease, *, job: dict[str, Any], requeue_seconds: int | None = None) -> None:
-    """The job's final unit (Plan H ruling 28): the lease row FOR UPDATE (this unit writes it, SA:191), owner and fence
-    compared, the handles minted under this fence revoked, the job finished (or re-queued after `requeue_seconds`)
-    and the lease released (`lease_until = '-infinity'`; owner and fence stay, so the run's next acquisition takes
-    fence + 1). Together, so a crash leaves either the claimed job with its lease or neither.
+    """The job's final unit (Plan H ruling 28): the local deadline checked first, then the lease row FOR UPDATE (this
+    unit writes it, SA:191) with owner, fence and liveness compared after the lock, the handles minted under this
+    fence revoked, the job finished (or re-queued after `requeue_seconds`) and the lease released (`lease_until =
+    '-infinity'`; owner and fence stay, so the run's next acquisition takes fence + 1). Together, so a crash leaves
+    either the claimed job with its lease or neither.
+
+    Liveness counts here like in every other unit. A lease that lapsed while the job's last call was in flight may
+    have made that call fail: mcp-write refuses the handle of a lapsed lease before SENT and answers INVALID_HANDLE.
+    Closing the job on that answer would leave an approved run with no grant and no job (final review, I1). Refused
+    here, the loss hands the job back (`handlers.abandon`) and the run's next owner runs it again.
 
     Raises:
-        LeaseLost: another owner holds the lease now; nothing is written.
+        LeaseLost: the local deadline passed, another owner holds the lease, or it lapsed on the database clock;
+            nothing is written.
     """
+    lease.check()
     async with conn.transaction():
         await set_tenant(conn, job["tenant_id"])  # jobs is under RLS; set_config takes no lock
         cur = await conn.execute(LOCK_FOR_UPDATE, (lease.run_id,))
         row = await cur.fetchone()
-        if row is None or row["owner"] != lease.owner or row["fence"] != lease.fence:
-            lease.mark_lost("another owner holds the lease")
+        if row is None or row["owner"] != lease.owner or row["fence"] != lease.fence or not row["live"]:
+            lease.mark_lost("another owner holds the lease, or it lapsed")
             raise LeaseLost("run lease lost")
         await revoke_handles(conn, lease.run_id, lease.fence)
         if requeue_seconds is None:

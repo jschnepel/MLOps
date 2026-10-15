@@ -204,7 +204,12 @@ async def _draft_and_freeze(
 
 async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
     """Call `create_incident` on mcp-write for an approved run; True when the job is finished by `handle`, False when
-    it was re-queued (its final unit already ran and released the lease)."""
+    it was re-queued (its final unit already ran and released the lease).
+
+    Any other envelope counts as final, an `INVALID_HANDLE` included. When that refusal came from this worker's own
+    lease lapsing during the call, `handle`'s final unit finds the lease not live and raises LeaseLost, so the job is
+    handed back and the next owner runs it again instead of closing it with the run still APPROVED (final review, I1).
+    """
     async with deps.conn.transaction():
         await persistence.set_tenant(deps.conn, job["tenant_id"])
         await persistence.fenced(deps.conn, lease)

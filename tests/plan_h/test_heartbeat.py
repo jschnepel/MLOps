@@ -4,8 +4,10 @@ of the real thread against a real event loop.
 Catches: a renewal more or less often than once per heartbeat, a loop blocked for 25 s that loses its lease (DoD 3), a
 dead loop or a job past its 90 s budget that keeps renewing (T13 review note 4), a renewal that meets the owner's own
 re-fence and cancels a healthy job (review note 2), another owner's fence or an expired lease that is not a loss, a
-transient error that loses the lease before the local deadline or never loses it after, a released lease whose effects
-are cancelled, and a cancellation that cannot cross from the thread to the effect on the event loop.
+transient error that loses the lease before the local deadline or never loses it after (judged on a clock reading
+taken before a failed call that spent its timeouts, or skipped by the tick's catch-all: final review, M1), a released
+lease whose effects are cancelled, and a cancellation that cannot cross from the thread to the effect on the event
+loop.
 """
 
 import asyncio
@@ -180,6 +182,36 @@ def test_transient_errors_are_retried_until_the_deadline() -> None:
     assert s.lease.lost is None  # the deadline is 12 + 25
     s.at(37.0)
     assert (s.lease.lost, s.cancels) == ("renewals failed until the local deadline", 1)
+
+
+def test_a_renewal_that_fails_past_the_deadline_is_a_loss_at_once() -> None:
+    """Final review, M1: the failed call may spend its 5 s timeouts, so the deadline is judged on a reading taken after
+    it. Judged on the reading taken before it, a renewal started at 22 that fails at 27 (deadline 25) would keep the
+    lease for another tick, and under repeated timeouts for several."""
+    s = Setup(Renewal.RENEWED)
+
+    def times_out() -> Renewal:
+        s.clock.now = 27.0  # the statement timeout spent five seconds
+        raise psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
+
+    s.renewer.script = [times_out]
+    s.at(22.0)
+    assert (s.lease.lost, s.cancels) == ("renewals failed until the local deadline", 1)
+
+
+def test_an_unexpected_tick_error_is_a_loss_past_the_deadline() -> None:
+    """Final review, M1: an error that is not a psycopg error reaches the thread's catch-all, which logs it, keeps the
+    thread alive and applies the same deadline rule."""
+    s = Setup(RuntimeError("a bug in the renewal"))
+    for now in (10.0, 20.0):
+        s.clock.now = now
+        s.liveness.stamp()
+        s.heartbeat.guarded_tick()  # never raises
+    assert s.lease.lost is None and s.cancels == 0  # before the deadline (0 + 25): the next tick tries again
+    s.clock.now = 25.0
+    s.liveness.stamp()
+    s.heartbeat.guarded_tick()
+    assert (s.lease.lost, s.cancels) == ("heartbeat ticks failed until the local deadline", 1)
 
 
 def test_a_released_lease_is_dropped_quietly() -> None:

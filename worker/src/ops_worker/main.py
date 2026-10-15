@@ -102,9 +102,13 @@ async def run_forever(deps: handlers.Deps, stop: asyncio.Event) -> None:
             pass
 
 
-def health_app(probe: persistence.Conn, polling_alive: Callable[[], bool]) -> Starlette:
-    """Readiness on its own connection and only while the poll loop runs: sharing the loop's connection let a health
-    call wedge it idle-in-transaction, and a dead loop behind a 200 is the same lie (round-1 and round-2 reviews)."""
+def health_app(
+    probe: persistence.Conn, polling_alive: Callable[[], bool], heartbeat_alive: Callable[[], bool]
+) -> Starlette:
+    """Readiness on its own connection and only while the poll loop and the heartbeat thread run: sharing the loop's
+    connection let a health call wedge it idle-in-transaction, and a dead loop behind a 200 is the same lie (round-1
+    and round-2 reviews). Without the thread the loop would claim jobs it can neither renew nor cancel (final review,
+    M4)."""
 
     async def live(_: Request) -> JSONResponse:
         return JSONResponse({"status": "live"})
@@ -112,6 +116,8 @@ def health_app(probe: persistence.Conn, polling_alive: Callable[[], bool]) -> St
     async def ready(_: Request) -> JSONResponse:
         if not polling_alive():
             return JSONResponse({"status": "not ready", "reason": "poll loop stopped"}, status_code=503)
+        if not heartbeat_alive():
+            return JSONResponse({"status": "not ready", "reason": "heartbeat thread stopped"}, status_code=503)
         try:
             await probe.execute("SELECT 1")  # autocommit: no transaction is left open
         except (psycopg.Error, OSError):
@@ -158,7 +164,7 @@ async def _main() -> None:
     polling = asyncio.create_task(run_forever(deps, stop), name="poll-loop")
     server = uvicorn.Server(
         uvicorn.Config(
-            health_app(probe, lambda: not polling.done()),
+            health_app(probe, lambda: not polling.done(), heartbeat.is_alive),
             host="127.0.0.1",
             port=settings.env_int("OPS_WORKER_HEALTH_PORT", 8070),
             log_level="warning",
@@ -173,8 +179,11 @@ async def _main() -> None:
         stop.set()
         server.should_exit = True
         await asyncio.gather(serving, polling, return_exceptions=True)
-        # Shutdown cancels nothing: the poll loop finishes its current job first, so the liveness stamps stop only
-        # now, or that job would lose its lease to "event loop stalled" (review round 2, m2).
+        # Shutdown cancels nothing: on SIGINT the poll loop finishes its current job first, so the liveness stamps
+        # stop only now, or that job would lose its lease to "event loop stalled" (review round 2, m2). SIGTERM is not
+        # drained: uvicorn 0.54 re-raises the captured signal once serve() returns, and SIGTERM's default handler ends
+        # the process mid-job. Safety holds (the open unit rolls back, the lease lapses and the sweeper hands the job
+        # back), but an investigate run is failed as interrupted (final review, M2). TODO(T30): drain on SIGTERM.
         stamps_stop.set()
         await stamping
         heartbeat.stop()

@@ -6,8 +6,10 @@ bounded number of times per poll.
 Catches: a unit that writes before its fence check (a stale worker's write would land), an MCP call started past the
 deadline, a job closed by one unit and its lease released by another (a crash between them strands the run), a lost
 lease turned into FAILED by its loser (the next owner decides), a deferral loop that never ends, a hand-back attempted
-on a connection left inside a transaction (it would never commit), and a handed-back job that closes without work and
-leaves its run RETRIEVING or DRAFTING, holding the conversation slot for good (review round 3, I1).
+on a connection left inside a transaction (it would never commit), a handed-back job that closes without work and
+leaves its run RETRIEVING or DRAFTING, holding the conversation slot for good (review round 3, I1), a final unit that
+closes an execute job under a lapsed lease and strands its approved run (final review, I1), and a readiness probe that
+answers 200 while the heartbeat thread is dead (final review, M4).
 """
 
 import asyncio
@@ -22,12 +24,13 @@ from uuid import uuid4
 import psycopg
 import pytest
 from ops_core import persistence, settings
-from ops_core.lease import Lease, LeaseLost
+from ops_core.lease import LOCK_FOR_UPDATE, RELEASED, Lease, LeaseLost
 from ops_core.states import RunState
 from ops_worker import handlers, main
 from ops_worker.drafting import FakeDraftGenerator
 from ops_worker.mcp import HttpMcpCaller
 from psycopg.pq import TransactionStatus
+from starlette.testclient import TestClient
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 TENANT, RUN_ID = uuid4(), uuid4()
@@ -44,6 +47,7 @@ RUN = {
     "active_proposal_id": uuid4(),
 }
 JOB = {"id": uuid4(), "run_id": RUN_ID, "tenant_id": TENANT, "type": "investigate"}
+REAL_RELEASE = persistence.release_lease  # `patch` replaces it; the release tests run the real unit on fakes
 WRITES = {"transition_run", "mint_handle", "append_event", "freeze_proposal", "insert", "mark_unknown"}
 SEARCH = {
     "status": "ok",
@@ -463,3 +467,118 @@ def test_a_lost_lease_cancels_a_real_mcp_call() -> None:
         return loop.time() - started
 
     assert asyncio.run(scenario()) < 10
+
+
+class LeaseRowConn(FakeConn):
+    """A FakeConn whose lease row lock answers with this owner and fence, live or lapsed on the database clock."""
+
+    def __init__(self, log: Log, *, live: bool) -> None:
+        super().__init__(log)
+        self.row = {"owner": "w:test", "fence": 3, "released": False, "live": live}
+
+    async def execute(self, query: str, params: Any = None) -> FakeCursor:
+        if query == LOCK_FOR_UPDATE:
+            self.log.entries.append("lock_lease")
+            return FakeCursor(self.row)
+        if query.startswith("UPDATE app.run_lease"):
+            self.log.entries.append("release")
+            return FakeCursor({})
+        return await super().execute(query, params)
+
+
+def releasing(monkeypatch: pytest.MonkeyPatch, log: Log) -> None:
+    """The real `release_lease` with recorders for the calls it makes besides its own SQL."""
+    monkeypatch.setattr(persistence, "release_lease", REAL_RELEASE)
+    for name in ("set_tenant", "revoke_handles", "finish_job", "requeue_job"):
+
+        async def call(*_: Any, _name: str = name, **__: Any) -> None:
+            log.entries.append(_name)
+
+        monkeypatch.setattr(persistence, name, call)
+
+
+def test_release_of_a_live_lease_closes_the_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    log = Log()
+    releasing(monkeypatch, log)
+    _, lease = make(log)
+    conn: Any = LeaseRowConn(log, live=True)
+    asyncio.run(persistence.release_lease(conn, lease, job=dict(JOB)))
+    assert log.units() == [["set_tenant", "lock_lease", "revoke_handles", "finish_job", "release"]]
+    assert lease.lost == RELEASED
+
+
+def test_release_refuses_a_lease_that_lapsed_on_the_database_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Final review, I1: same owner, same fence, but the lease lapsed. The unit writes nothing and rolls back."""
+    log = Log()
+    releasing(monkeypatch, log)
+    _, lease = make(log)
+    conn: Any = LeaseRowConn(log, live=False)
+    with pytest.raises(LeaseLost):
+        asyncio.run(persistence.release_lease(conn, lease, job=dict(JOB), requeue_seconds=30))
+    assert log.entries == ["BEGIN", "set_tenant", "lock_lease", "ROLLBACK"]
+    assert lease.lost == "another owner holds the lease, or it lapsed"
+
+
+def test_release_refuses_past_the_local_deadline_before_any_statement(monkeypatch: pytest.MonkeyPatch) -> None:
+    log = Log()
+    releasing(monkeypatch, log)
+    now = [0.0]
+    _, lease = make(log, clock=lambda: now[0])
+    now[0] = 25.0  # 0 + 30 - 5: the local deadline
+    conn: Any = LeaseRowConn(log, live=True)
+    with pytest.raises(LeaseLost):
+        asyncio.run(persistence.release_lease(conn, lease, job=dict(JOB)))
+    assert log.entries == [] and lease.lost == "local deadline passed"
+
+
+def test_an_invalid_handle_under_a_lapsed_lease_hands_the_job_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Final review, I1, traced through the loop: the lease lapses on the database clock while `create_incident` is in
+    flight and before the heartbeat has noticed; mcp-write refuses the handle before SENT and answers INVALID_HANDLE.
+    `execute` takes the envelope as final, the final unit finds the lease not live, and the loop hands the job back.
+    The job is never closed, so the run's next owner mints a fresh handle and asks for the grant again."""
+    log = Log()
+    patch(monkeypatch, log)
+    releasing(monkeypatch, log)
+
+    async def approved_run(_conn: Any, _run_id: Any, *, lock: bool = False) -> dict[str, Any]:
+        log.entries.append("run_row")
+        return {**RUN, "state": "APPROVED"}
+
+    class Refusing:
+        async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            log.entries.append(f"mcp:{tool}")
+            return {"status": "error", "data": None, "error": {"code": "INVALID_HANDLE", "message": "invalid handle"}}
+
+    monkeypatch.setattr(persistence, "run_row", approved_run)
+    deps, lease = make(log)
+    deps.conn = LeaseRowConn(log, live=False)  # the lease lapsed on the database clock
+    deps.mcp = Refusing()
+    claimed: Any = persistence.Claimed({**JOB, "type": "execute"}, lease)
+    asyncio.run(main.run_job(deps, claimed))
+    assert log.entries.count("mcp:create_incident") == 1
+    assert log.units()[-2:] == [["set_tenant", "lock_lease"], ["set_tenant", "revoke_handles", "unclaim_job"]]
+    assert "finish_job" not in log.entries and "requeue_job" not in log.entries
+    assert lease.lost == "another owner holds the lease, or it lapsed"
+
+
+class Probe:
+    async def execute(self, _query: str) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ("polling", "beating", "status", "reason"),
+    [
+        (True, True, 200, None),
+        (False, True, 503, "poll loop stopped"),
+        (True, False, 503, "heartbeat thread stopped"),
+    ],
+)
+def test_readiness_needs_the_poll_loop_and_the_heartbeat_thread(
+    polling: bool, beating: bool, status: int, reason: str | None
+) -> None:
+    """Final review, M4: a worker whose heartbeat thread died would claim jobs it can neither renew nor cancel."""
+    probe: Any = Probe()
+    with TestClient(main.health_app(probe, lambda: polling, lambda: beating)) as client:
+        response = client.get("/health/ready")
+    assert response.status_code == status and response.json().get("reason") == reason

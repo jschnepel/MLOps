@@ -8,8 +8,9 @@ reports/leases/t13-leases.txt (fences, verdicts and counts; no handle, token or 
 Catches: a second owner while the first is live, a fence that does not move on takeover, a stale worker's write that
 lands (DoD 1), a takeover that slips in under an open fenced unit, an expiry compared before the lock wait instead of
 after it (SA:157), a resume job that writes beside the original job (R087), a handle that outlives its lease or
-carries another fence, a release that forgets the handles or resets the fence, a claim that commits without its
-lease, and a claim that waits on an in-flight renewal instead of deferring.
+carries another fence, a release that forgets the handles or resets the fence, a release that closes a job under a
+lapsed lease (final review, I1), a claim that commits without its lease, and a claim that waits on an in-flight
+renewal instead of deferring.
 """
 
 import asyncio
@@ -32,7 +33,7 @@ pytestmark = pytest.mark.asyncio
 
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 EVIDENCE = Path("reports/leases/t13-leases.txt")
-EXPECTED_LINES = 10  # one per test
+EXPECTED_LINES = 11  # one per test
 SHORTEN = "UPDATE app.run_lease SET lease_until = app.current_time() + interval '2 seconds' WHERE run_id = %s"
 
 
@@ -358,6 +359,32 @@ async def test_release_closes_the_job_revokes_its_handles_and_keeps_the_fence(
         with pytest.raises(LeaseLost):
             await persistence.release_lease(a, claimed.lease, job=dict(claimed.job))
         lines.append("release: job done, handles revoked, lease '-infinity' at the same fence; the next job takes +1")
+    finally:
+        await forget(app_conn, tenant, run)
+
+
+async def test_a_release_under_a_lapsed_lease_closes_nothing(
+    app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
+) -> None:
+    """Final review, I1: the owner and the fence still match, but the lease lapsed on the database clock before the
+    final unit. The release refuses, so the job stays claimed and open for the hand-back, and the lease stays."""
+    tenant, run = await fresh_run(app_conn, role_conn)
+    a = await role_conn(Role.WORKER)
+    try:
+        claimed = await persistence.claim_next(a, worker_name="wa", tenant_ids=[tenant], lease_seconds=30)
+        assert isinstance(claimed, persistence.Claimed)
+        await expire_lease(app_conn, run)
+        with pytest.raises(LeaseLost):
+            await persistence.release_lease(a, claimed.lease, job=dict(claimed.job))
+        cur = await app_conn.execute(
+            "SELECT j.done_at IS NULL AS open, j.claimed_by, l.fence, l.lease_until = '-infinity' AS released"
+            " FROM app.jobs j JOIN app.run_lease l ON l.run_id = j.run_id WHERE j.id = %s",
+            (claimed.job["id"],),
+        )
+        row = await cur.fetchone()
+        assert row is not None
+        assert dict(row) == {"open": True, "claimed_by": "wa", "fence": claimed.lease.fence, "released": False}
+        lines.append("release under a lapsed lease: refused; the job stays open and claimed, the lease unreleased")
     finally:
         await forget(app_conn, tenant, run)
 

@@ -20,8 +20,12 @@ never ends shows up as SQLSTATE 55P03. Evidence: reports/leases/t13-stress.txt.
 
 Catches: a deadlock (40P01) or a lock wait past 10 s (55P03) anywhere in the mix, a fence that goes backwards or is
 handed out twice, two actors that both believe they hold a run's lease (or one whose belief the database does not
-share), a stale writer whose event lands after a newer fence's event, a reclaim that takes a live owner's job, and an
-expiry decided by anything but the database clock.
+share), and an expiry decided by anything but the database clock.
+
+What the run does not exercise: its evidence records `lost 0` and `jobs handed back 0`, so it cannot catch a stale
+write that lands or a reclaim that takes a live owner's job (final review, M6). Those are covered
+elsewhere: the stepped interleavings in test_leases_live.py and the fenced definers in test_fenced_definers_live.py
+refuse a stale write, and the R019 and live-lease reclaim tests below cover the reclaim.
 """
 
 import asyncio
