@@ -404,8 +404,8 @@
   - The R107 stress test has a "drop" step in which a holder stops renewing after about 2 s, as a hung worker, and
     asserts more than three acquisitions. Reason: the planned mix never moved a lease between holders, so takeovers
     were not exercised. It relaxes nothing; its cost is a longer or flakier run.
-- **Open items for later** (from the SDD ledger; each task's review was clean, so these are minors and the notes the
-  final review should look at):
+- **Open items for later** (minors from the SDD ledger, triaged by the final whole-branch review as safe to defer;
+  record `docs/reviews/plan-h-final-review-2026-10-15.md`):
   - Model permit TTL: 65 s with no cap on the hold until T19's 60 s attempt cap; a hold over 65 s would let a second
     worker take the slot (only the fake drafter exists today).
   - Smaller: the stress takeover count does not require distinct owners and no-op drops count toward its 200-operation
@@ -630,6 +630,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan H (T13) as described in the Next task line.
+Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan I (the next earliest dependency-satisfied task in `handoff/tasks.json`: T14 or T15, both unblocked by T13).
 
 Do not store secrets or private reasoning in this file.
