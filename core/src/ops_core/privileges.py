@@ -181,8 +181,8 @@ DEFINER_FUNCTIONS: Final[dict[str, tuple[str, tuple[str, ...]]]] = {
     "record_decision": ("uuid, uuid, uuid, text, text, text, text", ("api",)),
     "resolve_invocation": ("text, text", ("mcp_read", "mcp_exec")),
     "grant_execution": ("text, uuid", ("mcp_exec",)),
-    "mark_sent": ("uuid", ("mcp_exec",)),
-    "record_outcome": ("uuid, text, jsonb", ("mcp_exec",)),
+    "mark_sent": ("text, uuid", ("mcp_exec",)),  # T13: the raw handle first, so the fence is checked (erratum 48)
+    "record_outcome": ("text, uuid, text, jsonb", ("mcp_exec",)),  # likewise
     "lookup_action": ("text", ("mcp_exec",)),
     "mark_unknown": ("uuid, bigint", ("worker",)),
     "queued_runs_total": ("", ("api",)),  # T13 (Plan H ruling 13): BS:550's global count, one number

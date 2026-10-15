@@ -235,3 +235,17 @@ async def wait_until_blocked(conn: persistence.Conn, pid: int, *, timeout: float
             return [int(holder) for holder in row["holders"]]
         await asyncio.sleep(0.05)
     raise AssertionError(f"backend {pid} was never blocked")
+
+
+async def stage_lease(conn: persistence.Conn, run_id: object, *, owner: str = "live-test", seconds: int = 600) -> int:
+    """A live lease written by the superuser, for a definer test that needs a handle without running a worker: created
+    at fence 1, or renewed at its current fence; returns that fence (T13)."""
+    cur = await conn.execute(
+        "INSERT INTO app.run_lease (run_id, owner, lease_until, fence)"
+        " VALUES (%s, %s, app.current_time() + make_interval(secs => %s), 1)"
+        " ON CONFLICT (run_id) DO UPDATE SET lease_until = EXCLUDED.lease_until RETURNING fence",
+        (run_id, owner, seconds),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    return int(row["fence"])

@@ -19,7 +19,7 @@ from ops_core.outcomes import EventSource, EventType, event_rules_ok
 from ops_core.settings import Role
 from psycopg.types.json import Jsonb
 
-from tests.e2e.conftest import purge_run
+from tests.e2e.conftest import purge_run, stage_lease
 from tests.e2e.test_definers_run_path_live import ALEX, ALPHA, BETA, as_role, conversation, create, refused
 
 pytestmark = pytest.mark.asyncio
@@ -98,17 +98,21 @@ async def approve(
 
 
 async def handle_for(app_conn: persistence.Conn, run: UUID, job_type: str, *, expires_in: int = 60) -> str:
-    """A raw handle whose hash the superuser inserts (the worker's INSERT is proved in Task 6's live test)."""
+    """A raw handle whose hash the superuser inserts at the run's current lease fence, staging a live lease first
+    when the run has none (T13: the definers refuse a handle whose fence is not the lease's). The worker's own mint,
+    lease and fence are proved in tests/e2e/test_leases_live.py."""
     raw = f"handle-{uuid4().hex}"
     job = (
         await (
             await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s AND type = %s", (run, job_type))
         ).fetchone()
     )["id"]
+    fence = await stage_lease(app_conn, run)
+    server = "write" if job_type in ("execute", "recover") else "read"
     await app_conn.execute(
-        "INSERT INTO app.invocation_context (handle_sha256, run_id, job_id, server, azp, expires_at)"
-        " VALUES (%s, %s, %s, %s, 'ops-worker', now() + make_interval(secs => %s))",
-        (sha256_hex(raw.encode()), run, job, "write" if job_type in ("execute", "recover") else "read", expires_in),
+        "INSERT INTO app.invocation_context (handle_sha256, run_id, job_id, server, azp, fence, expires_at)"
+        " VALUES (%s, %s, %s, %s, 'ops-worker', %s, now() + make_interval(secs => %s))",
+        (sha256_hex(raw.encode()), run, job, server, fence, expires_in),
     )
     return raw
 
@@ -341,10 +345,10 @@ async def test_write_path_grant_sent_outcome_once_and_only_once(
         assert dict(row) == {"state": "EXECUTING", "state_version": 6}
         action = grant["action_id"]
         async with as_role(mcp_exec, preset=BETA):  # a hostile preset: ignored by mark_sent/lookup_action and restored
-            assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s) AS r", (action,))).fetchone())[
+            assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s, %s) AS r", (handle, action))).fetchone())[
                 "r"
             ] == "sent"
-            assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s) AS r", (action,))).fetchone())[
+            assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s, %s) AS r", (handle, action))).fetchone())[
                 "r"
             ] == "already_sent"
             cur = await mcp_exec.execute("SELECT * FROM app.lookup_action(%s)", (handle,))
@@ -361,8 +365,9 @@ async def test_write_path_grant_sent_outcome_once_and_only_once(
         assert (
             await refused(
                 mcp_exec,
-                "SELECT app.record_outcome(%s, 'SUCCEEDED', %s)",
+                "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s)",
                 (
+                    handle,
                     action,
                     Jsonb(
                         {
@@ -393,7 +398,7 @@ async def test_write_path_grant_sent_outcome_once_and_only_once(
             assert (
                 await (
                     await mcp_exec.execute(
-                        "SELECT app.record_outcome(%s, 'SUCCEEDED', %s) AS r", (action, Jsonb(document))
+                        "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s) AS r", (handle, action, Jsonb(document))
                     )
                 ).fetchone()
             )["r"] == "SUCCEEDED"
@@ -404,12 +409,16 @@ async def test_write_path_grant_sent_outcome_once_and_only_once(
             assert (
                 await (
                     await mcp_exec.execute(
-                        "SELECT app.record_outcome(%s, 'CONFLICT', %s) AS r",
-                        (action, Jsonb({"status": "CONFLICT", "action_id": str(action), "payload_sha256": digest})),
+                        "SELECT app.record_outcome(%s, %s, 'CONFLICT', %s) AS r",
+                        (
+                            handle,
+                            action,
+                            Jsonb({"status": "CONFLICT", "action_id": str(action), "payload_sha256": digest}),
+                        ),
                     )
                 ).fetchone()
             )["r"] == "SUCCEEDED"
-            assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s) AS r", (action,))).fetchone())[
+            assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s, %s) AS r", (handle, action))).fetchone())[
                 "r"
             ] == "resolved"
             cur = await mcp_exec.execute("SELECT * FROM app.lookup_action(%s)", (handle,))
@@ -459,15 +468,16 @@ async def test_mark_unknown_is_worker_only_revokes_handles_and_enqueues_recover(
                     await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal))
                 ).fetchone()
             )
-            await mcp_exec.execute("SELECT app.mark_sent(%s)", (grant["action_id"],))
-        assert await refused(mcp_exec, "SELECT app.mark_unknown(%s, 1)", (run,)) == "42501"  # SA:467: the worker's call
+            await mcp_exec.execute("SELECT app.mark_sent(%s, %s)", (handle, grant["action_id"]))
+        assert await refused(mcp_exec, "SELECT * FROM app.mark_unknown(%s, 1)", (run,)) == "42501"  # SA:467: worker's
         async with as_role(worker, preset=BETA):
-            assert (await (await worker.execute("SELECT app.mark_unknown(%s, 1) AS s", (run,))).fetchone())[
-                "s"
-            ] == "OUTCOME_UNKNOWN"
-            assert (await (await worker.execute("SELECT app.mark_unknown(%s, 1) AS s", (run,))).fetchone())[
-                "s"
-            ] == "OUTCOME_UNKNOWN"  # idempotent
+            cur = await worker.execute("SELECT * FROM app.mark_unknown(%s, 1)", (run,))
+            assert dict(await cur.fetchone()) == {"run_state": "OUTCOME_UNKNOWN", "new_fence": 2}  # bumped (ruling 9)
+        # Fence 1 is stale now; the current fence marks again idempotently and bumps once more.
+        assert await refused(worker, "SELECT * FROM app.mark_unknown(%s, 1)", (run,)) == "OC003"
+        async with as_role(worker, preset=BETA):
+            cur = await worker.execute("SELECT * FROM app.mark_unknown(%s, 2)", (run,))
+            assert dict(await cur.fetchone()) == {"run_state": "OUTCOME_UNKNOWN", "new_fence": 3}
             assert (await (await worker.execute("SELECT current_setting('app.tenant_id', true) AS t")).fetchone())[
                 "t"
             ] == str(BETA)
@@ -502,7 +512,8 @@ async def test_mark_unknown_is_worker_only_revokes_handles_and_enqueues_recover(
             assert (
                 await (
                     await mcp_exec.execute(
-                        "SELECT app.record_outcome(%s, 'SUCCEEDED', %s) AS r", (grant["action_id"], Jsonb(document))
+                        "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s) AS r",
+                        (new_handle, grant["action_id"], Jsonb(document)),
                     )
                 ).fetchone()
             )["r"] == "SUCCEEDED"
@@ -531,7 +542,7 @@ async def test_late_evidence_on_a_terminal_run_records_without_a_transition(
                     await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal))
                 ).fetchone()
             )
-            await mcp_exec.execute("SELECT app.mark_sent(%s)", (grant["action_id"],))
+            await mcp_exec.execute("SELECT app.mark_sent(%s, %s)", (handle, grant["action_id"]))
         await app_conn.execute("UPDATE app.runs SET state = 'FAILED', slot_held = false WHERE run_id = %s", (run,))
         document = {
             "status": "SUCCEEDED",
@@ -546,13 +557,14 @@ async def test_late_evidence_on_a_terminal_run_records_without_a_transition(
             "reason": None,
         }
         empty = {**document, "receipt": {}}  # a receipt without its three keys is no proof (AM-14)
-        record = "SELECT app.record_outcome(%s, 'SUCCEEDED', %s)"
-        assert await refused(mcp_exec, record, (grant["action_id"], Jsonb(empty))) == "OC006"
+        record = "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s)"
+        assert await refused(mcp_exec, record, (handle, grant["action_id"], Jsonb(empty))) == "OC006"
         async with as_role(mcp_exec):
             assert (
                 await (
                     await mcp_exec.execute(
-                        "SELECT app.record_outcome(%s, 'SUCCEEDED', %s) AS r", (grant["action_id"], Jsonb(document))
+                        "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s) AS r",
+                        (handle, grant["action_id"], Jsonb(document)),
                     )
                 ).fetchone()
             )["r"] == "SUCCEEDED"
@@ -632,14 +644,15 @@ async def test_stale_mark_sent_and_early_outcome_are_refused(app_conn: persisten
             handle = await handle_for(app_conn, run, "execute")
             async with as_role(mcp_exec):
                 cur = await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal))
-                grants.append((dict(await cur.fetchone())["action_id"], digest))
-        (stale, stale_digest), (cancelled, cancelled_digest) = grants
-        # The superuser moves the run as mark_unknown would, leaving the attempt at INTENT.
+                grants.append((dict(await cur.fetchone())["action_id"], digest, handle))
+        (stale, stale_digest, stale_handle), (cancelled, cancelled_digest, cancelled_handle) = grants
+        # The superuser moves the run as mark_unknown would (the fence untouched), leaving the attempt at INTENT.
         await app_conn.execute("UPDATE app.runs SET state = 'OUTCOME_UNKNOWN' WHERE run_id = %s", (runs[0],))
-        assert await refused(mcp_exec, "SELECT app.mark_sent(%s)", (stale,)) == "OC003"
+        assert await refused(mcp_exec, "SELECT app.mark_sent(%s, %s)", (stale_handle, stale)) == "OC003"
         early = {"status": "SUCCEEDED", "action_id": str(stale), "payload_sha256": stale_digest}
-        record = "SELECT app.record_outcome(%s, %s, %s)"
-        assert await refused(mcp_exec, record, (stale, "SUCCEEDED", Jsonb(early))) == "OC003"  # outcome before SENT
+        record = "SELECT app.record_outcome(%s, %s, %s, %s)"
+        # An outcome before SENT is a protocol violation whatever the fence says.
+        assert await refused(mcp_exec, record, (stale_handle, stale, "SUCCEEDED", Jsonb(early))) == "OC003"
         # Cancelled before send: FAILED_NO_COMMIT from INTENT on an EXECUTING run is allowed.
         tombstone = {
             "action_id": str(cancelled),
@@ -657,12 +670,20 @@ async def test_stale_mark_sent_and_early_outcome_are_refused(app_conn: persisten
             "receipt": None,
         }
         wrong_status = {**failed, "status": "SUCCEEDED"}  # a document that disagrees with the outcome recorded
-        assert await refused(mcp_exec, record, (cancelled, "FAILED_NO_COMMIT", Jsonb(wrong_status))) == "OC005"
+        assert (
+            await refused(mcp_exec, record, (cancelled_handle, cancelled, "FAILED_NO_COMMIT", Jsonb(wrong_status)))
+            == "OC005"
+        )
         # "No effect" without the destination's tombstone is refused in SQL too (final review M1).
         for bare in ({**failed, "tombstone": None}, {k: v for k, v in failed.items() if k != "tombstone"}):
-            assert await refused(mcp_exec, record, (cancelled, "FAILED_NO_COMMIT", Jsonb(bare))) == "OC005"
+            assert (
+                await refused(mcp_exec, record, (cancelled_handle, cancelled, "FAILED_NO_COMMIT", Jsonb(bare)))
+                == "OC005"
+            )
         async with as_role(mcp_exec):
-            cur = await mcp_exec.execute(record + " AS r", (cancelled, "FAILED_NO_COMMIT", Jsonb(failed)))
+            cur = await mcp_exec.execute(
+                record + " AS r", (cancelled_handle, cancelled, "FAILED_NO_COMMIT", Jsonb(failed))
+            )
             assert (await cur.fetchone())["r"] == "FAILED_NO_COMMIT"
         row = await (await app_conn.execute("SELECT state FROM app.runs WHERE run_id = %s", (runs[1],))).fetchone()
         assert row["state"] == "FAILED"

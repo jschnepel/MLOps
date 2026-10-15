@@ -276,7 +276,8 @@ async def test_refusal_after_a_real_post_is_unknown_not_an_error(
     """A mapped refusal from record_outcome after SENT answers outcome/UNKNOWN, never an error envelope (I1, AM-13).
 
     The POST is real, so the destination has committed; an error envelope would make the worker close the job and
-    strand the run in EXECUTING with a SENT attempt. A future lease fence raises VersionConflict on exactly this call.
+    strand the run in EXECUTING with a SENT attempt. The lease fence raises HandleRejected on this call (T13; proved
+    live in test_fenced_definers_live.py); every mapped refusal must answer the same way.
     """
 
     async def fenced_record_outcome(*args, **kwargs):

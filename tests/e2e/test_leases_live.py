@@ -20,7 +20,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from ops_core import persistence
-from ops_core.jobs import JobType, Server
+from ops_core.jobs import JobType, Server, Tool
 from ops_core.lease import LOCK_FOR_UPDATE, RELEASED, Busy, Lease, LeaseLost
 from ops_core.outcomes import EventType
 from ops_core.settings import Role
@@ -288,11 +288,15 @@ async def test_r087_only_the_current_run_fence_writes(
         await forget(app_conn, tenant, run)
 
 
-async def test_a_handle_is_capped_at_its_lease_and_bound_to_its_fence(
+async def test_a_handle_carries_its_ttl_and_fence_and_dies_with_its_lease(
     app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
 ) -> None:
+    """BS:558 (T13 controller ruling, Task 4): the handle's expiry is its own TTL, never capped at mint time, because
+    a mint-time cap would freeze the lease end and kill the handle under a renewed lease; the lease bound is enforced
+    at use, where `_resolve_handle` refuses the handle once the lease lapses (for a moved fence, see
+    test_fenced_definers_live.py)."""
     tenant, run = await fresh_run(app_conn, role_conn)
-    a = await role_conn(Role.WORKER)
+    a, mcp_read = await role_conn(Role.WORKER), await role_conn(Role.MCP_READ)
     try:
         job = await job_of(app_conn, run)
         lease = await lease_for(a, run, owner="wa", seconds=30)
@@ -301,18 +305,26 @@ async def test_a_handle_is_capped_at_its_lease_and_bound_to_its_fence(
                 a, run_id=run, job_id=job, server=Server.READ, azp="ops-worker", fence=lease.fence, ttl_seconds=3600
             )
         cur = await app_conn.execute(
-            "SELECT ic.fence, ic.expires_at <= l.lease_until AS capped FROM app.invocation_context ic"
-            " JOIN app.run_lease l ON l.run_id = ic.run_id WHERE ic.handle_sha256 = %s",
+            "SELECT ic.fence, extract(epoch FROM ic.expires_at - app.current_time()) AS left"
+            " FROM app.invocation_context ic WHERE ic.handle_sha256 = %s",
             (persistence.handle_hash(handle),),
         )
         row = await cur.fetchone()
-        assert row is not None and (row["fence"], row["capped"]) == (lease.fence, True)  # BS:558
-        with pytest.raises(LeaseLost):
+        assert row is not None and row["fence"] == lease.fence
+        assert 3590 < float(row["left"]) <= 3600  # now + TTL, not the 30 s lease's end
+        invocation = await persistence.resolve_invocation(
+            mcp_read, handle=handle, azp="ops-worker", tool=Tool.SEARCH_PROCEDURES
+        )
+        assert invocation.run_id == run
+        with pytest.raises(LeaseLost):  # the live lease, but another fence: nothing is minted
             async with a.transaction():
                 await persistence.mint_handle(
                     a, run_id=run, job_id=job, server=Server.READ, azp="ops-worker", fence=lease.fence + 1
                 )
-        lines.append("a handle asked for 3600 s ends with its 30 s lease, at its fence; another fence mints none")
+        await expire_lease(app_conn, run)
+        with pytest.raises(persistence.HandleRejected):  # an hour of TTL left, but the lease lapsed: refused at use
+            await persistence.resolve_invocation(mcp_read, handle=handle, azp="ops-worker", tool=Tool.SEARCH_PROCEDURES)
+        lines.append("a handle asked for 3600 s keeps its TTL at its fence, is refused once its lease lapses; no mint")
     finally:
         await forget(app_conn, tenant, run)
 

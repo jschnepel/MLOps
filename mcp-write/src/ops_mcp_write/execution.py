@@ -28,7 +28,8 @@ log = logging.getLogger(__name__)
 
 # The refusals the database maps to Python. Before SENT they are honest error envelopes (server.py); after SENT they
 # must not be, because the destination may have committed: the only answers then are a recorded outcome or UNKNOWN
-# (AM-13). A lease fence (T13/T22) will raise VersionConflict on exactly this path (final review I1).
+# (AM-13, final review I1). A lease fence that moved or lapsed after SENT raises HandleRejected, a PersistenceError,
+# on exactly this path (Plan H ruling 6); the run's next lease holder reconciles it (T22).
 _POST_SENT_REFUSALS = (persistence.PersistenceError, IllegalTransition, EventRuleViolation)
 
 
@@ -85,7 +86,7 @@ async def create_incident(deps: Deps, *, handle: str, proposal_id: UUID) -> Acti
         return _stored(grant)
     if step == "send":
         async with deps.session.unit() as conn:
-            sent = await persistence.mark_sent(conn, grant.action_id)  # committed here, before any I/O
+            sent = await persistence.mark_sent(conn, handle=handle, action_id=grant.action_id)  # committed before I/O
         if sent == "resolved":  # a concurrent caller finished first
             return await _read_back(deps, handle, grant)
         if sent == "cancelled":
@@ -114,7 +115,7 @@ async def create_incident(deps: Deps, *, handle: str, proposal_id: UUID) -> Acti
     # action id (the attempt is still SENT). A mapped refusal is answered UNKNOWN so the worker reconciles it.
     try:
         async with deps.session.unit() as conn:
-            standing = await persistence.record_outcome(conn, action_id=grant.action_id, outcome=outcome)
+            standing = await persistence.record_outcome(conn, handle=handle, action_id=grant.action_id, outcome=outcome)
     except _POST_SENT_REFUSALS:
         log.exception("recording the outcome of action %s failed after SENT", grant.action_id)
         return destination.unknown(grant.action_id, grant.payload_sha256)

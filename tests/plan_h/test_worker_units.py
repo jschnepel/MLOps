@@ -23,6 +23,7 @@ import psycopg
 import pytest
 from ops_core import persistence, settings
 from ops_core.lease import Lease, LeaseLost
+from ops_core.states import RunState
 from ops_worker import handlers, main
 from ops_worker.drafting import FakeDraftGenerator
 from psycopg.pq import TransactionStatus
@@ -166,7 +167,7 @@ def patch(monkeypatch: pytest.MonkeyPatch, log: Log, *, lost_at: int | None = No
         "release_lease": recorder("release_lease"),
         "revoke_handles": recorder("revoke_handles", 1),
         "unclaim_job": recorder("unclaim_job"),
-        "mark_unknown": recorder("mark_unknown"),
+        "mark_unknown": recorder("mark_unknown", persistence.Unknown(RunState.OUTCOME_UNKNOWN, 4)),
     }
     for name, fn in replaced.items():
         monkeypatch.setattr(persistence, name, fn)
@@ -290,3 +291,55 @@ def test_an_interrupted_run_is_failed_not_left_active(monkeypatch: pytest.Monkey
     assert moves == [(state, "FAILED", {"message": "interrupted; the run was not resumed"})]
     assert log.units()[0] == ["set_tenant", "fenced", "run_row", "transition_run"]
     assert log.entries[-1] == "release_lease" and "mcp:search_procedures" not in log.entries
+
+
+UNKNOWN_ENVELOPE = {"status": "outcome", "data": {"status": "UNKNOWN"}, "error": None}
+
+
+class UnknownMcp:
+    """mcp-write after SENT with no answer it could trust: the UNKNOWN envelope the worker must record."""
+
+    def __init__(self, log: Log) -> None:
+        self.log = log
+
+    async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        self.log.entries.append(f"mcp:{tool}")
+        return UNKNOWN_ENVELOPE
+
+
+def executing(monkeypatch: pytest.MonkeyPatch, log: Log, *, lost_at: int | None = None) -> tuple[handlers.Deps, Lease]:
+    """The fakes for an execute job whose run is EXECUTING and whose write call answers UNKNOWN."""
+    patch(monkeypatch, log, lost_at=lost_at)
+
+    async def executing_run(_conn: Any, _run_id: Any, *, lock: bool = False) -> dict[str, Any]:
+        log.entries.append("run_row")
+        return {**RUN, "state": "EXECUTING"}
+
+    monkeypatch.setattr(persistence, "run_row", executing_run)
+    deps, lease = make(log)
+    deps.mcp = UnknownMcp(log)
+    return deps, lease
+
+
+def test_mark_unknown_hands_the_new_fence_to_the_lease(monkeypatch: pytest.MonkeyPatch) -> None:
+    log = Log()
+    deps, lease = executing(monkeypatch, log)
+    assert asyncio.run(handlers.execute(deps, {**JOB, "type": "execute"}, lease)) is True
+    assert (lease.fence, lease.refencing) == (4, False)  # the bump's fence, handed over (ruling 10)
+    assert ["mark_unknown"] in log.units()  # its own unit: no share lock to upgrade (SA:191)
+
+
+def test_a_stale_fence_at_mark_unknown_is_a_lost_lease(monkeypatch: pytest.MonkeyPatch) -> None:
+    for lost_at, raised in ((2, LeaseLost), (None, persistence.VersionConflict)):
+        log = Log()
+        deps, lease = executing(monkeypatch, log, lost_at=lost_at)
+
+        async def refused(*_: Any, **__: Any) -> None:
+            raise persistence.VersionConflict("version_conflict: stale fence")
+
+        monkeypatch.setattr(persistence, "mark_unknown", refused)
+        # With lost_at=2 the fresh fence check after the refusal fails: the fence was stale, a lost lease. Without
+        # it the fence holds, so the refusal was the run's own state and is raised as it came.
+        with pytest.raises(raised):
+            asyncio.run(handlers.execute(deps, {**JOB, "type": "execute"}, lease))
+        assert (lease.fence, lease.refencing) == (3, False)

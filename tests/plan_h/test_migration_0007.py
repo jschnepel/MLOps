@@ -107,3 +107,64 @@ def test_the_testclock_branch_renders_from_frozen_tuples(monkeypatch: pytest.Mon
     # The frozen tuples render exactly what the live matrix rendered when the branch was applied (Plan E, 0002).
     assert seen[-3:] == p.grant_statements(["test_clock"], branch.GRANTS_TC)
     assert "GRANT USAGE ON SCHEMA app TO test_harness" in seen
+
+
+def test_upgrade_replaces_the_handle_functions_with_fenced_ones(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = revision()
+    seen = statements(module, "upgrade", monkeypatch)
+    for old, new in (
+        ("mark_sent(uuid)", "app.mark_sent(p_raw_handle text, p_action_id uuid)"),
+        ("record_outcome(uuid, text, jsonb)", "app.record_outcome(p_raw_handle text, p_action_id uuid"),
+        ("mark_unknown(uuid, bigint)", "app.mark_unknown(p_run_id uuid, p_fence bigint)"),
+    ):
+        dropped = seen.index(f"DROP FUNCTION app.{old}")
+        created = next(i for i, s in enumerate(seen) if new in s)
+        assert dropped < created, old  # another signature or return type: dropped, then created
+    resolve = module.RESOLVE_HANDLE
+    lock = resolve.index("FROM run_lease l WHERE l.run_id = v_ctx.run_id FOR SHARE")
+    assert lock < resolve.index("v_lease.fence <> v_ctx.fence") < resolve.index("_tenant_of_run")
+    assert lock < resolve.index("v_ctx.expires_at <= app.current_time()")  # SA:157: compared after the lock
+    for body in (module.MARK_SENT, module.RECORD_OUTCOME):
+        assert body.index("app._resolve_handle(p_raw_handle") < body.index("FOR UPDATE")  # run_lease before runs
+        assert "g.run_id = v_handle.run_id" in body  # the action must be the handle's run's
+    assert module.GRANT_EXECUTION != module.REV0005.GRANT_EXECUTION
+    assert module.GRANT_TODO_0005 in module.REV0005.GRANT_EXECUTION
+    assert module.GRANT_TODO_0005 not in module.GRANT_EXECUTION  # the reworded line is gone
+
+
+def test_mark_unknown_bumps_under_the_lock_and_locks_the_run_before_the_handles() -> None:
+    module = revision()
+    body = module.MARK_UNKNOWN
+    assert "RETURNS TABLE (run_state text, new_fence bigint)" in body
+    order = [
+        "FROM run_lease l WHERE l.run_id = p_run_id FOR UPDATE",
+        "v_lease.fence <> p_fence OR v_lease.lease_until <= app.current_time()",
+        "SET fence = p_fence + 1",
+        "FROM runs r WHERE r.run_id = p_run_id FOR UPDATE",
+        "UPDATE invocation_context ic SET revoked_at",
+    ]
+    assert [body.index(part) for part in order] == sorted(body.index(part) for part in order)  # SA:188, SA:191
+    revoke = module.REVOKE_HANDLES
+    assert revoke.index("FOR SHARE") < revoke.index("ic.fence <= p_fence")  # ruling 8: never refuses
+    assert "RAISE" not in revoke.split("BEGIN", 1)[1].replace("app._authority", "")
+
+
+def test_the_downgrade_restores_the_applied_bodies_exactly(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = revision()
+    seen = statements(module, "downgrade", monkeypatch)
+    drops = [
+        "DROP FUNCTION app.queued_runs_total()",
+        "DROP FUNCTION app.mark_sent(text, uuid)",
+        "DROP FUNCTION app.record_outcome(text, uuid, text, jsonb)",
+        "DROP FUNCTION app.mark_unknown(uuid, bigint)",
+    ]
+    assert seen[: len(drops)] == drops
+    for body in (
+        module.REV0004.RESOLVE_HANDLE,
+        module.REV0005.GRANT_EXECUTION,
+        module.REV0004.MARK_SENT,
+        module.REV0004.RECORD_OUTCOME,
+        module.REV0004.MARK_UNKNOWN,
+        module.REV0003.REVOKE_HANDLES,
+    ):
+        assert body in seen  # the applied revision's own text, byte for byte

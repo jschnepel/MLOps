@@ -288,12 +288,23 @@ async def revoke_handles(conn: Conn, run_id: UUID, fence: int) -> int:
     return 0 if row is None else int(row["n"])
 
 
-async def mark_unknown(conn: Conn, run_id: UUID) -> RunState:
-    """EXECUTING → OUTCOME_UNKNOWN with handles revoked and a recover job (SA:467); idempotent."""
-    row = await _call(conn, "SELECT app.mark_unknown(%s, 1) AS state", (run_id,))
+@dataclass(frozen=True)
+class Unknown:
+    """What mark_unknown returned: the run's state and the fence it moved the lease to."""
+
+    state: RunState
+    fence: int
+
+
+async def mark_unknown(conn: Conn, run_id: UUID, fence: int) -> Unknown:
+    """EXECUTING → OUTCOME_UNKNOWN under the caller's lease (SA:467, Plan H ruling 9): the lease row FOR UPDATE, a stale
+    fence or a lapsed lease refused (VersionConflict), the fence bumped to `fence + 1`, the old fence's handles revoked
+    and a recover job queued; a run already OUTCOME_UNKNOWN only gets the bump. The caller hands the returned fence to
+    its Lease (ruling 10)."""
+    row = await _call(conn, "SELECT * FROM app.mark_unknown(%s, %s)", (run_id, fence))
     if row is None:
         raise PersistenceError("mark_unknown returned nothing")
-    return RunState(str(row["state"]))
+    return Unknown(RunState(str(row["run_state"])), int(row["new_fence"]))
 
 
 @dataclass(frozen=True)
@@ -437,22 +448,24 @@ async def lookup_action(conn: Conn, *, handle: str) -> Grant:
     return _grant(row)
 
 
-async def mark_sent(conn: Conn, action_id: UUID) -> str:
-    """`sent`, `already_sent`, `resolved` or `cancelled` (SA:463); committed by the caller before any I/O."""
-    row = await _call(conn, "SELECT app.mark_sent(%s) AS outcome", (action_id,))
+async def mark_sent(conn: Conn, *, handle: str, action_id: UUID) -> str:
+    """`sent`, `already_sent`, `resolved` or `cancelled` (SA:463); committed by the caller before any I/O. The handle
+    binds the call to the run's lease fence (Plan H ruling 5): a moved fence or a lapsed lease is HandleRejected."""
+    row = await _call(conn, "SELECT app.mark_sent(%s, %s) AS outcome", (handle, action_id))
     if row is None:
         raise PersistenceError("mark_sent returned nothing")  # a missing row must never read as "go ahead"
     return str(row["outcome"])
 
 
-async def record_outcome(conn: Conn, *, action_id: UUID, outcome: ActionOutcome) -> ToolOutcome:
-    """RESOLVED plus the implied transition and the destination-sourced event (SA:464); returns what stands."""
+async def record_outcome(conn: Conn, *, handle: str, action_id: UUID, outcome: ActionOutcome) -> ToolOutcome:
+    """RESOLVED plus the implied transition and the destination-sourced event (SA:464); returns what stands. The handle
+    binds the record to the run's lease fence (ruling 5); after SENT its refusal is the caller's UNKNOWN (ruling 6)."""
     if outcome.status is ToolOutcome.UNKNOWN:
         raise ValueError("UNKNOWN is recorded by the worker through mark_unknown, never as an outcome")
     row = await _call(
         conn,
-        "SELECT app.record_outcome(%s, %s, %s) AS outcome",
-        (action_id, outcome.status.value, Jsonb(outcome.model_dump(mode="json"))),
+        "SELECT app.record_outcome(%s, %s, %s, %s) AS outcome",
+        (handle, action_id, outcome.status.value, Jsonb(outcome.model_dump(mode="json"))),
     )
     if row is None:
         raise PersistenceError("record_outcome returned nothing")
@@ -818,8 +831,14 @@ async def mint_handle(
     conn: Conn, *, run_id: UUID, job_id: UUID, server: Server, azp: str, fence: int, ttl_seconds: int = 60
 ) -> str:
     """A 256-bit capability bound to one job, one server and the lease fence it was minted under (BUILD_SPEC §9,
-    BS:360); only its hash is stored. It expires after `ttl_seconds` or with the lease, whichever comes first
-    (BS:558), and is minted only under a live lease at exactly that fence (Plan H ruling 5).
+    BS:360); only its hash is stored. It is minted only under a live lease at exactly that fence (Plan H ruling 5)
+    and expires after `ttl_seconds`. BS:558's other bound, the current lease, is enforced where the handle is used:
+    `app._resolve_handle` refuses it once its fence is not the lease's or the lease has lapsed. Capping `expires_at`
+    at mint time would freeze the lease end the handle saw, so a handle would die under a lease the heartbeat has
+    since renewed (T13 controller ruling, Task 4).
+
+    The caller's unit must already hold the run's lease row FOR SHARE (`fenced`, or the claim's FOR UPDATE): the
+    INSERT's own read of run_lease takes no lock, so only that lock keeps the fence from moving before the commit.
 
     Raises:
         LeaseLost: the run has no live lease at `fence`; nothing is written.
@@ -827,8 +846,7 @@ async def mint_handle(
     handle = secrets.token_urlsafe(32)
     cur = await conn.execute(
         "INSERT INTO app.invocation_context (handle_sha256, run_id, job_id, server, azp, fence, expires_at)"
-        " SELECT %s, l.run_id, %s, %s, %s, l.fence,"
-        " least(app.current_time() + make_interval(secs => %s), l.lease_until)"
+        " SELECT %s, l.run_id, %s, %s, %s, l.fence, app.current_time() + make_interval(secs => %s)"
         " FROM app.run_lease l WHERE l.run_id = %s AND l.fence = %s AND l.lease_until > app.current_time()",
         (handle_hash(handle), job_id, server.value, azp, ttl_seconds, run_id, fence),
     )

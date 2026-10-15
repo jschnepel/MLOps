@@ -15,7 +15,7 @@ import pytest_asyncio
 from ops_core import persistence, settings
 from ops_core.canonical import canonical_json, canonical_sha256
 from ops_core.jobs import Server, Tool
-from ops_core.lease import Lease
+from ops_core.lease import RELEASED, Lease
 from ops_core.settings import Role
 from ops_worker import handlers
 from ops_worker.drafting import FakeDraftGenerator
@@ -251,7 +251,7 @@ class GrantThenDownMcp(ScriptedMcp):
             grant = await persistence.grant_execution(
                 self.write, handle=handle, proposal_id=UUID(arguments["proposal_id"])
             )
-            await persistence.mark_sent(self.write, grant.action_id)
+            await persistence.mark_sent(self.write, handle=handle, action_id=grant.action_id)
         raise McpCallFailed("create_incident: connection lost after SENT")
 
 
@@ -267,7 +267,7 @@ class UnknownMcp(ScriptedMcp):
             grant = await persistence.grant_execution(
                 self.write, handle=handle, proposal_id=UUID(arguments["proposal_id"])
             )
-            await persistence.mark_sent(self.write, grant.action_id)
+            await persistence.mark_sent(self.write, handle=handle, action_id=grant.action_id)
         return {
             "status": "outcome",
             "data": {
@@ -333,8 +333,15 @@ async def test_unknown_envelope_is_recorded_by_the_worker(
         await handlers.handle(deps, *await own_job(app_conn, deps.conn, run, "investigate"))
         await approve(api, await proposal_of(app_conn, run))
         job, lease = await own_job(app_conn, deps.conn, run, "execute")
+        before = lease.fence
         await handlers.handle(deps, job, lease)
         assert (await persistence.run_row(app_conn, run))["state"] == "OUTCOME_UNKNOWN"
+        assert lease.fence == before + 1 and lease.lost == RELEASED  # bumped, handed over, released under it
+        cur = await app_conn.execute(
+            "SELECT fence, lease_until = '-infinity' AS released FROM app.run_lease WHERE run_id = %s", (run,)
+        )
+        row = await cur.fetchone()
+        assert row is not None and (row["fence"], row["released"]) == (before + 1, True)
         assert (await event_types(app_conn, run))[-1][0] == "action.uncertain"
         cur = await app_conn.execute("SELECT 1 FROM app.jobs WHERE run_id = %s AND type = 'recover'", (run,))
         assert await cur.fetchone() is not None

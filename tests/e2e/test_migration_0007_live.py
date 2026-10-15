@@ -7,7 +7,9 @@ fail closed for everyone), and a global queue count that misses a tenant, answer
 the caller's tenant setting changed.
 """
 
+import importlib.util
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -15,6 +17,8 @@ import psycopg
 import pytest
 from ops_core import persistence, settings
 from ops_core.settings import Profile, Role
+from psycopg import sql
+from psycopg.rows import dict_row
 
 from tests.e2e.conftest import purge_run, purge_tenant
 from tests.e2e.test_migrations_and_persistence import new_run
@@ -29,6 +33,49 @@ TAKE_PERMIT = (
     " ORDER BY slot FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING slot"
 )
 FREE_PERMIT = "UPDATE app.model_permit SET holder = NULL, leased_until = '-infinity' WHERE slot = 1"
+VERSIONS = Path(__file__).resolve().parents[2] / "migrations" / "app" / "versions"
+FUNCTION_DETAILS = (
+    "SELECT pg_get_functiondef(p.oid) AS body, p.proacl::text AS acl, p.proowner::regrole::text AS owner,"
+    " p.proconfig::text AS config FROM pg_proc p WHERE p.oid = %s::regprocedure"
+)
+SCRATCH_PREFIX = "r006_"  # every scratch database this module creates; leftovers are dropped by prefix
+# Leftovers no session is connected to: a concurrent session's scratch database in use is never touched.
+LEFTOVERS = (
+    "SELECT d.datname FROM pg_database d WHERE starts_with(d.datname, %s)"
+    " AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)"
+)
+
+
+def revision_0007() -> Any:
+    """Revision 0007 loaded by path, for the bodies its downgrade restores."""
+    spec = importlib.util.spec_from_file_location("live_rev_0007", VERSIONS / "0007_leases_fences.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def built_to_0006(superuser: settings.Postgres, signatures: list[str]) -> dict[str, dict[str, Any]]:
+    """The functions named, as a database built straight to 0006 holds them (review round 1, M3): definition, ACL,
+    owner and settings. A scratch database is created, upgraded to 0006 by the applied revisions alone, read and
+    dropped; the roles are cluster-wide, so its ACLs name the same roles as the test database's. A run killed before
+    its `finally` leaves a database behind; the next run drops every leftover with the prefix first (review round 2,
+    m6)."""
+    from scripts.skeleton import upgrade
+
+    scratch = f"{SCRATCH_PREFIX}{uuid4().hex[:12]}"
+    try:
+        with psycopg.connect(superuser.conninfo(), autocommit=True, row_factory=dict_row) as admin:
+            for row in admin.execute(LEFTOVERS, (SCRATCH_PREFIX,)).fetchall():
+                admin.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(row["datname"])))
+            admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(scratch)))
+        target = settings.Postgres(superuser.host, superuser.port, superuser.user, scratch, superuser.password)
+        upgrade("app", target, "0006_admission_idempotency")
+        with psycopg.connect(target.conninfo(), row_factory=dict_row) as conn:
+            return {name: dict(conn.execute(FUNCTION_DETAILS, (name,)).fetchone() or {}) for name in signatures}
+    finally:
+        with psycopg.connect(superuser.conninfo(), autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(scratch)))
 
 
 async def exists(conn: persistence.Conn, signature: str) -> bool:
@@ -69,9 +116,24 @@ async def test_the_round_trip_restores_0006(app_conn: persistence.Conn) -> None:
         assert not before["permit"] and "jobs_type_check" not in before["job_constraints"]
         assert ("app_definer", "UPDATE", "fence") not in before["lease_cells"]
         assert not await exists(app_conn, "app.queued_runs_total()")
+        assert await exists(app_conn, "app.mark_sent(uuid)") and not await exists(app_conn, "app.mark_sent(text, uuid)")
+        # Every function 0007 replaced is back exactly as the applied revision installed it (R006, ruling 31): the
+        # stored source is the text between the body's dollar quotes.
+        for name, args, _, body in revision_0007().RESTORED:
+            cur = await app_conn.execute(
+                "SELECT prosrc FROM pg_proc WHERE oid = %s::regprocedure", (f"app.{name}({args})",)
+            )
+            assert (await cur.fetchone())["prosrc"] == body.split("$fn$")[1], name
+        # ...and so are their definitions, ACLs, owners and settings, against a database that never saw 0007.
+        restored = [f"app.{name}({args})" for name, args, _, _ in revision_0007().RESTORED]
+        reference = built_to_0006(superuser, restored)
+        for signature in restored:
+            cur = await app_conn.execute(FUNCTION_DETAILS, (signature,))
+            assert dict(await cur.fetchone()) == reference[signature], signature
     finally:
         assert migrate(Profile.TEST) == 0  # every later test needs the head
     assert await snapshot(app_conn) == head  # the upgrade brings back exactly what the downgrade took
+    assert await exists(app_conn, "app.mark_sent(text, uuid)") and not await exists(app_conn, "app.mark_sent(uuid)")
 
 
 async def test_model_permit_is_seeded_and_only_the_worker_takes_it(role_conn: RoleConn) -> None:

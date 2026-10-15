@@ -242,10 +242,35 @@ async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
     log.info("execute job %s: %s %s", job["id"], doc.get("status"), data.get("status"))
     if doc.get("status") == "outcome" and data.get("status") == "UNKNOWN":  # an `error` envelope is never UNKNOWN
         # mcp-write reports uncertainty after SENT but may not record it (SA:467: mark_unknown is the worker's).
-        async with deps.conn.transaction():
-            await persistence.fenced(deps.conn, lease)
-            await persistence.mark_unknown(deps.conn, run["run_id"])
+        await _mark_unknown(deps, lease)
     return True
+
+
+async def _mark_unknown(deps: Deps, lease: Lease) -> None:
+    """EXECUTING → OUTCOME_UNKNOWN through `mark_unknown`, which takes the lease row FOR UPDATE itself and bumps the
+    fence (AM-13, Plan H ruling 9): no `fenced` share lock precedes it in its unit, because a transaction that writes
+    the lease takes FOR UPDATE from the start (SA:191). The new fence reaches the shared Lease before anything else
+    runs, and a renewal meeting it meanwhile retries instead of declaring the lease lost (ruling 10).
+
+    Raises:
+        LeaseLost: the fence was stale, told apart from a run that is not EXECUTING by a fresh `fenced` check rather
+            than by the refusal's text.
+        VersionConflict: the fence holds, so the run itself is not EXECUTING.
+    """
+    lease.check()
+    lease.begin_refence()
+    try:
+        async with deps.conn.transaction():
+            unknown = await persistence.mark_unknown(deps.conn, lease.run_id, lease.fence)
+    except persistence.VersionConflict:
+        lease.end_refence(None)
+        async with deps.conn.transaction():
+            await persistence.fenced(deps.conn, lease)  # a stale fence raises LeaseLost here
+        raise
+    except BaseException:
+        lease.end_refence(None)
+        raise
+    lease.end_refence(unknown.fence)
 
 
 async def handle(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
