@@ -112,6 +112,10 @@ class FakeUnit:
         self.fake.counts += 1
         return sum(1 for r in self.fake.runs.values() if r["tenant_id"] == self.tenant_id and r["state"] == "QUEUED")
 
+    async def queued_total(self) -> int:
+        self.fake.counts += 1
+        return sum(1 for r in self.fake.runs.values() if r["state"] == "QUEUED")  # every tenant (Plan H ruling 13)
+
     def _runs_of(self, conversation_id: UUID) -> list[dict[str, Any]]:
         return [r for r in self.fake.runs.values() if r["conversation_id"] == conversation_id]
 
@@ -275,7 +279,7 @@ class FakeStore(store.AdmissionStore):
         self.locks: list[str] = []
         self.slot_occupied = False  # force create_run's own refusal, as a concurrent admission would
         self.start_refusal: str | None = None  # a create_run Conflict code other than SLOT_OCCUPIED, scripted
-        self.counts = 0  # how many times a unit read the tenant's queued count
+        self.counts = 0  # how many times a unit read a queued count (the tenant's or the global one)
         self.logins: dict[str, tuple[LoginState, float]] = {}  # login hash -> (state, expiry)
         self.sessions: dict[str, dict[str, Any]] = {}  # session hash -> row fields + last_seen, expires, revoked
         self.jtis: set[str] = set()

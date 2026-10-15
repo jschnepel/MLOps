@@ -52,7 +52,7 @@ SAMPLE = {
 # A week-long replay window, so R018's replay three days on the test clock is still inside it (the default 24 h
 # window is SA:297's; the bound is ruling 7's maximum).
 WEEK = AdmissionSettings(idempotency_ttl_seconds=604800)
-EXPECTED_LINES = 14  # the evidence lines the six tests append between them
+EXPECTED_LINES = 15  # the evidence lines the tests append between them (T12's fourteen, T13's global bound)
 SKELETON_PORTS = (8000, 8070, 8071, 8081, 8082, 8090)
 KEYS: list[str] = []  # every Idempotency-Key a test sent, so the `created` fixture can delete its records
 
@@ -498,3 +498,21 @@ async def test_r115_live_errors_use_the_safe_schema(created: list[str], lines: l
         f"R115 live sample: {codes}, {checked} bodies checked, each with exactly {sorted(SAFE_KEYS)} "
         "and its X-Request-Id"
     )
+
+
+async def test_the_global_queue_bound_answers_429_and_records_nothing(
+    app_conn: persistence.Conn, created: list[str], lines: list[str]
+) -> None:
+    """Plan H ruling 13 (BS:550 "100 total"): the bound is set to one more than the QUEUED runs of every tenant, so
+    the first admission takes the last place and the next is refused, unrecorded, with Retry-After."""
+    queued = await count(app_conn, "SELECT count(*) AS n FROM app.runs WHERE state = 'QUEUED'")
+    async with api(AdmissionSettings(idempotency_ttl_seconds=604800, global_queue_limit=queued + 1)) as c:
+        last = await c.post(messages(await conversation(c, created)), headers=h(), json=SAMPLE)
+        last_status = last.status_code
+        assert last_status == 202, last_status
+        full = await c.post(messages(await conversation(c, created)), headers=h(key="global-key-0001"), json=SAMPLE)
+        status, body, retry = full.status_code, full.json(), full.headers.get("Retry-After")
+        assert (status, body["code"], body["message"], retry) == (429, "RATE_LIMITED", "the work queue is full", "5")
+    records = "SELECT count(*) AS n FROM app.idempotency_request WHERE key = %s"
+    assert await count(app_conn, records, "global-key-0001") == 0  # a 429 is nobody's record (Plan G ruling 5)
+    lines.append(f"global queue bound at {queued + 1}: the next admission 429 RATE_LIMITED Retry-After 5, unrecorded")

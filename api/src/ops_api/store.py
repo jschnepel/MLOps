@@ -269,6 +269,10 @@ class Unit(RecordUnit, Protocol):
         """QUEUED runs of the tenant (ruling 18)."""
         ...
 
+    async def queued_total(self) -> int:
+        """QUEUED runs of every tenant, one number (`queued_runs_total`, Plan H ruling 13)."""
+        ...
+
     async def active_run(self, conversation_id: UUID) -> bool:
         """Whether a run holds the conversation's slot (read, not locked: ruling 9)."""
         ...
@@ -384,8 +388,11 @@ class AdmissionStore:
         requester: UUID,
         request: MessageRequest,
         quota: int,
+        queue_limit: int = 100,
     ) -> Verdict:
-        """The messages route's unit in ruling 21's order: conversation, active run, router, quota count, effect."""
+        """The messages route's unit in ruling 21's order: conversation, active run, router, the tenant's quota count
+        and the global count (Plan H ruling 13; 100 is BS:550's starting value, the route passes the setting),
+        effect."""
         rid = idem.request_id
 
         async def work(unit: Unit) -> Verdict:
@@ -422,6 +429,11 @@ class AdmissionStore:
             # and the same key must then be admitted.
             if await unit.queued_count() >= quota:
                 raise QueueFull
+            # Plan H ruling 13: the global bound (BS:550 "100 total") after the tenant's quota, through the definer
+            # that counts every tenant. Counted, then created: admissions in different tenants can each pass a count
+            # of limit - 1, so the bound is soft by the number of concurrent admissions (the runbook says so; T29).
+            if await unit.queued_total() >= queue_limit:
+                raise QueueFull("the work queue is full")
             return await self._start(
                 unit,
                 idem=idem,
@@ -669,6 +681,7 @@ class Store(Protocol):
         requester: UUID,
         request: MessageRequest,
         quota: int,
+        queue_limit: int = 100,
     ) -> Verdict:
         """Route and commit one message (idempotent)."""
         ...
@@ -819,6 +832,10 @@ class DbUnit:
         """QUEUED runs of the tenant (ruling 18)."""
         return await persistence.queued_count(self.conn)
 
+    async def queued_total(self) -> int:
+        """QUEUED runs of every tenant (Plan H ruling 13)."""
+        return await persistence.queued_runs_total(self.conn)
+
     async def active_run(self, conversation_id: UUID) -> bool:
         """Whether a run holds the slot; a read, not a lock (ruling 9: `api` cannot lock conversations)."""
         return await persistence.latest_active_run(self.conn, conversation_id) is not None
@@ -919,7 +936,7 @@ class DbUnit:
         # The wait is bounded: a worker holding the run row must not stall the API's single connection, and every
         # request queued behind it (the final review's M4). A timeout is SQLSTATE 55P03, an OperationalError that
         # the app answers as a retryable 503. SET takes no bind parameter, so the value is a literal.
-        # TODO(T13): keep a per-unit lock_timeout once the connection pool lands.
+        # TODO(T30): keep a per-unit lock_timeout once the connection pool lands (Plan H ruling 25).
         await self.conn.execute("SET LOCAL lock_timeout = '2s'")
         cur = await self.conn.execute(
             "SELECT run_id, state, state_version, requester, conversation_id FROM app.runs"

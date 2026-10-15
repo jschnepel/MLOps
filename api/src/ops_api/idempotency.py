@@ -47,7 +47,12 @@ class IdempotencyConflict(Exception):
 
 
 class QueueFull(Exception):
-    """The tenant's queue is at its quota (ruling 18): transient, so the unit rolls back and nothing is recorded."""
+    """A queue bound is reached, the tenant's quota (Plan G ruling 18) or the global bound (Plan H ruling 13):
+    transient, so the unit rolls back and nothing is recorded; `message` is what the 429 says."""
+
+    def __init__(self, message: str = "tenant queue is full") -> None:
+        super().__init__(message)
+        self.message = message
 
 
 class RecordRace(Exception):

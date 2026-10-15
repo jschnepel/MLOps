@@ -160,8 +160,9 @@ def create_app(
         try:
             if isinstance(app.state.store, st.DbStore):
                 await persistence.assert_clock_profile(app.state.store.session.conn, settings.profile())
-                # Revision 0006: admission writes the record table and the message columns it adds.
-                await persistence.assert_relation(app.state.store.session.conn, "app.idempotency_request")
+                # Revision 0007: admission counts the global queue through queued_runs_total (0006's record table and
+                # message columns come before it); the permit table marks the revision.
+                await persistence.assert_relation(app.state.store.session.conn, "app.model_permit")
             if not verifier.ready:
                 await verifier.load_keys()
             deps = auth_factory()
@@ -296,12 +297,12 @@ def create_app(
             return response(await unit)
         except IdempotencyConflict as exc:
             raise ApiError(409, ErrorCode.IDEMPOTENCY_CONFLICT, exc.message) from exc
-        except QueueFull:
+        except QueueFull as exc:
             return limits.safe_response(
                 limits.request_id_of(request.scope),
                 429,
                 ErrorCode.RATE_LIMITED,
-                "tenant queue is full",
+                exc.message,  # which bound: the tenant's quota or the global queue (Plan H ruling 13)
                 retryable=True,
                 headers={"Retry-After": "5"},
             )
@@ -561,7 +562,7 @@ def create_app(
         key: Annotated[str, Depends(idempotency_key)],
     ) -> Response:
         """BS:271 through the AM-16 router: 202 for a run, 200 for a clarification or a status answer, 409 for a busy
-        conversation, 422 for an unroutable kind, 429 for a full tenant queue (ruling 21's order)."""
+        conversation, 422 for an unroutable kind, 429 for a full tenant or global queue (ruling 21's order)."""
         message: MessageRequest = await body(request, MessageRequest)
         store: st.Store = request.app.state.store
         idem = scoped(request, who, ROUTE_MESSAGES, key, {"conversation_id": str(conversation_id)}, message)
@@ -574,6 +575,7 @@ def create_app(
                 requester=who.subject,
                 request=message,
                 quota=bounds.tenant_queue_quota,
+                queue_limit=bounds.global_queue_limit,
             ),
         )
 

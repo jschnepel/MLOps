@@ -551,6 +551,12 @@ async def queued_count(conn: Conn) -> int:
     return 0 if row is None else int(row["n"])
 
 
+async def queued_runs_total(conn: Conn) -> int:
+    """QUEUED runs of every tenant through `app.queued_runs_total()` (api only, Plan H ruling 13): one number."""
+    row = await _call(conn, "SELECT app.queued_runs_total() AS n", ())
+    return 0 if row is None else int(row["n"])
+
+
 @dataclass(frozen=True)
 class Claimed:
     """A claimed job and the run lease its claim took in the same transaction (Plan H ruling 3)."""
