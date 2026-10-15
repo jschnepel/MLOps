@@ -220,7 +220,7 @@ async def test_r009_composite_keys_refuse_cross_tenant_children(app_conn: persis
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
             await app_conn.execute(
                 "INSERT INTO app.jobs (id, type, tenant_id, run_id, dedup_key)"
-                " VALUES (gen_random_uuid(), 'x', %s, %s, %s)",
+                " VALUES (gen_random_uuid(), 'investigate', %s, %s, %s)",  # a valid type: only the key may refuse it
                 (BETA, alpha_run, f"r009-{uuid4()}"),
             )
         # seed_run already wrote the (alpha_run, ALPHA) directory row, so moving it is the cross-tenant attempt.

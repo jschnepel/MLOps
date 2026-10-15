@@ -141,6 +141,9 @@ PURGE_ORDER = (
     "DELETE FROM app.jobs WHERE run_id = %s",
     "DELETE FROM app.run_state_history WHERE run_id = %s",
     "DELETE FROM app.run_directory WHERE run_id = %s",  # the directory references runs
+    "DELETE FROM app.run_lease WHERE run_id = %s",  # T13: the lease references runs
+    # T13: a permit a test left held for this run is free again (the seeded slot itself stays).
+    "UPDATE app.model_permit SET holder = NULL, run_id = NULL, leased_until = '-infinity' WHERE run_id = %s",
     # T12: the idempotency record of the admission that started the run (its response names the run).
     "DELETE FROM app.idempotency_request WHERE response->>'run_id' = %s::text",
 )

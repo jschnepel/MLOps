@@ -23,6 +23,11 @@ GRANTS_TC = {
         "test_harness": privileges.Grant(ins=True, upd=True, dele=True),
     }
 }
+# The roles this branch grants to and revokes from, frozen like the main line's MAIN_GRANTEES_<rev> (Plan H ruling 30):
+# rendering them from the live matrix would let a later role change rewrite an applied revision. They render exactly
+# what the matrix rendered when the branch was written (a unit test compares the two).
+TEST_ONLY_ROLES_TC = ("test_harness",)
+GRANTEES_TC = ("api", "worker", "sweeper", "mcp_read", "mcp_exec", "operator", "test_harness", "app_definer")
 
 DDL = (
     (
@@ -40,16 +45,16 @@ def upgrade() -> None:
     for statement in DDL:
         op.execute(statement)
     # The test-only role gets its schema access and its clock EXECUTE here, never on the main line (SA:403).
-    for statement in privileges.schema_usage_statements(privileges.TEST_ONLY_ROLES):
+    for statement in privileges.schema_usage_statements(TEST_ONLY_ROLES_TC):
         op.execute(statement)
-    for statement in privileges.function_grant_statements("current_time", args="", callers=("test_harness",)):
+    for statement in privileges.function_grant_statements("current_time", args="", callers=TEST_ONLY_ROLES_TC):
         op.execute(statement)
-    for statement in privileges.grant_statements(["test_clock"], GRANTS_TC):
+    for statement in privileges.grant_statements(["test_clock"], GRANTS_TC, revokees=GRANTEES_TC):
         op.execute(statement)
 
 
 def downgrade() -> None:
     """Drop the test clock and take back what the branch granted test_harness."""
     op.execute("DROP TABLE app.test_clock")
-    op.execute(f"REVOKE ALL ON FUNCTION app.current_time() FROM {', '.join(privileges.TEST_ONLY_ROLES)}")
-    op.execute(f"REVOKE USAGE ON SCHEMA app FROM {', '.join(privileges.TEST_ONLY_ROLES)}")
+    op.execute(f"REVOKE ALL ON FUNCTION app.current_time() FROM {', '.join(TEST_ONLY_ROLES_TC)}")
+    op.execute(f"REVOKE USAGE ON SCHEMA app FROM {', '.join(TEST_ONLY_ROLES_TC)}")

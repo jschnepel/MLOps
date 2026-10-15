@@ -52,7 +52,7 @@ OWN_UNIT: Final = frozenset(
     {"model_permit", "sessions", "login_state", "logout_jti", "test_clock", "tenants", "run_directory"}
 )
 NEVER_LOCKED: Final = frozenset({"conversations", "transitions"})
-NOT_YET_CREATED: Final = frozenset({"operator_resolutions", "outbox", "model_permit"})
+NOT_YET_CREATED: Final = frozenset({"operator_resolutions", "outbox"})
 
 OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "worker claim (persistence.claim_next)": ("jobs:claim", "run_lease", "runs"),  # a first lease's FK key share
