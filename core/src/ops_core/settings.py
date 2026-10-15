@@ -291,6 +291,7 @@ class AdmissionSettings:
     idempotency_key_min: int = 8
     idempotency_key_max: int = 128
     tenant_queue_quota: int = 100  # BS:550: queued work, as a per-tenant bound (ruling 18)
+    global_queue_limit: int = 100  # BS:550: "100 total" across tenants, checked after the quota (Plan H ruling 13)
 
 
 def _bounded(name: str, default: int, low: int, high: int) -> int:
@@ -302,12 +303,61 @@ def _bounded(name: str, default: int, low: int, high: int) -> int:
 
 
 def admission() -> AdmissionSettings:
-    """`OPS_MAX_BODY_BYTES`, `OPS_IDEMPOTENCY_TTL_SECONDS` and `OPS_TENANT_QUEUE_QUOTA`, each bounded (ruling 27)."""
+    """`OPS_MAX_BODY_BYTES`, `OPS_IDEMPOTENCY_TTL_SECONDS`, `OPS_TENANT_QUEUE_QUOTA` (Plan G ruling 27) and
+    `OPS_GLOBAL_QUEUE_LIMIT` (Plan H ruling 13), each bounded."""
     return AdmissionSettings(
         max_body_bytes=_bounded("OPS_MAX_BODY_BYTES", 65536, 1024, 1048576),
         idempotency_ttl_seconds=_bounded("OPS_IDEMPOTENCY_TTL_SECONDS", 86400, 60, 604800),
         tenant_queue_quota=_bounded("OPS_TENANT_QUEUE_QUOTA", 100, 1, 10000),
+        global_queue_limit=_bounded("OPS_GLOBAL_QUEUE_LIMIT", 100, 1, 100000),
     )
+
+
+@dataclass(frozen=True)
+class LeaseSettings:
+    """The run lease and its heartbeat (BS:557, SA:193-195) and the two renewal gates of T13 review note 4: the event
+    loop's stall limit and the compute budget (BS:555), as validated configuration (BS:542, Plan H ruling 20)."""
+
+    lease_seconds: int = 30  # BS:557
+    heartbeat_seconds: int = 10  # BS:557
+    loop_stall_seconds: int = 28  # above DoD 3's 25 s blocked loop, below a lease plus a heartbeat
+    compute_budget_seconds: int = 90  # BS:555: active compute per run
+
+
+# The worker stops starting effects 5 s before its lease ends (SA:195) and its heartbeat thread looks once a second.
+RENEWAL_MARGIN_SECONDS = 6
+
+
+def check_leases(chosen: LeaseSettings) -> None:
+    """Refuse a combination that would lose healthy leases or keep dead ones (Plan H ruling 20, review round 1 I5).
+
+    Two heartbeats plus RENEWAL_MARGIN_SECONDS must fit in one lease: the local deadline is the last renewal's start
+    plus the lease minus 5 s, so with less room one failed or slow renewal passes it and a healthy job is abandoned.
+    A loop silent for a whole lease plus a heartbeat is treated as dead, so the stall gate stays below that; a budget
+    shorter than one lease would end every job before its first renewal.
+
+    Raises:
+        SettingsError: naming the rule, never a value.
+    """
+    if chosen.heartbeat_seconds * 2 + RENEWAL_MARGIN_SECONDS >= chosen.lease_seconds:
+        raise SettingsError("OPS_HEARTBEAT_SECONDS must be less than half of (OPS_LEASE_SECONDS - 6)")
+    if chosen.loop_stall_seconds >= chosen.lease_seconds + chosen.heartbeat_seconds:
+        raise SettingsError("OPS_LOOP_STALL_SECONDS must be less than OPS_LEASE_SECONDS plus OPS_HEARTBEAT_SECONDS")
+    if chosen.compute_budget_seconds < chosen.lease_seconds:
+        raise SettingsError("OPS_COMPUTE_BUDGET_SECONDS must be at least OPS_LEASE_SECONDS")
+
+
+def leases() -> LeaseSettings:
+    """`OPS_LEASE_SECONDS`, `OPS_HEARTBEAT_SECONDS`, `OPS_LOOP_STALL_SECONDS` and `OPS_COMPUTE_BUDGET_SECONDS`, each
+    bounded, then checked together (`check_leases`); the worker refuses to start on a refusal."""
+    chosen = LeaseSettings(
+        lease_seconds=_bounded("OPS_LEASE_SECONDS", 30, 10, 900),
+        heartbeat_seconds=_bounded("OPS_HEARTBEAT_SECONDS", 10, 1, 300),
+        loop_stall_seconds=_bounded("OPS_LOOP_STALL_SECONDS", 28, 2, 900),
+        compute_budget_seconds=_bounded("OPS_COMPUTE_BUDGET_SECONDS", 90, 10, 3600),
+    )
+    check_leases(chosen)
+    return chosen
 
 
 @dataclass(frozen=True)
