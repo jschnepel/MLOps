@@ -177,9 +177,12 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   write, mint, release and handle all refuse after a takeover; a takeover waits for an open fenced unit; expiry is
   compared on the database clock after the lock; a resume job waits behind the original job's lease and then writes
   alone; a 25 s blocked loop and a 35 s drafter keep the lease while a forced renewal failure cancels the call and
-  revokes the handle; eight workers and the sweeper hammering three runs for 20 s never deadlock and never write
-  under an older fence after a newer one; a killed owner's job is reclaimed after expiry and taken at the next fence
-  (`reports/leases/`).
+  revokes the handle; a killed owner's job is reclaimed after expiry and taken at the next fence (R019). The refusal
+  of a stale writer is proved by those interleaving, fenced-definer and R019 tests. The 20 s stress run (eight
+  workers on three runs, the sweeper reclaiming beside them) showed zero deadlocks (40P01) and zero lock timeouts
+  (55P03), fences only increasing, at most one believing owner per run, committed re-fences, and more than three
+  takeovers through its drop step; it loses no lease and hands back no job, so it does not itself exercise a stale
+  write (`reports/leases/`).
 - The dev `ops` database needs revisions 0006 and 0007 (an owner input); the API, the sweeper, the worker and
   mcp-write refuse to start until then.
 - Deferred, each with its owner in `SESSION_STATE.md`: the permit's idle release rule -> T19; compute accounting and
