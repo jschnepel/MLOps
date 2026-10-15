@@ -3,6 +3,7 @@ azp `ops-mcp-write`, SA:262/270); recomputes the hash over the received bytes be
 answers with the key's own view (keys.document). A 401 carries a plain safe error and never an action id (SA:357)."""
 
 # No `from __future__ import annotations`: FastAPI resolves dependency annotations at import time (Plan D review).
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal, Protocol
@@ -88,14 +89,15 @@ class AbortRequest(BaseModel):
 
 
 class FaultRequest(BaseModel):
-    """How many occurrences of a fault to arm (test profile only)."""
+    """How many occurrences of a fault to arm, and how long a timed one holds (test profile only)."""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
     count: int = Field(ge=1, le=100)
+    seconds: int | None = Field(default=None, ge=1, le=120)  # timeout_before_accept only (Plan H ruling 22)
 
 
 def safe_error(status: int, code: ErrorCode, message: str, headers: dict[str, str] | None = None) -> JSONResponse:
-    body = SafeError(code=code, message=message, retryable=status == 503, request_id=uuid4())
+    body = SafeError(code=code, message=message, retryable=status in (429, 503), request_id=uuid4())
     return JSONResponse(status_code=status, content=body.model_dump(mode="json"), headers=headers)
 
 
@@ -184,6 +186,12 @@ def create_app(
             body = IncidentRequest.model_validate_json(text)  # JSON mode: strict models parse UUID text
         except (UnicodeDecodeError, CanonicalizationError, ValidationError, ValueError):
             return safe_error(422, ErrorCode.INVALID_INPUT, "body is not a well-formed incident request")
+        # Plan H ruling 22: the two faults that answer before the destination accepts anything (nothing is written).
+        if faults is not None and faults.take(FaultKind.TIMEOUT_BEFORE_ACCEPT):
+            await asyncio.sleep(faults.seconds(FaultKind.TIMEOUT_BEFORE_ACCEPT))
+            return safe_error(503, ErrorCode.UNAVAILABLE, "destination timed out before accepting (fault)")
+        if faults is not None and faults.take(FaultKind.RATE_LIMIT):
+            return safe_error(429, ErrorCode.RATE_LIMITED, "destination rate limit (fault)", {"Retry-After": "1"})
         # From here the envelope is well formed, so every refusal is a permanent REJECTED key (SA:261) and a lost
         # response is recoverable by lookup. keys.document answers 409 if the key committed under another hash.
         try:
@@ -213,6 +221,12 @@ def create_app(
         except psycopg.Error:
             return safe_error(503, ErrorCode.UNAVAILABLE, "destination database unavailable")
         status, doc = keys.document(row, presented_sha256=body.payload_sha256)
+        # Plan H ruling 22: two faults that corrupt the answer about a committed key; the key itself stands.
+        if faults is not None and faults.take(FaultKind.MALFORMED_RESPONSE):
+            return JSONResponse({"state": doc["state"], "receipt": "not a receipt"})
+        if faults is not None and faults.take(FaultKind.RECEIPT_HASH_MISMATCH):
+            other = sha256_hex(str(doc["payload_sha256"]).encode("utf-8"))  # the hash of the hash: never the hash
+            return JSONResponse(status_code=status, content={**doc, "payload_sha256": other})
         return JSONResponse(status_code=status, content=doc)
 
     @app.post("/internal/actions/{action_id}/abort")
@@ -241,7 +255,10 @@ def create_app(
                 body = FaultRequest.model_validate_json((await request.body()).decode("utf-8"))
             except (UnicodeDecodeError, ValidationError, ValueError):
                 return safe_error(422, ErrorCode.INVALID_INPUT, "body is not a well-formed fault request")
-            armable.arm(kind, body.count)
+            try:
+                armable.arm(kind, body.count, seconds=body.seconds)
+            except ValueError:  # `seconds` for a kind without a duration
+                return safe_error(422, ErrorCode.INVALID_INPUT, "seconds applies to timeout_before_accept only")
             return JSONResponse({"armed": armable.armed()})
 
     @app.get("/internal/actions/{action_id}")
@@ -251,6 +268,8 @@ def create_app(
             row = await st.lookup(action_id)
         except psycopg.Error:
             return safe_error(503, ErrorCode.UNAVAILABLE, "destination database unavailable")
+        if row is not None and faults is not None and faults.take(FaultKind.DELAY_RECEIPT):
+            row = None  # Plan H ruling 22: the key exists, but its receipt is not visible yet
         if row is None:
             return safe_error(404, ErrorCode.NOT_FOUND, "no such action")
         status, doc = keys.document(row, presented_sha256=row.payload_sha256)

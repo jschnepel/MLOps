@@ -348,7 +348,7 @@ Work = Callable[[Unit], Awaitable[Verdict]]
 class AdmissionStore:
     """The idempotent mutations of T12, written once over `Unit` (rulings 13-15, 21-25)."""
 
-    faults: Faults | None = None  # set by create_app under PROFILE=test only (ruling 24)
+    faults: Faults | None = None  # given by the store's factory under PROFILE=test only (Plan H ruling 22)
 
     def unit(self, tenant_id: UUID) -> AbstractAsyncContextManager[Unit]:
         """One transaction under the tenant; implementations roll back on any exception."""
@@ -357,9 +357,16 @@ class AdmissionStore:
     async def _idempotent(self, tenant_id: UUID, idem: Idem, work: Work) -> Verdict:
         try:
             async with self.unit(tenant_id) as unit:
-                return await idempotent(unit, idem, lambda: work(unit))
+                verdict = await idempotent(unit, idem, lambda: work(unit))
         except RecordRace:
             pass  # the unit rolled back; the re-read below answers from whatever row blocked the insert
+        else:
+            if not verdict.replayed and self.faults is not None and self.faults.take(FaultKind.LOSE_AFTER_COMMIT):
+                # R015's after-commit side (Plan H ruling 22): the unit, its record included, has committed; only the
+                # answer is lost, as when the connection drops after COMMIT. The client sees the retryable 503 of a
+                # lost connection, and a retry under the same key replays the recorded answer.
+                raise psycopg.OperationalError("fault: lose_after_commit")
+            return verdict
         async with self.unit(tenant_id) as unit:
             await unit.lock_scope(idem.scope.lock_key)
             found = await unit.find_record(idem.scope)
@@ -1013,8 +1020,9 @@ class DbUnit:
 class DbStore(AdmissionStore):
     """The PostgreSQL implementation of `Store` over one autocommit connection as role `api`."""
 
-    def __init__(self, conn: persistence.Conn) -> None:
+    def __init__(self, conn: persistence.Conn, *, faults: Faults | None = None) -> None:
         self.session = persistence.Session(conn)  # ruling 24: one unit of work at a time, each a real transaction
+        self.faults = faults  # the test profile's hooks, from the factory (Plan H ruling 22); None elsewhere
 
     @asynccontextmanager
     async def unit(self, tenant_id: UUID) -> AsyncIterator[Unit]:
