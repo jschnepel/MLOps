@@ -404,6 +404,48 @@ Allowed shortcuts in T12, each with its owning task:
 - the API's fault route implements `drop_before_commit` only; the other BS:405 faults, `lose_after_commit` included
   (R015's after-commit side is proved meanwhile by R016's replay of the recorded 202) → T13.
 
+## Plan H debt list (T13; committed before coding) [R6-B7]
+
+Allowed shortcuts in T13, each with its owning task:
+- the model permit is released when the draft call ends or is cancelled, and by its 65 s TTL; SA:205's "hold the
+  permit until `ollama ps` shows idle" waits on T02's cancellation measurement, and today's only route is the fake
+  drafter → T19;
+- the heartbeat's 90 s compute gate counts one lease's hold time; accounting into `runs.budget_used` across jobs, the
+  human-wait exclusion (BS:556) and R062's caps → T29;
+- the execute job's transport-failure and `GRANT_DEFERRED` re-queues have no retry bound (the run is APPROVED or
+  EXECUTING, which the worker may not move, SA:451) → T22;
+- the worker's transport failure still re-queues instead of taking AM-13's timeout path (`mark_unknown` on a
+  transport timeout, R109; erratum 14 stands) → T22;
+- the reclaim inserts no `recover` job and lost wake-ups are not re-enqueued → T22 (recover), T14 (wake-ups);
+- a deferred job waits for the busy lease's `lease_until` even when the holder releases early (no wake-up on
+  release) → T14;
+- a handler that crashes (an exception other than a lease loss) keeps its job claimed until its lease lapses and the
+  sweeper reclaims it, and then runs again without a bound → T22;
+- an investigate run interrupted in RETRIEVING or DRAFTING (a lost lease, a crash, a lock timeout) is failed by its
+  job's next owner (`interrupted; the run was not resumed`) instead of resumed from where it stopped → T20 (the
+  graph's node resume);
+- the asset-guard advisory lock is placed in the lock order and proved callable by `app_definer`, but
+  `freeze_proposal` and `grant_execution` do not take it yet → T21;
+- checkpoints are untouched (`runs.checkpoint_id` under the fence) → T20; fenced `put`/`put_writes` (R021) → T38;
+- one active compute lease per requester (BS:548) is not enforced (one worker replica runs one job at a time) → T29;
+- no connection pool and no reconnect except the heartbeat's connection; a lost loop connection still ends the
+  process; the API reply unit's per-unit `lock_timeout` → T30;
+- `api` may still INSERT a job of any of the eight types (the CHECK bounds the vocabulary, not the role) → T22;
+- the global queue bound is soft by the number of concurrent admissions (counted, then created, across tenants) →
+  T29;
+- mcp-write handles the five new incident-sim faults only through today's `classify` (rate limit, timeout and a
+  malformed body become UNKNOWN, a foreign receipt hash CONFLICT, a hidden receipt a 404 on lookup) → T22/T47;
+- the shared connect-and-assert helper for the servers, a closer that raises during startup cleanup and the token
+  verifier's injected-fetch exception → T30; the untested definer branches (Plan E list) → T22; the pre-SENT
+  `STALE_RUN`/`HASH_MISMATCH` envelopes → T47;
+- the worker still polls every 0.5 s and claims per tenant → T14 (wake-ups);
+- a handle's expiry is capped at the lease's end when it is minted and a renewal does not extend it, so a handle lives
+  20-30 s in practice and an MCP call slower than that ends with the handle refused, not a timeout (per-call minting
+  under the renewed lease) → T22/T47;
+- the global queue count costs one scan per tenant inside every run admission → T29;
+- the dev database stays at revision 0005 until the owner migrates it (0006 and 0007 pending); until then the API,
+  the sweeper, the worker and mcp-write refuse to start on it → owner input.
+
 ## Environment (observed)
 
 | Item | Observed |
