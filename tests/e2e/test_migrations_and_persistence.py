@@ -406,6 +406,11 @@ async def test_r006_populated_revision_1_database_upgrades_in_place(
             handle = await persistence.mint_handle(
                 worker, run_id=succeeded, job_id=execute_job, server=Server.WRITE, azp="ops-worker", fence=lease.fence
             )
+        # Revision 0009 (Plan J ruling 6): a handle naming a finished job is refused, migrated rows included; the same
+        # handle resolves once its job is open again, so the refusal is the binding's.
+        with pytest.raises(persistence.HandleRejected):
+            await persistence.lookup_action(mcp_exec, handle=handle)
+        await app_conn.execute("UPDATE app.jobs SET done_at = NULL WHERE id = %s", (execute_job,))
         grant = await persistence.lookup_action(mcp_exec, handle=handle)
         assert grant.action_id == action and grant.attempt_state == "RESOLVED"
     finally:
