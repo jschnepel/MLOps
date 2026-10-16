@@ -4,8 +4,9 @@ Locally the generated secret values are read from the secrets directory (`.env`'
 and must not appear in any evidence file; in CI no secrets exist, so only the JWT-shape check applies.
 `reports/auth` (T11's session and revocation evidence), `reports/ci` (T06's CI run record),
 `reports/admission` (T12's durable-admission evidence), `reports/leases` (T13's lease, heartbeat and stress evidence),
-`reports/events` and `reports/outbox` (T14's journal and outbox evidence) and `reports/mcp-read` (T15's handle,
-token and independent-client evidence) are scanned the same way.
+`reports/events` and `reports/outbox` (T14's journal and outbox evidence), `reports/mcp-read` (T15's handle,
+token and independent-client evidence) and `reports/mcp-write` (T47's write-path and independent-client evidence)
+are scanned the same way.
 """
 
 import re
@@ -26,6 +27,7 @@ EVIDENCE_ROOTS = (
     Path("reports/events"),
     Path("reports/outbox"),
     Path("reports/mcp-read"),
+    Path("reports/mcp-write"),
 )
 JWT = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
 
