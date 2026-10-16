@@ -13,12 +13,14 @@ moving its run (T14; R024, R089).
 takes `next_event_seq + 1` and inserts in the writer's transaction; Task 3 proves it live with stepped interleavings
 of the four writing roles and a stress run with readers on the events route. Revision `0008_journal_outbox` creates
 `app.outbox` (RLS `tenant_isolation` only, `app_definer` INSERT, the sweeper's four update cells), gives the sweeper
-DELETE on `jobs`, and re-creates `_append_event` with the payload rules (keys closed over the event schema's, a
-`status` only from the destination) and the intent insert (`ON CONFLICT DO NOTHING` on `run:type:channel:recipient`);
+DELETE on `jobs` (held to finished maintenance rows by a restrictive policy), and re-creates `_append_event` with the
+payload rules (keys closed over the event schema's, a `status` only from the destination) and the intent insert (`ON
+CONFLICT DO NOTHING` on `run:type:channel:recipient`);
 the schema (through `scripts/build_schemas.py`) and `ops_core.outcomes.event_rules_ok` carry the same rules, checked
 on one table of cases. The sweeper gains `ops_sweeper/tenants.py` (one transaction per tenant), `ops_sweeper/outbox.py`
-(claim, deliver outside any transaction to `LogSink`, record, dead-letter, announce) and `ops_sweeper/wakeups.py`
-(re-arm lost wake-ups, purge finished maintenance rows); `persistence.release_lease` makes the run's deferred jobs due.
+(per tenant: claim, deliver outside any transaction to `LogSink`, record, dead-letter, then announce under an advisory
+lock) and `ops_sweeper/wakeups.py` (re-arm lost wake-ups, purge finished maintenance rows), the sweep running before
+the delivery in every tick; `persistence.release_lease` makes the jobs deferred behind its lease due.
 
 **Tech Stack:** as Plan H; no new dependency. psycopg 3.3.6, PostgreSQL 17, Python 3.13 (PEP 695 type parameters in
 the sweeper's tenant helpers), jsonschema with rfc3339-validator (already a dev dependency) for the payload-rule table.
@@ -66,10 +68,14 @@ additions below win where the two differ:
   gated by `OPS_LIVE=1`; existing tests are updated in the task that changes the interface they pin, never deleted
   (Task 4 and Task 5 edit three Plan H tests: the BS:405 kind set, the sweeper's tick order, the release's unit). No
   xfail or skip except the live gate (BS:597). No new test needs `slow_live`: the longest, the R089 stress run, is
-  about 12 s.
+  about 12 s. A live test reads every backend pid before any transaction opens, and never cancels a task that may be
+  inside a database unit (`asyncio.wait`, then close the connection of a writer still pending): a pid query queued
+  behind a blocked statement, or a cancelled unit left holding a row, would hang the gate instead of failing it
+  (round 1, B1 and M3).
 - **Comments** per `docs/CODE_COMMENTS.md`; ≤120 characters per line (Plan H's counting command); no `type: ignore`;
   ruff + mypy strict clean; UTF-8 without BOM, LF; no new broad `except Exception` (a sink error other than
-  `SinkFailed` propagates to the tick's existing catch-all, and the claimed row comes back when its lease ends).
+  `SinkFailed` propagates to the tick's existing catch-all after the minute's record and the wake-up sweep have run;
+  the claimed row comes back when its lease ends and is dead-lettered by the claim once its attempts reached the cap).
 - **Gates:** `uv run ruff format <files> && uv run ruff check --fix <files>` (then
   `uv run ruff check --select ISC004 --fix --unsafe-fixes migrations/app/versions/0008_journal_outbox.py` after
   writing the revision), `PYTHONUTF8=1 uv run python scripts/check.py` GREEN after every task,
@@ -108,18 +114,26 @@ additions below win where the two differ:
 1. **A delivery that outlives its lease** (a slow sink, or a sweeper paused between its claim and its result) is
    claimed again by the next tick; the first delivery's late result must not overwrite the newer claim's. Pinned in
    Task 4: every result statement carries `AND attempts = %s` for the attempt it belongs to
-   (`test_a_delivery_runs_between_its_claim_and_its_result_unit`), and a crashed delivery is claimed again only after
-   its lease (`test_a_crashed_delivery_is_claimed_again_when_its_lease_runs_out`, live).
+   (`test_a_delivery_runs_between_its_claim_and_its_result_unit`), a late attempt-1 result after attempt 2 was
+   delivered writes nothing (`test_a_late_result_never_overwrites_a_newer_claim`, live), and a crashed delivery is
+   claimed again only after its lease and dead-lettered at its cap
+   (`test_a_crashed_delivery_is_claimed_again_when_its_lease_runs_out`,
+   `test_a_delivery_that_keeps_crashing_is_dead_lettered_at_its_cap`, live).
 2. **A sweeper that dies between a dead letter's result and its `notification.failed`**: the next tick must announce
-   it exactly once, and two passes must not announce it twice. Pinned in Task 4 (the R024 live test runs `deliver`,
-   finds no event, then `notify_dead_letters` twice; `test_a_dead_letter_already_notified_gets_no_second_event`).
+   it exactly once, and two passes, or two sweepers, must not announce it twice. Pinned in Task 4 (the R024 live test
+   runs `deliver`, finds no event, then `notify_dead_letters` twice; `test_a_dead_letter_already_notified_gets_no_
+   second_event`; the announcement's unit opens with the outbox id's advisory lock,
+   `test_a_dead_letter_gets_its_event_in_a_transaction_of_its_own`).
 3. **mcp-write replaying `record_outcome`** after a lost response (its normal recovery): the replay must add no second
    intent and no event. Pinned in Task 4 (the R024 live test replays it and re-appends the outcome event inside a
    rolled-back transaction) and Task 2 (`test_the_intent_commits_with_its_event_once_per_run_and_type`).
-4. **A run that moves between the sweep's unlocked read and its re-arm** (the worker finally handled the job): the
-   re-arm must not reopen a job for a run that no longer waits. Pinned in Task 5: the re-arm's UPDATE re-checks the
-   run's state and the job's `done_at` (`test_a_lost_wakeup_is_reopened_in_a_unit_of_its_own_under_the_cap`,
-   `test_a_job_another_hand_reopened_or_moved_counts_as_not_rearmed`).
+4. **A run or job that moves between the sweep's unlocked read and its re-arm** (the worker finally handled the job,
+   a newer job of the type arrived, the job was re-armed, claimed and finished again, the cancellation was
+   requested): the re-arm must not reopen it. The re-arm's UPDATE checks, on the row it takes: `j.done_at IS NOT
+   NULL`, `j.attempts < cap`, `j.done_at <= app.current_time() - grace`, no other job of the run and type that is
+   unfinished or finished later, and the run in the job's state with `NOT cancel_requested`. Pinned in Task 5
+   (`test_a_lost_wakeup_is_reopened_in_a_unit_of_its_own_under_the_cap` asserts each condition,
+   `test_a_job_another_hand_reopened_or_moved_counts_as_not_rearmed`, and the live cancellation case).
 5. **Today's real writers under the closed key set**: the API's clarification reply (`question_id`, `message_id`),
    the worker's tool events, the model summary and every definer's event must keep appending. Pinned in Task 1 (the
    case table's "clarification reply", "tool event", "model summary" and "confirmed" cases in the schema and in
@@ -153,49 +167,58 @@ ruling and, where the plan had to refine one against the code, says how (all ref
    ESCALATED and R023 are debt lines.
 8. **Re-enqueue = re-arm** — the newest done job of the type is reopened (`done_at`, `claimed_by`, `claimed_at` →
    NULL) under `sweeper_all`, below `OPS_WAKEUP_MAX_ATTEMPTS` (10); past the cap a log line per tick per run;
-   erratum 62 (Task 5). Refined (e).
+   erratum 62 (Task 5). Round 1 (I3, I7): never for a run whose cancellation was requested, and every condition is
+   repeated on the row the re-arm takes.
 9. **Durable ack** — unchanged; debt lines to T20 and T22.
 10. **Deferred jobs on release** — `persistence.pull_forward` in `release_lease`'s unit after the finish or re-queue;
-    `abandon` does not; unit and live tests (Task 5). Refined (f).
+    `abandon` does not; unit and live tests (Task 5). Refined (f); round 1 (M2): only jobs deferred behind the lease
+    being released (`available_at` no later than its `lease_until`), so a deliberate delay survives.
 11. **Per-tenant polling** — stays (ruling 6).
 12. **Outbox shape** — exactly the brief's columns, CHECKs, composite key and `tenant_isolation` (no `sweeper_all`),
     plus an `outbox_pending` partial index for the claim (Task 2); erratum 60. Refined (b).
 13. **Who inserts, which events** — inside `_append_event`, after the event: `action.confirmed`, `action.failed`,
-    `run.escalated`, `run.abandoned_unverified` (the type exists); recipient the requester, channel `local`, key
+    `action.conflict` (added in round 1, I2: the escalation that exists today), `run.escalated`,
+    `run.abandoned_unverified` (no emitter until T22; debt line); recipient the requester, channel `local`, key
     `run_id:type:channel:recipient`, target-less `ON CONFLICT DO NOTHING`; `notification.failed` never (Task 2);
     erratum 66.
 14. **Delivery without an external channel** — the `Sink` protocol, `LogSink` (one line, a hash of the recipient, no
     payload), `FaultKind.OUTBOX_SINK_FAIL` consumed by the sink, armed through `LogSink(faults=…)` (Task 4).
-15. **Delivery loop** — the sweeper's tick, per tenant: the claim unit with the brief's statement, delivery outside any
-    transaction, one result unit per row; `OPS_OUTBOX_LEASE_SECONDS` 30, `OPS_OUTBOX_BATCH` 10 (Tasks 1, 4); erratum
-    67. Refined (c).
+15. **Delivery loop** — the sweeper's tick, one tenant after another (round 1, M10): the claim unit with the brief's
+    statement, delivery outside any transaction, one result unit per row; `OPS_OUTBOX_LEASE_SECONDS` 30,
+    `OPS_OUTBOX_BATCH` 10 (Tasks 1, 4); erratum 67. Refined (c). Round 1 (I1): the claim first dead-letters rows whose
+    attempts reached the cap and whose lease ran out, and claims only rows under it; the tick runs the wake-up sweep
+    before the delivery and the delivery's record before its work.
 16. **Retry, jitter, dead letter** — `min(cap, base × 2^(attempts−1))` plus up to 25 % jitter, base 2, cap 300, the
     fifth failure dead-letters; visibility through `notification.failed` and a log line (Tasks 1, 4).
 17. **`notification.failed`** — once per dead letter in a separate transaction after the result unit, payload
     `code`, `message`, `outbox_id` (added to the schema), and the re-check every tick (Task 4); erratum 68. Refined
-    (d).
+    (d). Round 1 (M5): the announcement's unit opens with `pg_advisory_xact_lock(2, hashtext(outbox_id))`, so two
+    sweepers never announce one dead letter twice (the T30 debt line is gone).
 18. **Tenant iteration** — `ops_sweeper.tenants.for_each_tenant(conn, work, *, tenants=None)` and `in_tenant` (Task 4);
     erratum 69.
 19. **Maintenance job rows** — `main.record(deps, job_type)` (the old `record_sync` generalised) after each piece of
     work (Tasks 4, 5); erratum 70.
-20. **Purge** — the sweeper's `del` on `jobs` (Task 2), `wakeups.purge_maintenance` for `run_id IS NULL AND done_at`
-    older than `OPS_MAINTENANCE_RETENTION_HOURS` (24) (Task 5); erratum 61.
+20. **Purge** — the sweeper's `del` on `jobs` (Task 2), held to finished maintenance rows by the restrictive policy
+    `sweeper_purge_maintenance` (round 1, I6), `wakeups.purge_maintenance` for `run_id IS NULL AND done_at` older than
+    `OPS_MAINTENANCE_RETENTION_HOURS` (24) (Task 5); erratum 61.
 21. **Retention** — nothing deleted; debt line → T32.
-22. **Lock order** — seven new `OBSERVED_UNITS` and the release's comment (Task 1); `outbox` leaves
-    `NOT_YET_CREATED` (Task 2); erratum 71.
+22. **Lock order** — seven new `OBSERVED_UNITS`, the release's comment and the `advisory:notification` entry after
+    the asset guard (Task 1); `outbox` leaves `NOT_YET_CREATED` (Task 2); erratum 71.
 23. **Events route** — untouched; it is Task 3's reader.
 24. **Sequence width** — `integer` stays.
 25. **Sweeper's own events** — `notification.failed` only; `sweeper/README.md`'s "Never" line says so (Task 6).
 26. **SA:471 / erratum 49** — `wakeups.sweep` is a separate routine with direct grants (Task 5); erratum 63.
 27. **Review note 1** — `test_no_function_an_mcp_server_may_call_inserts_a_job` scans every function `mcp_read` or
-    `mcp_exec` may execute and, transitively, every `app.` function their bodies call (it asserts that `_authority`,
+    `mcp_exec` may execute and, transitively, every `app.` function their bodies call, by OID so every overload is
+    scanned (it asserts that `_authority`,
     `_resolve_handle`, `_transition`, `_append_event`, `_latest_attempt` and `_grant_row` are among them), and
     asserts both roles hold no table grant (Task 2).
 28. **Testing R024** — the brief's scenario, in `tests/e2e/test_outbox_live.py`, evidence
     `reports/outbox/t14-outbox.txt`; R089's in `reports/events/t14-events.txt` (Tasks 3, 4). Refined (h).
 29. **Migration** — one revision, `0008_journal_outbox`, downgrade to 0007 by re-running 0003's body and 0002's `jobs`
-    cells loaded from their files (the 0007 pattern), proved live by a round trip (Task 2); the owner input "migrate
-    dev to 0008" (Task 6).
+    cells loaded from their files (the 0007 pattern), proved live by a round trip that compares the restored body's
+    source with 0003's and its details and every `jobs` cell, table and column, with a scratch database built
+    straight to 0007 (round 1, I5) (Task 2); the owner input "migrate dev to 0008" (Task 6).
 
 ### Rulings needing controller attention
 
@@ -215,17 +238,19 @@ controller can overrule them before execution:
   `GRANTS_0008`.
 - **(c) Ruling 15: the result names its attempt.** Each result UPDATE carries `AND attempts = %s AND delivered_at IS
   NULL`, so a delivery that outlived its lease and was claimed again cannot overwrite the newer claim's result; the
-  `Result.recorded` flag says whether it landed (Review Focus 1).
+  `Result.recorded` flag says whether it landed (Review Focus 1; a live test since round 1, M4).
 - **(d) Ruling 17: one path for the first announcement and the re-check.** The tick runs `deliver` (claims and result
   units only) and then `notify_dead_letters`, which finds every dead letter lacking its event and appends each in a
   unit of its own after re-checking inside it. A fresh dead letter is thus announced in the same tick, after its
   result unit, by the same code that closes the crash window; the R024 test's "crash" is simply `deliver` without the
   `notify_dead_letters` that follows it.
-- **(e) Ruling 8: the re-arm re-checks.** The scan reads unlocked (as ruled); the re-arm's own UPDATE repeats `done_at
-  IS NOT NULL`, the cap and the run's state, so a run the worker moved meanwhile is not re-armed.
-- **(f) Ruling 10: SKIP LOCKED.** The pull-forward picks its rows `FOR UPDATE SKIP LOCKED`: a row another worker's
-  claim holds is about to be deferred by that claim anyway (its NOWAIT meets the release's lease lock), and not
-  waiting keeps the release's new statement from adding a wait to the lock order.
+- **(e) Ruling 8: the re-arm re-checks.** The scan reads unlocked (as ruled); the re-arm's own UPDATE repeats every
+  condition of the scan on the row it takes (round 1, I7: the grace on `app.current_time()` and the newest-job choice
+  included), so a run the worker moved, or a job re-armed or replaced meanwhile, is left alone.
+- **(f) Ruling 10: SKIP LOCKED.** The pull-forward picks its rows `FOR UPDATE SKIP LOCKED`, so the release's new
+  statement adds no wait to the lock order. A claim that saw the lease live before the release took the lease row
+  still commits its own deferral to the old lease end, so that one job can wait up to it: bounded and rare (round 1,
+  M2 corrected the earlier claim that its NOWAIT always meets the release's lock).
 - **(g) Ruling 2: who writes what in the stress run.** No MCP definer appends repeatedly (a grant, SENT and an outcome
   each happen once per run), and the worker's `transition_run` moves a run through pre-grant states only, so in the
   stress run the worker writes through `append_event` and each `mcp_exec` connection drives its runs' grant, SENT and
@@ -251,18 +276,23 @@ The spec text stays authoritative until the owner decides; each line names the t
 Task 6 Step 3's "Plan I executed" block; in short:
 
 60. **SA:427**: the outbox's columns, `leased_until` as both lease and next-attempt time, no `api`/`worker` cell.
-61. **SA:419**: the sweeper's DELETE on `jobs`, for finished maintenance rows past 24 h only.
+61. **SA:419 and SA:520**: the sweeper's DELETE on `jobs`, held by a restrictive policy to finished maintenance rows;
+    the purge takes those past 24 h.
 62. **AM-20.4 and SA:345**: a lost wake-up is re-armed by reopening its job; no sweeper-made `resume_input`/`execute`.
-63. **SA:471, extending erratum 49**: `wakeups.sweep`, separate from the reclaim, its predicates, grace and cap.
+63. **SA:471, extending erratum 49**: `wakeups.sweep`, separate from the reclaim, its predicates, grace and cap, never
+    for a cancelled run; a finally refused grant is re-dispatched up to the cap.
 64. **BS:340 and the polling debts**: a wake-up is a job plus the sweep; polling is the v1 wake mechanism; a release
-    makes deferred jobs due.
+    makes the jobs deferred behind its lease due.
 65. **SA:452 and AM-80's event schema**: the closed payload keys (three added) and `status` only from the destination.
-66. **BS:524 (intent)**: the four types, the requester, channel `local`, the dedup key, the target-less conflict.
-67. **BS:524 (delivery)**: the tick's claim, lease, sink, result units, backoff and dead letter.
-68. **SA:188 and BS:514**: `notification.failed` once, in its own transaction, with the re-check.
+66. **BS:524 (intent)**: the five types (three emitted today, two from T22), the requester, channel `local`, the dedup
+    key, the target-less conflict.
+67. **BS:524 (delivery)**: the tick's per-tenant claim, lease, sink, result units, backoff and dead letter, a crashing
+    delivery bounded by the same cap, the sweep before the delivery.
+68. **SA:188 and BS:514**: `notification.failed` once, in its own transaction under an advisory lock, with the
+    re-check.
 69. **SA:520**: the sweeper's tenant iteration.
 70. **SA:504**: the `deliver_outbox` and `sweep_wakeups` audit rows.
-71. **SA:188, extending erratum 52**: the new units' place in the lock order.
+71. **SA:188, extending erratum 52**: the announcement's advisory lock and the new units' place in the lock order.
 
 ## File structure
 
@@ -282,7 +312,8 @@ Task 6 Step 3's "Plan I executed" block; in short:
 - Tests: `tests/plan_i/` (`event_cases.py`, `test_settings_t14.py`, `test_event_rules.py`, `test_locking_t14.py`,
   `test_migration_0008.py`, `test_outbox.py`, `test_sweeper_tick.py`, `test_wakeups.py`); `tests/e2e/`
   (`test_migration_0008_live.py`, `test_event_journal_live.py`, `test_outbox_live.py`, `test_wakeups_live.py`,
-  `conftest.py`'s `PURGE_ORDER`); edits to `tests/plan_e/test_transitions_table.py`, `tests/plan_b/test_evidence.py`,
+  `conftest.py`'s `PURGE_ORDER`, `test_roles_live.py`'s R106 policy set, `test_r105_walking_skeleton.py`'s leftover
+  check); edits to `tests/plan_e/test_transitions_table.py`, `tests/plan_b/test_evidence.py`,
   `tests/plan_h/test_faults_t13.py`, `test_reclaim.py`, `test_worker_units.py`.
 - Documentation (Task 6): `handoff/*`, `SESSION_STATE.md`, `STATUS.md`, `docs/ARCHITECTURE.md`,
   `docs/runbooks/events-and-outbox.md` (new), `docs/PROJECT_HISTORY.md`, `README.md`, `worker/README.md`,
@@ -294,19 +325,21 @@ Task 6 Step 3's "Plan I executed" block; in short:
   (regenerated); the seven lock-order units; `tests/plan_i`. Tests: `test_settings_t14.py` 10, `test_event_rules.py`
   40, `test_locking_t14.py` 2, Plan H's lock-order module +7, Plan C's conformance +3. Dev gate after: 1001 passed,
   134 skipped (no migration, service or live test changed; the live gate is not run).
-- **Task 2:** revision 0008, the matrix, `PURGE_ORDER`. Tests: `test_migration_0008.py` 5, the transitions module +1
-  (parametrised); live `test_migration_0008_live.py` 5. Dev 1007/139, live 1125/21 (arithmetic).
-- **Task 3:** the R089 proof. Tests: live `test_event_journal_live.py` 4. Dev 1007/143, live 1129/21 (arithmetic).
-- **Task 4:** the tenant iteration, the delivery loop, `LogSink`, the fault kind, the tick. Tests: `test_outbox.py` 12,
-  `test_sweeper_tick.py` 2; live `test_outbox_live.py` 3. Dev 1021/146, live 1146/21 (arithmetic).
-- **Task 5:** the wake-up sweep, the pull-forward, the purge, the tick. Tests: `test_wakeups.py` 7,
-  `test_sweeper_tick.py` +1; live `test_wakeups_live.py` 5. Dev 1029/151, live 1159/21 (arithmetic).
+- **Task 2:** revision 0008 (with the purge policy), the matrix, `PURGE_ORDER`, R106's policy set. Tests:
+  `test_migration_0008.py` 5, the transitions module +1 (parametrised); live `test_migration_0008_live.py` 6. Dev
+  1007/140, live 1126/21 (arithmetic).
+- **Task 3:** the R089 proof. Tests: live `test_event_journal_live.py` 4. Dev 1007/144, live 1130/21 (arithmetic).
+- **Task 4:** the tenant iteration, the delivery loop, `LogSink`, the fault kind, the tick. Tests: `test_outbox.py` 13,
+  `test_sweeper_tick.py` 2; live `test_outbox_live.py` 5. Dev 1022/149, live 1150/21 (arithmetic).
+- **Task 5:** the wake-up sweep, the pull-forward, the purge, the tick, R105's leftover check. Tests:
+  `test_wakeups.py` 7, `test_sweeper_tick.py` +1; live `test_wakeups_live.py` 5. Dev 1030/154, live 1163/21
+  (arithmetic).
 - **Task 6:** handoff records, acceptance rows, errata 60-71, runbook, history, READMEs, final gates. No tests.
 
 The arithmetic, once: dev passed 939 + 62 (Task 1: 10 + 40 + 2 + 7 + 3) = 1001, + 6 (Task 2: 5 + 1) = 1007, + 0 (Task
-3) = 1007, + 14 (Task 4: 12 + 2) = 1021, + 8 (Task 5: 7 + 1) = 1029; dev skipped 134, + 5 = 139, + 4 = 143, + 3 =
-146, + 5 = 151. The live gate's passed count is the dev count plus the live-gated tests (the dev skips minus the 21
-that skip in both gates: 113 today; 118, 122, 125, 130 after Tasks 2-5), so 1125, 1129, 1146, 1159, always with 21
+3) = 1007, + 15 (Task 4: 13 + 2) = 1022, + 8 (Task 5: 7 + 1) = 1030; dev skipped 134, + 6 = 140, + 4 = 144, + 5 =
+149, + 5 = 154. The live gate's passed count is the dev count plus the live-gated tests (the dev skips minus the 21
+that skip in both gates: 113 today; 119, 123, 128, 133 after Tasks 2-5), so 1126, 1130, 1150, 1163, always with 21
 skipped. The dev numbers were measured on a scratch copy; the live ones are not measured (see "Counts").
 
 ---
@@ -387,9 +420,14 @@ Allowed shortcuts in T14, each with its owning task:
   per-channel redaction and a destination's own deduplication → T39 (Slack, M15);
 - a delivery slower than the 30 s outbox lease can be delivered twice (at-least-once, BS:76), and so can a delivery
   whose result unit fails after the sink succeeded → T39 (a real channel's deduplication);
-- two sweeper processes could both append `notification.failed` for one dead letter in the same instant (the re-check
-  and the append are one transaction, but nothing serialises two sweepers on the outbox row; v1 runs one sweeper)
-  → T30;
+- `run.escalated` and `run.abandoned_unverified` are notification triggers with no emitter yet (`escalate_run` and
+  `resolve_escalation` do not exist); today a run escalates only through `record_outcome`'s CONFLICT, whose
+  `action.conflict` is a trigger → T22;
+- a grant refusal the execute handler takes as final (an inactive membership, a missing approval) finishes the job
+  and leaves the run APPROVED, so the wake-up sweep re-dispatches it until the job has been claimed
+  `OPS_WAKEUP_MAX_ATTEMPTS` times; moving such a run out of APPROVED (BLOCKED_REVIEW, AM-10) so the sweep stops → T21;
+- `_idempotent`'s "not reusable yet" refusal tells the client to use a new key for a key that just became reusable
+  (harmless; moved from the Plan G line that named T14/T28) → T28;
 - operator visibility of a dead letter is the `notification.failed` event plus a log line; a wake-up past its re-arm
   cap is a log line once per tick; dashboards and metrics → T28/T29;
 - `_append_event` bounds the payload's keys and `status`, not its size (BS:514 "bounded safe payload") → T45;
@@ -1071,16 +1109,30 @@ with:
     # then the outbox row (revision 0008's _append_event; a fresh row, its unique key serialised by the runs lock).
     "event append with notification intent (_append_event)": ("runs", "events", "outbox"),
     # The delivery loop claims and records in units of their own, and appends notification.failed in a separate
-    # transaction, so it never takes runs after outbox (SA:188).
+    # transaction, so it never takes runs after outbox (SA:188); that unit first takes the dead letter's advisory lock,
+    # so two sweepers never announce one dead letter twice (round 1, M5).
     "sweeper outbox claim (outbox.deliver)": ("outbox",),
     "sweeper outbox result (outbox.deliver)": ("outbox",),
-    "sweeper notification.failed (outbox.notify_dead_letters)": ("runs", "events"),
+    "sweeper notification.failed (outbox.notify_dead_letters)": ("advisory:notification", "runs", "events"),
     # The wake-up sweep reads runs and jobs without a lock and re-arms one job per unit; the purge deletes finished
     # maintenance rows, which belong to no run.
     "sweeper wake-up re-arm (wakeups.sweep)": ("jobs:finish",),
     "sweeper maintenance purge (wakeups.purge_maintenance)": ("jobs:finish",),
     "sweeper deliver_outbox and sweep_wakeups job records": ("jobs:claim",),
 }
+```
+
+Edit 3 (`core/src/ops_core/locking.py`, the advisory locks), replace:
+
+```python
+    "advisory:asset",  # SA:189: pg_advisory_xact_lock(hashtextextended(tenant || ':' || asset, 0)); taken by T21
+```
+
+with:
+
+```python
+    "advisory:asset",  # SA:189: pg_advisory_xact_lock(hashtextextended(tenant || ':' || asset, 0)); taken by T21
+    "advisory:notification",  # T14: pg_advisory_xact_lock(2, hashtext(outbox_id)), a dead letter's announcement
 ```
 
 Create `tests/plan_i/test_locking_t14.py`:
@@ -1117,6 +1169,8 @@ def test_no_unit_takes_runs_after_the_outbox() -> None:
         if "outbox" in entries and "runs" in entries:
             assert entries.index("runs") < entries.index("outbox"), unit
     assert locking.rank("events") < locking.rank("outbox") < locking.rank("jobs:finish")
+    # The announcement's advisory lock comes before every row lock its unit takes (round 1, M5).
+    assert locking.rank("advisory:notification") < locking.rank("runs")
 ```
 
 Run: `uv run python -m pytest tests/plan_i tests/plan_h/test_locking.py -q`
@@ -1149,7 +1203,8 @@ git commit -m "feat(core): outbox and wake-up settings, the event payload rules,
   `tests/e2e/test_migration_0008_live.py`
 - Modify: `core/src/ops_core/privileges.py:7-18` (docstring), `:116-121` (`jobs`), `:129` (`events`, the outbox row
   after it), `:148-149` (`RLS_TABLES`), `core/src/ops_core/locking.py:47` and `:55`,
-  `tests/plan_e/test_transitions_table.py:92-93` (`REVISIONS`), `tests/e2e/conftest.py:134` (`PURGE_ORDER`)
+  `tests/plan_e/test_transitions_table.py:92-93` (`REVISIONS`), `tests/e2e/conftest.py:134` (`PURGE_ORDER`),
+  `tests/e2e/test_roles_live.py:273-282` (R106's policy set)
 
 **Requirements:** R024's transactional, deduplicated intent (the SQL half); T14 review notes 1 and 2; rulings 4, 12,
 13, 20, 27 and 29; R006 (an exact downgrade); R124/R106 (the matrix and the policy, through the existing live tests).
@@ -1164,10 +1219,13 @@ git commit -m "feat(core): outbox and wake-up settings, the event payload rules,
   '-infinity', delivered_at timestamptz, result text IN ('delivered','retrying','dead_letter'), created_at)` with the
   composite key to `runs`, `tenant_isolation` and no `sweeper_all`; `privileges.GRANTS["outbox"] = {"sweeper":
   sel + upd(leased_until, attempts, delivered_at, result), "app_definer": ins}`; the sweeper's `dele` on `jobs`;
-  `app._append_event` refusing an unknown key (OC006 `unknown payload key`) and a `status` outside the destination's
-  four types (OC006 `status`) and inserting one intent per `run_id:type:local:requester` for `action.confirmed`,
-  `action.failed`, `run.escalated` and `run.abandoned_unverified`; in the revision: `PAYLOAD_KEYS_0008`,
-  `STATUS_TYPES_0008`, `NOTIFY_TYPES_0008`, `EVENT_TYPES_0008`, `GRANTS_0008`, `JOB_CELLS_0002`, `FUNCTIONS`, `RESTORED`, `DOWNGRADE`.
+  the restrictive policy `sweeper_purge_maintenance` (the sweeper's DELETE on `jobs` reaches finished maintenance
+  rows only; `privileges.SWEEPER_PURGE` holds its table, name and stored text); `app._append_event` refusing an
+  unknown key (OC006 `unknown payload key`) and a `status` outside the destination's four types (OC006 `status`) and
+  inserting one intent per `run_id:type:local:requester` for `action.confirmed`, `action.failed`, `action.conflict`,
+  `run.escalated` and `run.abandoned_unverified`; in the revision: `PAYLOAD_KEYS_0008`, `STATUS_TYPES_0008`,
+  `NOTIFY_TYPES_0008`, `EVENT_TYPES_0008`, `GRANTS_0008`, `JOB_CELLS_0002`, `PURGE_POLICY`, `FUNCTIONS`, `RESTORED`,
+  `DOWNGRADE`.
 
 - [ ] **Step 1: Write the failing revision tests**
 
@@ -1235,6 +1293,7 @@ def test_the_frozen_rule_literals_are_the_live_vocabulary() -> None:
     assert set(module.NOTIFY_TYPES_0008) == {
         "action.confirmed",
         "action.failed",
+        "action.conflict",  # round 1, I2: the escalation that exists today
         "run.escalated",
         "run.abandoned_unverified",
     }
@@ -1281,7 +1340,14 @@ def test_upgrade_creates_the_outbox_its_cells_and_its_policy(monkeypatch: pytest
             "CREATE POLICY tenant_isolation ON app.outbox FOR ALL TO api, worker, sweeper, app_definer"
             f" USING (tenant_id = {p.TENANT_EXPR}) WITH CHECK (tenant_id = {p.TENANT_EXPR})"
         ),
+        # Round 1, I6: the sweeper's DELETE reaches finished maintenance rows only (erratum 61).
+        "DROP POLICY IF EXISTS sweeper_purge_maintenance ON app.jobs",
+        (
+            "CREATE POLICY sweeper_purge_maintenance ON app.jobs AS RESTRICTIVE FOR DELETE TO sweeper"
+            " USING (run_id IS NULL AND done_at IS NOT NULL)"
+        ),
     ]
+    assert p.SWEEPER_PURGE[:2] == ("jobs", "sweeper_purge_maintenance")
     assert "ALTER TABLE app.outbox FORCE ROW LEVEL SECURITY" in seen
 
 
@@ -1303,7 +1369,7 @@ def test_the_downgrade_restores_0007(monkeypatch: pytest.MonkeyPatch) -> None:
     seen = statements(module, "downgrade", monkeypatch)
     rev0003 = revision("0003_run_path_functions")
     assert seen[0] == rev0003.APPEND_EVENT_HELPER  # the 0003 body, byte for byte, before the table goes
-    assert "DROP TABLE app.outbox" in seen
+    assert "DROP TABLE app.outbox" in seen and "DROP POLICY sweeper_purge_maintenance ON app.jobs" in seen
     assert seen.index("DROP TABLE app.outbox") > seen.index(OUTBOX_REVOKE)
     rev0002 = revision("0002_roles_grants_rls")
     tail = p.grant_statements(("jobs",), {"jobs": rev0002.GRANTS_0002["jobs"]}, revokees=module.MAIN_GRANTEES_0008)
@@ -1346,11 +1412,15 @@ erratum 60 reads it): written by `_append_event` in the transaction of the event
 the sweeper's delivery loop, its result recorded apart from the run (DoD 2). `leased_until` is both the claim's lease
 and the next attempt's time, so the sweeper's four AM-20.2 cells suffice; the payload is the event, by reference. RLS
 is `tenant_isolation` only: the sweeper iterates tenants (SA:520). The sweeper gains DELETE on `jobs` for the purge of
-finished maintenance rows (erratum 61).
+finished maintenance rows, and a restrictive policy keeps that DELETE to them: `sweeper_all` would otherwise let it
+delete any tenant's run jobs, whose dedup keys are what makes a wake-up happen once (erratum 61, round 1 I6).
 
 `_append_event` is re-created with two more rules (ruling 4, T14 review note 2, erratum 65): the payload is closed over
 the event schema's keys, and only the destination's four types carry a `status`; then, after the event, the
-notification intent of the four types a requester must hear about (ruling 13, erratum 66). Everything else in its
+notification intent of the five types a requester must hear about (ruling 13 as amended in round 1, I2; erratum 66):
+the action's outcome (`action.confirmed`, `action.failed`, `action.conflict`, all emitted today by `record_outcome`)
+and the run's end without one (`run.escalated`, `run.abandoned_unverified`, whose emitters arrive with T22).
+Everything else in its
 body is revision 0003's, the gap-free sequence included (`runs` FOR UPDATE, `next_event_seq + 1`, the insert, all in
 the caller's transaction, SA:303). Every cell, caller and body is frozen here; the downgrade restores 0007 exactly by
 re-running 0003's own body and 0002's own `jobs` cells, loaded from their files (the 0007 pattern).
@@ -1404,8 +1474,15 @@ PAYLOAD_KEYS_0008 = (
 )
 # The destination's four types, the only ones that carry a status (ops_core.outcomes.STATUS_EVENT_TYPES).
 STATUS_TYPES_0008 = ("action.confirmed", "action.failed", "action.conflict", "action.late_evidence")
-# The events a requester is notified of (ruling 13): the action's outcome and the run's end without one.
-NOTIFY_TYPES_0008 = ("action.confirmed", "action.failed", "run.escalated", "run.abandoned_unverified")
+# The events a requester is notified of (ruling 13, round 1 I2): the action's outcome, the conflict that escalates a run
+# today (record_outcome's CONFLICT emits action.conflict and no run.escalated), and the run's end without an outcome.
+NOTIFY_TYPES_0008 = (
+    "action.confirmed",
+    "action.failed",
+    "action.conflict",
+    "run.escalated",
+    "run.abandoned_unverified",
+)
 
 
 def literal_list(values: tuple[str, ...]) -> str:
@@ -1580,19 +1657,33 @@ FUNCTIONS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
 RESTORED: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
     ("_append_event", "uuid, uuid, text, text, jsonb", (), REV0003.APPEND_EVENT_HELPER),
 )
+# Round 1, I6: the sweeper's DELETE on jobs reaches finished maintenance rows only (sweeper_all is FOR ALL USING
+# (true), and a restrictive policy is ANDed with every permissive one). privileges.SWEEPER_PURGE_QUAL is the text
+# PostgreSQL stores for this expression, which R106 compares.
+PURGE_POLICY = (
+    "DROP POLICY IF EXISTS sweeper_purge_maintenance ON app.jobs",
+    (
+        "CREATE POLICY sweeper_purge_maintenance ON app.jobs AS RESTRICTIVE FOR DELETE TO sweeper"
+        " USING (run_id IS NULL AND done_at IS NOT NULL)"
+    ),
+)
 DOWNGRADE = (
+    "DROP POLICY sweeper_purge_maintenance ON app.jobs",
     f"REVOKE ALL ON app.outbox FROM {', '.join(MAIN_GRANTEES_0008)}",
     "DROP TABLE app.outbox",  # its policy and index go with it
 )
 
 
 def upgrade() -> None:
-    """The table, its frozen cells and policy, the jobs cells, then the function (body first, then its REVOKE)."""
+    """The table, its frozen cells and policy, the jobs cells and their purge policy, then the function (body first,
+    then its REVOKE)."""
     for statement in SCHEMA_CHANGES:
         op.execute(statement)
     for statement in privileges.grant_statements(TABLES, GRANTS_0008, revokees=MAIN_GRANTEES_0008):
         op.execute(statement)
     for statement in privileges.rls_statements(("outbox",), POLICY_ROLES_0008):
+        op.execute(statement)
+    for statement in PURGE_POLICY:
         op.execute(statement)
     for name, args, callers, body in FUNCTIONS:
         op.execute(body)
@@ -1601,8 +1692,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Back to 0007: 0003's `_append_event` first (so no function names the table), then the outbox goes and the
-    jobs cells are 0002's again."""
+    """Back to 0007: 0003's `_append_event` first (so no function names the table), then the purge policy and the
+    outbox go and the jobs cells are 0002's again."""
     for name, args, callers, body in RESTORED:
         op.execute(body)
         for statement in privileges.function_grant_statements(name, args=args, callers=callers):
@@ -1617,11 +1708,13 @@ Then `uv run ruff check --select ISC004 --fix --unsafe-fixes migrations/app/vers
 change expected: every implicit concatenation is already inside its own parentheses).
 
 Run: `uv run python -m pytest tests/plan_i/test_migration_0008.py tests/plan_e/test_transitions_table.py -q`
-Expected: `2 failed, 16 passed`: `test_the_frozen_cells_are_the_live_matrix` fails with `KeyError: 'outbox'` (the
-matrix has no outbox row yet) and `test_the_newest_revision_of_every_cell_equals_the_live_matrix` with
-`AssertionError: jobs` (the revision's sweeper cell carries DELETE, the matrix's does not; the walk meets `jobs`
-first, because revision 0002 put it in the dictionary before 0008 added `outbox`). The other tests pass already: the
-revision renders its own frozen cells, so nothing else reads the matrix.
+Expected: `3 failed, 15 passed`: `test_the_frozen_cells_are_the_live_matrix` fails with `KeyError: 'outbox'` (the
+matrix has no outbox row yet), `test_upgrade_creates_the_outbox_its_cells_and_its_policy` with `AttributeError:
+module 'ops_core.privileges' has no attribute 'SWEEPER_PURGE'`, and
+`test_the_newest_revision_of_every_cell_equals_the_live_matrix` with `AssertionError: jobs` (the revision's sweeper
+cell carries DELETE, the matrix's does not; the walk meets `jobs` first, because revision 0002 put it in the
+dictionary before 0008 added `outbox`). The other tests pass already: the revision renders its own frozen cells and
+policies, so nothing else reads the matrix.
 
 - [ ] **Step 3: The matrix rows**
 
@@ -1655,8 +1748,9 @@ lock on proposals, decisions, memberships or execution_grant (a lock needs UPDAT
 sweeper holds SELECT beside its DELETE on sessions, login_state, logout_jti and idempotency_request (a DELETE with a
 WHERE reads the row), login_state and logout_jti are rows the printed table lacks, model_permit has no sweeper cell
 (an expired permit is free by the same comparison, erratum 50), the outbox has no api or worker cell (only
-`_append_event` writes intent, erratum 60), and the sweeper may DELETE from jobs (the purge of finished maintenance
-rows, erratum 61). `test_harness` exists only in the test profile: the main-line revisions grant it nothing;
+`_append_event` writes intent, erratum 60), and the sweeper may DELETE from jobs, finished maintenance rows only (a
+restrictive policy, SWEEPER_PURGE, erratum 61). `test_harness` exists only in the test profile: the main-line
+revisions grant it nothing;
 ```
 
 Edit 2 (`core/src/ops_core/privileges.py`, the `jobs` row), replace:
@@ -1705,7 +1799,10 @@ with:
     "events",
     "outbox",
 )
-SWEEPER_ALL: Final = ("memberships", "jobs")  # SA:520: the only policies besides tenant_isolation
+SWEEPER_ALL: Final = ("memberships", "jobs")  # SA:520: the permissive policies besides tenant_isolation
+# T14 (Plan I round 1, I6; erratum 61): a restrictive DELETE policy keeps the sweeper's purge to finished maintenance
+# rows (sweeper_all would admit every tenant's run jobs). The text is what pg_policies.qual stores, which R106 compares.
+SWEEPER_PURGE: Final = ("jobs", "sweeper_purge_maintenance", "((run_id IS NULL) AND (done_at IS NOT NULL))")
 ```
 
 Edit 5 (`core/src/ops_core/locking.py`, the outbox entry), replace:
@@ -1757,6 +1854,36 @@ with:
     "DELETE FROM app.events WHERE run_id = %s",
 ```
 
+Edit 2 (`tests/e2e/test_roles_live.py`, R106's policy set), replace:
+
+```python
+    expected = {(t, "tenant_isolation") for t in p.RLS_TABLES} | {(t, "sweeper_all") for t in p.SWEEPER_ALL}
+    assert set(policies) == expected
+    for (table, name), row in policies.items():
+```
+
+with:
+
+```python
+    purge_table, purge_name, purge_qual = p.SWEEPER_PURGE
+    expected = (
+        {(t, "tenant_isolation") for t in p.RLS_TABLES}
+        | {(t, "sweeper_all") for t in p.SWEEPER_ALL}
+        | {(purge_table, purge_name)}
+    )
+    assert set(policies) == expected
+    # T14 (erratum 61): the one restrictive policy, the sweeper's DELETE on finished maintenance rows only.
+    purge = policies.pop((purge_table, purge_name))
+    assert (purge["permissive"], purge["cmd"], purge["roles"], purge["qual"], purge["with_check"]) == (
+        "RESTRICTIVE",
+        "DELETE",
+        ["sweeper"],
+        purge_qual,
+        None,
+    )
+    for (table, name), row in policies.items():
+```
+
 - [ ] **Step 5: The live revision test**
 
 Create `tests/e2e/test_migration_0008_live.py`:
@@ -1764,16 +1891,20 @@ Create `tests/e2e/test_migration_0008_live.py`:
 ```python
 """Revision 0008 against the per-session test database (OPS_LIVE=1; Plan I rulings 4, 12, 13, 20, 27, 29).
 
-Catches: a downgrade that leaves the outbox, the sweeper's DELETE on jobs or the new `_append_event` body behind (or
-an upgrade that does not bring them back); a payload rule the SQL enforces differently from the schema and the
-Python twin (the same table of cases, tests/plan_i/event_cases.py); an intent written for an event that needs none,
-written twice for one run and type, or written with someone other than the requester; an outbox an api or worker
-connection can write, a sweeper can read across tenants or delete from; and a function either MCP server may call
-that inserts a job (T14 review note 1: recover jobs are never created by an MCP server).
+Catches: a downgrade that leaves the outbox, the sweeper's DELETE on jobs, its purge policy or the new `_append_event`
+body behind, or that restores a `jobs` cell (table or column) or the 0003 body differently from a database that never
+saw 0008 (or an upgrade that does not bring them back); a payload rule the SQL enforces differently from the schema
+and the Python twin (the same table of cases, tests/plan_i/event_cases.py); an intent written for an event that needs
+none, written twice for one run and type, or written with someone other than the requester; an outbox an api or
+worker connection can write, a sweeper can read across tenants or delete from; a sweeper DELETE that reaches a run's
+job; and a function either MCP server may call, in any overload, that inserts a job (T14 review note 1: recover jobs
+are never created by an MCP server).
 """
 
+import importlib.util
 import re
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -1782,9 +1913,12 @@ import pytest
 from ops_core import persistence, settings
 from ops_core.outcomes import EventType
 from ops_core.settings import Profile, Role
+from psycopg import sql
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from tests.e2e.conftest import purge_run, purge_tenant
+from tests.e2e.test_migration_0007_live import FUNCTION_DETAILS, LEFTOVERS
 from tests.e2e.test_migrations_and_persistence import ALEX, new_run
 from tests.plan_i.event_cases import CASES
 
@@ -1796,23 +1930,63 @@ FAILED = {"action_id": str(uuid4()), "reason": "expired"}
 # Any statement that adds a row to app.jobs, whatever the spacing or schema prefix.
 INSERTS_A_JOB = re.compile(r"INSERT\s+INTO\s+(app\.)?jobs\b", re.IGNORECASE)
 CALLS = re.compile(r"app\.(\w+)\(")
+VERSIONS = Path(__file__).resolve().parents[2] / "migrations" / "app" / "versions"
+APPEND_SIGNATURE = "app._append_event(uuid,uuid,text,text,jsonb)"
+# Every table and column cell on jobs and outbox: a column-level UPDATE cell 0008's REVOKE ALL and re-grant could
+# drop is compared too (round 1, I5).
+CELLS = (
+    "SELECT grantee, table_name, privilege_type, NULL AS column_name FROM information_schema.role_table_grants"
+    " WHERE table_schema = 'app' AND table_name IN ('jobs', 'outbox')"
+    " UNION ALL SELECT grantee, table_name, privilege_type, column_name FROM information_schema.column_privileges"
+    " WHERE table_schema = 'app' AND table_name IN ('jobs', 'outbox') ORDER BY 1, 2, 3, 4"
+)
+POLICIES = "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'app' AND tablename IN ('jobs', 'outbox')"
+SCRATCH_PREFIX = "r007_"  # every scratch database this module creates; leftovers are dropped by prefix
+
+
+def revision_0003() -> Any:
+    """Revision 0003 loaded by path, for the `_append_event` body 0008's downgrade restores."""
+    spec = importlib.util.spec_from_file_location("live_rev_0003", VERSIONS / "0003_run_path_functions.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def built_to_0007(superuser: settings.Postgres) -> dict[str, Any]:
+    """`_append_event`'s details and the jobs and outbox cells as a database built straight to 0007 holds them (the
+    0007 module's pattern): a scratch database is created, upgraded by the applied revisions alone, read and dropped."""
+    from scripts.skeleton import upgrade
+
+    scratch = f"{SCRATCH_PREFIX}{uuid4().hex[:12]}"
+    try:
+        with psycopg.connect(superuser.conninfo(), autocommit=True, row_factory=dict_row) as admin:
+            for row in admin.execute(LEFTOVERS, (SCRATCH_PREFIX,)).fetchall():
+                admin.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(row["datname"])))
+            admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(scratch)))
+        target = settings.Postgres(superuser.host, superuser.port, superuser.user, scratch, superuser.password)
+        upgrade("app", target, "0007_leases_fences")
+        with psycopg.connect(target.conninfo(), row_factory=dict_row) as conn:
+            details = dict(conn.execute(FUNCTION_DETAILS, (APPEND_SIGNATURE,)).fetchone() or {})
+            cells = [tuple(row.values()) for row in conn.execute(CELLS).fetchall()]
+            return {"append": details, "cells": cells}
+    finally:
+        with psycopg.connect(superuser.conninfo(), autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(scratch)))
 
 
 async def snapshot(conn: persistence.Conn) -> dict[str, Any]:
-    """What revision 0008 changes, as comparable values: every app function's definition, the jobs and outbox cells,
-    the outbox's policies and whether the table exists."""
+    """What revision 0008 changes, as comparable values: every app function's definition, the jobs and outbox cells
+    (table and column), their policies and whether the outbox exists."""
     cur = await conn.execute(
         "SELECT p.oid::regprocedure::text AS signature, pg_get_functiondef(p.oid) AS body FROM pg_proc p"
         " JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' ORDER BY 1"
     )
     functions = {row["signature"]: row["body"] for row in await cur.fetchall()}
-    cur = await conn.execute(
-        "SELECT grantee, table_name, privilege_type FROM information_schema.role_table_grants"
-        " WHERE table_schema = 'app' AND table_name IN ('jobs', 'outbox') ORDER BY 1, 2, 3"
-    )
-    cells = [(row["grantee"], row["table_name"], row["privilege_type"]) for row in await cur.fetchall()]
-    cur = await conn.execute("SELECT policyname FROM pg_policies WHERE schemaname = 'app' AND tablename = 'outbox'")
-    policies = sorted(row["policyname"] for row in await cur.fetchall())
+    cur = await conn.execute(CELLS)
+    cells = [tuple(row.values()) for row in await cur.fetchall()]
+    cur = await conn.execute(POLICIES)
+    policies = sorted((row["tablename"], row["policyname"]) for row in await cur.fetchall())
     cur = await conn.execute("SELECT to_regclass('app.outbox') IS NOT NULL AS present")
     outbox = bool((await cur.fetchone())["present"])
     return {"functions": functions, "cells": cells, "policies": policies, "outbox": outbox}
@@ -1823,15 +1997,22 @@ async def test_the_round_trip_restores_0007(app_conn: persistence.Conn) -> None:
 
     superuser = settings.superuser_postgres()
     head = await snapshot(app_conn)
-    assert head["outbox"] and head["policies"] == ["tenant_isolation"]
-    assert ("sweeper", "jobs", "DELETE") in head["cells"]
+    assert head["outbox"] and ("outbox", "tenant_isolation") in head["policies"]
+    assert ("jobs", "sweeper_purge_maintenance") in head["policies"]
+    assert ("sweeper", "jobs", "DELETE", None) in head["cells"]
     try:
         downgrade("app", superuser, "0007_leases_fences")
         before = await snapshot(app_conn)
-        assert not before["outbox"] and before["policies"] == []
-        assert ("sweeper", "jobs", "DELETE") not in before["cells"]
-        body = before["functions"]["app._append_event(uuid,uuid,text,text,jsonb)"]
-        assert "INSERT INTO outbox" not in body and "unknown payload key" not in body  # 0003's body again
+        assert not before["outbox"] and ("jobs", "sweeper_purge_maintenance") not in before["policies"]
+        # The restored body is 0003's text exactly (its stored source is what lies between the dollar quotes), and
+        # its definition, ACL, owner and settings and every jobs cell, table and column, are what a database that
+        # never saw 0008 holds (round 1, I5).
+        cur = await app_conn.execute("SELECT prosrc FROM pg_proc WHERE oid = %s::regprocedure", (APPEND_SIGNATURE,))
+        assert (await cur.fetchone())["prosrc"] == revision_0003().APPEND_EVENT_HELPER.split("$fn$")[1]
+        reference = built_to_0007(superuser)
+        cur = await app_conn.execute(FUNCTION_DETAILS, (APPEND_SIGNATURE,))
+        assert dict(await cur.fetchone()) == reference["append"]
+        assert before["cells"] == reference["cells"]
     finally:
         assert migrate(Profile.TEST) == 0  # every later test needs the head
     assert await snapshot(app_conn) == head  # the upgrade brings back exactly what the downgrade took
@@ -1953,30 +2134,69 @@ async def test_no_function_an_mcp_server_may_call_inserts_a_job(app_conn: persis
     """T14 review note 1 (ruling 27): every function mcp_read or mcp_exec may execute, and every app function those
     call, transitively, is free of an INSERT into jobs; and neither role holds a table grant (SA:437)."""
     cur = await app_conn.execute(
-        "SELECT p.proname AS name, pg_get_functiondef(p.oid) AS body,"
+        "SELECT p.oid, p.proname AS name, pg_get_functiondef(p.oid) AS body,"
         " has_function_privilege('mcp_read', p.oid, 'EXECUTE') AS by_read,"
         " has_function_privilege('mcp_exec', p.oid, 'EXECUTE') AS by_exec"
         " FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app'"
     )
     rows = await cur.fetchall()
-    bodies = {row["name"]: row["body"] for row in rows}
-    reachable = {row["name"] for row in rows if row["by_read"] or row["by_exec"]}
-    assert {"resolve_invocation", "grant_execution", "mark_sent", "record_outcome", "lookup_action"} <= reachable
+    # Keyed by OID, so every overload's body is scanned; a call by name reaches every overload of that name (M9).
+    bodies = {row["oid"]: row["body"] for row in rows}
+    by_name: dict[str, set[int]] = {}
+    for row in rows:
+        by_name.setdefault(row["name"], set()).add(row["oid"])
+    names = {row["oid"]: row["name"] for row in rows}
+    reachable = {row["oid"] for row in rows if row["by_read"] or row["by_exec"]}
+    entry = {names[oid] for oid in reachable}
+    assert {"resolve_invocation", "grant_execution", "mark_sent", "record_outcome", "lookup_action"} <= entry
     frontier = set(reachable)
     while frontier:  # the helpers they call, and the helpers those call
-        called = {name for body in (bodies[f] for f in frontier) for name in CALLS.findall(body)}
-        frontier = {name for name in called if name in bodies} - reachable
+        called = {name for oid in frontier for name in CALLS.findall(bodies[oid])}
+        frontier = {oid for name in called for oid in by_name.get(name, set())} - reachable
         reachable |= frontier
     # The helpers the write path reaches today; a new one is checked automatically, a vanished one fails here.
-    assert {"_authority", "_resolve_handle", "_transition", "_append_event", "_latest_attempt", "_grant_row"} <= (
-        reachable
-    )
-    assert sorted(name for name in reachable if INSERTS_A_JOB.search(bodies[name])) == []
+    assert {"_authority", "_resolve_handle", "_transition", "_append_event", "_latest_attempt", "_grant_row"} <= {
+        names[oid] for oid in reachable
+    }
+    assert sorted(names[oid] for oid in reachable if INSERTS_A_JOB.search(bodies[oid])) == []
     cur = await app_conn.execute(
         "SELECT count(*) AS n FROM information_schema.role_table_grants"
         " WHERE grantee IN ('mcp_read', 'mcp_exec') AND table_schema = 'app'"
     )
     assert (await cur.fetchone())["n"] == 0
+
+
+async def test_the_sweeper_may_delete_finished_maintenance_rows_only(
+    app_conn: persistence.Conn, role_conn: RoleConn
+) -> None:
+    """Round 1, I6 (erratum 61): the restrictive policy keeps the sweeper's DELETE on jobs to finished maintenance
+    rows, whatever the statement says; sweeper_all alone would admit every tenant's run jobs."""
+    sweeper = await role_conn(Role.SWEEPER)
+    tenant, _, run = await new_run(app_conn, api=await role_conn(Role.API))
+    keys = {name: f"sync_memberships:t14-policy-{name}-{uuid4()}" for name in ("done", "open")}
+    try:
+        await app_conn.execute(
+            "UPDATE app.jobs SET done_at = app.current_time() - interval '30 hours' WHERE run_id = %s", (run,)
+        )
+        for name, done in (("done", "1 hour"), ("open", None)):
+            await app_conn.execute(
+                "INSERT INTO app.jobs (id, type, dedup_key, available_at, done_at)"
+                " VALUES (gen_random_uuid(), 'sync_memberships', %s, app.current_time(),"
+                " app.current_time() - %s::interval)",
+                (keys[name], done),
+            )
+        cur = await sweeper.execute("DELETE FROM app.jobs WHERE run_id = %s", (run,))
+        assert cur.rowcount == 0  # a run's finished job: invisible to the DELETE
+        cur = await sweeper.execute("DELETE FROM app.jobs WHERE dedup_key = %s", (keys["open"],))
+        assert cur.rowcount == 0  # an unfinished maintenance row: likewise
+        cur = await sweeper.execute("DELETE FROM app.jobs WHERE dedup_key = %s", (keys["done"],))
+        assert cur.rowcount == 1
+        cur = await app_conn.execute("SELECT count(*) AS n FROM app.jobs WHERE run_id = %s", (run,))
+        assert (await cur.fetchone())["n"] == 1
+    finally:
+        await app_conn.execute("DELETE FROM app.jobs WHERE dedup_key = ANY(%s)", (list(keys.values()),))
+        await purge_run(app_conn, run)
+        await purge_tenant(app_conn, tenant)
 ```
 
 Run (dev stack up, no skeleton process running):
@@ -1987,9 +2207,9 @@ OPS_LIVE=1 PROFILE=test PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migr
   tests/e2e/test_definers_run_path_live.py tests/e2e/test_definers_write_path_live.py -q
 ```
 
-Expected: `43 passed` (the new 5; the 0007 module's 5, whose round trip now passes through 0008's downgrade; the
-roles module's 7, R124 and R106 now with the outbox row, its policy and the sweeper's DELETE; the persistence
-module's 7; the run-path definers' 8, whose `append_event` cases keep their verdicts; the write-path definers' 11,
+Expected: `44 passed` (the new 6; the 0007 module's 5, whose round trip now passes through 0008's downgrade; the
+roles module's 7, R124 and R106 now with the outbox row, its policy, the sweeper's DELETE and its restrictive
+policy; the persistence module's 7; the run-path definers' 8, whose `append_event` cases keep their verdicts; the write-path definers' 11,
 whose `record_outcome` now also writes an intent that `purge_run` removes). This count is arithmetic, not
 measured: the plan's dry run cannot run live steps.
 
@@ -1998,12 +2218,12 @@ measured: the plan's dry run cannot run live steps.
 Format, lint and count characters on every file of this task (the revision after the ISC004 pass).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1007 passed, 139 skipped` (1001 + 5 + 1 parametrised revision; the 5 new live
+Expected: `CHECK: GREEN`; pytest `1007 passed, 140 skipped` (1001 + 5 + 1 parametrised revision; the 6 new live
 tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1125 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 118
-live-gated tests, 139 − 21). Then
+Expected: `CHECK: GREEN`; pytest `1126 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 119
+live-gated tests, 140 − 21). Then
 `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
@@ -2012,7 +2232,7 @@ Expected: exit 0.
 ```bash
 git add migrations/app/versions/0008_journal_outbox.py core/src/ops_core/privileges.py core/src/ops_core/locking.py
 git add tests/plan_i/test_migration_0008.py tests/plan_e/test_transitions_table.py tests/e2e/conftest.py
-git add tests/e2e/test_migration_0008_live.py
+git add tests/e2e/test_migration_0008_live.py tests/e2e/test_roles_live.py
 git commit -m "feat(migrations): revision 0008, the outbox, the payload rules and the intent in _append_event (T14)"
 ```
 
@@ -2090,15 +2310,20 @@ four roles and both kinds of writer: the worker's `transition_run` against the A
 that took n and rolled back leaves n to the next writer. The stress test runs eight connections of the four roles
 against three runs for ten seconds, every writer rolling back about half of its transactions, while one reader
 follows each run's cursor through the route and another counts each run's rows; afterwards every run holds exactly
-1..next_event_seq, and no read ever saw a hole below its maximum. The worker writes through `append_event` in the
+1..next_event_seq, the cursor reader followed every run to its counter without a skip, and the counting reader saw
+each run grow without a hole below its maximum. The worker writes through `append_event` in the
 stress run (its `transition_run` moves a run through pre-grant states only, which the stepped test covers); mcp-write
 writes the grant, SENT and outcome of each run, each first attempt rolled back. Writes evidence to
 reports/events/t14-events.txt (counts and verdicts; no handle, token or seeded tenant id).
 
 Catches: a sequence number taken outside the run lock (two writers with one number, or a reader seeing n+1 before n),
 a rolled-back writer that leaves a hole, a definer that appends without the lock, an events route that returns a
-later sequence before an earlier one has committed (the cursor would skip it for good), and an outbox intent written
-twice for one run under contention.
+later sequence before an earlier one has committed (the cursor would skip it for good), and a reader that passes
+because it read nothing (each reader must follow every run to its end, or see it grow).
+
+Every backend pid is read before any transaction opens, and no task is ever cancelled while it may be inside a
+database unit: a pid query queued behind a blocked statement on the same connection, or a cancelled unit left inside
+its transaction holding the run row, would hang the live gate instead of failing it (round 1, B1 and M3).
 """
 
 import asyncio
@@ -2106,6 +2331,7 @@ import random
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -2155,6 +2381,17 @@ async def sequences(app_conn: persistence.Conn, run: UUID) -> tuple[list[int], i
     return seen, int((await cur.fetchone())["next_event_seq"])
 
 
+async def settle(task: asyncio.Task[None], conn: persistence.Conn) -> None:
+    """Wait up to 5 s for a writer task without cancelling it: a cancelled unit could leave its connection inside its
+    transaction holding the run row, and the purge in `finally` would wait on it for good. A writer still pending
+    fails the test, and its connection is closed first so the server ends its transaction."""
+    done, _ = await asyncio.wait({task}, timeout=5)
+    if not done:
+        await conn.close()
+        raise AssertionError("the waiting writer never finished")
+    task.result()
+
+
 async def stepped(
     app_conn: persistence.Conn,
     store: DbStore,
@@ -2166,6 +2403,8 @@ async def stepped(
     """Writer A appends sequence n and holds it uncommitted; writer B's append waits on A (pg_blocking_pids); the
     route shows n only after A commits and n + 1 only after B commits. Returns n."""
     (a_conn, a_sql, a_params), (b_conn, b_sql, b_params) = a, b
+    # Both pids first: once B's statement waits in the database, its connection is busy until A ends (B1).
+    a_pid, b_pid = await backend_pid(a_conn), await backend_pid(b_conn)
     before = await route(store, tenant, run)
     n = len(before) + 1
     assert before == list(range(1, n))
@@ -2177,17 +2416,22 @@ async def stepped(
             b_appended.set()
             await b_may_commit.wait()
 
-    async with a_conn.transaction():
-        await a_conn.execute(a_sql, a_params)
-        assert await route(store, tenant, run, after=n - 1) == []  # n is taken, not committed: invisible
-        b_task = asyncio.create_task(writer_b())
-        holders = await wait_until_blocked(app_conn, await backend_pid(b_conn))
-        assert await backend_pid(a_conn) in holders  # B waits on A's run row lock, nothing else
-        assert not b_appended.is_set() and await route(store, tenant, run, after=n - 1) == []
-    await asyncio.wait_for(b_appended.wait(), timeout=5)  # A committed; B got n + 1 and holds it
-    assert await route(store, tenant, run, after=n - 1) == [n]  # the cursor sees n, never n + 1 first
-    b_may_commit.set()
-    await asyncio.wait_for(b_task, timeout=5)
+    b_task: asyncio.Task[None] | None = None
+    try:
+        async with a_conn.transaction():
+            await a_conn.execute(a_sql, a_params)
+            assert await route(store, tenant, run, after=n - 1) == []  # n is taken, not committed: invisible
+            b_task = asyncio.create_task(writer_b())
+            assert a_pid in await wait_until_blocked(app_conn, b_pid)  # B waits on A's run row lock
+            assert not b_appended.is_set() and await route(store, tenant, run, after=n - 1) == []
+        await asyncio.wait_for(b_appended.wait(), timeout=5)  # A committed; B got n + 1 and holds it
+        assert await route(store, tenant, run, after=n - 1) == [n]  # the cursor sees n, never n + 1 first
+        b_may_commit.set()
+        await settle(b_task, b_conn)
+    finally:
+        b_may_commit.set()  # a failed assertion must not leave B's transaction open: the purge would wait on it
+        if b_task is not None and not b_task.done():
+            await settle(b_task, b_conn)
     assert await route(store, tenant, run, after=n) == [n + 1]
     seen, counter = await sequences(app_conn, run)
     assert seen == list(range(1, n + 2)) and counter == n + 1
@@ -2245,6 +2489,7 @@ async def test_r089_a_rolled_back_writer_leaves_no_hole(
 ) -> None:
     """Ruling 3 (b): A takes n and rolls back; B, which waited on A, then gets n itself."""
     api, worker = await role_conn(Role.API), await role_conn(Role.WORKER)
+    api_pid, worker_pid = await backend_pid(api), await backend_pid(worker)  # before any unit opens (B1)
     tenant, _, run = await new_run(app_conn, api=api)
     try:
         b_got: list[int] = []
@@ -2258,8 +2503,8 @@ async def test_r089_a_rolled_back_writer_leaves_no_hole(
             cur = await api.execute(APPEND, (run, "tool.completed", Jsonb({"message": "rolled back"})))
             taken = int((await cur.fetchone())["sequence"])
             b_task = asyncio.create_task(writer_b())
-            assert await backend_pid(api) in await wait_until_blocked(app_conn, await backend_pid(worker))
-        await asyncio.wait_for(b_task, timeout=5)
+            assert api_pid in await wait_until_blocked(app_conn, worker_pid)
+        await settle(b_task, worker)  # A rolled back on leaving the block; B proceeds and commits
         assert b_got == [taken] == [2]  # the number A gave back, after run.accepted
         seen, counter = await sequences(app_conn, run)
         assert seen == [1, 2] and counter == 2
@@ -2335,28 +2580,46 @@ async def mcp_actor(conn: persistence.Conn, work: list[dict[str, Any]], tally: T
                 await asyncio.sleep(0.05)
 
 
-async def cursor_reader(store: DbStore, runs: list[UUID], stop: float, seen: dict[str, int]) -> list[str]:
-    """Follow each run's cursor through the events route; every page must continue exactly where the last one
-    ended (`after` + 1, contiguous). Returns the violations."""
-    last = dict.fromkeys(runs, 0)
-    wrong: list[str] = []
-    while time.monotonic() < stop + 0.5:
+@dataclass
+class Reading:
+    """What one reader saw: violations, and per run what proves it read while the writers wrote."""
+
+    wrong: list[str] = field(default_factory=list)
+    last: dict[UUID, int] = field(default_factory=dict)  # the cursor reader's final cursor per run
+    pages: Counter[UUID] = field(default_factory=Counter)  # its non-empty pages per run
+    highs: dict[UUID, set[int]] = field(default_factory=dict)  # the counting reader's distinct maxima per run
+
+
+async def follow(store: DbStore, run: UUID, reading: Reading) -> bool:
+    """One page after the run's cursor; it must continue exactly where the last one ended. True when non-empty."""
+    after = reading.last[run]
+    page = await route(store, ALPHA, run, after=after)
+    if page and page != list(range(after + 1, after + 1 + len(page))):
+        reading.wrong.append(f"after {after}: {page[:3]}")
+    if page:
+        reading.last[run] = page[-1]
+        reading.pages[run] += 1
+    return bool(page)
+
+
+async def cursor_reader(store: DbStore, runs: list[UUID], writers_done: asyncio.Event) -> Reading:
+    """Follow each run's cursor through the events route while the writers write, then to each run's end."""
+    reading = Reading(last=dict.fromkeys(runs, 0))
+    while not writers_done.is_set():
         for run in runs:
-            page = await route(store, ALPHA, run, after=last[run])
-            if page and page != list(range(last[run] + 1, last[run] + 1 + len(page))):
-                wrong.append(f"after {last[run]}: {page[:3]}")
-            if page:
-                last[run] = page[-1]
-            seen["pages"] += 1
+            await follow(store, run, reading)
         await asyncio.sleep(0.02)
-    return wrong
+    for run in runs:  # the writers are done: drain each run, so its final cursor must be its counter
+        while await follow(store, run, reading):
+            pass
+    return reading
 
 
-async def count_reader(conn: persistence.Conn, runs: list[UUID], stop: float, seen: dict[str, int]) -> list[str]:
-    """Count each run's committed rows against their maximum in one snapshot: a hole below the maximum would show as
-    fewer rows than the maximum. Returns the violations."""
-    wrong: list[str] = []
-    while time.monotonic() < stop + 0.5:
+async def count_reader(conn: persistence.Conn, runs: list[UUID], writers_done: asyncio.Event) -> Reading:
+    """Count each run's committed rows against their maximum in one snapshot while the writers write: a hole below
+    the maximum would show as fewer rows than the maximum."""
+    reading = Reading(highs={run: set() for run in runs})
+    while not writers_done.is_set():
         async with conn.transaction():
             await persistence.set_tenant(conn, ALPHA)
             cur = await conn.execute(
@@ -2366,10 +2629,10 @@ async def count_reader(conn: persistence.Conn, runs: list[UUID], stop: float, se
             )
             for row in await cur.fetchall():
                 if row["n"] != row["hi"]:
-                    wrong.append(f"{row['n']} rows below {row['hi']}")
-        seen["counts"] += 1
+                    reading.wrong.append(f"{row['n']} rows below {row['hi']}")
+                reading.highs[row["run_id"]].add(int(row["hi"]))
         await asyncio.sleep(0.02)
-    return wrong
+    return reading
 
 
 async def test_r089_stress_four_roles_three_runs_with_rollbacks(
@@ -2393,7 +2656,7 @@ async def test_r089_stress_four_roles_three_runs_with_rollbacks(
         }
         for conn in (c for group in actors.values() for c in group):
             await conn.execute(LOCK_TIMEOUT)
-        tally, seen = Tally(), {"pages": 0, "counts": 0}
+        tally, writers_done = Tally(), asyncio.Event()
         stop = time.monotonic() + STRESS_SECONDS
         appenders = [
             append_actor(conn, role.value, runs, tally, stop, f"{role.value}-{i}")
@@ -2404,21 +2667,28 @@ async def test_r089_stress_four_roles_three_runs_with_rollbacks(
             mcp_actor(actors[Role.MCP_EXEC][0], work[0::2], tally),
             mcp_actor(actors[Role.MCP_EXEC][1], work[1::2], tally),
         ]
-        readers = [
-            cursor_reader(DbStore(await role_conn(Role.API)), runs, stop, seen),
-            count_reader(await role_conn(Role.SWEEPER), runs, stop, seen),
-        ]
-        results = await asyncio.gather(*appenders, *mcp, *readers)
-        cursor_wrong, count_wrong = results[-2], results[-1]
-        assert cursor_wrong == [] and count_wrong == []
+
+        async def writers() -> None:
+            await asyncio.gather(*appenders, *mcp)
+            writers_done.set()
+
+        _, cursor, counts = await asyncio.gather(
+            writers(),
+            cursor_reader(DbStore(await role_conn(Role.API)), runs, writers_done),
+            count_reader(await role_conn(Role.SWEEPER), runs, writers_done),
+        )
+        assert cursor.wrong == [] and counts.wrong == []
         assert tally.errors == Counter()  # no 55P03 and no 40P01: one run row per transaction, one lock order
         for role in ("api", "worker", "sweeper", "mcp_exec"):  # every role both committed and gave numbers back
             assert tally.committed[role] >= 3 and tally.rolled_back[role] >= 3, role
-        assert seen["pages"] >= 100 and seen["counts"] >= 100  # the readers read while the writers wrote
         total = 0
         for run in runs:
             got, counter = await sequences(app_conn, run)
             assert got == list(range(1, counter + 1)), run  # gap-free: exactly 1..next_event_seq
+            # The readers read this run while it was written (round 1, I4): the cursor followed it to its counter
+            # through at least 20 non-empty pages, and the counting reader saw its maximum grow.
+            assert cursor.last[run] == counter and cursor.pages[run] >= 20, run
+            assert len(counts.highs[run]) > 1, run
             total += counter
             cur = await app_conn.execute(
                 "SELECT r.state, (SELECT count(*) FROM app.outbox o WHERE o.run_id = r.run_id) AS intents"
@@ -2429,8 +2699,9 @@ async def test_r089_stress_four_roles_three_runs_with_rollbacks(
         lines.append(
             f"R089 stress: 8 connections of api, worker, sweeper and mcp_exec on 3 runs for {STRESS_SECONDS:.0f} s;"
             f" committed {sum(tally.committed.values())}, rolled back {sum(tally.rolled_back.values())};"
-            f" {total} events, every run exactly 1..next_event_seq; route pages {seen['pages']},"
-            f" count samples {seen['counts']}, no hole and no skip seen; 55P03 0, 40P01 0"
+            f" {total} events, every run exactly 1..next_event_seq; the cursor followed every run to its counter in"
+            f" {sum(cursor.pages.values())} non-empty pages, the counter saw {sum(map(len, counts.highs.values()))}"
+            " distinct maxima; no hole and no skip; 55P03 0, 40P01 0"
         )
     finally:
         for run in runs:
@@ -2454,10 +2725,10 @@ here is a finding against revision 0003's mechanism (ruling 1), not a reason to 
 Format, lint and count characters on `tests/e2e/test_event_journal_live.py` and `tests/plan_b/test_evidence.py`.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1007 passed, 143 skipped` (the 4 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `1007 passed, 144 skipped` (the 4 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1129 passed, 21 skipped` (arithmetic, not measured: 1007 + 122 live-gated tests).
+Expected: `CHECK: GREEN`; pytest `1130 passed, 21 skipped` (arithmetic, not measured: 1007 + 123 live-gated tests).
 Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases`
 (`reports/events` stays for Task 6).
 
@@ -2495,8 +2766,12 @@ rulings 14-19 and 25; DEV-029's "fault-injectable outbox sink" (T24 review note)
   both); `ops_sweeper.outbox.Delivery`, `Sink` (protocol: `async deliver(delivery) -> None`, raises `SinkFailed`),
   `SinkFailed`, `LogSink(faults: Faults | None = None)`, `recipient_hash(recipient) -> str`,
   `backoff_seconds(attempts, chosen, rng=random.random) -> float`, `Result(outbox_id, tenant_id, run_id, result,
-  attempts, recorded)`, `deliver(conn, sink, chosen, *, tenants=None, rng=random.random) -> list[Result]`,
-  `notify_dead_letters(conn, *, tenants=None) -> list[UUID]`, `DEAD_LETTER_CODE`; `ops_sweeper.main.Deps.sink`,
+  attempts, recorded)`, `deliver(conn, sink, chosen, *, tenants=None, rng=random.random) -> list[Result]` (one
+  tenant claimed, delivered and recorded after another; the claim first dead-letters rows whose attempts reached the
+  cap, `EXHAUSTED`), `record_result(conn, *, row, result, chosen, rng) -> bool` (the result unit's statement for the
+  attempt the row was claimed at), `notify_dead_letters(conn, *, tenants=None) -> list[UUID]` (each announcement's
+  unit opens with `ANNOUNCE_LOCK`, `pg_advisory_xact_lock(2, hashtext(outbox_id))`), `DEAD_LETTER_CODE`;
+  `ops_sweeper.main.Deps.sink`,
   `Deps.outbox_settings`, `main.deliver_outbox(deps)`, `main.record(deps, job_type)` (Task 5 calls it for
   `sweep_wakeups`).
 
@@ -2511,9 +2786,11 @@ own.
 
 Catches: a delivery made while the claim's transaction is still open (a slow sink would hold row locks, and a crash
 would roll the claim back and lose the lease), a result recorded in the claim's unit, a retry without backoff or
-with an uncapped one, a row dead-lettered one attempt early or late, a recipient written to a log in clear, a
-notification.failed appended in the result's transaction (it locks runs after outbox, SA:188) or appended twice for
-one dead letter, a payload `_append_event` would refuse, and a fault hook that exists outside the test profile.
+with an uncapped one, a row dead-lettered one attempt early or late, a row whose delivery crashes every time claimed
+without bound (round 1, I1), a tenant's rows left waiting behind another tenant's deliveries, a recipient written to
+a log in clear, a notification.failed appended in the result's transaction (it locks runs after outbox, SA:188),
+appended twice for one dead letter or without the lock that serialises two sweepers, a payload `_append_event` would
+refuse, and a fault hook that exists outside the test profile.
 """
 
 import asyncio
@@ -2612,9 +2889,11 @@ class Recording:
     def __init__(self, conn: FakeConn, fail: bool) -> None:
         self.conn, self.fail = conn, fail
         self.calls: list[tuple[outbox.Delivery, bool]] = []
+        self.units: list[int] = []  # the last unit the connection had opened when each delivery was made
 
     async def deliver(self, delivery: outbox.Delivery) -> None:
         self.calls.append((delivery, self.conn.open))
+        self.units.append(self.conn.unit)
         if self.fail:
             raise outbox.SinkFailed("down")
 
@@ -2689,17 +2968,25 @@ def test_a_delivery_runs_between_its_claim_and_its_result_unit(attempts: int, fa
     assert results == [outbox.Result(row["outbox_id"], ALPHA, row["run_id"], result, attempts, True)]
     ((delivery, open_transaction),) = sink.calls
     assert not open_transaction and delivery.attempt == attempts  # delivered outside any transaction
-    (claim_unit, claim, claim_params), (result_unit, record, record_params) = conn.log
-    assert result_unit == claim_unit + 1  # the result is its own unit
+    (exhaust_unit, exhaust, exhaust_params), (claim_unit, claim, claim_params), (result_unit, record, record_params) = (
+        conn.log
+    )
+    assert exhaust_unit == claim_unit and result_unit == claim_unit + 1  # the result is its own unit
+    # Round 1, I1: a row whose attempts reached the cap and whose lease ran out (its last delivery crashed) is
+    # dead-lettered in the claim's unit, before the claim, which takes only rows still under the cap.
+    assert exhaust.startswith("UPDATE app.outbox SET result = 'dead_letter' WHERE delivered_at IS NULL")
+    assert "attempts >= %s AND leased_until <= app.current_time()" in exhaust
+    assert exhaust_params == (SETTINGS.max_attempts,)
     for condition in (
         "delivered_at IS NULL",
         "result IS DISTINCT FROM 'dead_letter'",
         "leased_until <= app.current_time()",
+        "attempts < %s",
         "FOR UPDATE SKIP LOCKED",
         "attempts = attempts + 1",
     ):
         assert condition in claim, condition
-    assert claim_params == (SETTINGS.lease_seconds, SETTINGS.batch)
+    assert claim_params == (SETTINGS.lease_seconds, SETTINGS.max_attempts, SETTINGS.batch)
     assert "AND attempts = %s AND delivered_at IS NULL" in record  # a stale result never overwrites a newer claim
     if result == "delivered":
         assert "result = 'delivered'" in record and record_params == (row["outbox_id"], attempts)
@@ -2714,7 +3001,19 @@ def test_an_unclaimed_tenant_delivers_nothing() -> None:
     as_conn: Any = conn
     sink = Recording(conn, fail=False)
     assert run(outbox.deliver(as_conn, sink, SETTINGS)) == [] and sink.calls == []
-    assert [unit for unit, _, _ in conn.log] == [1, 2]  # one claim per tenant, nothing else
+    assert [unit for unit, _, _ in conn.log] == [1, 1, 2, 2]  # one claim unit per tenant, nothing else
+
+
+def test_each_tenant_is_delivered_before_the_next_is_claimed() -> None:
+    """Round 1, M10: a tenant's rows are claimed, delivered and recorded before the next tenant is claimed, so no
+    claimed row's lease runs while other tenants' deliveries go first."""
+    conn = FakeConn({"WITH claimed AS (UPDATE app.outbox": [claimed(1)]})
+    as_conn: Any = conn
+    sink = Recording(conn, fail=False)
+    results = run(outbox.deliver(as_conn, sink, SETTINGS))
+    assert [r.tenant_id for r in results] == [ALPHA, BETA]
+    assert sink.units == [1, 3]  # ALPHA delivered after its claim (unit 1); BETA claimed (unit 3) after ALPHA's result
+    assert [unit for unit, _, _ in conn.log] == [1, 1, 2, 3, 3, 4]
 
 
 def test_a_dead_letter_gets_its_event_in_a_transaction_of_its_own(database: list[Any]) -> None:
@@ -2731,8 +3030,11 @@ def test_a_dead_letter_gets_its_event_in_a_transaction_of_its_own(database: list
     payload = kwargs["payload"]
     assert payload["outbox_id"] == str(outbox_id) and payload["code"] == outbox.DEAD_LETTER_CODE
     event_rules_ok(EventType.NOTIFICATION_FAILED, EventSource.APPLICATION, payload)  # what _append_event accepts
-    recheck = [s for u, s, _ in conn.log if u == unit]
-    assert len(recheck) == 1 and "AND o.outbox_id = %s" in recheck[0]
+    # The unit's first statement is the advisory lock on the outbox id (two sweepers serialise there, round 1 M5),
+    # then the re-check; the append follows in the same unit.
+    (lock, lock_params), (recheck, _) = [(s, params) for u, s, params in conn.log if u == unit]
+    assert lock == outbox.ANNOUNCE_LOCK and lock_params == (str(outbox_id),)
+    assert "AND o.outbox_id = %s" in recheck
 
 
 def test_a_dead_letter_already_notified_gets_no_second_event(database: list[Any]) -> None:
@@ -2765,7 +3067,7 @@ def test_an_unexpected_sink_error_leaves_the_row_leased(monkeypatch: pytest.Monk
 
     with pytest.raises(RuntimeError):
         run(outbox.deliver(as_conn, Broken(), SETTINGS, tenants=[ALPHA]))
-    assert len(conn.log) == 1  # the claim only
+    assert len(conn.log) == 2  # the claim's unit only: nothing is recorded for a crash
 ```
 
 Edit 1 (`tests/plan_h/test_faults_t13.py`, the BS:405 test), replace:
@@ -2896,18 +3198,22 @@ Create `sweeper/src/ops_sweeper/outbox.py`:
 """The notification outbox's delivery loop (BS:524; Plan I rulings 13-17; errata 66-68), run by the sweeper's tick.
 
 `_append_event` writes one intent per run, event type, channel and recipient in the event's own transaction (revision
-0008). Here, per tenant: a claim unit leases a batch of due rows (`FOR UPDATE SKIP LOCKED`, `leased_until` moved one
-lease ahead, `attempts + 1`) and commits; each row is handed to the sink outside any transaction; then one result
-unit per row records `delivered`, or `retrying` with a capped, jittered backoff in `leased_until`, or `dead_letter`
-at the last attempt. The result names the attempt it belongs to, so a delivery that outlived its lease and was
-claimed again cannot overwrite the newer claim's result. A sink that crashes records nothing, and the row comes back
-when its lease runs out. The run's state is never touched: the delivery result is recorded apart from the action's
-outcome (DoD 2, BS:685).
+0008). Here, one tenant after another: a claim unit first dead-letters the rows whose attempts reached the cap and
+whose lease ran out (a delivery that crashed on its last attempt), then leases a batch of due rows (`FOR UPDATE SKIP
+LOCKED`, `leased_until` moved one lease ahead, `attempts + 1`) and commits; each row is handed to the sink outside any
+transaction; then one result unit per row records `delivered`, or `retrying` with a capped, jittered backoff in
+`leased_until`, or `dead_letter` at the last attempt. The tenant's rows are delivered before the next tenant is
+claimed, so no claimed row waits behind another tenant's deliveries. The result names the attempt it belongs to, so a
+delivery that outlived its lease and was claimed again cannot overwrite the newer claim's result. A sink that crashes
+records nothing: the row comes back when its lease runs out, and once its attempts reached the cap the next claim
+dead-letters it, so a row that crashes every delivery is bounded like one that fails (round 1, I1). The run's state is
+never touched: the delivery result is recorded apart from the action's outcome (DoD 2, BS:685).
 
 A dead letter is announced by `notification.failed`, appended through `append_event` in a transaction of its own
 after the result unit, because `append_event` locks `runs` and SA:188 forbids taking `runs` after `outbox`. The
 dead letters still lacking that event are found again on every tick (`notify_dead_letters`), which closes the crash
-window between the result and the event; the re-check and the append share one transaction.
+window between the result and the event. The announcement's unit takes a transaction advisory lock on the outbox id
+first, then re-checks and appends, so two sweepers never announce one dead letter twice.
 
 The v1 sink is `LogSink`: one log line per delivery and no egress (no channel is approved before Slack, T39). Its
 fault hook, `outbox_sink_fail`, exists only in the test profile and is armed through the sink's `faults` argument.
@@ -2937,12 +3243,18 @@ DEAD_LETTER_CODE = "notification_dead_letter"
 # BS:516: infrastructure failures are reported from templates, never from a model.
 DEAD_LETTER_MESSAGE = "The notification could not be delivered after {attempts} attempts; the run's outcome stands."
 
+# A row whose attempts reached the cap and whose lease ran out had its last delivery crash (a refusal would have
+# dead-lettered it in its result unit): it is not claimed again, it is dead-lettered (round 1, I1).
+EXHAUSTED = (
+    "UPDATE app.outbox SET result = 'dead_letter' WHERE delivered_at IS NULL"
+    " AND result IS DISTINCT FROM 'dead_letter' AND attempts >= %s AND leased_until <= app.current_time()"
+)
 CLAIM = (
     "WITH claimed AS (UPDATE app.outbox SET leased_until = app.current_time() + make_interval(secs => %s),"
     " attempts = attempts + 1"
     " WHERE outbox_id IN (SELECT outbox_id FROM app.outbox"
     " WHERE delivered_at IS NULL AND result IS DISTINCT FROM 'dead_letter' AND leased_until <= app.current_time()"
-    " ORDER BY created_at, outbox_id FOR UPDATE SKIP LOCKED LIMIT %s)"
+    " AND attempts < %s ORDER BY created_at, outbox_id FOR UPDATE SKIP LOCKED LIMIT %s)"
     " RETURNING outbox_id, tenant_id, run_id, event_id, channel, recipient, attempts)"
     " SELECT c.outbox_id, c.tenant_id, c.run_id, c.event_id, c.channel, c.recipient, c.attempts, e.type"
     " FROM claimed c JOIN app.events e ON e.event_id = c.event_id ORDER BY c.outbox_id"
@@ -2956,6 +3268,9 @@ RETRY = (
     " WHERE outbox_id = %s AND attempts = %s AND delivered_at IS NULL"
 )
 DEAD = "UPDATE app.outbox SET result = 'dead_letter' WHERE outbox_id = %s AND attempts = %s AND delivered_at IS NULL"
+# The announcement's lock (lock order: advisory:notification): the two-key space with class 2, apart from the API's
+# idempotency lock (class 1, erratum 37) and the asset guard's one-key space (SA:189).
+ANNOUNCE_LOCK = "SELECT pg_advisory_xact_lock(2, hashtext(%s))"
 UNNOTIFIED = (
     "SELECT o.outbox_id, o.run_id, o.attempts FROM app.outbox o WHERE o.result = 'dead_letter'"
     " AND NOT EXISTS (SELECT 1 FROM app.events e WHERE e.run_id = o.run_id AND e.type = 'notification.failed'"
@@ -3034,13 +3349,15 @@ def backoff_seconds(attempts: int, chosen: OutboxSettings, rng: Callable[[], flo
 
 
 async def _claim(conn: persistence.Conn, *, chosen: OutboxSettings) -> list[dict[str, Any]]:
-    cur = await conn.execute(CLAIM, (chosen.lease_seconds, chosen.batch))
+    await conn.execute(EXHAUSTED, (chosen.max_attempts,))
+    cur = await conn.execute(CLAIM, (chosen.lease_seconds, chosen.max_attempts, chosen.batch))
     return [dict(row) for row in await cur.fetchall()]
 
 
-async def _record(
+async def record_result(
     conn: persistence.Conn, *, row: dict[str, Any], result: str, chosen: OutboxSettings, rng: Callable[[], float]
 ) -> bool:
+    """Record one claimed row's result for the attempt it was claimed at; False when a newer claim moved it on."""
     if result == "delivered":
         cur = await conn.execute(DELIVERED, (row["outbox_id"], row["attempts"]))
     elif result == "retrying":
@@ -3059,15 +3376,18 @@ async def deliver(
     tenants: Sequence[UUID] | None = None,
     rng: Callable[[], float] = random.random,
 ) -> list[Result]:
-    """Claim each tenant's due rows, deliver them outside any transaction, record each result in a unit of its own.
+    """For one tenant after another: claim its due rows, deliver them outside any transaction, record each result in
+    a unit of its own.
 
     Raises:
-        Whatever the sink raises other than SinkFailed: the claimed rows stay leased and come back when the lease
-        runs out (a crashed delivery is retried, never lost).
+        Whatever the sink raises other than SinkFailed: the rows claimed and not yet recorded stay leased and come back
+        when the lease runs out, or are dead-lettered by the next claim once their attempts reached the cap (a crashed
+        delivery is retried, never lost, and never retried without bound).
     """
-    claimed = await for_each_tenant(conn, functools.partial(_claim, chosen=chosen), tenants=tenants)
+    chosen_tenants = await persistence.tenants(conn) if tenants is None else list(tenants)
     results: list[Result] = []
-    for tenant, rows in claimed.items():
+    for tenant in chosen_tenants:
+        rows = await in_tenant(conn, tenant, functools.partial(_claim, chosen=chosen))
         for row in rows:
             delivery = Delivery(
                 outbox_id=row["outbox_id"],
@@ -3094,7 +3414,7 @@ async def deliver(
                 )
             else:
                 result = "delivered"
-            work = functools.partial(_record, row=row, result=result, chosen=chosen, rng=rng)
+            work = functools.partial(record_result, row=row, result=result, chosen=chosen, rng=rng)
             recorded = await in_tenant(conn, tenant, work)
             results.append(Result(row["outbox_id"], tenant, row["run_id"], result, int(row["attempts"]), recorded))
     return results
@@ -3106,8 +3426,9 @@ async def _unnotified(conn: persistence.Conn) -> list[dict[str, Any]]:
 
 
 async def _notify(conn: persistence.Conn, *, row: dict[str, Any]) -> bool:
-    # The re-check runs in the append's own transaction, so a tick that already appended the event (or a crash
-    # after it) is seen here and nothing is appended twice.
+    # The advisory lock serialises two sweepers on this dead letter; the re-check then runs in the append's own
+    # transaction, so an event another tick (or a crash after it) already appended is seen here, never added twice.
+    await conn.execute(ANNOUNCE_LOCK, (str(row["outbox_id"]),))
     cur = await conn.execute(UNNOTIFIED + " AND o.outbox_id = %s", (row["outbox_id"],))
     if await cur.fetchone() is None:
         return False
@@ -3140,7 +3461,7 @@ async def notify_dead_letters(conn: persistence.Conn, *, tenants: Sequence[UUID]
 ```
 
 Run: `uv run python -m pytest tests/plan_i/test_outbox.py tests/plan_h/test_faults_t13.py -q`
-Expected: `16 passed` (the new module's 12, three of them the parametrised deliveries; Plan H's faults module's 4).
+Expected: `17 passed` (the new module's 13, three of them the parametrised deliveries; Plan H's faults module's 4).
 
 - [ ] **Step 4: The tick delivers, re-checks and records its minute**
 
@@ -3158,10 +3479,11 @@ with:
 
 ```python
 60 s holds with margin). The same tick purges expired rows, hands back the jobs whose run lease died with their
-worker (T13, `leases.reclaim`) and delivers the notification outbox (T14, `outbox.deliver`, then the dead letters'
-`notification.failed`), recording each minute's `deliver_outbox` job the way it records the sync. Readiness is 200
-only while the last successful sync is younger than 120 s, the window after which `grant_execution` refuses (T11
-review note 2), so `scripts/skeleton.py up` waits for the first sync. TODO(T21): proposal expiry.
+worker (T13, `leases.reclaim`) and, last, delivers the notification outbox (T14: this minute's `deliver_outbox` row,
+then `outbox.deliver`, then the dead letters' `notification.failed`), so a delivery that crashes ends the tick after
+everything else has run. Readiness is 200 only while the last successful sync is younger than 120 s, the window after
+which `grant_execution` refuses (T11 review note 2), so `scripts/skeleton.py up` waits for the first sync.
+TODO(T21): proposal expiry.
 """
 ```
 
@@ -3261,8 +3583,9 @@ with:
 ```python
 async def tick(deps: Deps) -> None:
     """Sync; if it succeeded, record this minute's maintenance job (insert, claim, finish); purge expired rows; hand
-    back the jobs of dead or lost run leases (T13); deliver the outbox (T14). Everything after the sync runs whether
-    or not Keycloak answered."""
+    back the jobs of dead or lost run leases (T13); deliver the outbox (T14), last, so a delivery that crashes
+    (anything but a refusal, which is a failed attempt) skips nothing else. Everything after the sync runs whether or
+    not Keycloak answered."""
     if await run_sync(deps):
         await record(deps, JobType.SYNC_MEMBERSHIPS)
     counts = await sync.purge_expired(deps.conn)
@@ -3275,8 +3598,11 @@ async def tick(deps: Deps) -> None:
 
 
 async def deliver_outbox(deps: Deps) -> None:
-    """The outbox's delivery loop over every tenant, then `notification.failed` for every dead letter that lacks it
-    (the result units first, the events after, SA:188), then this minute's `deliver_outbox` record (ruling 19)."""
+    """This minute's `deliver_outbox` record first (ruling 19: the audit row of the attempt), then the delivery loop
+    over every tenant, then `notification.failed` for every dead letter that lacks it (the result units first, the
+    events after, SA:188). A delivery that crashes propagates to the loop's catch-all after the record; its row is
+    claimed again when its lease ends and dead-lettered by the claim once its attempts reached the cap (round 1, I1)."""
+    await record(deps, JobType.DELIVER_OUTBOX)
     results = await outbox.deliver(deps.conn, deps.sink, deps.outbox_settings)
     announced = await outbox.notify_dead_letters(deps.conn)
     if results or announced:
@@ -3288,7 +3614,6 @@ async def deliver_outbox(deps: Deps) -> None:
             outcomes.count("dead_letter"),
             len(announced),
         )
-    await record(deps, JobType.DELIVER_OUTBOX)
 
 
 async def record(deps: Deps, job_type: JobType) -> None:
@@ -3379,11 +3704,11 @@ with:
 Create `tests/plan_i/test_sweeper_tick.py`:
 
 ```python
-"""The sweeper's tick after T14 (Plan I rulings 15 and 19), without a database: the outbox's delivery, then its dead
-letters' events, then this minute's audit row, and the default sink.
+"""The sweeper's tick after T14 (Plan I rulings 15 and 19; round 1, I1), without a database: this minute's audit row,
+then the outbox's delivery, then its dead letters' events, and the default sink.
 
-Catches: a dead letter announced before its result unit, a maintenance row recorded before the work it records (or
-not at all), and a production sink that carries a fault hook.
+Catches: a dead letter announced before its result unit, a maintenance row left unrecorded when a delivery crashes,
+and a production sink that carries a fault hook.
 """
 
 import asyncio
@@ -3404,7 +3729,7 @@ def test_the_default_sink_is_the_log_sink_without_faults() -> None:
     assert isinstance(sink, outbox.LogSink) and sink.faults is None  # no fault outside a test's own sink
 
 
-def test_delivery_runs_before_the_announcements_and_the_record(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_record_comes_first_then_delivery_then_the_announcements(monkeypatch: pytest.MonkeyPatch) -> None:
     order: list[str] = []
 
     async def deliver(_conn: Any, _sink: Any, _chosen: Any) -> list[outbox.Result]:
@@ -3422,11 +3747,11 @@ def test_delivery_runs_before_the_announcements_and_the_record(monkeypatch: pyte
     monkeypatch.setattr(outbox, "notify_dead_letters", notify)
     monkeypatch.setattr(main, "record", record)
     asyncio.run(main.deliver_outbox(deps()))
-    assert order == ["deliver", "notify", "record deliver_outbox"]
+    assert order == ["record deliver_outbox", "deliver", "notify"]
 ```
 
 Run: `uv run python -m pytest tests/plan_i tests/plan_h/test_reclaim.py tests/plan_f/test_sweeper.py -q`
-Expected: `82 passed` (Plan I's 71: 52 from Task 1, 5 from Task 2, the outbox's 12 and the tick's 2; the reclaim
+Expected: `83 passed` (Plan I's 72: 52 from Task 1, 5 from Task 2, the outbox's 13 and the tick's 2; the reclaim
 module's 2, its tick test now patching the delivery; Plan F's sweeper module's 9, whose `Deps` gains defaulted fields).
 
 - [ ] **Step 5: The live R024 test**
@@ -3449,10 +3774,12 @@ Writes evidence to reports/outbox/t14-outbox.txt (verdicts and counts; no recipi
 
 Catches: an intent written outside the outcome's transaction or twice, a delivery failure that touches the run, a
 retry that comes back before its backoff or never, a row dead-lettered early or late, a dead letter announced twice
-or never, a crashed delivery that is lost instead of retried when its lease runs out, a recipient in a log line, and
-a sweeper that delivers one tenant's rows under another's setting.
+or never, a crashed delivery that is lost instead of retried when its lease runs out, one that crashes every time and
+is retried without bound, a late result that overwrites a newer claim's, a recipient in a log line, and a sweeper
+that delivers one tenant's rows under another's setting.
 """
 
+import functools
 import logging
 import time
 from collections.abc import Awaitable, Callable, Iterator
@@ -3466,6 +3793,7 @@ from ops_core import persistence
 from ops_core.settings import OutboxSettings, Profile, Role
 from ops_core.testing.faults import FaultKind, Faults
 from ops_sweeper import outbox
+from ops_sweeper.tenants import in_tenant
 from psycopg.types.json import Jsonb
 
 from tests.e2e.conftest import purge_run, purge_tenant
@@ -3477,7 +3805,7 @@ pytestmark = pytest.mark.asyncio
 
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 EVIDENCE = Path("reports/outbox/t14-outbox.txt")
-EXPECTED_LINES = 3  # one per test
+EXPECTED_LINES = 5  # one per test
 # The defaults but a 60 s first backoff: a retry must stay "not due" while the test looks at it (2 s could pass),
 # and every backoff stays under 375 s (60 doubling, capped at 300, plus a quarter), so a 400 s clock step makes it due.
 CHOSEN = OutboxSettings(backoff_base_seconds=60)
@@ -3712,6 +4040,68 @@ async def test_a_crashed_delivery_is_claimed_again_when_its_lease_runs_out(
         if staged is not None:
             await purge_run(app_conn, staged.run)
         await purge_tenant(app_conn, tenant)
+
+
+async def test_a_delivery_that_keeps_crashing_is_dead_lettered_at_its_cap(
+    app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
+) -> None:
+    """Round 1, I1: a row whose every delivery crashes is bounded like one whose deliveries are refused: once its
+    attempts reached the cap and its last lease ran out, the next claim dead-letters it instead of claiming it, and
+    the re-check announces it."""
+    capped = OutboxSettings(backoff_base_seconds=60, max_attempts=2)
+    sweeper, harness = await role_conn(Role.SWEEPER), await role_conn(Role.TEST_HARNESS)
+    tenant = await own_tenant(app_conn)
+    staged: Outcome | None = None
+    try:
+        staged = await succeeded_run(app_conn, role_conn, tenant)
+        for attempt in (1, 2):
+            await move_clock(harness, (capped.lease_seconds + 1) * (attempt - 1))
+            with pytest.raises(RuntimeError):
+                await outbox.deliver(sweeper, Crashing(), capped, tenants=[tenant])
+            (row,) = await intents(app_conn, staged.run)
+            assert (row["attempts"], row["result"]) == (attempt, None)
+        await move_clock(harness, (capped.lease_seconds + 1) * 2)
+        assert await outbox.deliver(sweeper, outbox.LogSink(), capped, tenants=[tenant]) == []  # never claimed again
+        (row,) = await intents(app_conn, staged.run)
+        assert (row["attempts"], row["result"], row["delivered_at"]) == (2, "dead_letter", None)
+        assert await outbox.notify_dead_letters(sweeper, tenants=[tenant]) == [row["outbox_id"]]
+        (failed,) = await failures(app_conn, staged.run)
+        assert failed["outbox_id"] == str(row["outbox_id"])
+        lines.append("crash at the cap: two crashed deliveries, then dead-lettered by the claim and announced once")
+    finally:
+        await move_clock(harness, 0)
+        if staged is not None:
+            await purge_run(app_conn, staged.run)
+        await purge_tenant(app_conn, tenant)
+
+
+async def test_a_late_result_never_overwrites_a_newer_claim(
+    app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
+) -> None:
+    """Review Focus 1 (round 1, M4): a delivery that outlived its lease reports after the row was claimed and delivered
+    again; its result names attempt 1, the row is at attempt 2, so nothing is written."""
+    sweeper, harness = await role_conn(Role.SWEEPER), await role_conn(Role.TEST_HARNESS)
+    tenant = await own_tenant(app_conn)
+    staged: Outcome | None = None
+    try:
+        staged = await succeeded_run(app_conn, role_conn, tenant)
+        with pytest.raises(RuntimeError):
+            await outbox.deliver(sweeper, Crashing(), CHOSEN, tenants=[tenant])  # attempt 1: claimed, no result
+        (first,) = await intents(app_conn, staged.run)
+        await move_clock(harness, CHOSEN.lease_seconds + 1)
+        results = await outbox.deliver(sweeper, outbox.LogSink(), CHOSEN, tenants=[tenant])
+        assert [(r.result, r.attempts) for r in results] == [("delivered", 2)]
+        stale = {"outbox_id": first["outbox_id"], "attempts": 1}
+        late = functools.partial(outbox.record_result, row=stale, result="retrying", chosen=CHOSEN, rng=lambda: 0.0)
+        assert await in_tenant(sweeper, tenant, late) is False
+        (row,) = await intents(app_conn, staged.run)
+        assert (row["attempts"], row["result"]) == (2, "delivered") and row["delivered_at"] is not None
+        lines.append("late result: attempt 1's result after attempt 2 was delivered wrote nothing")
+    finally:
+        await move_clock(harness, 0)
+        if staged is not None:
+            await purge_run(app_conn, staged.run)
+        await purge_tenant(app_conn, tenant)
 ```
 
 Run (dev stack up, no skeleton process running):
@@ -3721,8 +4111,8 @@ OPS_LIVE=1 PROFILE=test PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_outb
   tests/e2e/test_sweeper_live.py tests/e2e/test_migration_0008_live.py -q
 ```
 
-Expected: `12 passed` (the new 3, the sweeper module's 4, the 0008 module's 5), and
-`reports/outbox/t14-outbox.txt` exists with four lines. This count is arithmetic, not measured: the plan's dry run
+Expected: `15 passed` (the new 5, the sweeper module's 4, the 0008 module's 6), and
+`reports/outbox/t14-outbox.txt` exists with six lines. This count is arithmetic, not measured: the plan's dry run
 cannot run live steps.
 
 - [ ] **Step 6: Gates and commit**
@@ -3730,10 +4120,10 @@ cannot run live steps.
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1021 passed, 146 skipped` (1007 + 14; the 3 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `1022 passed, 149 skipped` (1007 + 15; the 5 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1146 passed, 21 skipped` (arithmetic, not measured: 1021 + 125 live-gated
+Expected: `CHECK: GREEN`; pytest `1150 passed, 21 skipped` (arithmetic, not measured: 1022 + 128 live-gated
 tests). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission
 reports/leases` (`reports/events` and `reports/outbox` stay for Task 6).
 
@@ -3757,7 +4147,7 @@ git commit -m "feat(sweeper): the leased outbox delivery loop, LogSink, dead let
   docstring, imports, `Deps`, `tick`, `_main`); `sweeper/src/ops_sweeper/leases.py:1-10` (docstring);
   `tests/plan_h/test_worker_units.py:489-504` (the release recorders and their assertion);
   `tests/plan_h/test_reclaim.py` (the tick test, as Task 4 left it); `tests/plan_i/test_sweeper_tick.py`
-  (as Task 4 created it)
+  (as Task 4 created it); `tests/e2e/test_r105_walking_skeleton.py:51-53` (the skeleton fixture's leftover check)
 
 **Requirements:** BS:340 ("a sweeper … re-enqueues a deduplicated wake-up if a crash occurred between them"); T14's
 instructions ("wake-up jobs committed with user events; sweeper"); rulings 6-11, 19, 20 and 26; the Plan F debt line
@@ -3786,8 +4176,9 @@ Create `tests/plan_i/test_wakeups.py`:
 Catches: a sweep that re-arms a job whose run is still being worked (a job not yet done, or one done inside the
 grace), a state no handler serves yet (AWAITING_INPUT is T20's, OUTCOME_UNKNOWN T22's), a re-arm that inserts a new
 row instead of reopening the old one (the dedup key is the wake-up's identity, AM-20.4), a re-arm without a bound,
-a purge that could delete a run's job, and a release that leaves the run's deferred jobs waiting for a lease that is
-already free, or that waits on a row another claim holds.
+a re-arm of a cancelled run's job, a re-arm that trusts the scan's clock or newest-job choice instead of repeating
+them on the row it takes, a purge that could delete a run's job, and a release that leaves the run's deferred jobs
+waiting for a lease that is already free, that waits on a row another claim holds, or that cancels a deliberate delay.
 """
 
 import asyncio
@@ -3860,6 +4251,7 @@ def test_the_scan_finds_a_runs_newest_job_done_past_the_grace() -> None:
         "j.done_at IS NOT NULL",
         "j.done_at <= app.current_time() - make_interval(secs => %s)",
         "(r.state, j.type) IN (('QUEUED', 'investigate'), ('APPROVED', 'execute'))",
+        "r.state IN ('QUEUED', 'APPROVED') AND NOT r.cancel_requested",  # waiting, uncancelled runs only
     ):
         assert condition in scan, condition
     assert params == (SETTINGS.grace_seconds,)
@@ -3875,8 +4267,15 @@ def test_a_lost_wakeup_is_reopened_in_a_unit_of_its_own_under_the_cap() -> None:
     assert rearm_unit == scan_unit + 1
     assert rearm.startswith("UPDATE app.jobs j SET done_at = NULL, claimed_by = NULL, claimed_at = NULL")
     assert "INSERT" not in rearm and "available_at" not in rearm  # the same row, due already (erratum 62)
-    assert "j.attempts < %s" in rearm and "r.state = %s" in rearm  # bounded, and the run still waits
-    assert params == (found["job_id"], SETTINGS.max_attempts, "QUEUED")
+    for condition in (  # the scan's conditions again, on the row the UPDATE takes (round 1, I7)
+        "j.done_at IS NOT NULL",
+        "j.attempts < %s",
+        "j.done_at <= app.current_time() - make_interval(secs => %s)",
+        "NOT EXISTS (SELECT 1 FROM app.jobs o WHERE o.run_id = j.run_id AND o.type = j.type AND o.id <> j.id",
+        "r.state = %s AND NOT r.cancel_requested",
+    ):
+        assert condition in rearm, condition
+    assert params == (found["job_id"], SETTINGS.max_attempts, SETTINGS.grace_seconds, "QUEUED")
 
 
 def test_a_wakeup_at_its_cap_is_logged_not_reopened(caplog: pytest.LogCaptureFixture) -> None:
@@ -3919,10 +4318,13 @@ def test_the_pull_forward_takes_only_free_rows_of_the_run() -> None:
         "done_at IS NULL",
         "claimed_at IS NULL",
         "available_at > app.current_time()",
+        # Only jobs deferred behind the lease being released: a later, deliberate delay (a re-queue backoff, T22's
+        # recover cadence) survives (round 1, M2).
+        "available_at <= (SELECT l.lease_until FROM app.run_lease l WHERE l.run_id = %s)",
         "FOR UPDATE SKIP LOCKED",  # a row a claim holds is skipped, never waited on (ruling 22)
     ):
         assert condition in pull, condition
-    assert params == (run_id, job_id)
+    assert params == (run_id, job_id, run_id)
 ```
 
 Run: `uv run python -m pytest tests/plan_i/test_wakeups.py -q`
@@ -3984,17 +4386,23 @@ with:
 
 ```python
 async def pull_forward(conn: Conn, run_id: UUID, *, except_job: UUID) -> int:
-    """Make the run's other unclaimed, unfinished jobs due now when they wait for a later instant (Plan I ruling 10).
+    """Make due now the run's jobs that a claim deferred behind the lease being released (Plan I ruling 10).
 
-    Rows are picked with SKIP LOCKED: a row another worker's claim holds is about to be deferred by that claim (its
-    NOWAIT meets this release's lease lock) and is never waited on, so this UPDATE stays outside the lock order.
-    Returns how many jobs were made due.
+    Called in the release's unit before the lease row's `lease_until` is reset: a job waiting for an instant no later
+    than that `lease_until` was moved behind this lease (`claim_next` defers to the live lease's end, or one second
+    on); a job delayed beyond it on purpose (a re-queue backoff, T22's recover cadence) keeps its time (round 1, M2).
+    Rows are picked with SKIP LOCKED, so a row another worker's claim holds is never waited on and this UPDATE stays
+    outside the lock order. Such a claim, if it found the lease live before this release took the lease row, commits
+    its own deferral to the old lease end, so that one job can still wait up to it: bounded, and rare. Returns how
+    many jobs were made due.
     """
     cur = await conn.execute(
         "UPDATE app.jobs SET available_at = app.current_time() WHERE id IN (SELECT id FROM app.jobs"
         " WHERE run_id = %s AND id <> %s AND done_at IS NULL AND claimed_at IS NULL"
-        " AND available_at > app.current_time() FOR UPDATE SKIP LOCKED)",
-        (run_id, except_job),
+        " AND available_at > app.current_time()"
+        " AND available_at <= (SELECT l.lease_until FROM app.run_lease l WHERE l.run_id = %s)"
+        " FOR UPDATE SKIP LOCKED)",
+        (run_id, except_job, run_id),
     )
     return cur.rowcount
 
@@ -4045,14 +4453,24 @@ waiting in the job's state with the job done. The sweep finds such runs, in the 
 (QUEUED for `investigate`, APPROVED for `execute`; AWAITING_INPUT is T20's, OUTCOME_UNKNOWN and ESCALATED are T22's),
 when the newest job of the type has been done for longer than the grace, and reopens that job: its dedup key is the
 wake-up's identity, so the same row is re-armed (`done_at`, `claimed_by`, `claimed_at` cleared under `sweeper_all`),
-never a new one inserted (erratum 62). A job claimed `max_attempts` times is not re-armed again; the sweep logs it
-on every tick instead (operator visibility through logs; metrics are T28's).
+never a new one inserted (erratum 62). A run whose cancellation was requested is never re-armed. A job claimed
+`max_attempts` times is not re-armed again; the sweep logs it on every tick instead (operator visibility through
+logs; metrics are T28's).
+
+That predicate also matches a run the execute handler left APPROVED on purpose: a grant refusal it takes as final
+(an inactive membership, a missing approval) finishes the job without moving the run, so the sweep re-dispatches it,
+at most until the job has been claimed `max_attempts` times. No grant can follow a refusal that stays a refusal; a
+refusal that clears within those minutes (a reviewer reactivated by the membership sync) is executed. Moving such a
+run out of APPROVED (BLOCKED_REVIEW, AM-10) is T21's (debt list; round 1, I3).
 
 It is the sweeper's routine with direct grants, separate from the lease reclaim (erratum 63, extending erratum 49):
 the reclaim hands back claimed jobs of dead leases, this reopens done jobs of stuck runs. It reads runs per tenant
-(SA:520: `runs` has no sweeper policy) without a lock and re-arms each job in a unit of its own, re-checking the
-run's state there. The purge deletes finished maintenance rows past their retention; a run's jobs are never deleted,
-because their dedup keys are what makes a wake-up happen once.
+(SA:520: `runs` has no sweeper policy) without a lock and re-arms each job in a unit of its own. The re-arm's UPDATE
+repeats every condition of the scan on the row it takes, with the clock read there (round 1, I7): the job is still
+done, done longer ago than the grace on `app.current_time()`, below the cap, still the newest job of its type for the
+run, and the run still waits in the job's state without a cancellation. The purge deletes finished maintenance rows
+past their retention; a run's jobs are never deleted, because their dedup keys are what makes a wake-up happen once
+(a restrictive policy enforces it, erratum 61).
 """
 
 from __future__ import annotations
@@ -4074,6 +4492,7 @@ log = logging.getLogger("ops_sweeper.wakeups")
 # (the run's state, the job type that moves it on): the pairs whose handler exists today (ruling 7).
 WAKEUPS = (("QUEUED", "investigate"), ("APPROVED", "execute"))
 PAIRS = ", ".join(f"('{state}', '{job_type}')" for state, job_type in WAKEUPS)
+STATES = ", ".join(f"'{state}'" for state, _ in WAKEUPS)
 # Each run's newest job of its state's type; an unfinished one sorts first (NULLS FIRST), so a run whose wake-up is
 # still pending is never picked.
 LOST = (
@@ -4082,14 +4501,20 @@ LOST = (
     " WHERE jj.run_id = r.run_id"
     " AND jj.type = CASE r.state WHEN 'QUEUED' THEN 'investigate' WHEN 'APPROVED' THEN 'execute' END"
     " ORDER BY jj.done_at DESC NULLS FIRST, jj.created_at DESC LIMIT 1) j ON true"
-    f" WHERE (r.state, j.type) IN ({PAIRS})"
+    # Only waiting runs reach the lateral (round 1, M7), and never one whose cancellation was requested (I3).
+    f" WHERE r.state IN ({STATES}) AND NOT r.cancel_requested AND (r.state, j.type) IN ({PAIRS})"
     " AND j.done_at IS NOT NULL AND j.done_at <= app.current_time() - make_interval(secs => %s)"
     " ORDER BY r.run_id"
 )
+# The scan's conditions again, on the row the UPDATE takes (I7): a job re-armed, claimed and finished again since
+# the scan (a fresh done_at) or one a newer job of its type has replaced is left alone.
 REARM = (
     "UPDATE app.jobs j SET done_at = NULL, claimed_by = NULL, claimed_at = NULL"
     " WHERE j.id = %s AND j.done_at IS NOT NULL AND j.attempts < %s"
-    " AND EXISTS (SELECT 1 FROM app.runs r WHERE r.run_id = j.run_id AND r.state = %s)"
+    " AND j.done_at <= app.current_time() - make_interval(secs => %s)"
+    " AND NOT EXISTS (SELECT 1 FROM app.jobs o WHERE o.run_id = j.run_id AND o.type = j.type AND o.id <> j.id"
+    " AND (o.done_at IS NULL OR o.done_at > j.done_at))"
+    " AND EXISTS (SELECT 1 FROM app.runs r WHERE r.run_id = j.run_id AND r.state = %s AND NOT r.cancel_requested)"
 )
 PURGE = (
     "DELETE FROM app.jobs WHERE run_id IS NULL AND done_at IS NOT NULL"
@@ -4114,7 +4539,7 @@ async def _lost(conn: persistence.Conn, *, chosen: WakeupSettings) -> list[dict[
 
 
 async def _rearm(conn: persistence.Conn, *, row: dict[str, Any], chosen: WakeupSettings) -> bool:
-    cur = await conn.execute(REARM, (row["job_id"], chosen.max_attempts, row["state"]))
+    cur = await conn.execute(REARM, (row["job_id"], chosen.max_attempts, chosen.grace_seconds, row["state"]))
     return cur.rowcount == 1
 
 
@@ -4174,16 +4599,20 @@ Expected: `7 passed`.
 Edit 1 (`sweeper/src/ops_sweeper/main.py`, docstring), replace:
 
 ```python
-worker (T13, `leases.reclaim`) and delivers the notification outbox (T14, `outbox.deliver`, then the dead letters'
-`notification.failed`), recording each minute's `deliver_outbox` job the way it records the sync. Readiness is 200
+worker (T13, `leases.reclaim`) and, last, delivers the notification outbox (T14: this minute's `deliver_outbox` row,
+then `outbox.deliver`, then the dead letters' `notification.failed`), so a delivery that crashes ends the tick after
+everything else has run. Readiness is 200 only while the last successful sync is younger than 120 s, the window after
+which `grant_execution` refuses (T11 review note 2), so `scripts/skeleton.py up` waits for the first sync.
 ```
 
 with:
 
 ```python
-worker (T13, `leases.reclaim`), delivers the notification outbox (T14, `outbox.deliver`, then the dead letters'
-`notification.failed`) and re-arms lost wake-ups (T14, `wakeups.sweep`, then the purge of finished maintenance rows),
-recording each minute's `deliver_outbox` and `sweep_wakeups` jobs the way it records the sync. Readiness is 200
+worker (T13, `leases.reclaim`), re-arms lost wake-ups (T14: `wakeups.sweep`, the purge of finished maintenance rows,
+this minute's `sweep_wakeups` row) and, last, delivers the notification outbox (T14: this minute's `deliver_outbox`
+row, then `outbox.deliver`, then the dead letters' `notification.failed`), so a delivery that crashes ends the tick
+after everything else has run. Readiness is 200 only while the last successful sync is younger than 120 s, the window
+after which `grant_execution` refuses (T11 review note 2), so `scripts/skeleton.py up` waits for the first sync.
 ```
 
 Edit 2 (`sweeper/src/ops_sweeper/main.py`, imports), replace:
@@ -4226,15 +4655,17 @@ with:
 Edit 5 (`sweeper/src/ops_sweeper/main.py`, `tick`), replace:
 
 ```python
-    back the jobs of dead or lost run leases (T13); deliver the outbox (T14). Everything after the sync runs whether
-    or not Keycloak answered."""
+    back the jobs of dead or lost run leases (T13); deliver the outbox (T14), last, so a delivery that crashes
+    (anything but a refusal, which is a failed attempt) skips nothing else. Everything after the sync runs whether or
+    not Keycloak answered."""
 ```
 
 with:
 
 ```python
-    back the jobs of dead or lost run leases (T13); deliver the outbox and re-arm lost wake-ups (T14). Everything after
-    the sync runs whether or not Keycloak answered."""
+    back the jobs of dead or lost run leases (T13); re-arm lost wake-ups, then deliver the outbox (T14), last, so a
+    delivery that crashes (anything but a refusal, which is a failed attempt) never stops run progress. Everything
+    after the sync runs whether or not Keycloak answered."""
 ```
 
 Edit 6 (`sweeper/src/ops_sweeper/main.py`, `tick`'s last call), replace:
@@ -4249,8 +4680,8 @@ async def deliver_outbox(deps: Deps) -> None:
 with:
 
 ```python
+    await sweep_wakeups(deps)  # first: notification delivery must never starve run progress (round 1, I1)
     await deliver_outbox(deps)
-    await sweep_wakeups(deps)
 
 
 async def sweep_wakeups(deps: Deps) -> None:
@@ -4332,21 +4763,22 @@ with:
     none: Any = None
     deps = main.Deps(conn=none, admin=none, issuer="iss", tick_seconds=30.0, worker_name="sweeper:test")
     asyncio.run(main.tick(deps))
-    assert calls == ["sync", "purge", "reclaim", "outbox", "wakeups"]  # T14's work runs whether or not the sync did
+    # T14's work runs whether or not the sync did, the wake-up sweep before the delivery (round 1, I1).
+    assert calls == ["sync", "purge", "reclaim", "wakeups", "outbox"]
 ```
 
 Edit 10 (`tests/plan_i/test_sweeper_tick.py`, the end of the file as Task 4 created it), replace:
 
 ```python
     asyncio.run(main.deliver_outbox(deps()))
-    assert order == ["deliver", "notify", "record deliver_outbox"]
+    assert order == ["record deliver_outbox", "deliver", "notify"]
 ```
 
 with:
 
 ```python
     asyncio.run(main.deliver_outbox(deps()))
-    assert order == ["deliver", "notify", "record deliver_outbox"]
+    assert order == ["record deliver_outbox", "deliver", "notify"]
 
 
 def test_the_sweep_runs_before_the_purge_and_the_record(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4383,10 +4815,33 @@ from ops_sweeper import main, outbox, wakeups
 ```
 
 Run: `uv run python -m pytest tests/plan_i tests/plan_h/test_reclaim.py tests/plan_h/test_worker_units.py -q`
-Expected: `101 passed` (Plan I's 79: Task 4's 71, the wake-up module's 7 and the tick's third test; the reclaim
+Expected: `102 passed` (Plan I's 80: Task 4's 72, the wake-up module's 7 and the tick's third test; the reclaim
 module's 2; the worker-units module's 20).
 
 - [ ] **Step 5: The live wake-up tests**
+
+Edit 12 (`tests/e2e/test_r105_walking_skeleton.py`, the skeleton fixture), replace:
+
+```python
+    with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+        conn.execute("UPDATE app.memberships SET synced_at = app.current_time() - interval '10 minutes'")
+    sk = Skeleton()
+```
+
+with:
+
+```python
+    with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+        conn.execute("UPDATE app.memberships SET synced_at = app.current_time() - interval '10 minutes'")
+        # T14: the skeleton's sweeper re-arms any QUEUED or APPROVED run whose wake-up is done, and its worker would run
+        # it here; a run an earlier test left behind must fail this module loudly instead of joining it (round 1, M8).
+        leftover = conn.execute(
+            "SELECT count(*) FROM app.runs r WHERE r.state IN ('QUEUED', 'APPROVED')"
+            " AND NOT EXISTS (SELECT 1 FROM app.jobs j WHERE j.run_id = r.run_id AND j.done_at IS NULL)"
+        ).fetchone()[0]
+        assert leftover == 0, f"{leftover} waiting run(s) with no pending wake-up were left by an earlier test"
+    sk = Skeleton()
+```
 
 Create `tests/e2e/test_wakeups_live.py`:
 
@@ -4394,14 +4849,15 @@ Create `tests/e2e/test_wakeups_live.py`:
 """T14 live (OPS_LIVE=1): lost wake-ups re-armed by the sweeper, deferred jobs made due by a release, and the purge of
 finished maintenance rows, against the per-session test database (Plan I rulings 7, 8, 10, 20).
 
-A lost wake-up is staged as the superuser (a job marked done while its run still waits), because no handler today
-returns without moving a run except under faults this suite injects elsewhere; the sweep, the re-arm and the claim
-that follows run as the real roles. Every run lives on a tenant of its own and the sweep is narrowed to it.
+A lost wake-up is staged as the superuser (a job marked done while its run still waits): a crash between the job's
+consumption and the run's progress cannot be produced on demand, and the one handler path that leaves a run waiting
+today, a grant refusal the execute handler takes as final (APPROVED kept), needs mcp-write. The sweep, the re-arm and
+the claim that follows run as the real roles. Every run lives on a tenant of its own and the sweep is narrowed to it.
 
-Catches: a wake-up re-armed inside its grace or past its cap, re-armed for a state no handler serves (AWAITING_INPUT
-waits for T20), re-armed as a new row instead of the same one, not claimable once re-armed; a deferred job that
-still waits for a released lease; and a purge that deletes a run's job, an unfinished maintenance row or a recent
-one.
+Catches: a wake-up re-armed inside its grace or past its cap, re-armed for a run whose cancellation was requested,
+re-armed for a state no handler serves (AWAITING_INPUT waits for T20), re-armed as a new row instead of the same one,
+not claimable once re-armed; a deferred job that still waits for a released lease, and a deliberately delayed one
+that the release makes due; and a purge that deletes a run's job, an unfinished maintenance row or a recent one.
 """
 
 import logging
@@ -4480,6 +4936,10 @@ async def test_an_approved_runs_execute_wakeup_stops_at_its_cap(
         proposal, _, digest = await freeze(app_conn, worker, run, tenant)
         await approve(api, proposal, digest, SAM, tenant)
         job = await job_of(app_conn, run, JobType.EXECUTE.value)
+        await app_conn.execute("UPDATE app.runs SET cancel_requested = true WHERE run_id = %s", (run,))
+        await finish(app_conn, job, seconds_ago=120, attempts=1)
+        assert await wakeups.sweep(sweeper, CHOSEN, tenants=[tenant]) == []  # cancellation requested: never re-armed
+        await app_conn.execute("UPDATE app.runs SET cancel_requested = false WHERE run_id = %s", (run,))
         await finish(app_conn, job, seconds_ago=120, attempts=CHOSEN.max_attempts)
         (found,) = await wakeups.sweep(sweeper, CHOSEN, tenants=[tenant])
         assert (found.job_id, found.rearmed) == (job, False) and "not re-armed" in caplog.text
@@ -4537,7 +4997,19 @@ async def test_a_release_makes_the_runs_deferred_job_due_at_once(
         second = await persistence.claim_next(b, worker_name="wb", tenant_ids=[tenant], lease_seconds=30)
         assert isinstance(second, persistence.Claimed) and second.job["id"] == resume
         assert second.lease.fence == first.lease.fence + 1
+        # A job delayed past the lease's end on purpose (a re-queue backoff) is not pulled forward (round 1, M2).
+        later = await persistence.insert_job(
+            app_conn, job_type=JobType.RESUME_INPUT, run_id=run, clarification_event_id=uuid4()
+        )
+        await app_conn.execute(
+            "UPDATE app.jobs SET available_at = app.current_time() + interval '10 minutes' WHERE id = %s", (later,)
+        )
         await persistence.release_lease(b, second.lease, job=dict(second.job))
+        cur = await app_conn.execute(
+            "SELECT available_at > app.current_time() + interval '9 minutes' AS still FROM app.jobs WHERE id = %s",
+            (later,),
+        )
+        assert (await cur.fetchone())["still"]
     finally:
         await purge_run(app_conn, run)
         await purge_tenant(app_conn, tenant)
@@ -4583,17 +5055,18 @@ OPS_LIVE=1 PROFILE=test PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_wake
 
 Expected: `24 passed` (the new 5; the leases module's 11, whose releases now also pull deferred jobs forward and
 whose R087 test still sees the original job claimed; the worker module's 4; the sweeper module's 4). This count is
-arithmetic, not measured: the plan's dry run cannot run live steps.
+arithmetic, not measured: the plan's dry run cannot run live steps. The R105 module's new leftover check runs in the
+live gate (Step 6), where its skeleton starts.
 
 - [ ] **Step 6: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1029 passed, 151 skipped` (1021 + 8; the 5 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `1030 passed, 154 skipped` (1022 + 8; the 5 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1159 passed, 21 skipped` (arithmetic, not measured: 1029 + 130 live-gated
+Expected: `CHECK: GREEN`; pytest `1163 passed, 21 skipped` (arithmetic, not measured: 1030 + 133 live-gated
 tests). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission
 reports/leases`.
 
@@ -4602,7 +5075,7 @@ Expected: exit 0.
 
 ```bash
 git add core/src/ops_core/persistence.py sweeper/src/ops_sweeper tests/plan_i tests/plan_h/test_worker_units.py
-git add tests/plan_h/test_reclaim.py tests/e2e/test_wakeups_live.py
+git add tests/plan_h/test_reclaim.py tests/e2e/test_wakeups_live.py tests/e2e/test_r105_walking_skeleton.py
 git commit -m "feat(sweeper): re-arm lost wake-ups and purge maintenance rows; releases make deferred jobs due (T14)"
 ```
 
@@ -4671,18 +5144,23 @@ note = (
     "and a counting reader never saw a hole; _append_event's payload rules (keys closed over the event schema's "
     "thirteen, which gained question_id, message_id and outbox_id; a status only on the destination's four types) "
     "mirrored in event_rules_ok and the schema (rule 9) on one table of cases; app.outbox (revision 0008) with the "
-    "intent written inside _append_event for action.confirmed, action.failed, run.escalated and "
-    "run.abandoned_unverified, deduplicated by run:type:channel:recipient; the sweeper's tenant iteration; the "
-    "leased delivery loop (claim with SKIP LOCKED and a 30 s lease, delivery outside any transaction to LogSink, "
-    "result in its own unit, capped jittered backoff, dead letter at the fifth failure, notification.failed in a "
-    "separate transaction with a re-check every tick); the outbox_sink_fail fault (test profile, sink factory "
-    "argument); the wake-up sweep re-arming QUEUED/investigate and APPROVED/execute jobs done past a 60 s grace "
-    "under a 10-claim cap; the release making the run's deferred jobs due at once; the deliver_outbox and "
-    "sweep_wakeups audit rows; the purge of finished maintenance rows (the sweeper's DELETE on jobs); a catalog "
-    "test that no function an MCP server may call inserts a job. Evidence: tests/e2e/test_event_journal_live.py, "
+    "intent written inside _append_event for action.confirmed, action.failed and action.conflict (emitted today by "
+    "record_outcome) and run.escalated and run.abandoned_unverified (their emitters arrive with T22), deduplicated "
+    "by run:type:channel:recipient; the sweeper's tenant iteration; the leased delivery loop (one tenant after "
+    "another: claim with SKIP LOCKED and a 30 s lease, delivery outside any transaction to LogSink, result in its "
+    "own unit naming its attempt, capped jittered backoff, dead letter at the fifth failure or, for a delivery that "
+    "crashed on its last attempt, at the next claim; notification.failed in a separate transaction under an "
+    "advisory lock on the outbox id, with a re-check every tick); the outbox_sink_fail fault (test profile, sink "
+    "factory argument); the wake-up sweep re-arming QUEUED/investigate and APPROVED/execute jobs done past a 60 s "
+    "grace under a 10-claim cap, never for a run whose cancellation was requested, every condition repeated on the "
+    "row the re-arm takes; the release making the jobs deferred behind its lease due at once; the deliver_outbox "
+    "and sweep_wakeups audit rows (the sweep before the delivery in every tick); the purge of finished maintenance "
+    "rows (the sweeper's DELETE on jobs, held to those rows by a restrictive policy); a catalog test that no "
+    "function an MCP server may call inserts a job. Evidence: tests/e2e/test_event_journal_live.py, "
     "test_outbox_live.py, test_wakeups_live.py, test_migration_0008_live.py and reports/events/, reports/outbox/ "
     "(live), tests/plan_i/ for the unit half. Deferred: resume_input handling and the AWAITING_INPUT sweep -> T20; "
-    "recover handling and the OUTCOME_UNKNOWN/ESCALATED sweep -> T22; R023's decision crash test -> T21; "
+    "recover handling, the OUTCOME_UNKNOWN/ESCALATED sweep and the run.escalated emitter -> T22; R023's decision "
+    "crash test and moving a finally refused grant's run out of APPROVED -> T21; "
     "outcomes.Event on the read path -> T26; SSE and Last-Event-ID -> T27; retention -> T32; a real channel -> T39. "
     "Errata 60-71 are proposed in SESSION_STATE.md."
 )
@@ -4724,7 +5202,8 @@ notes = {
     "GET /api/v1/runs/{id}/events) returns n only after A commits and n + 1 only after B commits; a writer that "
     "rolls back leaves its number to the waiting writer; a 10 s stress run of eight connections of the four roles "
     "on three runs, about half of the transactions rolled back, ends with every run exactly 1..next_event_seq while a "
-    "cursor reader never skipped and a counting reader never saw a hole, with no 40P01 and no 55P03. SSE and "
+    "cursor reader followed every run to its counter without a skip and a counting reader saw each run grow without "
+    "a hole, with no 40P01 and no 55P03. SSE and "
     "Last-Event-ID replay are T27's.",
 }
 for row in matrix["requirements"]:
@@ -4810,7 +5289,7 @@ with:
   outbox grants, the MCP catalog check) and `reports/events/t14-events.txt`, `reports/outbox/t14-outbox.txt`; the
   unit half is in `tests/plan_i/`.
 - Gates: `check.py` <dev passed> passed / <dev skipped> skipped; `check.py --profile test` <live passed> passed / 21
-  skipped (the plan's tails are 1029/151 and 1159/21); `verify_handoff.py` exit 0 (STATUS.md, "Update — Plan I
+  skipped (the plan's tails are 1030/154 and 1163/21); `verify_handoff.py` exit 0 (STATUS.md, "Update — Plan I
   executed").
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan H's
   fifty-nine:
@@ -4819,46 +5298,54 @@ with:
       dead_letter}, created_at)` with the composite key to `runs` and `tenant_isolation` only; `leased_until` is
       both the claim's lease and the next attempt's time; `app_definer` `ins`, the sweeper `sel, upd(leased_until,
       attempts, delivered_at, result)`, and `api` and `worker` no cell (only `_append_event` writes intent).
-  61. SA:419 (`jobs`): the sweeper holds DELETE, used only for finished maintenance rows older than
+  61. SA:419 (`jobs`) and SA:520 (the policies): the sweeper holds DELETE on `jobs`, and a restrictive policy
+      `sweeper_purge_maintenance` holds it to finished maintenance rows; the purge deletes those older than
       `OPS_MAINTENANCE_RETENTION_HOURS` (24); a run's job is never deleted.
   62. AM-20.4 (SA:500-505) and SA:345: the sweeper re-arms a lost wake-up by reopening its job (the same row and
       dedup key); it never inserts a `resume_input` or `execute` row.
   63. SA:471 (extending erratum 49): lost wake-ups are re-armed by `wakeups.sweep`, a sweeper routine with direct
       grants separate from the lease reclaim, for QUEUED runs whose `investigate` jobs and APPROVED runs whose
       `execute` jobs are all done, past a 60 s grace (`OPS_WAKEUP_GRACE_SECONDS`) and below a 10-claim cap
-      (`OPS_WAKEUP_MAX_ATTEMPTS`); past the cap it logs instead.
+      (`OPS_WAKEUP_MAX_ATTEMPTS`), never for a run whose cancellation was requested, with every condition repeated
+      on the row the re-arm takes; past the cap it logs instead. A grant refusal the worker takes as final leaves
+      its run APPROVED and is therefore re-dispatched up to the cap (moving such a run out of APPROVED is T21's).
   64. BS:340 and the polling debt of Plans E and H: a wake-up is the job committed with its user event, plus the
       sweep; there is no LISTEN/NOTIFY; the worker's 0.5 s per-tenant poll is the v1 wake mechanism, and a lease's
-      release makes the run's deferred jobs due at once.
+      release makes the jobs deferred behind it due at once (a job delayed beyond the lease's end keeps its time).
   65. SA:452 and AM-80's event schema: `_append_event` refuses (OC006) a payload key outside the event schema's
       thirteen (the schema gains `question_id`, `message_id`, `outbox_id`) and a `status` on any type but the
       destination's four (schema rule 9); `event_rules_ok` mirrors both, on one table of cases.
   66. BS:524 (intent): notification intent is written inside `_append_event`, in the event's transaction, for
-      `action.confirmed`, `action.failed`, `run.escalated` and `run.abandoned_unverified`; the recipient is the
-      run's requester, the channel `local`, the dedup key `run_id:type:channel:recipient` with a target-less
+      `action.confirmed`, `action.failed`, `action.conflict`, `run.escalated` and `run.abandoned_unverified` (the
+      first three are emitted today by `record_outcome`; the last two have no emitter until T22); the recipient is
+      the run's requester, the channel `local`, the dedup key `run_id:type:channel:recipient` with a target-less
       `ON CONFLICT DO NOTHING`.
-  67. BS:524 (delivery): the sweeper's tick claims each tenant's due rows (`FOR UPDATE SKIP LOCKED`, a 30 s lease,
-      `OPS_OUTBOX_BATCH` 10), delivers outside any transaction to `LogSink` (one log line, no egress), and records
-      each result in its own unit; the backoff is `min(300, 2 × 2^(n−1))` s plus up to 25 % jitter; the fifth
-      failure dead-letters; `outbox_sink_fail` is the sink's test-profile fault.
+  67. BS:524 (delivery): the sweeper's tick, one tenant after another, claims the tenant's due rows (`FOR UPDATE
+      SKIP LOCKED`, a 30 s lease, `OPS_OUTBOX_BATCH` 10), delivers them outside any transaction to `LogSink` (one
+      log line, no egress), and records each result in its own unit for the attempt it was claimed at; the backoff
+      is `min(300, 2 × 2^(n−1))` s plus up to 25 % jitter; the fifth failure dead-letters, and a delivery that
+      crashes is retried when its lease ends and dead-lettered by the claim once its attempts reached the same cap;
+      the wake-up sweep runs before the delivery, so a crashing delivery never stops it; `outbox_sink_fail` is the
+      sink's test-profile fault.
   68. SA:188 and BS:514: `notification.failed` (payload `code`, `message`, `outbox_id`) is appended once per dead
-      letter in a separate transaction after the result unit, and every tick re-checks the dead letters that lack
-      it.
+      letter in a separate transaction after the result unit, under a transaction advisory lock on the outbox id
+      (two sweepers never announce one dead letter twice), and every tick re-checks the dead letters that lack it.
   69. SA:520: the sweeper iterates `tenants` and runs per-tenant work in one transaction per tenant
       (`ops_sweeper.tenants.for_each_tenant`): the delivery and the wake-up sweep now, T21's expiry and T22's
       deadline escalation later.
   70. SA:504: the `deliver_outbox` and `sweep_wakeups` rows are audit records like `sync_memberships`' (inserted,
       claimed and finished in one transaction per minute; the work runs outside it, and a second tick in the minute
       records nothing new).
-  71. SA:188 (extending erratum 52): `_append_event` takes `runs → events → outbox`; the delivery's claim and result
-      units lock `outbox` only; `notification.failed` takes `runs` in a unit of its own; the re-arm and the purge
-      lock `jobs` at the finish position; the release's pull-forward picks with SKIP LOCKED.
+  71. SA:188 (extending erratum 52): a third advisory lock, the dead letter's announcement, after the asset guard;
+      `_append_event` takes `runs → events → outbox`; the delivery's claim and result units lock `outbox` only;
+      `notification.failed` takes its advisory lock, then `runs`, in a unit of its own; the re-arm and the purge lock
+      `jobs` at the finish position; the release's pull-forward picks with SKIP LOCKED.
 - Earlier debt lines that named T14 and what became of them: the gap-free sequence is proved (walking-skeleton and
   Plan D lines); the outbox and its grant row are done (Plan E); `sweep_wakeups`, `deliver_outbox` and the purge of
   finished maintenance jobs are done (Plan F); lost wake-ups are re-armed by the sweep (Plan H; recover jobs stay
   T22's); a deferred job no longer waits for a released lease (Plan H); polling and per-tenant claims are kept as the
   v1 wake mechanism (erratum 64, Plans E and H); `_idempotent`'s "use a new key" answer for a key that just became
-  reusable stays harmless and moves to T28's polish.
+  reusable stays harmless and is on the Plan I debt list for T28.
 ```
 
 Edit 4 (`SESSION_STATE.md`, the dev database state), replace:
@@ -4941,9 +5428,10 @@ with:
   maintenance rows; the catalog check that no MCP-callable function inserts a job.
 - The dev `ops` database needs revisions 0006, 0007 and 0008 (an owner input); the API, the sweeper, the worker and
   mcp-write refuse to start until then.
-- Deferred, each with its owner in `SESSION_STATE.md`: resume_input handling -> T20; recover handling -> T22; R023's
-  crash test -> T21; `outcomes.Event` on the read path -> T26; SSE -> T27; dashboards -> T28/T29; retention -> T32;
-  a real channel -> T39. Twelve errata (60-71) are proposed.
+- Deferred, each with its owner in `SESSION_STATE.md`: resume_input handling -> T20; recover handling and the
+  `run.escalated` emitter -> T22; R023's crash test and a refused grant's run leaving APPROVED -> T21;
+  `outcomes.Event` on the read path -> T26; SSE -> T27; dashboards -> T28/T29; retention -> T32; a real channel ->
+  T39. Twelve errata (60-71) are proposed.
 ```
 
 Create `docs/runbooks/events-and-outbox.md`:
@@ -4973,17 +5461,25 @@ that never arrived. The design is AM-12, AM-14 and AM-20 in `SPEC_AMENDMENTS.md`
 ## Notification intent and the outbox
 
 - **Intent commits with its event.** When `_append_event` writes `action.confirmed`, `action.failed`,
-  `run.escalated` or `run.abandoned_unverified`, it also writes one `app.outbox` row in the same transaction,
-  addressed to the run's requester, channel `local`, with the dedup key `run_id:type:local:requester`. A replayed
-  writer adds no second row.
-- **Delivery is the sweeper's**, every tick (30 s), per tenant: claim the due rows (`FOR UPDATE SKIP LOCKED`, lease
-  `OPS_OUTBOX_LEASE_SECONDS`), hand each to the sink outside any transaction, record the result in its own unit.
+  `action.conflict`, `run.escalated` or `run.abandoned_unverified`, it also writes one `app.outbox` row in the same
+  transaction, addressed to the run's requester, channel `local`, with the dedup key `run_id:type:local:requester`.
+  A replayed writer adds no second row. Today `record_outcome` emits the first three (a CONFLICT escalates the run
+  through `action.conflict`); `run.escalated` and `run.abandoned_unverified` have no emitter until T22.
+- **Delivery is the sweeper's**, every tick (30 s), one tenant after another: claim the tenant's due rows (`FOR UPDATE
+  SKIP LOCKED`, lease `OPS_OUTBOX_LEASE_SECONDS`), hand each to the sink outside any transaction, record the result
+  in its own unit, then the next tenant.
   The v1 sink is a log line (`notification delivered: type=… run=… outbox=… recipient=<hash> …`): nothing leaves the
   machine. Slack is T39.
 - **Failure.** A failed delivery is `retrying` with `leased_until` pushed out by `min(cap, base × 2^(attempts−1))`
   plus up to 25 % jitter; the `OPS_OUTBOX_MAX_ATTEMPTS`-th failure is `dead_letter`. A dead letter gets one
-  `notification.failed` event on its run (`code`, `message`, `outbox_id`) in a separate transaction; every tick
-  re-checks for dead letters still lacking it. The run's state is never touched by delivery.
+  `notification.failed` event on its run (`code`, `message`, `outbox_id`) in a separate transaction, under an
+  advisory lock on the outbox id; every tick re-checks for dead letters still lacking it. The run's state is never
+  touched by delivery.
+- **A delivery that crashes** (anything but the sink's refusal: a bug, a killed process) records nothing. The tick
+  logs `sweeper tick failed` with the traceback and stops after its record of the minute; the wake-up sweep ran
+  before it. The row's `attempts` counts the crashed claim; it is claimed again when its lease ends, and once its
+  attempts reached `OPS_OUTBOX_MAX_ATTEMPTS` the next claim dead-letters it and the tick announces it. Until then
+  the tenants after the crashing one wait for the following tick.
 - **At least once.** A delivery slower than its lease, or a sweeper that dies after the sink but before the result,
   is delivered again later (BUILD_SPEC §2: "At-least-once dispatch can occur").
 
@@ -4993,14 +5489,22 @@ that never arrived. The design is AM-12, AM-14 and AM-20 in `SPEC_AMENDMENTS.md`
   with the approving decision, the reply job with the clarification. The worker polls every 0.5 s per tenant; there is
   no LISTEN/NOTIFY (erratum 64).
 - **A released lease makes the run's deferred jobs due at once**: a job a claim moved behind a busy lease no longer
-  waits for that lease's old end once its holder releases it.
+  waits for that lease's old end once its holder releases it. A job delayed beyond that end on purpose (a re-queue
+  backoff) keeps its time.
 - **The sweep re-arms a lost wake-up.** A run in QUEUED whose investigate jobs are all done, or in APPROVED whose
   execute jobs are all done, for longer than `OPS_WAKEUP_GRACE_SECONDS`, gets its newest job of that type reopened
-  (the same row: its dedup key is the wake-up's identity). A job already claimed `OPS_WAKEUP_MAX_ATTEMPTS` times is
-  not re-armed; the sweeper logs `wake-up not re-armed: …` every tick instead. AWAITING_INPUT (T20) and
-  OUTCOME_UNKNOWN or ESCALATED (T22) are not swept yet.
+  (the same row: its dedup key is the wake-up's identity); the re-arm checks again, on the row it takes, that the job
+  is still done, past the grace, the newest of its type and below the cap, and that the run still waits without a
+  cancellation. A run whose cancellation was requested is never re-armed. A job already claimed
+  `OPS_WAKEUP_MAX_ATTEMPTS` times is not re-armed; the sweeper logs `wake-up not re-armed: …` every tick instead.
+  AWAITING_INPUT (T20) and OUTCOME_UNKNOWN or ESCALATED (T22) are not swept yet.
+- **A refused grant is re-dispatched.** When `grant_execution` refuses for good (an inactive membership, a missing
+  approval), the worker finishes the execute job and the run stays APPROVED, so the sweep re-arms the job each grace
+  until the cap. No grant follows a refusal that stays a refusal; a refusal that clears in time is executed. Moving
+  such a run out of APPROVED is T21's.
 - **Finished maintenance rows** (`sync_memberships`, `deliver_outbox`, `sweep_wakeups`) older than
-  `OPS_MAINTENANCE_RETENTION_HOURS` are deleted; a run's jobs never are.
+  `OPS_MAINTENANCE_RETENTION_HOURS` are deleted; a run's jobs never are (a restrictive policy holds the sweeper's
+  DELETE to finished maintenance rows).
 
 ## Settings (validated when the sweeper starts)
 
@@ -5034,8 +5538,9 @@ SELECT id, type, run_id, attempts, done_at, claimed_by FROM app.jobs WHERE run_i
   says `notification not delivered: … (retrying|dead_letter): <reason>` for each failure.
 - **A run sits in QUEUED or APPROVED with its job done**: the sweep re-arms it after the grace; if the log says
   `wake-up not re-armed: … claimed N times`, the job's handler keeps returning without moving the run (for an
-  execute job, often a refused grant: a stale membership, a revoked reviewer). Fix the cause; the next decision or
-  revision makes a new wake-up.
+  execute job, a grant refused for good: an inactive membership, an approval no longer active; a stale membership is
+  different, it re-queues the job instead of finishing it). Fix the cause; the next decision or revision makes a new
+  wake-up.
 - **An append is refused with OC006**: the payload carries a key the event schema does not define, or a `status` on
   a non-destination type. The writer, not the database, is wrong.
 
@@ -5066,7 +5571,8 @@ with:
 ## 6. The event journal, wake-ups and the outbox (built in T14)
 
 **Claim.** A run's events are numbered without gaps in the order they commit, whoever writes them; a notification
-is promised in the same transaction as the event that needs it and delivered at least once apart from the run; and
+is promised in the same transaction as the event that needs it and attempted, apart from the run, until delivered
+or dead-lettered; and
 a wake-up the worker consumed without moving its run is noticed and re-armed.
 
 - **One counter under one lock.** `_append_event` takes the run row `FOR UPDATE`, `next_event_seq + 1` and the
@@ -5117,6 +5623,18 @@ the keys today's writers already used. Revision 0008 added the outbox, written b
 sweeper per tenant with a lease, a capped backoff and a dead letter announced in a transaction of its own. The sweep
 re-arms the investigate and execute jobs of runs that did not move, and a release makes a deferred job due at once.
 
+**Round 1 (static critic: 1 Blocking, 7 Important, 12 Minor; every splice, format check and dev count held).** The
+blocking finding was in a test, not the code: the rollback test asked for the waiting connection's pid while that
+connection's statement could already be waiting on the row lock the test itself held, so asyncio and PostgreSQL could
+wait on each other for ever and the live gate would hang instead of failing. Every pid is now read before any
+transaction opens, and no writer task is cancelled inside a database unit. The important findings were about bounds
+and claims: a delivery that crashed instead of failing was claimed forever and stopped every later step of the tick,
+so the claim now dead-letters a row at its cap and the wake-up sweep runs first; two of the four notification types
+had no emitter, so `action.conflict`, the escalation that exists today, became a trigger; the sweep would re-dispatch
+a cancelled run, and repeated none of its checks on the row it re-armed; the stress readers could pass having read
+nothing; the downgrade's evidence was weaker than its claim; and the sweeper's new DELETE reached every tenant's run
+jobs, which a restrictive policy now forbids.
+
 ## 27. What the process taught
 ```
 
@@ -5134,10 +5652,10 @@ from pathlib import Path
 
 path = Path("README.md")
 text = path.read_text(encoding="utf-8")
-old = "and fenced run leases with a heartbeat (T13) run locally**"
+old = "(T12) and fenced run leases with a heartbeat (T13) run locally**"
 new = (
-    "fenced run leases with a heartbeat (T13) and a gap-free event journal with a leased notification outbox (T14) "
-    "run locally**"
+    "(T12), fenced run leases with a heartbeat (T13) and a gap-free event journal with a leased notification outbox "
+    "(T14) run locally**"
 )
 assert text.count(old) == 1
 path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
@@ -5245,7 +5763,7 @@ PYTHONUTF8=1 uv run python scripts/check.py --profile test
 uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts
 ```
 
-Expected: `CHECK: GREEN` with `1029 passed, 151 skipped`; `CHECK: GREEN` with `1159 passed, 21 skipped` (the live
+Expected: `CHECK: GREEN` with `1030 passed, 154 skipped`; `CHECK: GREEN` with `1163 passed, 21 skipped` (the live
 number is arithmetic until this run measures it); exit 0. Fill the `<dev passed>`, `<dev skipped>` and `<live
 passed>` placeholders of Steps 3 and 4 with the printed numbers. Then `git checkout -- reports/bootstrap
 reports/auth`; the live run rewrote `reports/admission`, `reports/skeleton`, `reports/leases` and wrote
@@ -5310,10 +5828,12 @@ git commit -m "docs: close T14 - handoff records, acceptance rows, errata 60-71,
    `leased_until`, `delivered_at`, `result`, `dedup_key`) match revision 0008, the matrix row and the queries;
    `PAYLOAD_KEYS_0008` and `STATUS_TYPES_0008` equal `outcomes.PAYLOAD_KEYS` and `STATUS_EVENT_TYPES` (a unit test).
    `FaultKind.OUTBOX_SINK_FAIL` is the one `SWEEPER_FAULTS` member and is consumed only by `LogSink`.
-4. **Review Focus.** (1) a delivery outliving its lease → Task 4's result-statement test and the crash test; (2) a
-   crash between result and event → Task 4's R024 test and the already-notified test; (3) a replayed outcome → Task
-   4's R024 test and Task 2's intent test; (4) a run moving before its re-arm → Task 5's re-arm tests; (5) today's
-   writers under the closed keys → the case table in Tasks 1 and 2 and the existing live tests in Task 2's gate.
+4. **Review Focus.** (1) a delivery outliving its lease → Task 4's result-statement test, the late-result, crash and
+   crash-at-the-cap live tests; (2) a crash between result and event, or two sweepers → Task 4's R024 test, the
+   already-notified test and the advisory lock in the announcement test; (3) a replayed outcome → Task 4's R024 test
+   and Task 2's intent test; (4) a run or job moving before its re-arm → Task 5's re-arm tests (each condition
+   asserted) and the live cancellation case; (5) today's writers under the closed keys → the case table in Tasks 1 and
+   2 and the existing live tests in Task 2's gate.
 5. **Known risks the executor should watch** (none changes a ruling):
    - The live tests of Tasks 2-5 were written against the real fixtures and functions but could not be run in the
      dry run; their first live run is in execution. A failure in Task 3 is a finding against revision 0003's
@@ -5327,4 +5847,74 @@ git commit -m "docs: close T14 - handoff records, acceptance rows, errata 60-71,
      the schema, `event_rules_ok` and the SQL together, and the case table will fail until all three agree.
    - The R105 skeleton's real sweeper now delivers and sweeps every tenant every 30 s: a QUEUED or APPROVED run some
      earlier test left behind with its job done would be re-armed and run by the skeleton's worker. Every live test
-     purges what it creates in `finally`.
+     purges what it creates in `finally`, and the R105 fixture now fails loudly on such a leftover before it starts the
+     skeleton (round 1, M8).
+   - A finally refused grant leaves its run APPROVED, so the sweep re-dispatches it up to the 10-claim cap; a refusal
+     that clears within those minutes is executed (T21 moves such runs out of APPROVED; debt line).
+   - The round trip builds a scratch database to 0007 and compares cells with `information_schema` views; the two
+     databases are queried the same way as the same superuser, but this comparison has never run live.
+
+## Round 1 changes
+
+Inputs: the controller's rulings on the static review (`round1-rulings.md`: REVISE, 1 Blocking, 7 Important, 12
+Minor, all accepted) and the critic's evidence (`round1-static.md`). Every ruling is applied in this text; nothing
+was declined. The plan was re-applied task by task to a `git archive` copy with `ruff format` between tasks: every
+quoted old text matched once, `ruff format` changed nothing, ruff, mypy strict and `verify_handoff` passed after every
+task, and the dev counts below are the measured ones.
+
+- **B1 (Task 3).** `stepped()` and the rollback test read both backend pids before any transaction opens, so no pid
+  query can queue behind a statement that waits on the test's own row lock.
+- **M3 (Task 3).** A new `settle(task, conn)` waits for a writer with `asyncio.wait` (never cancelling it) and closes
+  the connection of a writer still pending before failing; `stepped()` releases B in `finally`, so a failed assertion
+  never leaves B's transaction open in front of the purge.
+- **I4 (Task 3).** The readers record what they saw: the cursor reader follows each run to its end after the writers
+  finish (`writers_done`), and the test asserts each run's final cursor equals `next_event_seq` and that it took at
+  least 20 non-empty pages; the counting reader records each run's distinct maxima and must have seen more than one.
+- **M6 (Task 3).** The journal test's docstring no longer claims a contended intent; the one-intent assertion stays.
+- **I1 (Task 4, Task 5, Task 6).** The claim unit first dead-letters rows whose attempts reached the cap and whose
+  lease ran out (`EXHAUSTED`) and claims only rows under the cap; the tick runs the wake-up sweep before the delivery,
+  and `deliver_outbox` records its minute before its work; a unit test asserts both statements, a live test shows a
+  row whose deliveries always crash dead-lettered at its cap and announced, and the runbook says what a crashing
+  delivery looks like. No broad `except` was added.
+- **M10 (Task 4).** `deliver` claims, delivers and records one tenant before claiming the next (a unit test pins the
+  order).
+- **M5 (Tasks 1, 4).** The announcement's unit opens with `pg_advisory_xact_lock(2, hashtext(outbox_id))`; the lock
+  order gains `advisory:notification` after the asset guard; the two-sweeper debt line is gone.
+- **M4 (Task 4).** `record_result` is public, and a live test records attempt 1's late result after attempt 2 was
+  delivered and finds nothing written.
+- **I2 (Tasks 2, 6).** `action.conflict` joins the notification triggers; the revision, erratum 66, the runbook, the
+  handoff note and ARCHITECTURE say which three triggers have an emitter today and that `run.escalated` and
+  `run.abandoned_unverified` arrive with T22 (debt line).
+- **I6 (Task 2).** The restrictive policy `sweeper_purge_maintenance` (`FOR DELETE TO sweeper USING (run_id IS NULL
+  AND done_at IS NOT NULL)`) is created by 0008 and dropped by its downgrade; `privileges.SWEEPER_PURGE` carries its
+  stored text; R106 expects it; a new live test shows the sweeper's DELETE finding no run job and no unfinished
+  maintenance row; erratum 61 says so.
+- **I5 (Task 2).** The round trip compares table and column cells on `jobs` and `outbox`, the restored body's
+  `prosrc` with 0003's, and its definition, ACL, owner and settings and every `jobs` cell with a scratch database built
+  straight to 0007 (the 0007 module's pattern, prefix `r007_`).
+- **M9 (Task 2).** The catalog test keys bodies by OID and follows a call by name to every overload.
+- **I3 and I7 (Task 5).** The scan and the re-arm exclude runs with `cancel_requested`; the re-arm repeats the grace on
+  `app.current_time()`, the newest-job check, `done_at`, the cap and the run's state on the row it takes; Review Focus
+  4 lists exactly those conditions; the live test's docstring no longer claims no handler leaves a run waiting, and it
+  checks a cancelled run is never re-armed; the runbook's example names a refusal that finishes the job; the debt line
+  for T21 and erratum 63 state that a finally refused grant is re-dispatched up to the cap.
+- **M7 (Task 5).** The scan filters `r.state IN ('QUEUED', 'APPROVED')` before the lateral.
+- **M2 (Task 5).** The pull-forward moves only jobs whose `available_at` is no later than the released lease's
+  `lease_until` (read in the same unit); a live check shows a ten-minute delay survives a release; the docstring
+  states the residual race honestly.
+- **M8 (Task 5).** The R105 fixture fails before starting the skeleton when a QUEUED or APPROVED run with no pending
+  job is left in the database.
+- **M11 (Task 1).** The `_idempotent` "use a new key" line is on the Plan I debt list (→ T28).
+- **M1, M12 (Task 6).** The README tail keeps its separator; ARCHITECTURE says "attempted, apart from the run, until
+  delivered or dead-lettered".
+- **Counts.** Dev: Task 1 1001/134, Task 2 1007/140, Task 3 1007/144, Task 4 1022/149, Task 5 1030/154 (measured).
+  Live (arithmetic): 1126, 1130, 1150, 1163, with 21 skipped. Errata keep their numbers (60-71); 61, 63, 64, 66, 67,
+  68 and 71 are reworded.
+
+## Round 1 open points
+
+- No live step has run in any dry run (the permission policy refuses copying `.env` into a scratch tree); the new live
+  tests of this round (the crash-at-cap, late-result and purge-policy tests, the stronger round trip with its scratch
+  database, the readers' new floors, the R105 leftover check) are first exercised in execution.
+- The stored text of the restrictive policy, `((run_id IS NULL) AND (done_at IS NOT NULL))`, is PostgreSQL's usual
+  deparse of that expression; R106 is the test that confirms it on the first live run.
