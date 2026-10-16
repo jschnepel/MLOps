@@ -191,8 +191,12 @@ async def test_r131_mcp_exec_executes_exactly_the_write_path_functions(
     others = (set(privileges.DEFINER_FUNCTIONS) | set(privileges.HELPER_FUNCTIONS)) - MCP_EXEC_FUNCTIONS
     assert others <= {row["name"] for row in rows}  # every other function exists, so the line above is not vacuous
     mcp_exec = await role_conn(Role.MCP_EXEC)
-    assert await refused(mcp_exec, "SELECT * FROM app.mark_unknown(%s, 1)", (uuid4(),)) == "42501"  # the worker's
-    lines.append(f"R131 write half: mcp_exec EXECUTE = the seven write-path functions; {len(others)} others refused")
+    code = await refused(mcp_exec, "SELECT * FROM app.mark_unknown(%s, 1)", (uuid4(),))
+    assert code == "42501"  # the worker's
+    lines.append(
+        f"R131 write half: mcp_exec EXECUTE = the seven write-path functions; {len(others)} others refused"
+        " (mark_unknown 42501)"
+    )
 
 
 async def test_r131_read_handles_are_refused_at_mcp_write(
@@ -235,7 +239,8 @@ async def test_r131_read_handles_are_refused_at_mcp_write(
             await set_server(app_conn, investigate, "write")  # the lie: the job type still says read
             for tool in WRITE_TOOLS:
                 assert_refused(await call(url, token, investigate, tool, arguments))
-            assert await refused(mcp_exec, resolve, (investigate,)) == "OC008"  # mcp_exec's own resolution agrees
+            code = await refused(mcp_exec, resolve, (investigate,))  # bound first: no handle as an assert operand
+            assert code == "OC008"  # mcp_exec's own resolution agrees
             await set_server(app_conn, investigate, "read")
             cur = await mcp_read.execute(resolve, (investigate,))
             assert (await cur.fetchone() or {}).get("job_id") == await investigate_job(app_conn, read_run)
@@ -317,21 +322,23 @@ async def test_r030_the_receipt_lookup_is_recover_only_and_creates_nothing(
                 worker, read_run, await investigate_job(app_conn, read_run), await lease_for(worker, read_run)
             )
             unrelated = await recover_handle(app_conn, worker, bare, "timeout")
+            calls = Calls(monkeypatch)
             for tool in ("get_incident_receipt", "abort_incident"):
                 assert_refused(await call(url, token, fresh, tool, arguments))  # execute jobs never look up
                 assert_refused(await call(url, token, investigate, tool, arguments))  # nor do read jobs
             for tool in WRITE_TOOLS:  # an APPROVED run is in no recover state: refused, and nothing is created
                 assert_refused(await call(url, token, unrelated, tool, {"proposal_id": str(bare_proposal)}))
+            assert calls.made == []  # every refusal came before any destination call
             recover = await recover_handle(app_conn, worker, run, "timeout")
             cur = await app_conn.execute(COUNTS)
-            before = dict(await cur.fetchone() or {})
-            calls = Calls(monkeypatch)
+            before, keys = dict(await cur.fetchone() or {}), await keys_total(incident_conn)
             await arm(sim, own, "delay_receipt")
             delayed = data(await call(url, token, recover, "get_incident_receipt", arguments), "outcome")
             assert delayed["status"] == "UNKNOWN" and await attempt_states(app_conn, run) == ["INTENT", "SENT"]
             found = data(await call(url, token, recover, "get_incident_receipt", arguments), "ok")
             cur = await app_conn.execute(COUNTS)
             after = dict(await cur.fetchone() or {})
+        assert await keys_total(incident_conn) == keys  # the lookups wrote no key at the destination
         assert set(found) == {"status", "action_id", "payload_sha256", "receipt", "tombstone", "reason"}  # minimal
         assert found["status"] == "SUCCEEDED" and UUID(found["action_id"]) == action and found["tombstone"] is None
         assert calls.made == ["get_action", "get_action"]  # a lookup never POSTs
@@ -447,6 +454,7 @@ async def test_a_rate_limited_send_is_aborted_once_cancelled(
             before, keys = dict(await cur.fetchone() or {}), await keys_total(incident_conn)
             looked = data(await call(url, token, recover, "get_incident_receipt", arguments), "outcome")
             assert looked["status"] == "UNKNOWN"  # 404: no key, which is never a no-commit (SA:269)
+            assert await keys_total(incident_conn) == keys  # the lookup wrote none, so the later +1 is the tombstone
             early = error(await call(url, token, recover, "abort_incident", arguments))
             assert early["code"] == "ABORT_NOT_DUE" and early["retryable"] is True
             assert await attempt_states(app_conn, run) == ["INTENT", "SENT"]
@@ -462,7 +470,8 @@ async def test_a_rate_limited_send_is_aborted_once_cancelled(
         assert await at_destination(incident_conn, action) == (("ABORTED", "deadline"), 0)
         lines.append(
             "rate_limit -> UNKNOWN; lookup 404 -> UNKNOWN; abort not due refused; cancel -> abort 'deadline' ->"
-            " FAILED aborted_no_commit"
+            " FAILED aborted_no_commit; grant/attempt/job/proposal counts unchanged around the lookup and the abort;"
+            " the destination gained only the tombstone"
         )
     finally:
         await purge_run(app_conn, run)
@@ -525,6 +534,10 @@ async def test_a_send_past_the_dispatch_deadline_ends_expired(
                 )
         finally:
             await harness.execute(NOW)
+        # The harness may write the clock but not read it (AM-20.2), so the superuser reads the reset back.
+        cur = await app_conn.execute("SELECT clock_offset = interval '0' AS reset FROM app.test_clock")
+        reset = bool((await cur.fetchone() or {}).get("reset"))
+        assert reset  # the global offset is back at zero for every later test
         assert ended["status"] == "FAILED_NO_COMMIT" and ended["reason"] == "expired"
         assert UUID(ended["action_id"]) == grant.action_id and calls.made == ["post_abort"]
         assert await run_state(app_conn, run) == ("FAILED", "expired")
