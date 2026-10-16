@@ -50,13 +50,15 @@ def is_deferred(doc: dict[str, Any]) -> bool:
 @dataclass
 class Deps:
     """What a handler needs: the loop's connection, the MCP client, the model route, the server URLs, the worker's
-    name (the lease owner), the lease settings and the heartbeat that renews the lease while a job runs."""
+    name (the lease owner), the workload client its tokens are issued to (the `azp` a handle is bound to), the lease
+    settings and the heartbeat that renews the lease while a job runs."""
 
     conn: persistence.Conn
     mcp: McpCaller
     generator: DraftGenerator
     urls: Urls
     worker_name: str
+    workload_azp: str  # the token source's client id (Plan J ruling 17): _resolve_handle compares it with the token's
     leases: LeaseSettings = field(default_factory=LeaseSettings)
     heartbeat: Heartbeat | None = None  # main.run_job hands it each claimed lease; tests may run without one
 
@@ -107,7 +109,12 @@ async def investigate(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
         text = str(message["text"])
         await persistence.transition_run(deps.conn, run_id=run["run_id"], src=RunState.QUEUED, dst=RunState.RETRIEVING)
         handle = await persistence.mint_handle(
-            deps.conn, run_id=run["run_id"], job_id=job["id"], server=Server.READ, azp="ops-worker", fence=lease.fence
+            deps.conn,
+            run_id=run["run_id"],
+            job_id=job["id"],
+            server=Server.READ,
+            azp=deps.workload_azp,
+            fence=lease.fence,
         )
     await _event(deps, lease, EventType.TOOL_STARTED, {"message": "search_procedures"})
     try:
@@ -221,7 +228,12 @@ async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
             return True
         proposal_id: UUID = run["active_proposal_id"]
         handle = await persistence.mint_handle(
-            deps.conn, run_id=run["run_id"], job_id=job["id"], server=Server.WRITE, azp="ops-worker", fence=lease.fence
+            deps.conn,
+            run_id=run["run_id"],
+            job_id=job["id"],
+            server=Server.WRITE,
+            azp=deps.workload_azp,
+            fence=lease.fence,
         )
     try:
         doc = await lease.effect(

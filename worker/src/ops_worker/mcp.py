@@ -12,6 +12,7 @@ from typing import Any, Protocol
 import httpx2
 from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
+from ops_core.mcp_protocol import PROTOCOL_VERSION
 
 
 class McpCallFailed(Exception):
@@ -61,7 +62,7 @@ class HttpMcpCaller:
             headers = {"Authorization": f"Bearer {await self._tokens.token()}", "X-Ops-Invocation": handle}
             async with (
                 httpx2.AsyncClient(headers=headers, timeout=self._timeout) as http,
-                Client(streamable_http_client(url, http_client=http), mode="2026-07-28") as client,
+                Client(streamable_http_client(url, http_client=http), mode=PROTOCOL_VERSION) as client,
             ):
                 result = await client.call_tool(tool, arguments)
         except TRANSPORT_FAILURES as exc:

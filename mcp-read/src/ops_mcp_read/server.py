@@ -1,6 +1,7 @@
 """mcp-read: the authenticated read-tool server (ADR-0003; AM-15 read tools; SA:557 token checks).
 
-Every call must present the worker's workload token (aud = this server's resource URL, azp = ops-worker) and an
+Every call must carry `MCP-Protocol-Version: 2026-07-28` (anything else is refused before authentication, AM-30), the
+worker's workload access token (`typ` Bearer, aud = this server's resource URL, azp = ops-worker) and an
 `X-Ops-Invocation` handle minted for an `investigate` job; the handle, not the token, says which run and tenant the
 call is for (BUILD_SPEC §9). The tool's argument model forbids extra keys, so an argument that tries to supply a
 tenant, role or actor is refused before the tool body runs (SA:350). Results are the AM-80 tool-result envelope
@@ -27,6 +28,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.tools.base import Tool
 from ops_core import persistence, redaction, settings
 from ops_core.jobs import Tool as ToolName
+from ops_core.mcp_protocol import ProtocolVersionGuard
 from ops_core.settings import Role
 from ops_core.tokens import Principal, TokenRejected, TokenVerifier
 from pydantic import AnyHttpUrl, ConfigDict, Field
@@ -112,10 +114,16 @@ class Verifier(Protocol):  # the subset of ops_core.tokens.TokenVerifier the ser
 
 
 class McpVerifier:
-    """The SDK's TokenVerifier protocol: None means 401. The SDK re-checks `expires_at`, consistently with PyJWT."""
+    """The SDK's TokenVerifier protocol: None means 401. The SDK re-checks `expires_at`, consistently with PyJWT.
+
+    A token whose `aud` lacks this server's resource URL is refused here, whatever audience the wrapped verifier was
+    configured with, and only then is `resource` stamped with that URL (Plan J ruling 2). The SDK's own resource check
+    (`validate_token_resource`) stays on as a second layer; it cannot refuse anything while the stamp is this server's
+    own URL, and would decide only if the stamp ever came from the token.
+    """
 
     def __init__(self, verifier: Verifier, resource_url: str) -> None:
-        """Adapt a token verifier to the SDK's bearer-auth hook; `resource_url` is stamped on the access token."""
+        """Adapt a token verifier to the SDK's bearer-auth hook; `resource_url` is this server's audience."""
         self._verifier = verifier
         self._resource = resource_url
 
@@ -123,6 +131,8 @@ class McpVerifier:
         try:
             principal = await self._verifier.verify_async(token)
         except TokenRejected:
+            return None
+        if self._resource not in principal.audiences:
             return None
         return AccessToken(
             token=token,
@@ -191,7 +201,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
     return MCPServer(
         name="mcp-read",
         auth=AuthSettings(
-            issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url), validate_token_resource=False
+            issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url), validate_token_resource=True
         ),
         token_verifier=McpVerifier(state.verifier, resource_url),
         tools=[strict_tool(search_procedures)],
@@ -237,7 +247,26 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         return JSONResponse({"status": "ready"})
 
     return Starlette(
-        routes=[Route("/health/live", live), Route("/health/ready", ready), Mount("/", app=mcp_app)], lifespan=lifespan
+        routes=[
+            Route("/health/live", live),
+            Route("/health/ready", ready),
+            # The version rule runs before the SDK app and its bearer auth (AM-30, Plan J ruling 4).
+            Mount("/", app=ProtocolVersionGuard(mcp_app)),
+        ],
+        lifespan=lifespan,
+    )
+
+
+def read_verifier(kc: settings.Keycloak, urls: settings.Urls) -> TokenVerifier:
+    """mcp-read's token checks (SA:557, Plan J ruling 2): the realm's issuer and keys, this server's resource URL as the
+    audience, the worker as the only `azp`, and an access token's `typ` claim. `production_app` builds its verifier
+    here, and the unit tests build theirs here too, so they pin the wiring that runs."""
+    return TokenVerifier(
+        issuer=kc.issuer,
+        audience=urls.mcp_read_resource,
+        allowed_azp=frozenset({"ops-worker"}),
+        jwks_url=kc.jwks_url,
+        token_type="Bearer",  # an access token: Keycloak's ID and refresh tokens carry another `typ` (ruling 2)
     )
 
 
@@ -245,10 +274,9 @@ def production_app() -> Starlette:
     """The app wired from the environment and secret files, as `python -m ops_mcp_read` runs it."""
     kc = settings.keycloak()
     urls = settings.urls()
-    verifier = TokenVerifier(
-        issuer=kc.issuer, audience=urls.mcp_read_resource, allowed_azp=frozenset({"ops-worker"}), jwks_url=kc.jwks_url
+    state = State(
+        session=None, corpora=procedures.load_corpora(settings.fixtures_dir()), verifier=read_verifier(kc, urls)
     )
-    state = State(session=None, corpora=procedures.load_corpora(settings.fixtures_dir()), verifier=verifier)
     return build_app(build_server(state, issuer=kc.issuer, resource_url=urls.mcp_read_resource), state)
 
 

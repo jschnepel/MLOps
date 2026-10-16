@@ -24,6 +24,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.tools.base import Tool
 from ops_core import persistence, redaction, settings
 from ops_core.jobs import Tool as ToolName
+from ops_core.mcp_protocol import ProtocolVersionGuard
 from ops_core.outcomes import ActionOutcome, ToolOutcome
 from ops_core.settings import Role
 from ops_core.tokens import Principal, TokenRejected, TokenVerifier, WorkloadTokenSource
@@ -262,7 +263,13 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         return JSONResponse({"status": "ready"})
 
     return Starlette(
-        routes=[Route("/health/live", live), Route("/health/ready", ready), Mount("/", app=mcp_app)], lifespan=lifespan
+        routes=[
+            Route("/health/live", live),
+            Route("/health/ready", ready),
+            # The version rule runs before the SDK app and its bearer auth (AM-30, Plan J ruling 4).
+            Mount("/", app=ProtocolVersionGuard(mcp_app)),
+        ],
+        lifespan=lifespan,
     )
 
 

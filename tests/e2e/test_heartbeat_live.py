@@ -96,6 +96,7 @@ async def worker_deps(role_conn: RoleConn, mcp_class: type[ScriptedMcp], generat
         generator=generator,
         urls=settings.urls(),
         worker_name=WORKER,
+        workload_azp="ops-worker",  # the azp the scripted callers resolve with
         leases=settings.leases(),  # the real defaults: DoD 3 is about these values
     )
 

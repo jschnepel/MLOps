@@ -95,7 +95,14 @@ async def test_execute_requeues_a_deferred_grant_and_releases_its_lease(monkeypa
     conn: Any = FakeConn()
     mcp = DeferringMcp()
     no_generator: Any = None  # the execute path never drafts
-    deps = handlers.Deps(conn=conn, mcp=mcp, generator=no_generator, urls=settings.urls(), worker_name="worker:test")
+    deps = handlers.Deps(
+        conn=conn,
+        mcp=mcp,
+        generator=no_generator,
+        urls=settings.urls(),
+        worker_name="worker:test",
+        workload_azp="ops-worker",
+    )
     job = {"id": job_id, "run_id": run_id, "tenant_id": tenant, "type": "execute"}
     assert await handlers.execute(deps, job, lease) is False
     assert mcp.calls == ["create_incident"] and calls["fenced"] == [2]

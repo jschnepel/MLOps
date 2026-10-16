@@ -86,10 +86,12 @@ class TokenVerifier:
         required_claims: tuple[str, ...] = ("exp", "iss", "aud", "sub"),
         require_azp: bool = True,
         typ: str | None = None,
+        token_type: str | None = None,
     ) -> None:
         """Pin the server's issuer, audience, allowed azp and key source; `required_claims`, `require_azp` and `typ`
         let one class verify ID tokens (nonce, sid) and logout tokens (jti, events, typ logout+jwt, no azp),
-        ruling 26."""
+        ruling 26. `token_type` is the `typ` *claim* Keycloak writes into the payload ("Bearer" for an access token,
+        "ID" and "Refresh" for the others); `typ` is the JOSE header's (Plan J ruling 2)."""
         self._issuer = issuer
         self._audience = audience
         self._allowed_azp = allowed_azp
@@ -99,6 +101,7 @@ class TokenVerifier:
         self._required_claims = tuple(dict.fromkeys(("exp", "iss", "aud", *required_claims)))
         self._require_azp = require_azp
         self._typ = typ
+        self._token_type = token_type
         self._keys: PyJWKSet | None = None
         self._refreshed_at = 0.0
         self._refresh_lock = asyncio.Lock()  # single-flight: concurrent unknown-kid requests share one fetch
@@ -163,6 +166,8 @@ class TokenVerifier:
             raise TokenRejected(f"token rejected: {exc.__class__.__name__}") from exc
         if self._typ is not None and str(header.get("typ", "")).lower() != self._typ.lower():
             raise TokenRejected("token type is not accepted here")
+        if self._token_type is not None and claims.get("typ") != self._token_type:
+            raise TokenRejected("token type is not accepted here")
         subject = claims.get("sub", "")
         if "sub" in self._required_claims and (not isinstance(subject, str) or not subject):
             raise TokenRejected("token has no subject")
@@ -221,6 +226,11 @@ class WorkloadTokenSource:
         self._token: str | None = None
         self.expires_at = 0.0
         self._lock = asyncio.Lock()  # concurrent first callers share one token request
+
+    @property
+    def client_id(self) -> str:
+        """The workload client the tokens are issued to: their `azp`, which a handle minted with them is bound to."""
+        return self._client_id
 
     async def token(self) -> str:
         async with self._lock:
