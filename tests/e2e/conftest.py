@@ -131,6 +131,7 @@ async def fresh_memberships(migrated: None, request: pytest.FixtureRequest) -> N
 
 PURGE_ORDER = (
     "DELETE FROM app.invocation_context WHERE run_id = %s",
+    "DELETE FROM app.outbox WHERE run_id = %s",  # T14: an intent references its event and its run
     "DELETE FROM app.events WHERE run_id = %s",
     (
         "DELETE FROM app.action_attempt_state WHERE action_id IN "

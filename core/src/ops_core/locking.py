@@ -45,7 +45,7 @@ LOCK_ORDER: Final = (
     "invocation_context",
     "run_state_history",
     "events",
-    "outbox",  # created by T14
+    "outbox",  # T14: revision 0008
     "jobs:finish",  # the transaction's own claimed job: finished, re-queued or handed back
     "idempotency_request",  # written last, before commit (SA:188)
 )
@@ -53,7 +53,7 @@ OWN_UNIT: Final = frozenset(
     {"model_permit", "sessions", "login_state", "logout_jti", "test_clock", "tenants", "run_directory"}
 )
 NEVER_LOCKED: Final = frozenset({"conversations", "transitions"})
-NOT_YET_CREATED: Final = frozenset({"operator_resolutions", "outbox"})
+NOT_YET_CREATED: Final = frozenset({"operator_resolutions"})
 
 OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "worker claim (persistence.claim_next)": ("jobs:claim", "run_lease", "runs"),  # a first lease's FK key share

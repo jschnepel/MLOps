@@ -4,17 +4,20 @@ function's callers (SPEC_AMENDMENTS AM-20.1, AM-20.2, AM-20.3, AM-20.5).
 One source of truth for two consumers: the migrations render GRANT, REVOKE and POLICY statements from it for the
 tables each revision creates or changes (never for "every table": an applied revision must not change when a row is
 added here), and the R124/R106 tests enumerate the catalogs against it, so an extra or missing grant fails a test
-instead of hiding. Rows exist only for tables that exist; the owners of later tables (outbox → T14, feedback → T21,
-operator_resolutions → T22, documents/chunks/embeddings → T17) add their rows. Eight departures from the printed
+instead of hiding. Rows exist only for tables that exist; the owners of later tables (feedback → T21,
+operator_resolutions → T22, documents/chunks/embeddings → T17) add their rows. Ten departures from the printed
 table, each a proposed erratum (Plan E rulings 6, 10, 17, 23; Plan F rulings 2, 3 and 17 with erratum 25; Plan G
-ruling 4; Plan H rulings 1 and 12): the worker (not the sweeper) may UPDATE jobs.available_at (re-queue after a
-transport failure), app_definer may UPDATE runs.updated_at, app_definer may UPDATE run_lease.fence (the fenced
-definers lock the lease row and mark_unknown bumps it, erratum 45), the `transitions` table (the T07 table mirrored
-in SQL) is readable by app_definer only, no definer function takes a row lock on proposals, decisions, memberships or
-execution_grant (a lock needs UPDATE, which the matrix withholds), the sweeper holds SELECT beside its DELETE on
-sessions, login_state, logout_jti and idempotency_request (a DELETE with a WHERE reads the row), login_state and
-logout_jti are rows the printed table lacks, and model_permit has no sweeper cell (an expired permit is free by the
-same comparison, erratum 50). `test_harness` exists only in the test profile: the main-line revisions grant it nothing;
+ruling 4; Plan H rulings 1 and 12; Plan I rulings 12 and 20): the worker (not the sweeper) may UPDATE
+jobs.available_at (re-queue after a transport failure), app_definer may UPDATE runs.updated_at, app_definer may
+UPDATE run_lease.fence (the fenced definers lock the lease row and mark_unknown bumps it, erratum 45), the
+`transitions` table (the T07 table mirrored in SQL) is readable by app_definer only, no definer function takes a row
+lock on proposals, decisions, memberships or execution_grant (a lock needs UPDATE, which the matrix withholds), the
+sweeper holds SELECT beside its DELETE on sessions, login_state, logout_jti and idempotency_request (a DELETE with a
+WHERE reads the row), login_state and logout_jti are rows the printed table lacks, model_permit has no sweeper cell
+(an expired permit is free by the same comparison, erratum 50), the outbox has no api or worker cell (only
+`_append_event` writes intent, erratum 60), and the sweeper may DELETE from jobs, finished maintenance rows only (a
+restrictive policy, SWEEPER_PURGE, erratum 61). `test_harness` exists only in the test profile: the main-line
+revisions grant it nothing;
 the testclock branch grants it schema USAGE, EXECUTE on current_time() and its test_clock cells.
 """
 
@@ -116,7 +119,7 @@ GRANTS: Final[dict[str, dict[str, Grant]]] = {
     "jobs": {
         "api": _INS,
         "worker": Grant(sel=True, ins=True, upd=(*_JOB_COLUMNS, "available_at")),
-        "sweeper": Grant(sel=True, ins=True, upd=_JOB_COLUMNS),
+        "sweeper": Grant(sel=True, ins=True, upd=_JOB_COLUMNS, dele=True),  # erratum 61: finished maintenance rows
         DEFINER_ROLE: _SI,
     },
     "invocation_context": {"worker": _INS, "sweeper": _S, DEFINER_ROLE: Grant(sel=True, upd=("revoked_at",))},
@@ -127,6 +130,12 @@ GRANTS: Final[dict[str, dict[str, Grant]]] = {
     "action_attempt": {"api": _S, "worker": _S, "sweeper": _S, DEFINER_ROLE: _SI},
     "action_attempt_state": {"api": _S, "worker": _S, "sweeper": _S, DEFINER_ROLE: _SI},
     "events": {"api": _S, "worker": _S, "sweeper": _S, DEFINER_ROLE: _SI},
+    # T14 (Plan I ruling 12, erratum 60): intent is written by _append_event alone (INSERT, no SELECT: its ON
+    # CONFLICT names no target); the sweeper claims, leases and records results under its tenant setting.
+    "outbox": {
+        "sweeper": Grant(sel=True, upd=("leased_until", "attempts", "delivered_at", "result")),
+        DEFINER_ROLE: _INS,
+    },
     "transitions": {DEFINER_ROLE: _S},
     "test_clock": {DEFINER_ROLE: _S, "test_harness": Grant(ins=True, upd=True, dele=True)},
 }
@@ -146,8 +155,12 @@ RLS_TABLES: Final = (
     "action_attempt",
     "action_attempt_state",
     "events",
+    "outbox",
 )
-SWEEPER_ALL: Final = ("memberships", "jobs")  # SA:520: the only policies besides tenant_isolation
+SWEEPER_ALL: Final = ("memberships", "jobs")  # SA:520: the permissive policies besides tenant_isolation
+# T14 (Plan I round 1, I6; erratum 61): a restrictive DELETE policy keeps the sweeper's purge to finished maintenance
+# rows (sweeper_all would admit every tenant's run jobs). The text is what pg_policies.qual stores, which R106 compares.
+SWEEPER_PURGE: Final = ("jobs", "sweeper_purge_maintenance", "((run_id IS NULL) AND (done_at IS NOT NULL))")
 NO_RLS: Final = (
     "tenants",
     "run_directory",
