@@ -8,8 +8,8 @@ children (`scripts.skeleton.process_environment`: this session's test profile an
 `get_incident_receipt` has a real lookup to do and no new action to create. Catches: a server that only works
 in-process (BUILD_SPEC §10), a tool list other than the three write tools or one that advertises extra arguments, a
 locked SDK version other than AM-30's, a lookup through the network that creates a grant, an attempt, a job or an
-incident, and a handle or a token in the child's own log (written through its redaction filter at uvicorn's "warning"
-level, so a weaker check than the in-process ones).
+incident, or that answers the receipt without recording it, and a handle or a token in the child's own log (written
+through its redaction filter at uvicorn's "warning" level, so a weaker check than the in-process ones).
 """
 
 import asyncio
@@ -35,6 +35,7 @@ from ops_mcp_write import execution
 
 from scripts.skeleton import healthy, process_environment
 from tests.e2e.conftest import purge_run
+from tests.e2e.test_fenced_definers_live import attempt_states
 from tests.e2e.test_mcp_read_t15_live import free_port, worker_token
 from tests.e2e.test_mcp_write_live import approved_run
 from tests.e2e.test_mcp_write_t47_live import (
@@ -149,6 +150,7 @@ async def test_r025_an_independent_client_lists_the_write_tools_and_looks_up_a_r
         assert not result.is_error and isinstance(doc, dict) and doc["status"] == "ok"
         assert doc["data"]["status"] == "SUCCEEDED" and doc["data"]["action_id"] == str(first.action_id)
         assert after == before  # no grant, attempt, job or proposal created by the lookup
+        assert await attempt_states(app_conn, run) == ["INTENT", "SENT", "RESOLVED"]  # the child recorded the receipt
         assert await at_destination(incident_conn, first.action_id) == (("COMMITTED", None), 1)
         text = log.read_text(encoding="utf-8", errors="replace")
         leaked = any(value in text for value in (handle, recover, token, own))  # one boolean, never a value
@@ -158,7 +160,7 @@ async def test_r025_an_independent_client_lists_the_write_tools_and_looks_up_a_r
         lines.append(
             f"R025 (write half) / R031 (network half, mcp-write): child process; official client mode"
             f" {PROTOCOL_VERSION} listed [{names}]; get_incident_receipt with a recover handle answered SUCCEEDED for"
-            " the existing action; no grant, attempt, job or incident created"
+            " the existing action and recorded it (attempt RESOLVED); no grant, attempt, job or incident created"
         )
     finally:
         await purge_run(app_conn, run)

@@ -12,10 +12,16 @@ or one whose stored server column lies) answered at mcp-write; incident-sim acce
 or an abort answered for an execute or investigate handle, or for an APPROVED run (no grant); a lookup that writes a
 key, a grant, an attempt, a job or a proposal, or answers more than the minimal outcome; an abort that writes more than
 its own state rows and its tombstone; the re-queued execute job's re-send
-creating a second action or incident; a 404, 429 or lost reply recorded as anything but UNKNOWN; a foreign receipt hash
-recorded as anything but CONFLICT, or re-queried once recorded; an abort before it is due; a cancelled or expired
-attempt sent instead of aborted, or ending without the destination's tombstone; and a redispatch outside EXECUTING
-that sends anything.
+creating a second action or incident, or its call after an abort request refused instead of answered UNKNOWN with
+nothing sent (final review I1); a delayed receipt's 404 at the lookup, or a rate limit or a lost reply at the send,
+answered as anything but an unrecorded UNKNOWN; a foreign receipt hash recorded as anything but CONFLICT, or re-queried
+once recorded; an abort before it is due; a cancelled or expired attempt sent instead of aborted, or ending without the
+destination's tombstone; and a redispatch outside EXECUTING that sends anything.
+
+What it does not pin rests on other modules: the lookup's 429, 503 and lost reply, the abort's unanswered and
+resolved branches and the other proposal's refusal are scripted in tests/plan_k/test_recovery_tools.py; the definers'
+own rules (the abort's reasons, the deadline, a receipt after an abort, the token's `azp`, another run's action id)
+are called directly in tests/e2e/test_migration_0010_live.py.
 """
 
 import asyncio
@@ -50,7 +56,7 @@ pytestmark = pytest.mark.asyncio
 
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 EVIDENCE = Path("reports/mcp-write/t47-mcp-write.txt")
-EXPECTED_LINES = 10  # one per test below
+EXPECTED_LINES = 11  # one per test below
 WRITE_TOOLS = ("create_incident", "get_incident_receipt", "abort_incident")
 MCP_EXEC_FUNCTIONS = {
     "current_time",  # erratum 15
@@ -544,6 +550,58 @@ async def test_a_send_past_the_dispatch_deadline_ends_expired(
         assert await attempt_states(app_conn, run) == ["INTENT", "ABORT_REQUESTED", "RESOLVED"]
         assert await at_destination(incident_conn, grant.action_id) == (("ABORTED", "expired"), 0)
         lines.append("past the dispatch deadline: create_incident -> abort -> FAILED_NO_COMMIT expired; no POST")
+    finally:
+        await purge_run(app_conn, run)
+
+
+async def test_a_re_queued_execute_job_at_an_abort_request_parks_the_run(
+    app_conn: persistence.Conn,
+    role_conn: RoleConn,
+    incident_conn: persistence.Conn,
+    secret: Callable[[str], str],
+    monkeypatch: pytest.MonkeyPatch,
+    lines: list[str],
+) -> None:
+    """Final review I1: the grant committed, then a cancel, then the abort request committed (ABORT_REQUESTED,
+    `cancelled_before_send`) and mcp-write stopped before the abort POST and the record, as a crash or a database
+    error leaves it; the worker re-queues the execute job. Its fresh handle is answered UNKNOWN with no destination
+    call and nothing written, and the worker's mark_unknown then parks the run in OUTCOME_UNKNOWN with a recover
+    job, where T22 picks it up. Before the fix the handle was refused, the job closed and the run stranded."""
+    api, worker, mcp_exec = await role_conn(Role.API), await role_conn(Role.WORKER), await role_conn(Role.MCP_EXEC)
+    _, run, proposal, execute = await approved_run(app_conn, api=api, worker=worker)
+    token = await worker_token(secret)
+    try:
+        grant = await persistence.grant_execution(mcp_exec, handle=execute, azp=AZP, proposal_id=proposal)
+        await cancel(api, run)
+        reason = await persistence.request_abort(mcp_exec, handle=execute, azp=AZP, action_id=grant.action_id)
+        assert reason == "cancelled_before_send"  # committed; its POST and its record never happen
+        fresh = await execute_handle(worker, run, fence=await fence_of(app_conn, run))  # the re-queued job's
+        cur = await app_conn.execute(COUNTS)
+        before, keys = dict(await cur.fetchone() or {}), await keys_total(incident_conn)
+        async with write_stack(monkeypatch) as (_, url):
+            calls = Calls(monkeypatch)
+            answered = data(await call(url, token, fresh, "create_incident", {"proposal_id": str(proposal)}), "outcome")
+        cur = await app_conn.execute(COUNTS)
+        after = dict(await cur.fetchone() or {})
+        assert answered["status"] == "UNKNOWN" and UUID(answered["action_id"]) == grant.action_id
+        assert calls.made == []  # no incident POST, no abort POST, no lookup
+        assert after == before and await keys_total(incident_conn) == keys  # nothing written here or at the destination
+        assert await at_destination(incident_conn, grant.action_id) == (None, 0)
+        assert await attempt_states(app_conn, run) == ["INTENT", "ABORT_REQUESTED"]
+        assert await run_state(app_conn, run) == ("EXECUTING", None)
+        # What the worker's execute handler does with that UNKNOWN (handlers._mark_unknown), at the job's own fence.
+        unknown = await persistence.mark_unknown(worker, run, await fence_of(app_conn, run))
+        assert unknown.state.value == "OUTCOME_UNKNOWN"
+        cur = await app_conn.execute(
+            "SELECT dedup_key FROM app.jobs WHERE run_id = %s AND type = 'recover' AND done_at IS NULL", (run,)
+        )
+        assert [row["dedup_key"] for row in await cur.fetchall()] == [f"{grant.action_id}:timeout"]
+        assert await run_state(app_conn, run) == ("OUTCOME_UNKNOWN", None)
+        lines.append(
+            "I1: abort requested (cancelled_before_send), outcome never recorded; the re-queued execute job's"
+            " create_incident -> UNKNOWN, no destination call, counts and keys unchanged; mark_unknown ->"
+            " OUTCOME_UNKNOWN with a recover job"
+        )
     finally:
         await purge_run(app_conn, run)
 

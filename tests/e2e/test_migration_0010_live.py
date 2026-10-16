@@ -5,7 +5,8 @@ Catches: a downgrade that leaves 0010's functions behind or restores the four ap
 database that never saw 0010, or an upgrade that does not bring 0010 back; mcp-write's startup check passing at 0009;
 `mark_sent` writing SENT past the dispatch deadline, after an abort request, or answering `expired` for a cancelled
 run, and allowing the re-send of a SENT attempt after a cancel, past the deadline or to a recover job;
-`request_abort` writing a row when no abort is due, choosing the wrong reason, or writing a second row on a repeat;
+`request_abort` writing a row when no abort is due, choosing the wrong reason, or writing a second row on a repeat, or
+answering for another run's action id or a finished job's handle;
 a receipt refused after an abort requested after SENT (an abort answered by the existing receipt is the destination's
 truth), or accepted after one requested before SENT (nothing was ever sent); and a
 write-path definer that still compares a literal `'ops-worker'` instead of the presented token's `azp` (a handle
@@ -358,3 +359,34 @@ async def test_every_write_path_definer_compares_the_presented_azp(
         assert await attempt_states(app_conn, run) == ["INTENT", "SENT", "RESOLVED"]
     finally:
         await purge_run(app_conn, run)
+
+
+async def test_an_abort_request_is_bound_to_the_handles_run_and_open_job(
+    app_conn: persistence.Conn, role_conn: RoleConn
+) -> None:
+    """`request_abort`'s own authority checks: another run's action id is refused OC002 (the definer's
+    `g.run_id = v_handle.run_id`), and a handle whose job has finished is refused OC008 (0009's binding, through
+    `_resolve_handle`). The same handle with its own run's action is answered in between, so neither refusal is
+    vacuous, and neither writes a row."""
+    api, worker, mcp_exec = await role_conn(Role.API), await role_conn(Role.WORKER), await role_conn(Role.MCP_EXEC)
+    _, first, first_proposal, first_handle = await approved_run(app_conn, api=api, worker=worker)
+    _, second, second_proposal, second_handle = await approved_run(app_conn, api=api, worker=worker)
+    try:
+        one = await persistence.grant_execution(mcp_exec, handle=first_handle, azp=AZP, proposal_id=first_proposal)
+        two = await persistence.grant_execution(mcp_exec, handle=second_handle, azp=AZP, proposal_id=second_proposal)
+        await cancel(api, first)
+        await cancel(api, second)  # so an abort of the second action would be due, were it the handle's own
+        with pytest.raises(persistence.NotFound):
+            await persistence.request_abort(mcp_exec, handle=first_handle, azp=AZP, action_id=two.action_id)
+        assert await attempt_states(app_conn, second) == ["INTENT"]
+        reason = await persistence.request_abort(mcp_exec, handle=first_handle, azp=AZP, action_id=one.action_id)
+        assert reason == "cancelled_before_send"  # the positive control: the same handle, its own run's action
+        await app_conn.execute("UPDATE app.jobs SET done_at = now() WHERE run_id = %s AND type = 'execute'", (first,))
+        finished = await refused(
+            persistence.request_abort(mcp_exec, handle=first_handle, azp=AZP, action_id=one.action_id)
+        )
+        assert finished  # even the repeat that would return the first reason
+        assert await attempt_states(app_conn, first) == ["INTENT", "ABORT_REQUESTED"]
+    finally:
+        await purge_run(app_conn, first)
+        await purge_run(app_conn, second)
