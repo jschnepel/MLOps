@@ -7,7 +7,7 @@ lost its lease. Reclaim hands such jobs back (`claimed_by`, `claimed_at` cleared
 next poll claims them and takes the run's lease at the next fence, and whoever claims one re-reads the run (jobs are
 wake-ups; an investigate job whose run it finds RETRIEVING or DRAFTING fails that run as interrupted, review round
 3). Nothing else: no `recover` job (T22), no model permit work (an expired permit is free by the same comparison), no
-lost wake-ups (T14).
+lost wake-ups (those are `wakeups.sweep`'s: it reopens done jobs of stuck runs, erratum 63).
 """
 
 from __future__ import annotations
