@@ -254,7 +254,7 @@ RESTORED: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
     ("_append_event", "uuid, uuid, text, text, jsonb", (), REV0003.APPEND_EVENT_HELPER),
 )
 # Round 1, I6: the sweeper's DELETE on jobs reaches finished maintenance rows only (sweeper_all is FOR ALL USING
-# (true), and a restrictive policy is ANDed with every permissive one). privileges.SWEEPER_PURGE_QUAL is the text
+# (true), and a restrictive policy is ANDed with every permissive one). privileges.SWEEPER_PURGE is the text
 # PostgreSQL stores for this expression, which R106 compares.
 PURGE_POLICY = (
     "DROP POLICY IF EXISTS sweeper_purge_maintenance ON app.jobs",

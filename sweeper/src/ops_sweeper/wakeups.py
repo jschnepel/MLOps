@@ -47,13 +47,23 @@ log = logging.getLogger("ops_sweeper.wakeups")
 WAKEUPS = (("QUEUED", "investigate"), ("APPROVED", "execute"))
 PAIRS = ", ".join(f"('{state}', '{job_type}')" for state, job_type in WAKEUPS)
 STATES = ", ".join(f"'{state}'" for state, _ in WAKEUPS)
+
+
+def job_type_case(pairs: Sequence[tuple[str, str]]) -> str:
+    """The state -> job type map the lateral picks a run's job by, built from the same pairs as PAIRS and STATES.
+
+    A hand-written CASE would yield NULL for a pair added to WAKEUPS alone, and the run would be silently dropped.
+    """
+    return "CASE r.state " + " ".join(f"WHEN '{state}' THEN '{job_type}'" for state, job_type in pairs) + " END"
+
+
 # Each run's newest job of its state's type; an unfinished one sorts first (NULLS FIRST), so a run whose wake-up is
 # still pending is never picked.
 LOST = (
     "SELECT r.run_id, r.state, j.id AS job_id, j.type AS job_type, j.attempts FROM app.runs r"
     " JOIN LATERAL (SELECT jj.id, jj.type, jj.attempts, jj.done_at FROM app.jobs jj"
     " WHERE jj.run_id = r.run_id"
-    " AND jj.type = CASE r.state WHEN 'QUEUED' THEN 'investigate' WHEN 'APPROVED' THEN 'execute' END"
+    f" AND jj.type = {job_type_case(WAKEUPS)}"
     " ORDER BY jj.done_at DESC NULLS FIRST, jj.created_at DESC LIMIT 1) j ON true"
     # Only waiting runs reach the lateral (round 1, M7), and never one whose cancellation was requested (I3).
     f" WHERE r.state IN ({STATES}) AND NOT r.cancel_requested AND (r.state, j.type) IN ({PAIRS})"

@@ -69,6 +69,18 @@ def test_the_sweep_looks_only_where_a_handler_exists() -> None:
     assert wakeups.WAKEUPS == (("QUEUED", "investigate"), ("APPROVED", "execute"))  # ruling 7: T20, T21, T22 add
 
 
+def test_the_job_type_case_covers_every_wakeup_pair() -> None:
+    case = wakeups.job_type_case(wakeups.WAKEUPS)
+    # Today's text, unchanged: built from WAKEUPS, it equals what was once written by hand.
+    assert case == "CASE r.state WHEN 'QUEUED' THEN 'investigate' WHEN 'APPROVED' THEN 'execute' END"
+    assert f"jj.type = {case}" in wakeups.LOST
+    # A pair added to WAKEUPS alone reaches the CASE, so the lateral cannot return NULL for its runs.
+    extended = (*wakeups.WAKEUPS, ("AWAITING_INPUT", "resume_input"))
+    assert "WHEN 'AWAITING_INPUT' THEN 'resume_input'" in wakeups.job_type_case(extended)
+    for state, job_type in extended:
+        assert f"WHEN '{state}' THEN '{job_type}'" in wakeups.job_type_case(extended)
+
+
 def test_the_scan_finds_a_runs_newest_job_done_past_the_grace() -> None:
     conn = FakeConn([])
     as_conn: Any = conn
