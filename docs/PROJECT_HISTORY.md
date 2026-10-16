@@ -520,14 +520,40 @@ process; `docs/threat-model.md` says plainly that v1 trusts mcp-write for outcom
 it sees neither the cancel flag nor the grant's time, so the function chooses it under the lock. The abort tool's
 result schema had no way to say "the destination did not answer", so the schema gained UNKNOWN and CONFLICT. And two
 of the faults the rulings named act only on the incident POST, so their effect on the recovery tools is shown through
-the POST's consequences, with a scripted reply for a rate limit at the lookup itself.
+the POST's consequences, with a scripted reply for a rate limit at the lookup itself. The plan then went through two static reviews, each
+applying it task by task to a fresh copy of the tree.
 
 **Problem.** The plan's first review (0 Blocking, 1 Important, 11 Minor) found a hole the plan said was closed: the
 execute job's re-send of a SENT attempt skipped `mark_sent`, so after a lost reply a re-queued job could still POST
 after a cancel or past the dispatch deadline, and a recover job could re-send too. **Change.** Every send now passes
 `mark_sent`, which checks a re-send as it checks a first send and refuses a recover job's; a receipt after an abort is
 accepted only when the abort followed SENT; the hash-mismatch pin follows every function mcp-write reaches; and the
-counts and destination keys are checked around the abort as well as the lookups.
+counts and destination keys are checked around the abort as well as the lookups. The second review accepted the
+plan (0 Blocking, 0 Important, 4 Minor) and the minors were folded in without a third round: the receipt-after-abort
+rule was reworded to match the narrowed code (only an abort that followed SENT lets a receipt through); the abort
+rule's docstring now covers the re-send of a SENT attempt; errata 85 and 89 gained the `not_redispatchable` answer
+and its plain `NOT_REDISPATCHABLE` error; and the backstop that refuses a receipt after an abort compares the reason
+with `IS NOT DISTINCT FROM 'deadline'`, so an abort row with no reason fails closed instead of letting a receipt
+through.
+
+**Execution.** Six tasks (the debt list and the verifier, revision 0010, the allowlist and the recovery tools, the
+live evidence, the independent process with the threat model, and the close-out). Each passed its task review with no
+Critical and no Important finding, except the last, and the live counts were measured for the first time at Tasks 2
+to 5 (1251, 1300, 1310, 1311 passed, 21 skipped), matching the plan's arithmetic. Task 1 had 3 Minor findings, such
+as a verifier test whose failure message could print a token object, and a setting that does not strip whitespace.
+Task 2 had 6: among them the interim gap that the re-send of a SENT attempt did not yet pass `mark_sent` (the plan
+gave it to Task 3, which closed it), a stale R131 count in the mcp-read evidence (regenerated at the close-out), and
+the missing note not to downgrade past 0010 while an abort request exists (now in the runbook). Task 3 had 4, among
+them that the abort path forwarded any answer of `request_abort` as the run's reason (to be limited to the three
+known reasons). Task 4 had 7 and one fix round, test-only (28d3f0b): the R030 test now also pins that refusals make no
+destination call and that a lookup writes no destination key, and the deadline test checks that the test clock was
+reset, because the records and the threat model cite those claims. Task 5 had 4, two of them overstatements in the
+threat model (the worker "has no route to incident-sim", which is the network isolation T30 will build, and a
+send/abort row that did not say only `sent` and `already_sent` lead to a POST), both corrected in Task 6. Task 6's own
+review found one Important gap, this section: it recorded only the plan's first review round, though every round's
+problems and fixes belong here. It was fixed in a round of its own.
+
+**Final review (whole branch).** To be filled after the whole-branch review.
 
 ## 29. What the process taught
 

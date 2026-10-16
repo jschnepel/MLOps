@@ -261,8 +261,8 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 ## Update — Plan K executed (2026-10-16, branch `plan-k`)
 
-- Plan K (T47: the authenticated mcp-write and its recovery tools) executed on branch `plan-k` (`dd9f7b1..ea0bf54`, on
-  top of `plan-j`). The plan is `docs/superpowers/plans/2026-10-16-first-slice-k-mcp-write-recovery-tools.md`.
+- Plan K (T47: the authenticated mcp-write and its recovery tools) executed on branch `plan-k` (`dd9f7b1..ea0bf54`: the debt
+  list and the five building tasks, on top of `plan-j`; the close-out follows). The plan is `docs/superpowers/plans/2026-10-16-first-slice-k-mcp-write-recovery-tools.md`.
 - `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1152 passed, 180 skipped`.
   `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1311 passed, 21 skipped`.
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.

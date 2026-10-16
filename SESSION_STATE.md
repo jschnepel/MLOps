@@ -3,7 +3,7 @@
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
 **Next task:** Plan K (T47) is executed on branch `plan-k` (on top of `plan-j`: `dd9f7b1..ea0bf54` holds the debt list and
-the five tasks, and the close-out is the commit after `ea0bf54`). T47 is DONE subject to the owner's decisions on errata
+the five building tasks, and the close-out is the commit after `ea0bf54`). T47 is DONE subject to the owner's decisions on errata
 72, 84 and 91 (R131's function sets and the attempt-state allowlist). Owner inputs: (1) the holdout seal (T03 step 9),
 then the live probe (T02); (2) merge the stacked PRs #1-#8 in order (plan-b -> main through plan-i -> plan-h), then
 the plan-j -> plan-i PR and, after Plan K's final review, a plan-k -> plan-j PR; (3) T44 step 10
@@ -645,7 +645,7 @@ T47, unblocked by T09).
 
 ## Plan K executed (2026-10-16, branch `plan-k`)
 
-- T47 = `dd9f7b1..ea0bf54` (the debt list first, then the five tasks; the close-out is the commit after `ea0bf54`). The
+- T47 = `dd9f7b1..ea0bf54` (the debt list first, then the five building tasks; the close-out is the commit after `ea0bf54`). The
   plan (`docs/superpowers/plans/2026-10-16-first-slice-k-mcp-write-recovery-tools.md`) holds the 27 rulings of the
   controller's brief as implemented; the input is `docs/superpowers/research/2026-10-16-plan-k-inputs.md`. Evidence:
   `tests/e2e/test_migration_0010_live.py` (the round trip and mcp-write's startup check against 0009, the dispatch
@@ -717,7 +717,6 @@ T47, unblocked by T09).
   after the destination answered); Plan H's "mcp-write handles the five new faults only through `classify`": four are
   driven at the recovery tools live, the rest stay T22's; Plan I's "incident-sim's fault route accepts any
   `FaultKind`" moves to T22 (the Plan K debt list).
-
 - Rulings made during execution:
   - Task 2's two substantive evidence diffs under `reports/` (R131's "14 others" and an Ollama version line) were
     reverted at once, so no later task could commit them by accident; this close-out's live run regenerates the
@@ -726,6 +725,9 @@ T47, unblocked by T09).
     that a lookup writes no destination key, the deadline test asserts the clock reset, and the evidence lines name
     `mark_unknown` 42501 and state that around a rate-limited abort the counts are unchanged and only the tombstone is
     added. The clock is read through `app_conn` because the test harness cannot SELECT `test_clock` (AM-20.2).
+  - Task 4's fix round was re-reviewed by the controller reading its 25-line, test-only diff, not by a second review
+    task: every item was addressed and the change touched no production code. If that was too light, the final
+    review is where it shows.
   - The live gate counts of Tasks 2 to 5 were measured, not computed: 1251, 1300, 1310 and 1311 passed, each with 21
     skipped.
   - `reports/mcp-read/t15-mcp-read.txt` is committed with its new R131 line (14 other functions refused, not 13:
