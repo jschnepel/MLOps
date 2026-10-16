@@ -479,12 +479,13 @@
         "tests/e2e/test_mcp_read_process_live.py",
         "reports/mcp-read/t15-independent-client.txt",
         "tests/plan_j/test_verifier_t15.py",
-        "tests/plan_j/test_mcp_read_http.py"
+        "tests/plan_j/test_mcp_read_http.py",
+        "tests/e2e/test_r105_walking_skeleton.py"
       ],
       "owning_tasks": [
         "T15"
       ],
-      "note": "Plan J (T15): against mcp-read as an independent process, a persona token (aud ops-api, the stand-in for a browser token: no ops-web access token is minted anywhere, the API stores none), an ops-mcp-write token (aud incident-sim) and an ops-mcp-read token (aud asset-sim) each get 401 invalid_token on a tools/call of search_procedures that carries a valid handle, which the worker's token then answers with data: the refusal comes before the tool and the handle lookup, and mcp-read forwards nothing downstream. Missing aud, azp ops-web, a non-access typ and another workload's azp are synthetic-key unit cases at mcp-read's configuration (erratum 81); every foreign token above is 401 through read_verifier's audience check (PyJWT's aud), with McpVerifier's own aud check behind it (unit-tested with a verifier that checks no audience) and the SDK's validate_token_resource (pinned on by a unit test) a third, inert layer."
+      "note": "Plan J (T15): against mcp-read as an independent process, a persona token (aud ops-api, the stand-in for a browser token: no ops-web access token is minted anywhere, the API stores none), an ops-mcp-write token (aud incident-sim) and an ops-mcp-read token (aud asset-sim) each get 401 invalid_token on a tools/call of search_procedures that carries a valid handle, which the worker's token then answers with data: the refusal comes before the tool and the handle lookup, and mcp-read forwards nothing downstream. Missing aud, azp ops-web, a non-access typ and another workload's azp are synthetic-key unit cases at mcp-read's configuration (erratum 81); every foreign token above is 401 through read_verifier's audience check (PyJWT's aud), with McpVerifier's own aud check behind it (unit-tested with a verifier that checks no audience) and the SDK's validate_token_resource (pinned on by a unit test) a third, inert layer. At mcp-write, whose verifier hardening is T47's, a wrong aud is refused by PyJWT: the walking skeleton (tests/e2e/test_r105_walking_skeleton.py) presents a persona token and an ops-mcp-read token to mcp-write live and both are refused."
     },
     {
       "id": "R027",
@@ -502,7 +503,8 @@
         "tests/e2e/test_migration_0009_live.py",
         "tests/plan_j/test_migration_0009.py",
         "tests/plan_j/test_allowlist.py",
-        "tests/plan_j/test_worker_azp.py"
+        "tests/plan_j/test_worker_azp.py",
+        "tests/e2e/test_definers_write_path_live.py"
       ],
       "owning_tasks": [
         "T15"

@@ -459,7 +459,7 @@ four version cases and that no log record carries a handle, and an independent m
 the official client. Two older tests changed their meaning: the walking skeleton's replay after the outcome and the
 populated upgrade's migrated execute job are now refused, because their handles name a finished job.
 
-**Problem.** The plan's own review caught what a dry run could not: a populated-upgrade test (the R006 upgrade) seeded
+**Review.** The plan's own review caught what a dry run could not: a populated-upgrade test (the R006 upgrade) seeded
 a finished execute job that the new binding refuses, so every live gate from the second task on would have been red;
 the verifier's new `typ` rule was only tested against a hand-built object, not the wiring `production_app` uses; and the
 log test could have passed with uvicorn's loggers silenced. **Change.** The first review round found 1 Blocking, 3
@@ -470,6 +470,34 @@ uvicorn's, the SDK's and httpx2's records before it trusts a clean result.
 **Execution.** Five tasks (the debt list and the guard, the binding and the allowlist, the handle cases over HTTP, the
 independent process, the close-out). The four building tasks were each reviewed once with Minor findings only and no
 fix round, and their live halves passed on their first run. Execution found nothing the plan had not ruled on.
+
+**Final review (whole branch: 0 Critical, 1 Important, 7 Minor; one fix wave).**
+
+**Problem.** The Important finding was a protection one server claimed and did not check. The handle's job binding lives
+in `_resolve_handle`, which both MCP servers use, and the README and erratum 75 said it protected both. Only mcp-read
+checked for revision 0009 at start; mcp-write checked for 0007 alone. On a database left at 0008, which is where Plan I
+had told the owner to migrate the dev database, mcp-read would refuse to start while mcp-write started and resolved
+execute handles with 0007's unbound read. The Python run-state rule still refused a replay after the outcome, so the
+exposure was small, but the documented property was only half true. The minors were mostly about evidence that could be
+empty. The update that made a handle's `server` column lie never checked that it changed a row, so the refusal after it
+might have been the plain wrong-server one. The execute and recover refusals had no positive control. The log checks
+looked for the handle but not for the worker's token. A `POST /mcp/` without the version header relied on a redirect
+nobody had pinned. And the records sent the owner to open pull requests that already existed. The authentication,
+binding, guard and secrets checks held: the reviewer found no way for a foreign token, another server's handle, another
+run's job or a stale handle to reach a tool, and no way around the guard.
+
+**Change.** The startup marker moved into `core` (`persistence.HANDLE_BINDING`), because services never import each
+other. mcp-read re-exports it, and mcp-write's startup now checks it too, with a unit test both ways and a live round
+trip in which `mcp_exec` is refused at 0008 and passes at the head. The lying-column update asserts one row. Each
+write-handle refusal now sits beside mcp-write's role resolving the same handle, and the lie is shown to have landed
+and, once put back, to resolve again. The log checks cover the worker's token, the R026 test reads the child's log for
+the three foreign tokens, and each check binds its verdict to a boolean or to indexes, so a failure never prints a
+value. The DEBUG test asserts that no redaction filter sits on the capturing handler. One `MCP_PATH` constant serves the
+guard and both SDK apps, and a test pins `/mcp/` to the router's 307. The records were corrected: the open PRs, the
+README's replay wording, R026's and R027's evidence, and T15's DONE, which depends on the owner's decisions on errata 72
+and 76. Two items went to T47 as debt: an over-the-wire test of the EXECUTING re-queue's re-send through mcp-write, and
+the three remaining `"ops-worker"` literals. The lesson: when two servers share a protection, the check that it is
+installed has to be shared too, or one of them is protected only on paper.
 
 ## 28. What the process taught
 

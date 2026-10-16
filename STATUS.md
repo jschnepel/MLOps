@@ -225,7 +225,6 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   `outcomes.Event` on the read path -> T26; SSE -> T27; dashboards -> T28/T29; retention -> T32; a real channel ->
   T39. Twelve errata (60-71) are proposed.
 
-
 ## Update — Plan J executed (2026-10-15, branch `plan-j`)
 
 - Plan J (T15: the authenticated mcp-read, its token verifier and bound invocation handles) executed on branch
@@ -234,21 +233,27 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 - `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1071 passed, 164
   skipped`. `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1214
   passed, 21 skipped`. `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
+  After the final-review fix wave the gates are `1075 passed, 164 skipped` and `1218 passed, 21 skipped`.
 - **Evidenced** (acceptance matrix `RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R026, R027 and R085.
   Tokens for another audience or client are refused with 401 on a tool call that carries a valid handle; a read
   handle is refused when its job is another run's, when it expired, when its lease lapsed or its fence moved, after
   its release, and once its run left the job type's states, each over HTTP, and when its job is finished, at the
   definer; recover and execute handles are refused at mcp-read, the execute one even when its stored server column
-  lies; no log record captured at DEBUG holds a handle.
+  lies; no log record captured at DEBUG holds a handle or the worker's token.
 - **Evidenced in part** (`RECORDED_LOCALLY_LIVE`, still `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`): R025 and R131
   (mcp-read's halves; mcp-write's are T47's) and R031 (the network half for mcp-read): an independent mcp-read process
   is listed and called by the official client over the network, and `mcp_read` can execute `current_time` and
   `resolve_invocation` only.
 - Also built: the protocol-version guard on both MCP servers (the SDK's legacy path is closed); revision 0009 (the
-  handle's job binding); mcp-read's startup check for it; the worker's own client id on every handle.
+  handle's job binding); both MCP servers' startup check for it (mcp-write's since the final-review fix wave); the
+  worker's own client id on every handle.
 - The dev `ops` database needs revisions 0006 to 0009 (an owner input); the API, the sweeper, the worker, mcp-write and
   mcp-read refuse to start until then.
 - Deferred, each with its owner in `SESSION_STATE.md`: mcp-write's verifier, its literal azp, the attempt-state
   allowlist and the write halves of R025/R131 -> T47; the asset tools and asset-sim -> T16; the governed store ->
   T17/T16; the worker's 401 handling and `resume_input` -> T20; TLS, container hosts and per-service tests -> T30. Ten
-  errata (72-81) are proposed.
+  errata (72-81) are proposed. T15 is DONE subject to the owner's decisions on errata 72 and 76.
+- Final whole-branch review: ready with fixes (0 Critical, 1 Important, 7 Minor), fixed in one wave. The Important
+  was mcp-write starting without revision 0009 while the binding was claimed for both servers; it now refuses, as
+  mcp-read does. Two items went to T47 as debt: an over-the-wire test of the EXECUTING re-queue's re-send through
+  mcp-write, and the remaining `"ops-worker"` literals.

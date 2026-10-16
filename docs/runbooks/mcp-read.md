@@ -38,8 +38,9 @@ checked in this order; the first failure decides the answer.
 
 `python -m ops_mcp_read` (or `scripts/skeleton.py up`) needs the database at revision 0009: at start it refuses when
 `app.test_clock` exists outside the test profile, and when `app._resolve_handle` lacks 0009's job binding ("…
-predates this service; run scripts/skeleton.py migrate for this profile"). The dev database stays at 0005 until the
-owner migrates it. Readiness (`/health/ready`) needs the realm's signing keys and the database.
+predates this service; run scripts/skeleton.py migrate for this profile"). mcp-write makes the same check at its own
+start. The dev database stays at 0005 until the owner migrates it. Readiness (`/health/ready`) needs the realm's
+signing keys and the database.
 
 | Variable | Default | What it is |
 |---|---|---|
