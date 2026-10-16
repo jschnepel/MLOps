@@ -10,7 +10,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from ops_sweeper import main, outbox
+from ops_sweeper import main, outbox, wakeups
 
 
 def deps() -> main.Deps:
@@ -42,3 +42,24 @@ def test_the_record_comes_first_then_delivery_then_the_announcements(monkeypatch
     monkeypatch.setattr(main, "record", record)
     asyncio.run(main.deliver_outbox(deps()))
     assert order == ["record deliver_outbox", "deliver", "notify"]
+
+
+def test_the_sweep_runs_before_the_purge_and_the_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    order: list[str] = []
+
+    async def sweep(_conn: Any, _chosen: Any) -> list[wakeups.Wakeup]:
+        order.append("sweep")
+        return []
+
+    async def purge(_conn: Any, _chosen: Any) -> int:
+        order.append("purge")
+        return 0
+
+    async def record(_deps: Any, job_type: Any) -> None:
+        order.append(f"record {job_type.value}")
+
+    monkeypatch.setattr(wakeups, "sweep", sweep)
+    monkeypatch.setattr(wakeups, "purge_maintenance", purge)
+    monkeypatch.setattr(main, "record", record)
+    asyncio.run(main.sweep_wakeups(deps()))
+    assert order == ["sweep", "purge", "record sweep_wakeups"]

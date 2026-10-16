@@ -6,10 +6,11 @@ key; inserted, claimed and finished by the same tick, so the `jobs` table is the
 second sweeper instance never records the same minute twice); the first tick syncs at once, so readiness arrives
 within seconds of start, and two syncs are never more than 30 s plus one sync's duration apart (ruling 12; SA:547's
 60 s holds with margin). The same tick purges expired rows, hands back the jobs whose run lease died with their
-worker (T13, `leases.reclaim`) and, last, delivers the notification outbox (T14: this minute's `deliver_outbox` row,
-then `outbox.deliver`, then the dead letters' `notification.failed`), so a database error during delivery ends the
-tick after everything else has run (a sink's crash is one row's failed attempt). Readiness is 200 only while the last
-successful sync is younger than 120 s, the window after which `grant_execution` refuses (T11 review note 2), so
+worker (T13, `leases.reclaim`), re-arms lost wake-ups (T14: `wakeups.sweep`, the purge of finished maintenance rows,
+this minute's `sweep_wakeups` row) and, last, delivers the notification outbox (T14: this minute's `deliver_outbox`
+row, then `outbox.deliver`, then the dead letters' `notification.failed`), so a database error during delivery ends
+the tick after everything else has run (a sink's crash is one row's failed attempt). Readiness is 200 only while the
+last successful sync is younger than 120 s, the window after which `grant_execution` refuses (T11 review note 2), so
 `scripts/skeleton.py up` waits for the first sync.
 TODO(T21): proposal expiry.
 """
@@ -32,13 +33,13 @@ import uvicorn
 from ops_core import keycloak_admin, persistence, redaction, settings
 from ops_core.jobs import JobType
 from ops_core.keycloak_admin import AdminUnavailable
-from ops_core.settings import OutboxSettings, Role
+from ops_core.settings import OutboxSettings, Role, WakeupSettings
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from ops_sweeper import leases, outbox, sync
+from ops_sweeper import leases, outbox, sync, wakeups
 
 FRESH_SECONDS = 120.0  # the gate's window (0005's grant_execution); readiness follows it
 log = logging.getLogger("ops_sweeper")
@@ -57,6 +58,7 @@ class Deps:
     last_sync_at: float | None = None  # monotonic time of the last successful sync
     sink: outbox.Sink = field(default_factory=outbox.LogSink)  # T14: the v1 sink, no egress (Plan I ruling 14)
     outbox_settings: OutboxSettings = field(default_factory=OutboxSettings)
+    wakeup_settings: WakeupSettings = field(default_factory=WakeupSettings)
 
 
 def minute_bucket(at: datetime) -> str:
@@ -116,9 +118,9 @@ async def run_sync(deps: Deps) -> bool:
 
 async def tick(deps: Deps) -> None:
     """Sync; if it succeeded, record this minute's maintenance job (insert, claim, finish); purge expired rows; hand
-    back the jobs of dead or lost run leases (T13); deliver the outbox (T14), last, so a database error during
-    delivery skips nothing else (a sink's crash is one row's failed attempt). Everything after the sync runs whether
-    or not Keycloak answered."""
+    back the jobs of dead or lost run leases (T13); re-arm lost wake-ups, then deliver the outbox (T14), last, so a
+    database error during delivery never stops run progress (a sink's crash is one row's failed attempt). Everything
+    after the sync runs whether or not Keycloak answered."""
     if await run_sync(deps):
         await record(deps, JobType.SYNC_MEMBERSHIPS)
     counts = await sync.purge_expired(deps.conn)
@@ -127,7 +129,23 @@ async def tick(deps: Deps) -> None:
     reclaimed = await leases.reclaim(deps.conn)
     if reclaimed:
         log.info("reclaimed %d job(s) whose run lease was not live", len(reclaimed))
+    await sweep_wakeups(deps)  # first: notification delivery must never starve run progress (round 1, I1)
     await deliver_outbox(deps)
+
+
+async def sweep_wakeups(deps: Deps) -> None:
+    """Re-arm the lost wake-ups of every tenant, purge finished maintenance rows past their retention, then record
+    this minute's `sweep_wakeups` row (rulings 8, 19, 20)."""
+    found = await wakeups.sweep(deps.conn, deps.wakeup_settings)
+    purged = await wakeups.purge_maintenance(deps.conn, deps.wakeup_settings)
+    rearmed = [w for w in found if w.rearmed]
+    if rearmed:
+        log.info(
+            "re-armed %d lost wake-up(s): %s", len(rearmed), ", ".join(f"{w.job_type} {w.run_id}" for w in rearmed)
+        )
+    if purged:
+        log.info("purged %d finished maintenance job row(s)", purged)
+    await record(deps, JobType.SWEEP_WAKEUPS)
 
 
 async def deliver_outbox(deps: Deps) -> None:
@@ -222,6 +240,7 @@ async def _main() -> None:
         await persistence.assert_clock_profile(probe, settings.profile())
         await persistence.assert_relation(probe, "app.outbox")  # revision 0008: the outbox this process delivers
         chosen_outbox = settings.outbox()  # refused before the loop starts, like every other setting
+        chosen_wakeups = settings.wakeups()
     except BaseException:  # close what was built before the tasks exist (a refused start must not leak sockets)
         await admin.aclose()
         for opened_conn in opened:
@@ -236,6 +255,7 @@ async def _main() -> None:
         allow_mass=os.environ.get("OPS_SYNC_ALLOW_MASS_DEACTIVATION") == "1",
         sink=outbox.LogSink(),  # no fault route in any profile: the live tests build their own sink (ruling 14)
         outbox_settings=chosen_outbox,
+        wakeup_settings=chosen_wakeups,
     )
     stop = asyncio.Event()
     loop_task = asyncio.create_task(run_forever(deps, stop), name="sweeper-loop")
