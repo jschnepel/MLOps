@@ -101,10 +101,16 @@ class Verifier(Protocol):  # the subset of ops_core.tokens.TokenVerifier the ser
 
 
 class McpVerifier:
-    """The SDK's TokenVerifier protocol: None means 401. The SDK re-checks `expires_at`, consistently with PyJWT."""
+    """The SDK's TokenVerifier protocol: None means 401. The SDK re-checks `expires_at`, consistently with PyJWT.
+
+    A token whose `aud` lacks this server's resource URL is refused here, whatever audience the wrapped verifier was
+    configured with, and only then is `resource` stamped with that URL (mcp-read's rule, Plan J ruling 2; Plan K
+    ruling 11). The SDK's own resource check (`validate_token_resource`) stays on as a second layer; it cannot refuse
+    anything while the stamp is this server's own URL, and would decide only if the stamp ever came from the token.
+    """
 
     def __init__(self, verifier: Verifier, resource_url: str) -> None:
-        """Adapt a token verifier to the SDK's bearer-auth hook; `resource_url` is stamped on the access token."""
+        """Adapt a token verifier to the SDK's bearer-auth hook; `resource_url` is this server's audience."""
         self._verifier = verifier
         self._resource = resource_url
 
@@ -113,6 +119,8 @@ class McpVerifier:
         try:
             principal = await self._verifier.verify_async(token)
         except TokenRejected:
+            return None
+        if self._resource not in principal.audiences:
             return None
         return AccessToken(
             token=token,
@@ -204,7 +212,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
     return MCPServer(
         name="mcp-write",
         auth=AuthSettings(
-            issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url), validate_token_resource=False
+            issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url), validate_token_resource=True
         ),
         token_verifier=McpVerifier(state.verifier, resource_url),
         tools=[strict_tool(create_incident)],
@@ -276,14 +284,25 @@ def build_app(server: MCPServer, state: State) -> Starlette:
     )
 
 
+def write_verifier(kc: settings.Keycloak, urls: settings.Urls) -> TokenVerifier:
+    """mcp-write's token checks (SA:557; mcp-read's since Plan J, Plan K ruling 11): the realm's issuer and keys, this
+    server's resource URL as the audience, the worker's client (`settings.workload_client_id`, ruling 12) as the only
+    `azp`, and an access token's `typ` claim. `production_app` builds its verifier here, and the unit tests build
+    theirs here too, so they pin the wiring that runs."""
+    return TokenVerifier(
+        issuer=kc.issuer,
+        audience=urls.mcp_write_resource,
+        allowed_azp=frozenset({settings.workload_client_id()}),
+        jwks_url=kc.jwks_url,
+        token_type="Bearer",  # an access token: Keycloak's ID and refresh tokens carry another `typ`
+    )
+
+
 def production_app() -> Starlette:
     """The app wired from the environment and secret files, as `python -m ops_mcp_write` runs it."""
     kc = settings.keycloak()
     urls = settings.urls()
-    verifier = TokenVerifier(
-        issuer=kc.issuer, audience=urls.mcp_write_resource, allowed_azp=frozenset({"ops-worker"}), jwks_url=kc.jwks_url
-    )
-    state = State(deps=None, verifier=verifier)
+    state = State(deps=None, verifier=write_verifier(kc, urls))
     return build_app(build_server(state, issuer=kc.issuer, resource_url=urls.mcp_write_resource), state)
 
 

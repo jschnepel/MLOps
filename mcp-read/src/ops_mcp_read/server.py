@@ -1,7 +1,7 @@
 """mcp-read: the authenticated read-tool server (ADR-0003; AM-15 read tools; SA:557 token checks).
 
 Every call must carry `MCP-Protocol-Version: 2026-07-28` (anything else is refused before authentication, AM-30), the
-worker's workload access token (`typ` Bearer, aud = this server's resource URL, azp = ops-worker) and an
+worker's workload access token (`typ` Bearer, aud = this server's resource URL, azp = the worker's client) and an
 `X-Ops-Invocation` handle minted for an `investigate` job; the handle, not the token, says which run and tenant the
 call is for (BUILD_SPEC §9). The tool's argument model forbids extra keys, so an argument that tries to supply a
 tenant, role or actor is refused before the tool body runs (SA:350). Results are the AM-80 tool-result envelope
@@ -264,12 +264,13 @@ def build_app(server: MCPServer, state: State) -> Starlette:
 
 def read_verifier(kc: settings.Keycloak, urls: settings.Urls) -> TokenVerifier:
     """mcp-read's token checks (SA:557, Plan J ruling 2): the realm's issuer and keys, this server's resource URL as the
-    audience, the worker as the only `azp`, and an access token's `typ` claim. `production_app` builds its verifier
-    here, and the unit tests build theirs here too, so they pin the wiring that runs."""
+    audience, the worker's client (`settings.workload_client_id`, Plan K ruling 12) as the only `azp`, and an access
+    token's `typ` claim. `production_app` builds its verifier here, and the unit tests build theirs here too, so they
+    pin the wiring that runs."""
     return TokenVerifier(
         issuer=kc.issuer,
         audience=urls.mcp_read_resource,
-        allowed_azp=frozenset({"ops-worker"}),
+        allowed_azp=frozenset({settings.workload_client_id()}),
         jwks_url=kc.jwks_url,
         token_type="Bearer",  # an access token: Keycloak's ID and refresh tokens carry another `typ` (ruling 2)
     )
