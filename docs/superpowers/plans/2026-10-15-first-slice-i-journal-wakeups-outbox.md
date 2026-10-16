@@ -73,9 +73,13 @@ additions below win where the two differ:
   behind a blocked statement, or a cancelled unit left holding a row, would hang the gate instead of failing it
   (round 1, B1 and M3).
 - **Comments** per `docs/CODE_COMMENTS.md`; ≤120 characters per line (Plan H's counting command); no `type: ignore`;
-  ruff + mypy strict clean; UTF-8 without BOM, LF; no new broad `except Exception` (a sink error other than
-  `SinkFailed` propagates to the tick's existing catch-all after the minute's record and the wake-up sweep have run;
-  the claimed row comes back when its lease ends and is dead-lettered by the claim once its attempts reached the cap).
+  ruff + mypy strict clean; UTF-8 without BOM, LF; no `noqa: BLE001`. The broad `except Exception` catches allowed
+  are the two existing loop guards (worker, sweeper) and one new one, at the outbox's sink boundary in
+  `outbox.deliver`, around the single `sink.deliver(...)` call (round 2, N1): a sink that crashes on one row is logged
+  with its traceback (no payload content) and recorded as that row's failed attempt, so it never costs the batch's
+  other rows, later tenants or the announcements an attempt; its comment carries that reason. Nothing else in Plan I
+  catches broadly; a database error still propagates to the sweeper loop's catch-all after the minute's record and
+  the wake-up sweep have run, and the rows it left claimed come back when their lease ends.
 - **Gates:** `uv run ruff format <files> && uv run ruff check --fix <files>` (then
   `uv run ruff check --select ISC004 --fix --unsafe-fixes migrations/app/versions/0008_journal_outbox.py` after
   writing the revision), `PYTHONUTF8=1 uv run python scripts/check.py` GREEN after every task,
@@ -115,15 +119,18 @@ additions below win where the two differ:
    claimed again by the next tick; the first delivery's late result must not overwrite the newer claim's. Pinned in
    Task 4: every result statement carries `AND attempts = %s` for the attempt it belongs to
    (`test_a_delivery_runs_between_its_claim_and_its_result_unit`), a late attempt-1 result after attempt 2 was
-   delivered writes nothing (`test_a_late_result_never_overwrites_a_newer_claim`, live), and a crashed delivery is
-   claimed again only after its lease and dead-lettered at its cap
-   (`test_a_crashed_delivery_is_claimed_again_when_its_lease_runs_out`,
-   `test_a_delivery_that_keeps_crashing_is_dead_lettered_at_its_cap`, live).
+   delivered writes nothing (`test_a_late_result_never_overwrites_a_newer_claim`, live), no result overwrites a dead
+   letter (round 2, N2: the same test's unit half, and the lost-at-the-cap live test), a delivery lost with its
+   sweeper is claimed again only after its lease and dead-lettered at its cap
+   (`test_a_delivery_lost_with_its_sweeper_is_dead_lettered_at_its_cap`, live), and a sink that crashes on one row
+   costs that row one attempt and no other row anything (`test_a_crashing_row_costs_one_attempt_and_spares_its_batch`,
+   `test_a_crash_on_one_row_spares_the_rows_claimed_with_it`, live).
 2. **A sweeper that dies between a dead letter's result and its `notification.failed`**: the next tick must announce
-   it exactly once, and two passes, or two sweepers, must not announce it twice. Pinned in Task 4 (the R024 live test
-   runs `deliver`, finds no event, then `notify_dead_letters` twice; `test_a_dead_letter_already_notified_gets_no_
-   second_event`; the announcement's unit opens with the outbox id's advisory lock,
-   `test_a_dead_letter_gets_its_event_in_a_transaction_of_its_own`).
+   it exactly once, and two passes must not announce it twice. Pinned in Task 4 (the R024 live test runs `deliver`,
+   finds no event, then `notify_dead_letters` twice; `test_a_dead_letter_already_notified_gets_no_second_event`). Two
+   sweepers are serialised by the statement order alone: the announcement's unit opens with the outbox id's advisory
+   lock and re-checks after it, which `test_a_dead_letter_gets_its_event_in_a_transaction_of_its_own` pins; no test
+   races two sweepers (round 2, N5).
 3. **mcp-write replaying `record_outcome`** after a lost response (its normal recovery): the replay must add no second
    intent and no event. Pinned in Task 4 (the R024 live test replays it and re-appends the outcome event inside a
    rolled-back transaction) and Task 2 (`test_the_intent_commits_with_its_event_once_per_run_and_type`).
@@ -187,13 +194,15 @@ ruling and, where the plan had to refine one against the code, says how (all ref
     statement, delivery outside any transaction, one result unit per row; `OPS_OUTBOX_LEASE_SECONDS` 30,
     `OPS_OUTBOX_BATCH` 10 (Tasks 1, 4); erratum 67. Refined (c). Round 1 (I1): the claim first dead-letters rows whose
     attempts reached the cap and whose lease ran out, and claims only rows under it; the tick runs the wake-up sweep
-    before the delivery and the delivery's record before its work.
+    before the delivery and the delivery's record before its work. Round 2 (N1, N2): a sink's crash on a row is caught
+    at the sink boundary and recorded as that row's failed attempt, and no result overwrites a dead letter.
 16. **Retry, jitter, dead letter** — `min(cap, base × 2^(attempts−1))` plus up to 25 % jitter, base 2, cap 300, the
     fifth failure dead-letters; visibility through `notification.failed` and a log line (Tasks 1, 4).
 17. **`notification.failed`** — once per dead letter in a separate transaction after the result unit, payload
     `code`, `message`, `outbox_id` (added to the schema), and the re-check every tick (Task 4); erratum 68. Refined
-    (d). Round 1 (M5): the announcement's unit opens with `pg_advisory_xact_lock(2, hashtext(outbox_id))`, so two
-    sweepers never announce one dead letter twice (the T30 debt line is gone).
+    (d). Round 1 (M5): the announcement's unit opens with `pg_advisory_xact_lock(2, hashtext(outbox_id))` and
+    re-checks after it, so a second sweeper waits for the first and finds the event (statement order, pinned by a
+    unit test; the T30 debt line is gone).
 18. **Tenant iteration** — `ops_sweeper.tenants.for_each_tenant(conn, work, *, tenants=None)` and `in_tenant` (Task 4);
     erratum 69.
 19. **Maintenance job rows** — `main.record(deps, job_type)` (the old `record_sync` generalised) after each piece of
@@ -286,9 +295,10 @@ Task 6 Step 3's "Plan I executed" block; in short:
 65. **SA:452 and AM-80's event schema**: the closed payload keys (three added) and `status` only from the destination.
 66. **BS:524 (intent)**: the five types (three emitted today, two from T22), the requester, channel `local`, the dedup
     key, the target-less conflict.
-67. **BS:524 (delivery)**: the tick's per-tenant claim, lease, sink, result units, backoff and dead letter, a crashing
-    delivery bounded by the same cap, the sweep before the delivery.
-68. **SA:188 and BS:514**: `notification.failed` once, in its own transaction under an advisory lock, with the
+67. **BS:524 (delivery)**: the tick's per-tenant claim, lease, sink, result units, backoff and dead letter, a sink's
+    crash as one row's failed attempt, a delivery lost with its sweeper bounded by the same cap, no result over a dead
+    letter, the sweep before the delivery.
+68. **SA:188 and BS:514**: `notification.failed` once, in its own transaction opened by an advisory lock, with the
     re-check.
 69. **SA:520**: the sweeper's tenant iteration.
 70. **SA:504**: the `deliver_outbox` and `sweep_wakeups` audit rows.
@@ -329,17 +339,17 @@ Task 6 Step 3's "Plan I executed" block; in short:
   `test_migration_0008.py` 5, the transitions module +1 (parametrised); live `test_migration_0008_live.py` 6. Dev
   1007/140, live 1126/21 (arithmetic).
 - **Task 3:** the R089 proof. Tests: live `test_event_journal_live.py` 4. Dev 1007/144, live 1130/21 (arithmetic).
-- **Task 4:** the tenant iteration, the delivery loop, `LogSink`, the fault kind, the tick. Tests: `test_outbox.py` 13,
-  `test_sweeper_tick.py` 2; live `test_outbox_live.py` 5. Dev 1022/149, live 1150/21 (arithmetic).
+- **Task 4:** the tenant iteration, the delivery loop, `LogSink`, the fault kind, the tick. Tests: `test_outbox.py` 14,
+  `test_sweeper_tick.py` 2; live `test_outbox_live.py` 5. Dev 1023/149, live 1151/21 (arithmetic).
 - **Task 5:** the wake-up sweep, the pull-forward, the purge, the tick, R105's leftover check. Tests:
-  `test_wakeups.py` 7, `test_sweeper_tick.py` +1; live `test_wakeups_live.py` 5. Dev 1030/154, live 1163/21
+  `test_wakeups.py` 7, `test_sweeper_tick.py` +1; live `test_wakeups_live.py` 5. Dev 1031/154, live 1164/21
   (arithmetic).
 - **Task 6:** handoff records, acceptance rows, errata 60-71, runbook, history, READMEs, final gates. No tests.
 
 The arithmetic, once: dev passed 939 + 62 (Task 1: 10 + 40 + 2 + 7 + 3) = 1001, + 6 (Task 2: 5 + 1) = 1007, + 0 (Task
-3) = 1007, + 15 (Task 4: 13 + 2) = 1022, + 8 (Task 5: 7 + 1) = 1030; dev skipped 134, + 6 = 140, + 4 = 144, + 5 =
+3) = 1007, + 16 (Task 4: 14 + 2) = 1023, + 8 (Task 5: 7 + 1) = 1031; dev skipped 134, + 6 = 140, + 4 = 144, + 5 =
 149, + 5 = 154. The live gate's passed count is the dev count plus the live-gated tests (the dev skips minus the 21
-that skip in both gates: 113 today; 119, 123, 128, 133 after Tasks 2-5), so 1126, 1130, 1150, 1163, always with 21
+that skip in both gates: 113 today; 119, 123, 128, 133 after Tasks 2-5), so 1126, 1130, 1151, 1164, always with 21
 skipped. The dev numbers were measured on a scratch copy; the live ones are not measured (see "Counts").
 
 ---
@@ -1109,8 +1119,8 @@ with:
     # then the outbox row (revision 0008's _append_event; a fresh row, its unique key serialised by the runs lock).
     "event append with notification intent (_append_event)": ("runs", "events", "outbox"),
     # The delivery loop claims and records in units of their own, and appends notification.failed in a separate
-    # transaction, so it never takes runs after outbox (SA:188); that unit first takes the dead letter's advisory lock,
-    # so two sweepers never announce one dead letter twice (round 1, M5).
+    # transaction, so it never takes runs after outbox (SA:188); that unit first takes the dead letter's advisory lock
+    # and then re-checks, so a second sweeper waits for the first and finds the event (round 1, M5).
     "sweeper outbox claim (outbox.deliver)": ("outbox",),
     "sweeper outbox result (outbox.deliver)": ("outbox",),
     "sweeper notification.failed (outbox.notify_dead_letters)": ("advisory:notification", "runs", "events"),
@@ -2209,9 +2219,9 @@ OPS_LIVE=1 PROFILE=test PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migr
 
 Expected: `44 passed` (the new 6; the 0007 module's 5, whose round trip now passes through 0008's downgrade; the
 roles module's 7, R124 and R106 now with the outbox row, its policy, the sweeper's DELETE and its restrictive
-policy; the persistence module's 7; the run-path definers' 8, whose `append_event` cases keep their verdicts; the write-path definers' 11,
-whose `record_outcome` now also writes an intent that `purge_run` removes). This count is arithmetic, not
-measured: the plan's dry run cannot run live steps.
+policy; the persistence module's 7; the run-path definers' 8, whose `append_event` cases keep their verdicts; the
+write-path definers' 11, whose `record_outcome` now also writes an intent that `purge_run` removes). This count is
+arithmetic, not measured: the plan's dry run cannot run live steps.
 
 - [ ] **Step 6: Gates and commit**
 
@@ -2491,6 +2501,7 @@ async def test_r089_a_rolled_back_writer_leaves_no_hole(
     api, worker = await role_conn(Role.API), await role_conn(Role.WORKER)
     api_pid, worker_pid = await backend_pid(api), await backend_pid(worker)  # before any unit opens (B1)
     tenant, _, run = await new_run(app_conn, api=api)
+    b_task: asyncio.Task[None] | None = None
     try:
         b_got: list[int] = []
 
@@ -2510,6 +2521,8 @@ async def test_r089_a_rolled_back_writer_leaves_no_hole(
         assert seen == [1, 2] and counter == 2
         lines.append(f"R089 rollback: api took {taken} and rolled back; the waiting worker took {b_got[0]}; no hole")
     finally:
+        if b_task is not None and not b_task.done():  # a failed assertion: B commits once A has rolled back (N3)
+            await settle(b_task, worker)
         await purge_run(app_conn, run)
         await purge_tenant(app_conn, tenant)
 
@@ -2770,7 +2783,9 @@ rulings 14-19 and 25; DEV-029's "fault-injectable outbox sink" (T24 review note)
   tenant claimed, delivered and recorded after another; the claim first dead-letters rows whose attempts reached the
   cap, `EXHAUSTED`), `record_result(conn, *, row, result, chosen, rng) -> bool` (the result unit's statement for the
   attempt the row was claimed at), `notify_dead_letters(conn, *, tenants=None) -> list[UUID]` (each announcement's
-  unit opens with `ANNOUNCE_LOCK`, `pg_advisory_xact_lock(2, hashtext(outbox_id))`), `DEAD_LETTER_CODE`;
+  unit opens with `ANNOUNCE_LOCK`, `pg_advisory_xact_lock(2, hashtext(outbox_id))`), `DEAD_LETTER_CODE`; `deliver`
+  catches any exception the sink raises for one row at the sink boundary and records it as that row's failed attempt
+  (round 2, N1);
   `ops_sweeper.main.Deps.sink`,
   `Deps.outbox_settings`, `main.deliver_outbox(deps)`, `main.record(deps, job_type)` (Task 5 calls it for
   `sweep_wakeups`).
@@ -2786,11 +2801,12 @@ own.
 
 Catches: a delivery made while the claim's transaction is still open (a slow sink would hold row locks, and a crash
 would roll the claim back and lose the lease), a result recorded in the claim's unit, a retry without backoff or
-with an uncapped one, a row dead-lettered one attempt early or late, a row whose delivery crashes every time claimed
-without bound (round 1, I1), a tenant's rows left waiting behind another tenant's deliveries, a recipient written to
-a log in clear, a notification.failed appended in the result's transaction (it locks runs after outbox, SA:188),
-appended twice for one dead letter or without the lock that serialises two sweepers, a payload `_append_event` would
-refuse, and a fault hook that exists outside the test profile.
+with an uncapped one, a row dead-lettered one attempt early or late, a result that overwrites a dead letter, a sink
+crash on one row that costs the rest of its batch (round 2, N1), a row whose sweeper keeps dying claimed without bound
+(round 1, I1), a tenant's rows left waiting behind another tenant's deliveries, a recipient written to a log in clear,
+a notification.failed appended in the result's transaction (it locks runs after outbox, SA:188), or appended without
+the lock taken first that serialises two sweepers, a payload `_append_event` would refuse, and a fault hook that
+exists outside the test profile.
 """
 
 import asyncio
@@ -2988,6 +3004,7 @@ def test_a_delivery_runs_between_its_claim_and_its_result_unit(attempts: int, fa
         assert condition in claim, condition
     assert claim_params == (SETTINGS.lease_seconds, SETTINGS.max_attempts, SETTINGS.batch)
     assert "AND attempts = %s AND delivered_at IS NULL" in record  # a stale result never overwrites a newer claim
+    assert "AND result IS DISTINCT FROM 'dead_letter'" in record  # nor a dead letter (round 2, N2)
     if result == "delivered":
         assert "result = 'delivered'" in record and record_params == (row["outbox_id"], attempts)
     elif result == "retrying":
@@ -3054,20 +3071,47 @@ def test_a_dead_letter_already_notified_gets_no_second_event(database: list[Any]
     assert not [call for call in database if call[0] == "append_event"]
 
 
-def test_an_unexpected_sink_error_leaves_the_row_leased(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A sink that raises anything but SinkFailed is a crash: nothing is recorded, and the row comes back when its
-    lease runs out (ruling 15)."""
+def test_a_crashing_row_costs_one_attempt_and_spares_its_batch(caplog: pytest.LogCaptureFixture) -> None:
+    """Round 2, N1: a sink that raises anything but SinkFailed on one row is caught at the sink boundary, logged with
+    its traceback and recorded as that row's failed attempt (backoff, like a refusal); the rows claimed with it are
+    delivered."""
+    caplog.set_level(logging.ERROR, logger="ops_sweeper.outbox")
+    rows = [claimed(1), claimed(1), claimed(1)]
+    conn = FakeConn({"WITH claimed AS (UPDATE app.outbox": rows})
+    as_conn: Any = conn
+    poison = rows[1]["outbox_id"]
+
+    class CrashesOnOne:
+        async def deliver(self, delivery: outbox.Delivery) -> None:
+            if delivery.outbox_id == poison:
+                raise RuntimeError("the sink crashed on this row")
+
+    results = run(outbox.deliver(as_conn, CrashesOnOne(), SETTINGS, tenants=[ALPHA], rng=lambda: 0.0))
+    assert [(r.outbox_id, r.result, r.attempts) for r in results] == [
+        (rows[0]["outbox_id"], "delivered", 1),
+        (poison, "retrying", 1),
+        (rows[2]["outbox_id"], "delivered", 1),
+    ]
+    retries = [params for _, statement, params in conn.log if "result = 'retrying'" in statement]
+    assert retries == [(2.0, poison, 1)]  # exactly one attempt, recorded with its backoff
+    assert "notification delivery crashed" in caplog.text and "Traceback" in caplog.text
+
+
+def test_a_killed_delivery_leaves_its_row_leased() -> None:
+    """A sweeper killed mid-delivery (its task cancelled, as a dying process cancels it; not an Exception, so the sink
+    boundary lets it through) records nothing: the row comes back when its lease runs out, and the claim dead-letters
+    it once its attempts reached the cap (round 1, I1)."""
     row = claimed(1)
     conn = FakeConn({"WITH claimed AS (UPDATE app.outbox": [row]})
     as_conn: Any = conn
 
-    class Broken:
+    class Killed:
         async def deliver(self, delivery: outbox.Delivery) -> None:
-            raise RuntimeError("the sink crashed")
+            raise asyncio.CancelledError
 
-    with pytest.raises(RuntimeError):
-        run(outbox.deliver(as_conn, Broken(), SETTINGS, tenants=[ALPHA]))
-    assert len(conn.log) == 2  # the claim's unit only: nothing is recorded for a crash
+    with pytest.raises(asyncio.CancelledError):
+        run(outbox.deliver(as_conn, Killed(), SETTINGS, tenants=[ALPHA]))
+    assert len(conn.log) == 2  # the claim's unit only: nothing is recorded
 ```
 
 Edit 1 (`tests/plan_h/test_faults_t13.py`, the BS:405 test), replace:
@@ -3199,21 +3243,24 @@ Create `sweeper/src/ops_sweeper/outbox.py`:
 
 `_append_event` writes one intent per run, event type, channel and recipient in the event's own transaction (revision
 0008). Here, one tenant after another: a claim unit first dead-letters the rows whose attempts reached the cap and
-whose lease ran out (a delivery that crashed on its last attempt), then leases a batch of due rows (`FOR UPDATE SKIP
+whose lease ran out (a sweeper killed during its last attempt), then leases a batch of due rows (`FOR UPDATE SKIP
 LOCKED`, `leased_until` moved one lease ahead, `attempts + 1`) and commits; each row is handed to the sink outside any
 transaction; then one result unit per row records `delivered`, or `retrying` with a capped, jittered backoff in
 `leased_until`, or `dead_letter` at the last attempt. The tenant's rows are delivered before the next tenant is
 claimed, so no claimed row waits behind another tenant's deliveries. The result names the attempt it belongs to, so a
-delivery that outlived its lease and was claimed again cannot overwrite the newer claim's result. A sink that crashes
-records nothing: the row comes back when its lease runs out, and once its attempts reached the cap the next claim
-dead-letters it, so a row that crashes every delivery is bounded like one that fails (round 1, I1). The run's state is
-never touched: the delivery result is recorded apart from the action's outcome (DoD 2, BS:685).
+delivery that outlived its lease and was claimed again cannot overwrite the newer claim's result, and no result
+overwrites a dead letter. A sink that crashes (raises anything but `SinkFailed`) is caught at the sink boundary,
+logged with its traceback and recorded as a failed attempt of that row alone (round 2, N1): the batch's other rows,
+the later tenants and the announcements go on. A sweeper killed mid-delivery records nothing: its rows come back when
+their lease runs out, and once a row's attempts reached the cap the next claim dead-letters it (round 1, I1). The
+run's state is never touched: the delivery result is recorded apart from the action's outcome (DoD 2, BS:685).
 
 A dead letter is announced by `notification.failed`, appended through `append_event` in a transaction of its own
 after the result unit, because `append_event` locks `runs` and SA:188 forbids taking `runs` after `outbox`. The
 dead letters still lacking that event are found again on every tick (`notify_dead_letters`), which closes the crash
 window between the result and the event. The announcement's unit takes a transaction advisory lock on the outbox id
-first, then re-checks and appends, so two sweepers never announce one dead letter twice.
+first, then re-checks and appends, so a second sweeper announcing the same dead letter waits for the first one's
+commit and then finds the event (the statement order a unit test pins; no test races two sweepers).
 
 The v1 sink is `LogSink`: one log line per delivery and no egress (no channel is approved before Slack, T39). Its
 fault hook, `outbox_sink_fail`, exists only in the test profile and is armed through the sink's `faults` argument.
@@ -3243,8 +3290,9 @@ DEAD_LETTER_CODE = "notification_dead_letter"
 # BS:516: infrastructure failures are reported from templates, never from a model.
 DEAD_LETTER_MESSAGE = "The notification could not be delivered after {attempts} attempts; the run's outcome stands."
 
-# A row whose attempts reached the cap and whose lease ran out had its last delivery crash (a refusal would have
-# dead-lettered it in its result unit): it is not claimed again, it is dead-lettered (round 1, I1).
+# A row whose attempts reached the cap and whose lease ran out lost its last attempt with the process that claimed it
+# (a refusal or a caught crash would have dead-lettered it in its result unit): it is not claimed again, it is
+# dead-lettered (round 1, I1).
 EXHAUSTED = (
     "UPDATE app.outbox SET result = 'dead_letter' WHERE delivered_at IS NULL"
     " AND result IS DISTINCT FROM 'dead_letter' AND attempts >= %s AND leased_until <= app.current_time()"
@@ -3259,15 +3307,20 @@ CLAIM = (
     " SELECT c.outbox_id, c.tenant_id, c.run_id, c.event_id, c.channel, c.recipient, c.attempts, e.type"
     " FROM claimed c JOIN app.events e ON e.event_id = c.event_id ORDER BY c.outbox_id"
 )
+# Every result names the attempt it belongs to and never overwrites a dead letter: a delivery that outlived its lease
+# can meet another sweeper's claim-time dead letter at the same attempt, and the dead letter stands (round 2, N2).
 DELIVERED = (
     "UPDATE app.outbox SET delivered_at = app.current_time(), result = 'delivered'"
-    " WHERE outbox_id = %s AND attempts = %s AND delivered_at IS NULL"
+    " WHERE outbox_id = %s AND attempts = %s AND delivered_at IS NULL AND result IS DISTINCT FROM 'dead_letter'"
 )
 RETRY = (
     "UPDATE app.outbox SET result = 'retrying', leased_until = app.current_time() + make_interval(secs => %s)"
-    " WHERE outbox_id = %s AND attempts = %s AND delivered_at IS NULL"
+    " WHERE outbox_id = %s AND attempts = %s AND delivered_at IS NULL AND result IS DISTINCT FROM 'dead_letter'"
 )
-DEAD = "UPDATE app.outbox SET result = 'dead_letter' WHERE outbox_id = %s AND attempts = %s AND delivered_at IS NULL"
+DEAD = (
+    "UPDATE app.outbox SET result = 'dead_letter'"
+    " WHERE outbox_id = %s AND attempts = %s AND delivered_at IS NULL AND result IS DISTINCT FROM 'dead_letter'"
+)
 # The announcement's lock (lock order: advisory:notification): the two-key space with class 2, apart from the API's
 # idempotency lock (class 1, erratum 37) and the asset guard's one-key space (SA:189).
 ANNOUNCE_LOCK = "SELECT pg_advisory_xact_lock(2, hashtext(%s))"
@@ -3379,10 +3432,10 @@ async def deliver(
     """For one tenant after another: claim its due rows, deliver them outside any transaction, record each result in
     a unit of its own.
 
-    Raises:
-        Whatever the sink raises other than SinkFailed: the rows claimed and not yet recorded stay leased and come back
-        when the lease runs out, or are dead-lettered by the next claim once their attempts reached the cap (a crashed
-        delivery is retried, never lost, and never retried without bound).
+    A refusal (`SinkFailed`) and a crash (any other exception from the sink) are both a failed attempt of that row:
+    retried after its backoff, dead-lettered at the cap. Only the database, or the process dying, can end the loop
+    early; a row claimed and not yet recorded then comes back when its lease runs out, and the claim dead-letters it
+    once its attempts reached the cap.
     """
     chosen_tenants = await persistence.tenants(conn) if tenants is None else list(tenants)
     results: list[Result] = []
@@ -3398,10 +3451,11 @@ async def deliver(
                 recipient=str(row["recipient"]),
                 attempt=int(row["attempts"]),
             )
+            failed = "dead_letter" if row["attempts"] >= chosen.max_attempts else "retrying"
             try:
                 await sink.deliver(delivery)
             except SinkFailed as exc:
-                result = "dead_letter" if row["attempts"] >= chosen.max_attempts else "retrying"
+                result = failed
                 log.warning(
                     "notification not delivered: type=%s run=%s outbox=%s attempt=%d of %d (%s): %s",
                     delivery.event_type,
@@ -3411,6 +3465,19 @@ async def deliver(
                     chosen.max_attempts,
                     result,
                     exc,
+                )
+            # The sink boundary (round 2, N1): a sink that crashes on one row must cost that row one attempt and touch
+            # nothing else, not the batch's other rows, the later tenants or the announcements.
+            except Exception:
+                result = failed
+                log.exception(
+                    "notification delivery crashed: type=%s run=%s outbox=%s attempt=%d of %d (%s)",
+                    delivery.event_type,
+                    delivery.run_id,
+                    delivery.outbox_id,
+                    delivery.attempt,
+                    chosen.max_attempts,
+                    result,
                 )
             else:
                 result = "delivered"
@@ -3461,7 +3528,7 @@ async def notify_dead_letters(conn: persistence.Conn, *, tenants: Sequence[UUID]
 ```
 
 Run: `uv run python -m pytest tests/plan_i/test_outbox.py tests/plan_h/test_faults_t13.py -q`
-Expected: `17 passed` (the new module's 13, three of them the parametrised deliveries; Plan H's faults module's 4).
+Expected: `18 passed` (the new module's 14, three of them the parametrised deliveries; Plan H's faults module's 4).
 
 - [ ] **Step 4: The tick delivers, re-checks and records its minute**
 
@@ -3480,9 +3547,10 @@ with:
 ```python
 60 s holds with margin). The same tick purges expired rows, hands back the jobs whose run lease died with their
 worker (T13, `leases.reclaim`) and, last, delivers the notification outbox (T14: this minute's `deliver_outbox` row,
-then `outbox.deliver`, then the dead letters' `notification.failed`), so a delivery that crashes ends the tick after
-everything else has run. Readiness is 200 only while the last successful sync is younger than 120 s, the window after
-which `grant_execution` refuses (T11 review note 2), so `scripts/skeleton.py up` waits for the first sync.
+then `outbox.deliver`, then the dead letters' `notification.failed`), so a database error during delivery ends the
+tick after everything else has run (a sink's crash is one row's failed attempt). Readiness is 200 only while the last
+successful sync is younger than 120 s, the window after which `grant_execution` refuses (T11 review note 2), so
+`scripts/skeleton.py up` waits for the first sync.
 TODO(T21): proposal expiry.
 """
 ```
@@ -3583,9 +3651,9 @@ with:
 ```python
 async def tick(deps: Deps) -> None:
     """Sync; if it succeeded, record this minute's maintenance job (insert, claim, finish); purge expired rows; hand
-    back the jobs of dead or lost run leases (T13); deliver the outbox (T14), last, so a delivery that crashes
-    (anything but a refusal, which is a failed attempt) skips nothing else. Everything after the sync runs whether or
-    not Keycloak answered."""
+    back the jobs of dead or lost run leases (T13); deliver the outbox (T14), last, so a database error during
+    delivery skips nothing else (a sink's crash is one row's failed attempt). Everything after the sync runs whether
+    or not Keycloak answered."""
     if await run_sync(deps):
         await record(deps, JobType.SYNC_MEMBERSHIPS)
     counts = await sync.purge_expired(deps.conn)
@@ -3600,8 +3668,9 @@ async def tick(deps: Deps) -> None:
 async def deliver_outbox(deps: Deps) -> None:
     """This minute's `deliver_outbox` record first (ruling 19: the audit row of the attempt), then the delivery loop
     over every tenant, then `notification.failed` for every dead letter that lacks it (the result units first, the
-    events after, SA:188). A delivery that crashes propagates to the loop's catch-all after the record; its row is
-    claimed again when its lease ends and dead-lettered by the claim once its attempts reached the cap (round 1, I1)."""
+    events after, SA:188). A sink's crash is one row's failed attempt (`outbox.deliver`'s sink boundary, round 2,
+    N1); a database error propagates to the loop's catch-all after the record, and the rows it left claimed come back
+    when their lease ends (dead-lettered by the claim once their attempts reached the cap, round 1, I1)."""
     await record(deps, JobType.DELIVER_OUTBOX)
     results = await outbox.deliver(deps.conn, deps.sink, deps.outbox_settings)
     announced = await outbox.notify_dead_letters(deps.conn)
@@ -3707,7 +3776,7 @@ Create `tests/plan_i/test_sweeper_tick.py`:
 """The sweeper's tick after T14 (Plan I rulings 15 and 19; round 1, I1), without a database: this minute's audit row,
 then the outbox's delivery, then its dead letters' events, and the default sink.
 
-Catches: a dead letter announced before its result unit, a maintenance row left unrecorded when a delivery crashes,
+Catches: a dead letter announced before its result unit, a maintenance row left unrecorded when a delivery fails,
 and a production sink that carries a fault hook.
 """
 
@@ -3751,7 +3820,7 @@ def test_the_record_comes_first_then_delivery_then_the_announcements(monkeypatch
 ```
 
 Run: `uv run python -m pytest tests/plan_i tests/plan_h/test_reclaim.py tests/plan_f/test_sweeper.py -q`
-Expected: `83 passed` (Plan I's 72: 52 from Task 1, 5 from Task 2, the outbox's 13 and the tick's 2; the reclaim
+Expected: `84 passed` (Plan I's 73: 52 from Task 1, 5 from Task 2, the outbox's 14 and the tick's 2; the reclaim
 module's 2, its tick test now patching the delivery; Plan F's sweeper module's 9, whose `Deps` gains defaulted fields).
 
 - [ ] **Step 5: The live R024 test**
@@ -3774,11 +3843,16 @@ Writes evidence to reports/outbox/t14-outbox.txt (verdicts and counts; no recipi
 
 Catches: an intent written outside the outcome's transaction or twice, a delivery failure that touches the run, a
 retry that comes back before its backoff or never, a row dead-lettered early or late, a dead letter announced twice
-or never, a crashed delivery that is lost instead of retried when its lease runs out, one that crashes every time and
-is retried without bound, a late result that overwrites a newer claim's, a recipient in a log line, and a sweeper
-that delivers one tenant's rows under another's setting.
+or never, a sink crash on one row that costs the rows claimed with it an attempt (round 2, N1), a delivery whose
+sweeper was killed that is lost instead of retried when its lease runs out or retried without bound, a late result
+that overwrites a newer claim's or a dead letter, a recipient in a log line, and a sweeper that delivers one tenant's
+rows under another's setting.
+
+A killed sweeper is simulated by cancelling the delivery's task while the sink awaits (`Hanging`): the claim's unit
+has committed and no result unit has started, so no database unit is cancelled.
 """
 
+import asyncio
 import functools
 import logging
 import time
@@ -3799,7 +3873,7 @@ from psycopg.types.json import Jsonb
 from tests.e2e.conftest import purge_run, purge_tenant
 from tests.e2e.test_definers_run_path_live import ALPHA
 from tests.e2e.test_definers_write_path_live import SAM, approve, drafting_run, freeze, handle_for
-from tests.e2e.test_migrations_and_persistence import ALEX
+from tests.e2e.test_migrations_and_persistence import ALEX, new_run
 
 pytestmark = pytest.mark.asyncio
 
@@ -4011,43 +4085,78 @@ async def test_a_delivered_intent_is_recorded_once_and_logged_without_its_recipi
         await purge_tenant(app_conn, tenant)
 
 
-class Crashing:
-    """A sink that dies mid-delivery: not a refusal (SinkFailed), a crash."""
+APPEND = "SELECT * FROM app._append_event(%s, %s, 'action.failed', 'destination', %s)"
+
+
+class Hanging:
+    """A sink that never answers: the test cancels the delivery's task while it waits here, as a dying sweeper would
+    lose it. The claim's unit has committed and no result unit has started, so no database unit is cancelled."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
 
     async def deliver(self, delivery: outbox.Delivery) -> None:
-        raise RuntimeError("the sweeper died while delivering")
+        self.entered.set()
+        await asyncio.Event().wait()
 
 
-async def test_a_crashed_delivery_is_claimed_again_when_its_lease_runs_out(
+async def kill_mid_delivery(sweeper: persistence.Conn, tenant: UUID, chosen: OutboxSettings) -> None:
+    """Claim the tenant's due rows and lose the process during the first delivery: one attempt counted, no result."""
+    sink = Hanging()
+    task = asyncio.create_task(outbox.deliver(sweeper, sink, chosen, tenants=[tenant]))
+    await asyncio.wait_for(sink.entered.wait(), timeout=10)  # waits on an Event, never on a database unit
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_a_crash_on_one_row_spares_the_rows_claimed_with_it(
     app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
 ) -> None:
-    sweeper, harness = await role_conn(Role.SWEEPER), await role_conn(Role.TEST_HARNESS)
+    """Round 2, N1: the sink crashes on the middle row of a batch of three; the other two are delivered in the same
+    tick, the crashing row costs exactly one attempt and is delivered after its backoff."""
+    sweeper, harness, api = await role_conn(Role.SWEEPER), await role_conn(Role.TEST_HARNESS), await role_conn(Role.API)
     tenant = await own_tenant(app_conn)
-    staged: Outcome | None = None
+    runs: list[UUID] = []
     try:
-        staged = await succeeded_run(app_conn, role_conn, tenant)
-        with pytest.raises(RuntimeError):
-            await outbox.deliver(sweeper, Crashing(), CHOSEN, tenants=[tenant])
-        (row,) = await intents(app_conn, staged.run)
-        assert (row["attempts"], row["result"], row["waiting"]) == (1, None, True)  # claimed, leased, no result
-        assert await outbox.deliver(sweeper, outbox.LogSink(), CHOSEN, tenants=[tenant]) == []  # the lease holds
-        await move_clock(harness, CHOSEN.lease_seconds + 1)
+        for _ in range(3):
+            _, _, run = await new_run(app_conn, tenant, api=api)
+            runs.append(run)
+            await app_conn.execute(APPEND, (tenant, run, Jsonb({"action_id": str(uuid4()), "reason": "expired"})))
+        poison = runs[1]
+
+        class CrashesOnOne:
+            async def deliver(self, delivery: outbox.Delivery) -> None:
+                if delivery.run_id == poison:
+                    raise RuntimeError("the sink crashed on this row")
+
+        results = await outbox.deliver(sweeper, CrashesOnOne(), CHOSEN, tenants=[tenant])
+        assert sorted((r.run_id == poison, r.result, r.attempts) for r in results) == [
+            (False, "delivered", 1),
+            (False, "delivered", 1),
+            (True, "retrying", 1),
+        ]
+        (row,) = await intents(app_conn, poison)
+        assert (row["attempts"], row["result"], row["waiting"]) == (1, "retrying", True)  # behind its backoff
+        await move_clock(harness, 400)
         results = await outbox.deliver(sweeper, outbox.LogSink(), CHOSEN, tenants=[tenant])
-        assert [(r.result, r.attempts) for r in results] == [("delivered", 2)]
-        lines.append(f"crash: the claimed row came back after its {CHOSEN.lease_seconds} s lease and was delivered")
+        assert [(r.run_id, r.result, r.attempts) for r in results] == [(poison, "delivered", 2)]
+        lines.append(
+            "crash: one row of three crashed the sink; the other two delivered, the crashed one after its backoff"
+        )
     finally:
         await move_clock(harness, 0)
-        if staged is not None:
-            await purge_run(app_conn, staged.run)
+        for run in runs:
+            await purge_run(app_conn, run)
         await purge_tenant(app_conn, tenant)
 
 
-async def test_a_delivery_that_keeps_crashing_is_dead_lettered_at_its_cap(
+async def test_a_delivery_lost_with_its_sweeper_is_dead_lettered_at_its_cap(
     app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
 ) -> None:
-    """Round 1, I1: a row whose every delivery crashes is bounded like one whose deliveries are refused: once its
-    attempts reached the cap and its last lease ran out, the next claim dead-letters it instead of claiming it, and
-    the re-check announces it."""
+    """Round 1, I1: a row whose sweeper dies during every delivery is bounded: once its attempts reached the cap and
+    its last lease ran out, the next claim dead-letters it instead of claiming it, and the re-check announces it; a
+    late result for that last attempt cannot overwrite the dead letter (round 2, N2)."""
     capped = OutboxSettings(backoff_base_seconds=60, max_attempts=2)
     sweeper, harness = await role_conn(Role.SWEEPER), await role_conn(Role.TEST_HARNESS)
     tenant = await own_tenant(app_conn)
@@ -4056,18 +4165,19 @@ async def test_a_delivery_that_keeps_crashing_is_dead_lettered_at_its_cap(
         staged = await succeeded_run(app_conn, role_conn, tenant)
         for attempt in (1, 2):
             await move_clock(harness, (capped.lease_seconds + 1) * (attempt - 1))
-            with pytest.raises(RuntimeError):
-                await outbox.deliver(sweeper, Crashing(), capped, tenants=[tenant])
+            await kill_mid_delivery(sweeper, tenant, capped)
             (row,) = await intents(app_conn, staged.run)
             assert (row["attempts"], row["result"]) == (attempt, None)
         await move_clock(harness, (capped.lease_seconds + 1) * 2)
         assert await outbox.deliver(sweeper, outbox.LogSink(), capped, tenants=[tenant]) == []  # never claimed again
         (row,) = await intents(app_conn, staged.run)
         assert (row["attempts"], row["result"], row["delivered_at"]) == (2, "dead_letter", None)
+        late = functools.partial(outbox.record_result, row=row, result="delivered", chosen=capped, rng=lambda: 0.0)
+        assert await in_tenant(sweeper, tenant, late) is False  # the dead letter stands
         assert await outbox.notify_dead_letters(sweeper, tenants=[tenant]) == [row["outbox_id"]]
         (failed,) = await failures(app_conn, staged.run)
         assert failed["outbox_id"] == str(row["outbox_id"])
-        lines.append("crash at the cap: two crashed deliveries, then dead-lettered by the claim and announced once")
+        lines.append("killed at the cap: two lost deliveries, then dead-lettered by the claim and announced once")
     finally:
         await move_clock(harness, 0)
         if staged is not None:
@@ -4085,8 +4195,7 @@ async def test_a_late_result_never_overwrites_a_newer_claim(
     staged: Outcome | None = None
     try:
         staged = await succeeded_run(app_conn, role_conn, tenant)
-        with pytest.raises(RuntimeError):
-            await outbox.deliver(sweeper, Crashing(), CHOSEN, tenants=[tenant])  # attempt 1: claimed, no result
+        await kill_mid_delivery(sweeper, tenant, CHOSEN)  # attempt 1: claimed, no result
         (first,) = await intents(app_conn, staged.run)
         await move_clock(harness, CHOSEN.lease_seconds + 1)
         results = await outbox.deliver(sweeper, outbox.LogSink(), CHOSEN, tenants=[tenant])
@@ -4120,10 +4229,10 @@ cannot run live steps.
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1022 passed, 149 skipped` (1007 + 15; the 5 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `1023 passed, 149 skipped` (1007 + 16; the 5 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1150 passed, 21 skipped` (arithmetic, not measured: 1022 + 128 live-gated
+Expected: `CHECK: GREEN`; pytest `1151 passed, 21 skipped` (arithmetic, not measured: 1023 + 128 live-gated
 tests). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission
 reports/leases` (`reports/events` and `reports/outbox` stay for Task 6).
 
@@ -4600,9 +4709,10 @@ Edit 1 (`sweeper/src/ops_sweeper/main.py`, docstring), replace:
 
 ```python
 worker (T13, `leases.reclaim`) and, last, delivers the notification outbox (T14: this minute's `deliver_outbox` row,
-then `outbox.deliver`, then the dead letters' `notification.failed`), so a delivery that crashes ends the tick after
-everything else has run. Readiness is 200 only while the last successful sync is younger than 120 s, the window after
-which `grant_execution` refuses (T11 review note 2), so `scripts/skeleton.py up` waits for the first sync.
+then `outbox.deliver`, then the dead letters' `notification.failed`), so a database error during delivery ends the
+tick after everything else has run (a sink's crash is one row's failed attempt). Readiness is 200 only while the last
+successful sync is younger than 120 s, the window after which `grant_execution` refuses (T11 review note 2), so
+`scripts/skeleton.py up` waits for the first sync.
 ```
 
 with:
@@ -4610,9 +4720,10 @@ with:
 ```python
 worker (T13, `leases.reclaim`), re-arms lost wake-ups (T14: `wakeups.sweep`, the purge of finished maintenance rows,
 this minute's `sweep_wakeups` row) and, last, delivers the notification outbox (T14: this minute's `deliver_outbox`
-row, then `outbox.deliver`, then the dead letters' `notification.failed`), so a delivery that crashes ends the tick
-after everything else has run. Readiness is 200 only while the last successful sync is younger than 120 s, the window
-after which `grant_execution` refuses (T11 review note 2), so `scripts/skeleton.py up` waits for the first sync.
+row, then `outbox.deliver`, then the dead letters' `notification.failed`), so a database error during delivery ends
+the tick after everything else has run (a sink's crash is one row's failed attempt). Readiness is 200 only while the
+last successful sync is younger than 120 s, the window after which `grant_execution` refuses (T11 review note 2), so
+`scripts/skeleton.py up` waits for the first sync.
 ```
 
 Edit 2 (`sweeper/src/ops_sweeper/main.py`, imports), replace:
@@ -4655,16 +4766,16 @@ with:
 Edit 5 (`sweeper/src/ops_sweeper/main.py`, `tick`), replace:
 
 ```python
-    back the jobs of dead or lost run leases (T13); deliver the outbox (T14), last, so a delivery that crashes
-    (anything but a refusal, which is a failed attempt) skips nothing else. Everything after the sync runs whether or
-    not Keycloak answered."""
+    back the jobs of dead or lost run leases (T13); deliver the outbox (T14), last, so a database error during
+    delivery skips nothing else (a sink's crash is one row's failed attempt). Everything after the sync runs whether
+    or not Keycloak answered."""
 ```
 
 with:
 
 ```python
     back the jobs of dead or lost run leases (T13); re-arm lost wake-ups, then deliver the outbox (T14), last, so a
-    delivery that crashes (anything but a refusal, which is a failed attempt) never stops run progress. Everything
+    database error during delivery never stops run progress (a sink's crash is one row's failed attempt). Everything
     after the sync runs whether or not Keycloak answered."""
 ```
 
@@ -4815,7 +4926,7 @@ from ops_sweeper import main, outbox, wakeups
 ```
 
 Run: `uv run python -m pytest tests/plan_i tests/plan_h/test_reclaim.py tests/plan_h/test_worker_units.py -q`
-Expected: `102 passed` (Plan I's 80: Task 4's 72, the wake-up module's 7 and the tick's third test; the reclaim
+Expected: `103 passed` (Plan I's 81: Task 4's 73, the wake-up module's 7 and the tick's third test; the reclaim
 module's 2; the worker-units module's 20).
 
 - [ ] **Step 5: The live wake-up tests**
@@ -4833,14 +4944,27 @@ with:
 ```python
     with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
         conn.execute("UPDATE app.memberships SET synced_at = app.current_time() - interval '10 minutes'")
-        # T14: the skeleton's sweeper re-arms any QUEUED or APPROVED run whose wake-up is done, and its worker would run
-        # it here; a run an earlier test left behind must fail this module loudly instead of joining it (round 1, M8).
-        leftover = conn.execute(
-            "SELECT count(*) FROM app.runs r WHERE r.state IN ('QUEUED', 'APPROVED')"
-            " AND NOT EXISTS (SELECT 1 FROM app.jobs j WHERE j.run_id = r.run_id AND j.done_at IS NULL)"
-        ).fetchone()[0]
-        assert leftover == 0, f"{leftover} waiting run(s) with no pending wake-up were left by an earlier test"
+        # T14: the skeleton's sweeper re-arms what the sweep's own query finds (here with a grace of 0, as the
+        # superuser, so in every tenant), and its worker would run it here; a run an earlier test left behind must fail
+        # this module loudly instead of joining it (round 1, M8; round 2, N4).
+        leftover = len(conn.execute(wakeups.LOST, (0,)).fetchall())
+        assert leftover == 0, f"{leftover} run(s) with a lost wake-up were left by an earlier test"
     sk = Skeleton()
+```
+
+Edit 13 (`tests/e2e/test_r105_walking_skeleton.py`, imports), replace:
+
+```python
+from ops_core.settings import Role
+from ops_worker.mcp import failure_leaf
+```
+
+with:
+
+```python
+from ops_core.settings import Role
+from ops_sweeper import wakeups
+from ops_worker.mcp import failure_leaf
 ```
 
 Create `tests/e2e/test_wakeups_live.py`:
@@ -5063,10 +5187,10 @@ live gate (Step 6), where its skeleton starts.
 Format, lint and count characters on every file of this task.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1030 passed, 154 skipped` (1022 + 8; the 5 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `1031 passed, 154 skipped` (1023 + 8; the 5 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1163 passed, 21 skipped` (arithmetic, not measured: 1030 + 133 live-gated
+Expected: `CHECK: GREEN`; pytest `1164 passed, 21 skipped` (arithmetic, not measured: 1031 + 133 live-gated
 tests). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission
 reports/leases`.
 
@@ -5115,7 +5239,7 @@ Expected: the first command prints nothing (Task 1 moved `outcomes.Event`'s to T
 T21; Task 5 rewrote `claim_next`'s as erratum 64; Task 2 removed the matrix docstring's and the lock order's
 forward references; the applied revisions 0002-0007 carry no `TODO(T14)`). The second prints one line,
 `sweeper/README.md:23:Wake-ups, the outbox and proposal expiry: T14/T21.`, which Step 4 rewrites. If the first
-prints a line, give that TODO its owner from the debt list (T20, T21, T22, T26, T27, T28, T30, T32, T39, T45 or T47)
+prints a line, give that TODO its owner from the debt list (T20, T21, T22, T26, T27, T28, T29, T32, T39, T45 or T47)
 in a separate commit before continuing.
 
 - [ ] **Step 2: Handoff records**
@@ -5148,9 +5272,10 @@ note = (
     "record_outcome) and run.escalated and run.abandoned_unverified (their emitters arrive with T22), deduplicated "
     "by run:type:channel:recipient; the sweeper's tenant iteration; the leased delivery loop (one tenant after "
     "another: claim with SKIP LOCKED and a 30 s lease, delivery outside any transaction to LogSink, result in its "
-    "own unit naming its attempt, capped jittered backoff, dead letter at the fifth failure or, for a delivery that "
-    "crashed on its last attempt, at the next claim; notification.failed in a separate transaction under an "
-    "advisory lock on the outbox id, with a re-check every tick); the outbox_sink_fail fault (test profile, sink "
+    "own unit naming its attempt and never overwriting a dead letter, a sink's crash caught at the sink boundary as "
+    "that row's failed attempt, capped jittered backoff, dead letter at the fifth failure or, for a delivery lost "
+    "with its sweeper, at the next claim; notification.failed in a separate transaction opened by an advisory lock "
+    "on the outbox id, with a re-check every tick); the outbox_sink_fail fault (test profile, sink "
     "factory argument); the wake-up sweep re-arming QUEUED/investigate and APPROVED/execute jobs done past a 60 s "
     "grace under a 10-claim cap, never for a run whose cancellation was requested, every condition repeated on the "
     "row the re-arm takes; the release making the jobs deferred behind its lease due at once; the deliver_outbox "
@@ -5284,7 +5409,8 @@ with:
   (`docs/superpowers/plans/2026-10-15-first-slice-i-journal-wakeups-outbox.md`) holds the 29 rulings of the
   controller's brief as implemented; the input is `docs/superpowers/research/2026-10-15-plan-i-inputs.md`.
   Evidence: `tests/e2e/test_event_journal_live.py` (R089: the stepped writers of four roles, the rollback, the
-  stress run with its readers), `test_outbox_live.py` (R024, the delivered row, the crashed delivery),
+  stress run with its readers), `test_outbox_live.py` (R024, the delivered row, a sink crash on one row of three, a
+  delivery lost with its sweeper at the cap, a late result),
   `test_wakeups_live.py`, `test_migration_0008_live.py` (the round trip, the payload table in SQL, the intent, the
   outbox grants, the MCP catalog check) and `reports/events/t14-events.txt`, `reports/outbox/t14-outbox.txt`; the
   unit half is in `tests/plan_i/`.
@@ -5323,13 +5449,15 @@ with:
   67. BS:524 (delivery): the sweeper's tick, one tenant after another, claims the tenant's due rows (`FOR UPDATE
       SKIP LOCKED`, a 30 s lease, `OPS_OUTBOX_BATCH` 10), delivers them outside any transaction to `LogSink` (one
       log line, no egress), and records each result in its own unit for the attempt it was claimed at; the backoff
-      is `min(300, 2 × 2^(n−1))` s plus up to 25 % jitter; the fifth failure dead-letters, and a delivery that
-      crashes is retried when its lease ends and dead-lettered by the claim once its attempts reached the same cap;
-      the wake-up sweep runs before the delivery, so a crashing delivery never stops it; `outbox_sink_fail` is the
-      sink's test-profile fault.
+      is `min(300, 2 × 2^(n−1))` s plus up to 25 % jitter; the fifth failure dead-letters; a sink that crashes on a
+      row is caught at the sink boundary and counted as that row's failed attempt, sparing its batch, the later
+      tenants and the announcements; a delivery lost with its sweeper is retried when its lease ends and
+      dead-lettered by the claim once its attempts reached the same cap; no result overwrites a dead letter; the
+      wake-up sweep runs before the delivery; `outbox_sink_fail` is the sink's test-profile fault.
   68. SA:188 and BS:514: `notification.failed` (payload `code`, `message`, `outbox_id`) is appended once per dead
-      letter in a separate transaction after the result unit, under a transaction advisory lock on the outbox id
-      (two sweepers never announce one dead letter twice), and every tick re-checks the dead letters that lack it.
+      letter in a separate transaction after the result unit, opened by a transaction advisory lock on the outbox id
+      and followed by the re-check, so a second sweeper waits for the first and finds the event; every tick re-checks
+      the dead letters that lack it.
   69. SA:520: the sweeper iterates `tenants` and runs per-tenant work in one transaction per tenant
       (`ops_sweeper.tenants.for_each_tenant`): the delivery and the wake-up sweep now, T21's expiry and T22's
       deadline escalation later.
@@ -5472,14 +5600,18 @@ that never arrived. The design is AM-12, AM-14 and AM-20 in `SPEC_AMENDMENTS.md`
   machine. Slack is T39.
 - **Failure.** A failed delivery is `retrying` with `leased_until` pushed out by `min(cap, base × 2^(attempts−1))`
   plus up to 25 % jitter; the `OPS_OUTBOX_MAX_ATTEMPTS`-th failure is `dead_letter`. A dead letter gets one
-  `notification.failed` event on its run (`code`, `message`, `outbox_id`) in a separate transaction, under an
-  advisory lock on the outbox id; every tick re-checks for dead letters still lacking it. The run's state is never
-  touched by delivery.
-- **A delivery that crashes** (anything but the sink's refusal: a bug, a killed process) records nothing. The tick
-  logs `sweeper tick failed` with the traceback and stops after its record of the minute; the wake-up sweep ran
-  before it. The row's `attempts` counts the crashed claim; it is claimed again when its lease ends, and once its
-  attempts reached `OPS_OUTBOX_MAX_ATTEMPTS` the next claim dead-letters it and the tick announces it. Until then
-  the tenants after the crashing one wait for the following tick.
+  `notification.failed` event on its run (`code`, `message`, `outbox_id`) in a separate transaction, opened by an
+  advisory lock on the outbox id and followed by a re-check, so a second sweeper waits and then finds the event;
+  every tick re-checks for dead letters still lacking it. The run's state is never touched by delivery.
+- **A sink that crashes on a row** (any exception but the sink's refusal: a bug, a payload it cannot render) is
+  caught at the sink boundary: the log says `notification delivery crashed: type=… run=… outbox=… attempt=n of m
+  (retrying|dead_letter)` with the traceback, and the row is recorded as a failed attempt, exactly like a refusal
+  (backoff, dead letter at the cap). The batch's other rows, the later tenants and the announcements go on.
+- **A sweeper that dies mid-delivery** (killed, or its database connection lost) records nothing for the row it was
+  delivering: the row keeps its counted attempt and is claimed again when its lease ends, and once its attempts
+  reached `OPS_OUTBOX_MAX_ATTEMPTS` the next claim dead-letters it and the tick announces it. A database error during
+  delivery logs `sweeper tick failed` (or ends the process, if the connection is gone) after the minute's record and
+  the wake-up sweep have run.
 - **At least once.** A delivery slower than its lease, or a sweeper that dies after the sink but before the result,
   is delivered again later (BUILD_SPEC §2: "At-least-once dispatch can occur").
 
@@ -5634,6 +5766,15 @@ had no emitter, so `action.conflict`, the escalation that exists today, became a
 a cancelled run, and repeated none of its checks on the row it re-armed; the stress readers could pass having read
 nothing; the downgrade's evidence was weaker than its claim; and the sweeper's new DELETE reached every tenant's run
 jobs, which a restrictive policy now forbids.
+
+**Round 2 (static critic: 0 Blocking, 1 Important, 5 Minor).** Round 1's bound for a crashing delivery had a cost the
+first review had not seen: the crash left the rest of its batch claimed and unrecorded, so rows that were never
+handed to the sink burned an attempt per crash and were finally dead-lettered and announced as undeliverable. The
+crash is now caught at the sink boundary and recorded as that row's failed attempt, the one broad catch the plan adds,
+so the rest of the batch, the later tenants and the announcements go on; the claim-time dead letter stays for a
+sweeper that dies mid-delivery. No result may overwrite a dead letter any more, the rollback test settles its writer
+before the purge, the skeleton's leftover check uses the sweep's own query, and two wording claims were narrowed to
+what the tests show.
 
 ## 27. What the process taught
 ```
@@ -5796,8 +5937,8 @@ git commit -m "docs: close T14 - handoff records, acceptance rows, errata 60-71,
    `_append_event` (Task 2) and the leased loop to `LogSink` (Task 4). DoD 1 "Concurrent writers yield gap-free
    commit-ordered sequences" → Task 3's two stepped tests, the rollback test and the stress run. DoD 2 "Outbox rows
    deduplicated and leased; delivery result recorded separately" → the dedup key and its target-less conflict (Task 2
-   live, Task 4 R024 replay), the claim's lease and its expiry (Task 4 crash test), the result on the outbox row with
-   the run untouched (R024). Review notes: 1 (dedup keys UNIQUE; no recover job from an MCP server) → the catalog test
+   live, Task 4 R024 replay), the claim's lease and its expiry (Task 4's lost-delivery tests), the result on the
+   outbox row with the run untouched (R024). Review notes: 1 (dedup keys UNIQUE; no recover job from an MCP server) → the catalog test
    (Task 2) and the re-arm that reuses the row and key (Task 5); 2 (payload rules inside the function; the emitters of
    `action.granted` and `action.redispatched`; `deliver_outbox` a job type) → `_append_event`'s rules (Task 2) with
    their mirrors (Task 1), the emitters already as the note says (FS §3.4, unchanged), `deliver_outbox` recorded as a
@@ -5828,9 +5969,10 @@ git commit -m "docs: close T14 - handoff records, acceptance rows, errata 60-71,
    `leased_until`, `delivered_at`, `result`, `dedup_key`) match revision 0008, the matrix row and the queries;
    `PAYLOAD_KEYS_0008` and `STATUS_TYPES_0008` equal `outcomes.PAYLOAD_KEYS` and `STATUS_EVENT_TYPES` (a unit test).
    `FaultKind.OUTBOX_SINK_FAIL` is the one `SWEEPER_FAULTS` member and is consumed only by `LogSink`.
-4. **Review Focus.** (1) a delivery outliving its lease → Task 4's result-statement test, the late-result, crash and
-   crash-at-the-cap live tests; (2) a crash between result and event, or two sweepers → Task 4's R024 test, the
-   already-notified test and the advisory lock in the announcement test; (3) a replayed outcome → Task 4's R024 test
+4. **Review Focus.** (1) a delivery outliving its lease or crashing → Task 4's result-statement and sink-crash unit
+   tests, and the late-result, lost-at-the-cap and crash-on-one-row live tests; (2) a crash between result and event,
+   or two sweepers → Task 4's R024 test, the already-notified test and the statement order (lock first, then the
+   re-check) in the announcement test; (3) a replayed outcome → Task 4's R024 test
    and Task 2's intent test; (4) a run or job moving before its re-arm → Task 5's re-arm tests (each condition
    asserted) and the live cancellation case; (5) today's writers under the closed keys → the case table in Tasks 1 and
    2 and the existing live tests in Task 2's gate.
@@ -5840,9 +5982,12 @@ git commit -m "docs: close T14 - handoff records, acceptance rows, errata 60-71,
      mechanism and must be reported, never worked around by weakening an assertion.
    - The R089 stress run's volume depends on the machine: six appending connections with millisecond sleeps can write
      thousands of events per run in 10 s; the cursor reader pages by 500 and the assertions are exact, not
-     statistical, but the reader floors (100 pages, 100 counts) assume the readers are not starved.
-   - The R024 and crash tests move the global test clock (to 4000 s and 31 s) and reset it in `finally`; they rely on
-     the suite running tests one at a time, as it does.
+     statistical, but the reader floors (at least 20 non-empty route pages per run, and more than one distinct
+     maximum per run for the counting reader) assume the readers are not starved.
+   - The R024, crash and lost-delivery tests move the global test clock (up to 4000 s) and reset it in `finally`;
+     they rely on the suite running tests one at a time, as it does. The lost-delivery tests cancel the delivery's
+     task while the sink awaits an Event, after the claim committed and before any result unit: no database unit is
+     cancelled, which the test's comments state.
    - Schema rule 9 changes a contract T45 owns (AM-80); a later writer that needs `status` on a new type must extend
      the schema, `event_rules_ok` and the SQL together, and the case table will fail until all three agree.
    - The R105 skeleton's real sweeper now delivers and sweeps every tenant every 30 s: a QUEUED or APPROVED run some
@@ -5918,3 +6063,46 @@ task, and the dev counts below are the measured ones.
   database, the readers' new floors, the R105 leftover check) are first exercised in execution.
 - The stored text of the restrictive policy, `((run_id IS NULL) AND (done_at IS NOT NULL))`, is PostgreSQL's usual
   deparse of that expression; R106 is the test that confirms it on the first live run.
+
+## Round 2 changes
+
+Inputs: the controller's rulings on the round-2 static review (`round2-static.md`: REVISE light, 0 Blocking,
+1 Important, 5 Minor, all accepted). Every ruling is applied; nothing was declined. The plan was re-applied task by
+task to a `git archive` copy with `ruff format` between tasks: every quoted old text matched once, `ruff format`
+changed nothing, ruff, mypy strict and `verify_handoff` passed after every task, and the dev counts below are measured.
+
+- **N1 (Task 4; Global Constraints; Task 6).** `outbox.deliver` wraps only the per-row `sink.deliver(...)` call in
+  `except Exception`, with its reason in a comment: the crash is logged with `log.exception` (type, run, outbox id,
+  attempt; no payload) and recorded through the normal failure path, `retrying` with its backoff or `dead_letter` at
+  the cap, so it costs that row one attempt and nothing else. The Global Constraints list it as the one new
+  catch-all. The claim-time dead letter (`EXHAUSTED`) stays for a sweeper that dies mid-delivery. Tests: the unit test
+  `test_a_crashing_row_costs_one_attempt_and_spares_its_batch` (three rows, the middle one crashes: two delivered, one
+  `retrying` at attempt 1 with its backoff, the traceback logged) replaces the old "leaves the row leased" test, and
+  `test_a_killed_delivery_leaves_its_row_leased` keeps the killed-process half; the live
+  `test_a_crash_on_one_row_spares_the_rows_claimed_with_it` (three rows in one tenant, the middle one delivered after
+  its backoff) replaces the old crashed-delivery test. The two live tests that need a delivery lost mid-flight (at the
+  cap, and the late result) now lose it by cancelling the delivery's task while the sink awaits an Event, after the
+  claim committed and before any result unit, so no database unit is cancelled. The `deliver` docstring, the sweeper
+  `main` docstrings, erratum 67, the runbook (what a crashing sink and a dying sweeper each look like), the handoff note
+  and the history are updated.
+- **N2 (Task 4).** `DELIVERED`, `RETRY` and `DEAD` carry `AND result IS DISTINCT FROM 'dead_letter'`; the unit test
+  asserts it, and the lost-at-the-cap live test records a late `delivered` for the dead-lettered attempt and finds
+  nothing written.
+- **N3 (Task 3).** The rollback test keeps `b_task` and settles it in `finally` before the purge.
+- **N4 (Task 5).** The R105 leftover check runs the sweep's own `wakeups.LOST` with a grace of 0, as the superuser
+  (Edit 12, and Edit 13 for the import).
+- **N5 (Tasks 1, 4, 6; Review Focus 2; rulings 17; erratum 68).** The claim now reads: the announcement's unit opens
+  with the advisory lock and re-checks after it, so a second sweeper waits and then finds the event; pinned by the
+  statement order in a unit test; no test races two sweepers.
+- **N6.** The self-review's reader floors read "at least 20 non-empty pages per run and more than one distinct
+  maximum"; Task 6 Step 1's owner list names T29 and no longer T30.
+- **Counts.** Dev: Task 1 1001/134, Task 2 1007/140, Task 3 1007/144, Task 4 1023/149, Task 5 1031/154 (measured).
+  Live (arithmetic): 1126, 1130, 1151, 1164, with 21 skipped. Errata keep their numbers; 67 and 68 are reworded.
+
+## Round 2 open points
+
+- As in round 1: no live step has run in any dry run; the new and reworked live tests of this round (the crash on one
+  row of three, the lost delivery by task cancellation, the late result against a dead letter, the R105 check through
+  `wakeups.LOST`) are first exercised in execution.
+- A sweeper killed mid-batch still leaves each claimed, unrecorded row with one counted attempt; only repeated kills
+  can dead-letter such a row (the critic's residual; claiming one row per unit would close it and is not done).
