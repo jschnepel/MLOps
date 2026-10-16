@@ -26,11 +26,11 @@ from psycopg.rows import DictRow, dict_row
 from psycopg.types.json import Jsonb
 
 from ops_core.canonical import sha256_hex
-from ops_core.jobs import JOB_RULES, JobType, Server, Tool, dedup_key
+from ops_core.jobs import ATTEMPT_STATES, JOB_RULES, JobType, Server, Tool, dedup_key
 from ops_core.lease import LOCK_FOR_SHARE, LOCK_FOR_UPDATE, LOCK_FOR_UPDATE_NOWAIT, RELEASED, Busy, Lease, LeaseLost
 from ops_core.outcomes import ActionOutcome, EventRuleViolation, EventSource, EventType, ToolOutcome
 from ops_core.settings import Postgres, Profile
-from ops_core.states import IllegalTransition, Intent, Reason, RunState
+from ops_core.states import AttemptState, IllegalTransition, Intent, Reason, RunState
 
 Conn = psycopg.AsyncConnection[DictRow]
 log = logging.getLogger("ops_core.persistence")
@@ -396,17 +396,24 @@ class Invocation:
     attempt_state: str | None
 
 
-def allowed_tool(job_type: JobType, run_state: RunState, tool: Tool) -> None:
-    """The AM-15 allowlist stays in Python (Plan E ruling 21, erratum 19): the tool must be one of the job type's and
-    the run must be in one of the job type's states (Plan J ruling 6); the function has already bound server, azp,
+def allowed_tool(job_type: JobType, run_state: RunState, attempt_state: AttemptState | None, tool: Tool) -> None:
+    """The AM-15 allowlist stays in Python (Plan E ruling 21, erratum 19): the tool must be one of the job type's, the
+    run must be in one of the job type's states (Plan J ruling 6), and a write tool's latest attempt state must be one
+    `jobs.ATTEMPT_STATES` admits for the job type (Plan K ruling 4); the function has already bound server, azp,
     expiry, fence and the handle's job. A run that moved on (a read handle once the run awaits approval, an execute
-    handle once the run succeeded) is refused like any other handle."""
+    handle once the run succeeded, a recover handle asking to redispatch a sent attempt) is refused like any other
+    handle."""
     rule = JOB_RULES[job_type]
     if tool not in rule.allowed_tools:
         log.info("tool %s is not allowed for job type %s", tool.value, job_type.value)  # never the handle
         raise HandleRejected("invocation handle rejected")  # the one fixed message (SA:357)
     if run_state not in rule.run_states:
         log.info("job type %s does not run in state %s", job_type.value, run_state.value)  # never the handle
+        raise HandleRejected("invocation handle rejected")
+    attempts = ATTEMPT_STATES.get((job_type, tool))
+    if attempts is not None and attempt_state not in attempts:
+        shown = "none" if attempt_state is None else attempt_state.value
+        log.info("tool %s is not allowed for job type %s with attempt %s", tool.value, job_type.value, shown)
         raise HandleRejected("invocation handle rejected")
 
 
@@ -422,7 +429,8 @@ async def resolve_invocation(conn: Conn, *, handle: str, azp: str, tool: Tool) -
         raise HandleRejected("invocation handle rejected")
     job_type = JobType(str(row["job_type"]))
     run_state = RunState(str(row["run_state"]))
-    allowed_tool(job_type, run_state, tool)
+    attempt_state = None if row["attempt_state"] is None else AttemptState(str(row["attempt_state"]))
+    allowed_tool(job_type, run_state, attempt_state, tool)
     return Invocation(
         UUID(str(row["run_id"])),
         UUID(str(row["job_id"])),
@@ -430,7 +438,7 @@ async def resolve_invocation(conn: Conn, *, handle: str, azp: str, tool: Tool) -
         UUID(str(row["tenant_id"])),
         UUID(str(row["conversation_id"])),
         run_state,
-        None if row["attempt_state"] is None else str(row["attempt_state"]),
+        None if attempt_state is None else attempt_state.value,
     )
 
 

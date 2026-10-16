@@ -13,7 +13,7 @@ from enum import StrEnum
 from typing import Final
 from uuid import UUID
 
-from ops_core.states import RunState
+from ops_core.states import AttemptState, RunState
 
 
 class Tool(StrEnum):
@@ -52,9 +52,9 @@ class JobRule:
     """What a job type may do: its tools, the run states it runs in, its server, creators and dedup key shape.
 
     AM-15 derives the allowlist from the job type plus the run state and the attempt state. `allowed_tools` and
-    `run_states` are the first two, and `persistence.allowed_tool` checks both at every handle resolution (T15).
-    TODO(T47): the attempt-state dimension (`create_incident` only while the attempt is absent or INTENT, not
-    cancelled, before the deadline) is mcp-write's, where `execution.next_step` branches on it today.
+    `run_states` are the first two (T15); the third is `ATTEMPT_STATES` below (T47), and `persistence.allowed_tool`
+    checks all three at the start of every MCP call. "Not cancelled, before the deadline" is not part of it: it needs
+    the cancel flag and the grant's time, so `mark_sent` re-checks both under the runs lock (Plan K ruling 4).
     """
 
     type: JobType
@@ -104,6 +104,19 @@ JOB_RULES: Final[dict[JobType, JobRule]] = {
         t: JobRule(t, frozenset(), frozenset(), None, ("sweeper",), "name:minute_bucket")
         for t in (JobType.EXPIRE_PROPOSALS, JobType.SYNC_MEMBERSHIPS, JobType.SWEEP_WAKEUPS, JobType.DELIVER_OUTBOX)
     },
+}
+
+_A = AttemptState
+# The attempt-state dimension (AM-15, SA:338; Plan K rulings 4 and 5): the latest attempt state a write tool may be
+# called in, per job type; None is "no attempt yet" (no grant). A (job type, tool) pair not listed has no attempt rule
+# (the read tools). An execute job re-sends a SENT attempt under the same action id (the re-queue after a lost reply,
+# Plan E ruling 6); a recover job redispatches INTENT only (SA:345 over SA:334), looks up any attempt that may have
+# reached the destination (a resolved one answers its stored outcome), and aborts one that is not resolved.
+ATTEMPT_STATES: Final[dict[tuple[JobType, Tool], frozenset[AttemptState | None]]] = {
+    (JobType.EXECUTE, Tool.CREATE_INCIDENT): frozenset({None, _A.INTENT, _A.SENT}),
+    (JobType.RECOVER, Tool.CREATE_INCIDENT): frozenset({_A.INTENT}),
+    (JobType.RECOVER, Tool.GET_INCIDENT_RECEIPT): frozenset({_A.SENT, _A.ABORT_REQUESTED, _A.RESOLVED}),
+    (JobType.RECOVER, Tool.ABORT_INCIDENT): frozenset({_A.INTENT, _A.SENT, _A.ABORT_REQUESTED}),
 }
 
 RECOVER_CADENCE: Final = (300, 3600, 48)  # every 5 min for the first hour, then hourly, 48 attempts (AM-20.4)

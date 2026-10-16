@@ -111,8 +111,9 @@ def test_next_step_replays_without_a_second_send_once_resolved():
     assert execution.next_step("RESOLVED") == "stored"
     assert execution.next_step("INTENT") == "send"
     assert execution.next_step("SENT") == "resend"
+    assert execution.next_step("ABORT_REQUESTED") == "aborting"  # T47: nothing more is sent once an abort is asked
     with pytest.raises(ValueError):
-        execution.next_step("ABORT_REQUESTED")  # T22 territory; the skeleton refuses to guess
+        execution.next_step(None)  # a grant always has an attempt
 
 
 class StubVerifier:
@@ -135,7 +136,7 @@ async def test_tool_schema_matches_the_contract_and_rejects_extras():
     )
     async with Client(mcp) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-        assert set(tools) == {"create_incident"}
+        assert set(tools) == {"create_incident", "get_incident_receipt", "abort_incident"}  # T47's three
         schema: dict[str, Any] = tools["create_incident"].input_schema
         assert schema["additionalProperties"] is False and schema["required"] == INPUT["required"]
         assert schema["properties"]["proposal_id"]["format"] == "uuid"
