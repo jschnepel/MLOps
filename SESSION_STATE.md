@@ -8,9 +8,7 @@ the five building tasks, the close-out is `a335e1b..6ec740f`, the final-review f
 then the live probe (T02); (2) merge the stacked PRs #1-#10 in order (plan-b -> main through plan-k -> plan-j; #10 is
 https://github.com/jschnepel/MLOps/pull/10); (3) T44 step 10 (step A applied 2026-10-16; the other-device LAN check and the firewall rules remain)
 (`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F, G, H, I, J and K (K: 82-92
-below); (5) migrate the dev database to revision 0010 (`uv run python scripts/skeleton.py migrate`, dev profile: from
-0005 it applies 0006 to 0010 together; 0010 re-creates the write-path functions with the token's `azp`, adds
-`request_abort` and the dispatch deadline, and changes no row; mcp-write now also refuses to start without it). Next
+below). The dev database is at revision 0010 (the owner migrated it on 2026-10-16). Next
 is Plan L = T17 (the governed corpus, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after
 T47, unblocked by T09).
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
@@ -1055,10 +1053,13 @@ also refuses to start without 0010 (it checks `app.request_abort(text, text, uui
 `grant_execution`, `lookup_action`, `mark_sent` and `record_outcome` with the token's `azp` as a second argument,
 creates `request_abort` and the helper `_dispatch_seconds()`, and changes no row.
 
+**Update (2026-10-16, later):** the owner ran `uv run python scripts/skeleton.py migrate` (dev profile: `app at
+app@head, incident at head`), so the dev `ops` database is at `0010_write_path`. `skeleton.py up` then brought all six
+processes to ready (mcp-write's startup check needs 0010) and `down` stopped them.
+
 ## Open owner inputs
 
-- Migrate the dev database to revision 0010 (`uv run python scripts/skeleton.py migrate`, dev profile; it applies
-  0006 to 0010 together), then decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed"), 60-71 (see
+- Decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed"), 60-71 (see
   "Plan I executed"), 72-81 (see "Plan J executed") and 82-92 (see "Plan K executed").
 - R025 and R031 have every half evidenced (mcp-read by T15, mcp-write by T47, the import half by T04) but keep
   `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`, because no open task owns them: flipping their status is the owner's call
@@ -1095,6 +1096,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A; the dev database migration to 0010; the proposed errata of Plans C-K, up to 92) and write Plan L for T17 (the governed corpus and lexical baseline, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T47, unblocked by T09).
+Then wait for the owner inputs above (holdout seal, then live probe; merging the PRs; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-K, up to 92) and write Plan L for T17 (the governed corpus and lexical baseline, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T47, unblocked by T09).
 
 Do not store secrets or private reasoning in this file.
