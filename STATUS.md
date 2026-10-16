@@ -266,6 +266,7 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 - `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1152 passed, 180 skipped`.
   `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1311 passed, 21 skipped`.
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
+  After the final-review fix wave the gates are `1161 passed, 182 skipped` and `1322 passed, 21 skipped`.
 - **Evidenced** (`RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R030 and R131. The receipt lookup answers
   only a recover job's handle whose attempt may have reached the destination; execute and investigate handles, and a
   recover handle of an APPROVED run (no grant), are refused at both recovery tools; a lookup is a GET that creates
@@ -285,3 +286,7 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   recover jobs, redispatch from OUTCOME_UNKNOWN, escalation and late evidence after RESOLVED -> T22; the deadline as a
   setting -> T29; the network half of T47 DoD 3 and per-service tests -> T30; signed receipts -> v1.1. Eleven errata
   (82-92) are proposed. T47 is DONE subject to the owner's decisions on errata 72, 84 and 91.
+- Final whole-branch review: ready with fixes (0 Critical, 1 Important, 1 Minor), fixed in one wave. The Important
+  was a re-queued execute job refused at an abort request, which closed the job and left the run EXECUTING with no
+  job; the execute job is now admitted there and answered UNKNOWN with nothing sent, so the worker parks the run in
+  OUTCOME_UNKNOWN for T22. The Minor was four overclaiming sentences; nine deferred task minors were fixed with them.

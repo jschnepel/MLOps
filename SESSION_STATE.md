@@ -3,7 +3,7 @@
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
 **Next task:** Plan K (T47) is executed on branch `plan-k` (on top of `plan-j`: `dd9f7b1..ea0bf54` holds the debt list and
-the five building tasks, and the close-out is the commit after `ea0bf54`). T47 is DONE subject to the owner's decisions on errata
+the five building tasks, the close-out is `a335e1b..6ec740f`, and the final-review fix wave follows `6ec740f`). T47 is DONE subject to the owner's decisions on errata
 72, 84 and 91 (R131's function sets and the attempt-state allowlist). Owner inputs: (1) the holdout seal (T03 step 9),
 then the live probe (T02); (2) merge the stacked PRs #1-#8 in order (plan-b -> main through plan-i -> plan-h), then
 the plan-j -> plan-i PR and, after Plan K's final review, a plan-k -> plan-j PR; (3) T44 step 10
@@ -657,7 +657,15 @@ T47, unblocked by T09).
   R031's network half at mcp-write) and `reports/mcp-write/`; the unit half is in `tests/plan_k/`, and the
   outcome-truth statement is `docs/threat-model.md`.
 - Gates: `check.py` 1152 passed / 180 skipped; `check.py --profile test` 1311 passed / 21 skipped; `verify_handoff.py`
-  exit 0 (STATUS.md, "Update — Plan K executed").
+  exit 0 (STATUS.md, "Update — Plan K executed"). After the final-review fix wave: 1161 passed / 182 skipped and
+  1322 passed / 21 skipped (measured), `verify_handoff.py` exit 0.
+- Final whole-branch review: ready with fixes (0 Critical, 1 Important, 1 Minor), fixed in one wave after `6ec740f`.
+  The Important (I1): a re-queued execute job that met ABORT_REQUESTED (an abort requested, then mcp-write failed
+  before the record) was refused, so the worker closed the job and the run stayed EXECUTING with no job; the execute
+  row now admits ABORT_REQUESTED, the call answers UNKNOWN with no destination call, and the worker's `mark_unknown`
+  parks the run in OUTCOME_UNKNOWN with a recover job (erratum 84 amended). The Minor (M1): four sentences in the
+  threat model, mcp-write's README and PROJECT_HISTORY said more than the code. Nine deferred task minors were fixed
+  in the same wave (PROJECT_HISTORY §28); five stay open (below).
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan J's
   eighty-one:
   82. SA:465 (`request_abort`): `request_abort(raw_handle, client_azp, action_id)` takes no reason; under the runs lock
@@ -672,10 +680,13 @@ T47, unblocked by T09).
       token's `azp` with the handle's, as `resolve_invocation` does; the worker's client is named once
       (`OPS_WORKLOAD_CLIENT_ID`, default `ops-worker`).
   84. SA:338, SA:344-345 and SA:334 (the attempt-state allowlist): checked in Python with the job type's tools and run
-      states (errata 19 and 76); `execute`/`create_incident`: no attempt, INTENT or SENT (SA:344 gains SENT: the
-      re-queued job re-sends the same action id after a lost reply, still not cancelled and before the deadline,
-      re-checked by `mark_sent`); `recover`/`create_incident`: INTENT only (SA:345 over SA:334; `mark_sent` also refuses
-      a recover job's re-send under the lock, `not_redispatchable`); `recover`/`get_incident_receipt`: SENT,
+      states (errata 19 and 76); `execute`/`create_incident`: no attempt, INTENT, SENT or ABORT_REQUESTED (SA:344
+      gains SENT: the re-queued job re-sends the same action id after a lost reply, still not cancelled and before the
+      deadline, re-checked by `mark_sent`; and ABORT_REQUESTED: a job re-queued after mcp-write failed between the
+      abort request and its record is answered UNKNOWN with no destination call, so the worker's `mark_unknown` parks
+      the run in OUTCOME_UNKNOWN with a recover job instead of the refusal closing the job, final review I1);
+      `recover`/`create_incident`: INTENT only (SA:345 over SA:334; `mark_sent` also refuses a recover job's re-send
+      under the lock, `not_redispatchable`); `recover`/`get_incident_receipt`: SENT,
       ABORT_REQUESTED or RESOLVED (a resolved attempt answers its stored outcome); `recover`/`abort_incident`: INTENT,
       SENT or ABORT_REQUESTED. "Not cancelled, before the deadline" is `mark_sent`'s check under the runs lock, for a
       first send and a re-send alike, not the allowlist's.
@@ -735,17 +746,16 @@ T47, unblocked by T09).
     `bootstrap`, `auth` and `mcp-read` is reverted.
   - `docs/runbooks/mcp-write.md` says never to downgrade past 0010 while an `ABORT_REQUESTED` row exists (0009's
     `mark_sent` would not honour it); `docs/threat-model.md` says the worker has no client code and no credential for
-    incident-sim (network isolation is T30's) and that only `sent` or `already_sent` from `mark_sent` lead to a POST.
-- **Open items for later:** minors the reviews deferred to Plan K's final fix wave or beyond: `test_verifier_t47`'s
-  `is None, why` could print an `AccessToken` repr on failure (bind it to a boolean first); `settings.workload_client_id()`
-  does not strip whitespace; `execution._abort` forwards any `request_abort` answer but `resolved` as the reason
-  (allowlist `ABORT_REASONS`); no scripted test of `_abort`'s `resolved` read-back branch; the resolve-time
-  `INVALID_HANDLE` for the recovery tools is only implicit; no live `request_abort` with another run's action id (OC002)
-  or a finished job's handle (OC008); an orphaned `azp` block comment above `grant_execution`; the process test does
-  not pin SENT to RESOLVED after the child's lookup; Task 4's module docstring "Catches" is broader than the module;
-  `OTHER_PROPOSAL` surfaces as `GRANT_REFUSED` text (cosmetic). Not deferred but owned elsewhere: the network half of T47
-  DoD 3 and per-service tests (T30), the worker's recover handler and everything after it (T22), the deadline as a
-  setting (T29), signed receipts (v1.1).
+    incident-sim (network isolation is T30's) and that only `sent` or `already_sent` from `mark_sent` lead to the
+    incident POST (`cancelled` and `expired` lead to the abort POST; final review M1).
+- **Open items for later:** minors the final review left deferred (the final-review fix wave took the other nine):
+  no end-to-end environment test of `production_app`'s `azp` (each construction point is tested); `OTHER_PROPOSAL`
+  surfaces as `GRANT_REFUSED` text (cosmetic; erratum 89 and the runbook say so); the T47 live module's setup before
+  `try` can leak runs on a Keycloak hiccup (the counts are diffed; Plan J's precedent); the inherited `free_port` race
+  and the start loop without a timeout; the process test's evidence path is relative to the working directory (the
+  gates run from the root). Not deferred but owned elsewhere: the network half of T47 DoD 3 and per-service tests
+  (T30), the worker's recover handler and everything after it (T22), the deadline as a setting (T29), signed receipts
+  (v1.1).
 
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 

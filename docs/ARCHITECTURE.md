@@ -278,8 +278,10 @@ it leaves, and a recovery call can observe or end an existing action but never s
   worker's client, `typ` Bearer), then the handle in the database with the token's `azp`: the five write-path
   functions compare it themselves (revision 0010), so the worker's client is named once, in settings.
 - **The allowlist has three dimensions.** The job type's tools and run states, and the latest attempt state: an
-  execute job creates with no attempt, INTENT or SENT (the re-send after a lost reply); a recover job redispatches
-  INTENT only, looks up SENT, ABORT_REQUESTED or RESOLVED, and aborts INTENT, SENT or ABORT_REQUESTED.
+  execute job creates with no attempt, INTENT or SENT (the re-send after a lost reply), and at ABORT_REQUESTED is
+  answered UNKNOWN with nothing sent, so its re-queue after a failed abort parks the run in OUTCOME_UNKNOWN instead of
+  stranding it EXECUTING; a recover job redispatches INTENT only, looks up SENT, ABORT_REQUESTED or RESOLVED, and
+  aborts INTENT, SENT or ABORT_REQUESTED.
 - **Nothing leaves before it is written.** `mark_sent` commits SENT before the POST, and every send passes it, a
   re-send of a SENT attempt included: under the runs lock it refuses a cancelled run (`cancelled`), one past the
   five-minute dispatch deadline (`expired`), an attempt with an abort requested, and a recover job's re-send;
@@ -287,7 +289,8 @@ it leaves, and a recovery call can observe or end an existing action but never s
   before the abort POST; nothing is sent after it. Only the moment between `mark_sent`'s commit and the POST itself is
   left, as AM-13 has it.
 - **Recovery observes.** `get_incident_receipt` is one GET of the action's key: a matching receipt, a tombstone or
-  another hash is recorded; a 404 or no answer stays UNKNOWN. It creates no grant, attempt, job or key.
+  another hash is recorded; a 404 or no answer stays UNKNOWN. It creates no grant, attempt, job or key; an abort adds
+  only its attempt-state rows and the destination's tombstone.
 - **Least privilege.** `mcp_exec` executes `current_time` and the six write-path functions and nothing else; v1
   trusts mcp-write for outcome truth (`docs/threat-model.md`).
 

@@ -544,16 +544,52 @@ as a verifier test whose failure message could print a token object, and a setti
 Task 2 had 6: among them the interim gap that the re-send of a SENT attempt did not yet pass `mark_sent` (the plan
 gave it to Task 3, which closed it), a stale R131 count in the mcp-read evidence (regenerated at the close-out), and
 the missing note not to downgrade past 0010 while an abort request exists (now in the runbook). Task 3 had 4, among
-them that the abort path forwarded any answer of `request_abort` as the run's reason (to be limited to the three
-known reasons). Task 4 had 7 and one fix round, test-only (28d3f0b): the R030 test now also pins that refusals make no
-destination call and that a lookup writes no destination key, and the deadline test checks that the test clock was
-reset, because the records and the threat model cite those claims. Task 5 had 4, two of them overstatements in the
-threat model (the worker "has no route to incident-sim", which is the network isolation T30 will build, and a
-send/abort row that did not say only `sent` and `already_sent` lead to a POST), both corrected in Task 6. Task 6's own
-review found one Important gap, this section: it recorded only the plan's first review round, though every round's
-problems and fixes belong here. It was fixed in a round of its own.
+them that the abort path forwarded any answer of `request_abort` as the abort request's reason (limited to the three
+known reasons in the final fix wave). Task 4 had 7 and one fix round, test-only (28d3f0b): the R030 test now also
+pins that refusals make no destination call and that a lookup writes no destination key, and the deadline test checks
+that the test clock was reset, because the records and the threat model cite those claims. Task 5 had 4, two of
+them overstatements in the threat model (the worker "has no route to incident-sim", which is the network isolation
+T30 will build, and a send/abort row that did not say only `sent` and `already_sent` lead to a POST), both corrected
+in Task 6. Task 6's own review found one Important gap, this section: it recorded only the plan's first review round,
+though every round's problems and fixes belong here. It was fixed in a round of its own.
 
-**Final review (whole branch).** To be filled after the whole-branch review.
+**Final review (whole branch: 0 Critical, 1 Important, 1 Minor; ready with fixes, one fix wave).** The safety
+properties held: nothing reaches incident-sim without a committed grant and a committed SENT or ABORT_REQUESTED,
+`mark_sent` and `request_abort` serialise on the runs row, the `azp` is the verified token's, and `mcp_exec` executes
+exactly its seven functions.
+
+**Problem.** The Important finding was a liveness hole where the new allowlist met the worker's existing re-queue.
+When `create_incident` aborts a cancelled or expired attempt, `request_abort` commits ABORT_REQUESTED, and the abort
+POST and the record follow in steps of their own. If mcp-write dies in between, or the record meets a database error
+it does not map (a lock timeout, a dropped connection), the worker sees a failed call and re-queues the execute job.
+The fresh handle then met ABORT_REQUESTED, which the execute row of the allowlist did not admit, so it was refused;
+the worker closed the job as final, and the run stayed EXECUTING with no job and its conversation slot held, where
+nothing would find it before the escalation deadline. A comment in `execution.py` said the opposite: that the next
+call meets the same action id. The plan's table (erratum 84) had the gap, not the implementer. The Minor finding was
+four sentences that said more than the code: the threat model said the recovery tools create no key (an abort writes
+the destination's tombstone) and that a `cancelled` or `expired` answer sends nothing (it leads to the abort POST),
+mcp-write's README said a cancelled or expired attempt ends FAILED (a SENT one can meet its receipt and end
+SUCCEEDED), and this section called the abort request's reason the run's.
+
+**Change.** The execute row now admits ABORT_REQUESTED. The re-queued call reaches `create_incident`'s `aborting`
+branch, which answers UNKNOWN with no destination call, and the worker's `mark_unknown`, which accepts an EXECUTING
+run whatever its attempt state, parks the run in OUTCOME_UNKNOWN with a recover job for T22. A unit test drives that
+call through the real allowlist, and a live test stages the abort request, shows the fresh handle's call making no
+destination call and writing nothing, then runs `mark_unknown`. The comment, erratum 84, the runbook's table and
+ARCHITECTURE §8 now say the same, and the four sentences say what the code does. Nine of the deferred task minors
+were taken into the same wave: the verifier test binds its verdict to a boolean before asserting;
+`settings.workload_client_id()` trims whitespace and treats an all-blank value as unset; `request_abort` with another
+run's action id (OC002) and with a finished job's handle (OC008) is shown live; the orphaned `azp` comment is part of
+`grant_execution`'s docstring; `_abort` refuses any `request_abort` answer but the three reasons and `resolved`
+before the POST; `_abort`'s `resolved` read-back has a scripted test; both recovery tools have an explicit
+resolve-time `INVALID_HANDLE` case; the T47 live module's docstring claims only what it pins; and the process test
+checks that the child recorded the receipt. Five stayed deferred: no end-to-end environment test of
+`production_app`'s `azp` (each construction point is tested), `OTHER_PROPOSAL` surfacing as `GRANT_REFUSED`
+(documented in erratum 89 and the runbook), live setup before `try` that can leak runs on a Keycloak hiccup (the
+counts are diffed, as in Plan J), the inherited `free_port` race and start loop without a timeout (harness
+behaviour), and the process test's evidence path relative to the working directory (the gates run from the root).
+After the wave the gates were `check.py` 1161 passed / 182 skipped, `check.py --profile test` 1322 passed /
+21 skipped, and `verify_handoff.py` exit 0.
 
 ## 29. What the process taught
 

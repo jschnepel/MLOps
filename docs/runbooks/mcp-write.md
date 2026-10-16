@@ -23,12 +23,15 @@ checked in this order, as at mcp-read (`docs/runbooks/mcp-read.md`); the first f
 
    | Job | Tool | Run states | Latest attempt state |
    |---|---|---|---|
-   | `execute` | `create_incident` | APPROVED, EXECUTING | none, INTENT, SENT (a re-send) |
+   | `execute` | `create_incident` | APPROVED, EXECUTING | none, INTENT, SENT (a re-send), ABORT_REQUESTED (UNKNOWN) |
    | `recover` | `create_incident` | EXECUTING, OUTCOME_UNKNOWN, ESCALATED, ABANDONED_UNVERIFIED | INTENT |
    | `recover` | `get_incident_receipt` | the same | SENT, ABORT_REQUESTED, RESOLVED |
    | `recover` | `abort_incident` | the same | INTENT, SENT, ABORT_REQUESTED |
 
-   Every refusal of a presented handle is the plain `INVALID_HANDLE` envelope ("invocation handle rejected"), never
+   An execute job is admitted at ABORT_REQUESTED so that its re-queue after a failure between the abort request and
+   the record (a crash, a database error) is answered UNKNOWN with nothing sent, and the worker's `mark_unknown` parks
+   the run in OUTCOME_UNKNOWN with a recover job; a refusal would close the job and leave the run EXECUTING with no
+   job. Every refusal of a presented handle is the plain `INVALID_HANDLE` envelope ("invocation handle rejected"), never
    an action id. All three tools are listed to the worker, the only client that can authenticate here; the table is
    what keeps the recovery tools to recover jobs.
 
@@ -44,6 +47,7 @@ each one.
   `app._dispatch_seconds()`) means nothing more is sent: the tool requests the abort, POSTs it and records what the
   destination answers, so an attempt never sent ends FAILED with `cancelled_before_send` or `expired`, and a SENT one
   with the receipt or `aborted_no_commit`. A recover job's re-send of a SENT attempt is refused `NOT_REDISPATCHABLE`.
+  Once an abort was requested, the call sends nothing and answers UNKNOWN; the abort's own record decides.
 - **`get_incident_receipt`**: the stored outcome once the attempt is RESOLVED; otherwise one GET of the action's key.
   A receipt for the grant's hash is recorded as SUCCEEDED, another hash as CONFLICT, a tombstone as FAILED_NO_COMMIT;
   a 404, a 429, a 503 or no answer is UNKNOWN and recorded by nobody. It never POSTs and creates nothing.
