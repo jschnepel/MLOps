@@ -12,13 +12,15 @@ independent process (T15; R025 and R131 read halves, R026, R027, R031 network ha
 **Architecture:** No new read tool and no new definer (ruling 1, 8, 9): `search_procedures` stays the one tool and
 `mcp_read` keeps EXECUTE on `current_time` and `resolve_invocation`. A pure ASGI `ops_core.mcp_protocol.
 ProtocolVersionGuard` sits in front of each server's SDK app and refuses, with HTTP 400 and JSON-RPC `-32022`, any POST
-to `/mcp` that does not carry exactly `MCP-Protocol-Version: 2026-07-28`, before bearer auth runs. mcp-read's verifier
-requires the access token's `typ` claim (`Bearer`), stamps the SDK's `AccessToken.resource` only from `aud`, and turns
-the SDK's `validate_token_resource` on. Revision `0009_handle_binding` re-creates `app._resolve_handle` with one
-statement changed (the handle's job must be its own run's and unfinished; an exact downgrade re-runs 0007's body), and
-`persistence.allowed_tool` adds the run-state dimension of the AM-15 allowlist in Python (erratum 19). mcp-read checks
-the stored body for that binding at start. Live tests drive the server in-process over a real socket (handle, ACL
-and protocol cases) and as a child process reached by the official SDK client (R025, R026).
+to `/mcp` that does not carry exactly `MCP-Protocol-Version: 2026-07-28`, before bearer auth runs. mcp-read's verifier,
+built in one place (`read_verifier`) for production and the unit tests, requires the access token's `typ` claim
+(`Bearer`); its SDK adapter refuses any token whose `aud` lacks the server's URL before it stamps the SDK's
+`AccessToken.resource`, and the SDK's `validate_token_resource` is on as a second layer. Revision `0009_handle_binding`
+re-creates `app._resolve_handle` with one statement changed (the handle's job must be its own run's and unfinished; an
+exact downgrade re-runs 0007's body), and `persistence.allowed_tool` adds the run-state dimension of the AM-15 allowlist
+in Python (erratum 19). mcp-read checks the stored body for that binding at start. Live tests drive the server
+in-process over a real socket (handle, ACL and protocol cases) and as a child process reached by the official SDK client
+(R025, R026).
 
 **Tech Stack:** as Plan I; no new dependency. `mcp` 2.3.0 and `mcp-types` 2.3.0 (`Client`, `MCPServer`, the bearer
 middleware, the 2026-07-28 ladder), Starlette 1.7 (`TestClient` on `httpx2`), `httpx2` 2.13 (`ASGITransport` for the
@@ -45,8 +47,9 @@ additions below win where the two differ:
   Nothing not on the list may be shortcut; every line names its owning task.
 - **Authority boundaries stay where the spec puts them.** `mcp_read` holds no table grant and EXECUTE on
   `current_time` and `resolve_invocation` only (SA:437, erratum 15; a live test in Task 3); no MCP server creates a
-  job (Plan I's catalog test stays green); every handle refusal is one `INVALID_HANDLE` envelope with the one fixed
-  message and never an `action_id` (SA:354-355); token refusals stay HTTP 401 at both MCP servers (Plan D ruling 25);
+  job (Plan I's catalog test stays green); every refusal of a presented handle is one `INVALID_HANDLE` envelope with
+  the one fixed message and never an `action_id` (SA:354-355; a call with no handle gets the same code with "missing
+  invocation handle"); token refusals stay HTTP 401 at both MCP servers (Plan D ruling 25);
   **nothing here sends anything to an external system or a person** (BS:730).
 - **Secrets** live only as files under `OPS_SECRETS_DIR`. No secret, token, raw handle, session id or password in an
   environment variable, a command line, a log line, an exception message, an assertion operand, an evidence file or a
@@ -63,10 +66,12 @@ additions below win where the two differ:
   uvicorn in-process through `should_exit`, a child process through `terminate()` and, after 15 s, `kill()`.
 - **Tests:** unit tests in `tests/plan_j/` (DB-free; added to `testpaths` in Task 1), live tests in `tests/e2e/` gated
   by `OPS_LIVE=1`; existing tests are updated in the task that changes the interface they pin, never deleted (Task 1
-  edits four constructions of the worker's `Deps`; Task 2 edits two Plan D/E allowlist tests, the revision list and
-  R105's replay step). No xfail or skip except the live gate (BS:597). No new test needs `slow_live`. A live test reads
-  every backend pid before any transaction opens and never cancels a task that may be inside a database unit (Plan I
-  round 1, B1 and M3); none of this plan's live tests runs two connections against one lock.
+  edits four constructions of the worker's `Deps`; Task 2 edits two Plan D/E allowlist tests, the revision list, R105's
+  replay step and the handle step of `tests/e2e/test_migrations_and_persistence.py::
+  test_r006_populated_revision_1_database_upgrades_in_place`). No xfail or skip except the live gate (BS:597). No new
+  test needs `slow_live`. A live test reads every backend pid before any transaction opens and never cancels a task that
+  may be inside a database unit (Plan I round 1, B1 and M3); none of this plan's live tests runs two connections against
+  one lock.
 - **Comments** per `docs/CODE_COMMENTS.md`; ≤120 characters per line (the counting command below); no `type: ignore`;
   ruff + mypy strict clean; UTF-8 without BOM, LF; no `noqa`. No broad `except` is added.
 - **Gates:** `uv run ruff format <files> && uv run ruff check --fix <files>` (then
@@ -118,11 +123,15 @@ additions below win where the two differ:
 
 1. **A replay of `create_incident` after its run's outcome** (the R105 step that minted a fresh execute handle for the
    finished execute job of a SUCCEEDED run and expected the recorded outcome). With the binding and the run-state
-   rule, such a handle is refused before the grant, and the destination keeps its one incident; a replay inside an
-   open execute job (the re-queue after a transport failure, run APPROVED or EXECUTING) must still be answered. Pinned
-   in Task 2: R105's step asserts the `INVALID_HANDLE` refusal and the unchanged receipt; the exhaustive allowlist test
-   admits `create_incident` in APPROVED and EXECUTING for an execute job; `test_mcp_write_live.py`'s idempotent
-   replays (open job, direct calls) run unchanged in the live gate.
+   rule, such a handle is refused before the grant, and the destination keeps its one incident; through the tool, a
+   replay is answered only while the run is APPROVED or EXECUTING (the re-queue after a transport failure re-sends
+   under the same action id). The stored-outcome branch of `execution.create_incident` is no longer reachable through
+   the tool (its run is past EXECUTING), which production never needed: the worker skips the call past EXECUTING.
+   Pinned in Task 2: R105's step asserts the `INVALID_HANDLE` refusal and the unchanged receipt; the R006 populated
+   upgrade asserts the refusal of a migrated finished job, then reopens it; the exhaustive allowlist table admits
+   `create_incident` in APPROVED and EXECUTING for an execute job (the tool path's re-send has no other test);
+   `test_mcp_write_live.py`'s direct calls of `execution.create_incident`, unchanged, prove the execution layer's
+   idempotency, not the tool's.
 2. **The worker's real client meets the guard** on every POST it sends to either server. The SDK client pinned to
    2026-07-28 sends the header on each request; if any of its requests did not, every investigate and execute job
    would fail. Pinned in Task 1 (`test_the_official_client_lists_and_calls_through_the_guard`: the official client
@@ -132,9 +141,12 @@ additions below win where the two differ:
    able to skip it. Pinned in Task 1 (`test_the_version_rule_comes_before_authentication`: no header and no token is
    400, the right header and no token is 401) and Task 3 (the four raw POSTs with a valid worker token).
 4. **A handle in a log.** The guard, the SDK, uvicorn, httpx2 and `persistence` all log around a call that carries
-   `X-Ops-Invocation`; none may record it, at any level, before any redaction filter. Pinned in Task 3
-   (`test_r027_no_log_record_carries_the_handle`, every record at DEBUG of an answered call, a refused call and a
-   refused raw POST), Task 2 (the allowlist's refusal log line) and Task 4 (the child process's own log).
+   `X-Ops-Invocation`; none may record it at DEBUG, with no redaction filter installed. Pinned in Task 3
+   (`test_r027_no_log_record_carries_the_handle`: the server runs with uvicorn at DEBUG and its loggers propagating,
+   every record of an answered call, a refused call and a refused raw POST is captured, and the test fails unless
+   uvicorn, SDK and client records are among them), Task 2 (the allowlist's refusal log line) and, more weakly, Task 4
+   (the child process's own log, written through its redaction filter). uvicorn's TRACE level logs request headers
+   and is enabled nowhere (`serve_app` pins "warning"); the runbook says never to use it.
 5. **A database that predates the binding.** mcp-read must refuse to start on it (the dev database is at 0005 today),
    and a database at 0009 must start. Pinned in Task 2 (`test_mcp_read_startup.py` both ways, and the live round trip
    that runs the same check against the database downgraded to 0008 and back).
@@ -149,9 +161,12 @@ ruling and, where the plan had to refine one against the code, says how (all ref
    (Task 2), the version guard (Task 1), the stricter verifier (Task 1), the startup guard (Task 2), the workload azp
    at mint (Task 1) and live tests for every DoD case (Tasks 2-4). No new read tool.
 2. **Verifier** — `McpVerifier` answers `None` (the SDK's 401) when the verified audiences lack this server's resource
-   URL and stamps `AccessToken.resource` only then; `validate_token_resource=True`; `TokenVerifier` gains a
-   `token_type` knob for the `typ` *claim*, and `production_app` passes `"Bearer"` (Task 1, unit tests for the pass and
-   the refusals). The verifier stays per service; mcp-write's change is a debt line (T47). Refined (b).
+   URL and stamps `AccessToken.resource` only then; that check is what refuses. `validate_token_resource=True` is a
+   second layer, which cannot fire while the stamp is the server's own URL, pinned by a unit test so it cannot be
+   switched off unnoticed. `TokenVerifier` gains a `token_type` knob for the `typ` *claim*, and `read_verifier`, the one
+   constructor `production_app` and the unit tests share, passes `"Bearer"` (Task 1, unit tests for the pass and the
+   refusals through the real wiring). The verifier stays per service; mcp-write's change is a debt line (T47).
+   Refined (b).
 3. **Resource-server requirements** — the SDK's protected-resource metadata route stays (a Task 1 unit test reads it);
    one sentence in the runbook (Task 5); no erratum.
 4. **Protocol version** — `ops_core.mcp_protocol.ProtocolVersionGuard`, mounted in front of the SDK app in both
@@ -164,7 +179,8 @@ ruling and, where the plan had to refine one against the code, says how (all ref
 6. **Allowlist and handle binding** — `allowed_tool(job_type, run_state, tool)` also requires `run_state ∈
    JOB_RULES[job_type].run_states`, refusing with the same `HandleRejected` (Task 2); revision `0009_handle_binding`
    re-creates `_resolve_handle` with the job read bound to `jobs.run_id = ic.run_id AND jobs.done_at IS NULL`, exact
-   downgrade to 0008 by re-running 0007's body (Task 2). Erratum 75. Refined (a).
+   downgrade to 0008 by re-running 0007's body (Task 2); the R006 populated upgrade's migrated finished job is
+   refused, then reopened (Task 2 Step 5). Erratum 75. Refined (a).
 7. **Attempt state** — no call site today needs the attempt-state parameter, so the shared function does not gain it;
    `jobs.JobRule`'s `TODO(T15)` becomes a `TODO(T47)` (Task 2) and the write rule is a debt line. Erratum 76.
 8. **Tools** — only `search_procedures` is registered; DoD 1 is met by `list_tools` + `call_tool` of it (Task 4).
@@ -172,21 +188,23 @@ ruling and, where the plan had to refine one against the code, says how (all ref
    stays; the two `TODO(T15)` markers on the `vector_exact` translation become `TODO(T16)` (Task 5 Step 1).
 10. **R131 read half** — the live ACL test (Task 3): `mcp_read`'s EXECUTE set equals `{current_time,
     resolve_invocation}`, every other definer exists and is not executable by it, and an attempted `grant_execution`
-    fails `42501`; an execute handle at mcp-read and a lying stored `server` column are refused over HTTP. Erratum 72.
-    Refined (f).
+    fails `42501`; a recover and an execute handle at mcp-read and a lying stored `server` column are refused over HTTP.
+    Erratum 72. Refined (f).
 11. **R027 / DoD 2 handle cases** — live at HTTP (Task 3): another run's job (the superuser rewrites the handle's
     `job_id`), expired (the test clock 120 s ahead, reset in `finally`), a lapsed lease, a moved fence, released
     (revoked); the same handle answers between causes. Other-azp at the definer (the existing
     `test_definers_write_path_live.py` case, cited) and at the verifier (unit, `azp=ops-mcp-read` and `ops-web`
-    synthetic tokens). "Handle absent from logs": every DEBUG record of the exchange (Task 3) and the child's log
-    (Task 4). Refined (d).
+    synthetic tokens). "Handle absent from logs": every record of the exchange with uvicorn and the server at DEBUG and
+    no redaction filter (Task 3), and the child's log written through its filter (Task 4). "Absent from the model": a
+    unit test pins `DraftRequest`'s four fields (Task 1). Refined (d).
 12. **Independent-process client** — `python -m ops_mcp_read` as a child process on a free loopback port with
     `scripts.skeleton.process_environment()` plus the port; the official SDK `Client` from the test lists exactly
     `search_procedures` and calls it with a valid handle; terminated in `finally` (Task 4). mcp-write's half → T47.
 13. **Error envelopes** — unchanged: one `INVALID_HANDLE` envelope for every handle refusal (asserted field by field in
     Task 3), 401 for every token refusal; distinguishing 401 in the worker → T20 (debt line).
-14. **Browser token** — live: the `ops-dev-direct` persona token (aud `ops-api`) is the stand-in (Task 4); unit: the
-    synthetic `azp=ops-web` token (Task 1); the evidence and erratum 81 say no real `ops-web` access token is minted.
+14. **Browser token** — live: the `ops-dev-direct` persona token (aud `ops-api`) is the stand-in, on a `tools/call`
+    with a valid handle (Task 4); unit: the synthetic `azp=ops-web` token (Task 1); the evidence and erratum 81 say no
+    real `ops-web` access token is minted.
 15. **Missing aud** — the synthetic-JWKS case at mcp-read's configuration (Task 1) is the evidence; erratum 81.
 16. **TLS and hosts** — debt line to T30.
 17. **Worker client** — `handlers.Deps.workload_azp` (required), filled from `WorkloadTokenSource.client_id` in
@@ -216,10 +234,13 @@ controller can overrule them before execution:
   answers the recorded outcome (Plan D review focus 1 and 3). Under ruling 6 that handle is refused twice over: its job
   is done (0009) and SUCCEEDED is not one of the execute job's run states (`allowed_tool`). Task 2 changes the step to
   assert the `INVALID_HANDLE` refusal and the destination's unchanged receipt (no second incident), and its evidence
-  line to `replay=refused_finished_job`; the idempotent replay inside an open execute job stays proved by
-  `tests/e2e/test_mcp_write_live.py` (direct calls, unchanged). Smallest alternative: keep the binding for read handles
-  only (`p_server = 'read'` in the new condition) and apply the run-state rule to read job types only, so a
-  post-outcome replay at mcp-write still answers.
+  line to `replay=refused_finished_job`. The same binding refuses the R006 populated upgrade's migrated finished job,
+  so that test asserts the refusal and then reopens the job (round 1, B1). Through the tool, a replay is answered only
+  while the run is APPROVED or EXECUTING; `execution.create_incident`'s stored-outcome branch remains reachable by
+  direct callers (`tests/e2e/test_mcp_write_live.py`, which proves the execution layer, not the tool) and its module
+  docstring says so (Task 2 Step 5). Smallest alternative: keep the binding for read handles only (`p_server =
+  'read'` in the new condition) and apply the run-state rule to read job types only, so a post-outcome replay at
+  mcp-write still answers.
 - **(b) Ruling 2's `typ` is a claim, not the header.** Keycloak writes `"typ": "Bearer"` into the access token's
   payload (`reports/bootstrap/keycloak-claims.txt`), while `TokenVerifier`'s existing `typ` knob compares the JOSE
   header's `typ` (Keycloak's is `JWT`; the knob exists for logout tokens, `logout+jwt`). The plan adds a separate
@@ -274,11 +295,13 @@ Task 5 Step 3's "Plan J executed" block; in short:
 73. **SA:571-572 and BS:378**: both MCP servers refuse a POST to `/mcp` without exactly `MCP-Protocol-Version:
     2026-07-28` (HTTP 400, `-32022`) before authentication; the SDK's legacy stateless path is closed; a header/`_meta`
     mismatch is the SDK's `HEADER_MISMATCH` (400, `-32020`).
-74. **SA:557**: mcp-read also requires the access token's `typ` claim `Bearer`, stamps the SDK's resource only from
-    `aud`, and has the SDK compare it; every refusal stays 401 (mcp-write follows in T47).
+74. **SA:557**: mcp-read also requires the access token's `typ` claim `Bearer`, and its SDK adapter refuses a token
+    whose `aud` lacks the server's URL before it stamps the SDK's resource (the SDK's own resource check is a second
+    layer); every refusal stays 401 (mcp-write follows in T47).
 75. **SA:459 and SA:496**: `_resolve_handle` resolves a handle only for its own run's unfinished job.
-76. **SA:338 and T15 review note 2**: the run-state dimension of the allowlist is checked in Python at every
-    resolution; the attempt-state dimension is mcp-write's (T47).
+76. **SA:338 and T15 review note 2**: the run-state dimension of the allowlist is checked in Python at the start of
+    every MCP call (`persistence.resolve_invocation`), not in the definers' own resolutions; the attempt-state
+    dimension is mcp-write's (T47).
 77. **SA:459's row as amended**: lock `run_lease FOR SHARE` only (erratum 53); returns `run_id, job_id, job_type,
     tenant_id, conversation_id, run_state, attempt_state` (erratum 19); the binding of erratum 75.
 78. **SA:34 (AM-00 §9)**: the audience wording is replaced by AM-20.7 item 6, not AM-20.6.
@@ -294,7 +317,9 @@ Task 5 Step 3's "Plan J executed" block; in short:
   `route_path`, `ProtocolVersionGuard`.
 - `core/src/ops_core/tokens.py` (Task 1): `TokenVerifier(token_type=…)`, `WorkloadTokenSource.client_id`.
 - `mcp-read/src/ops_mcp_read/server.py` (Tasks 1, 2): the docstring, `McpVerifier`'s audience check,
-  `validate_token_resource=True`, the guard's mount, `token_type="Bearer"`; `HANDLE_BINDING` and the startup check.
+  `validate_token_resource=True`, the guard's mount, `read_verifier` (with `token_type="Bearer"`); `HANDLE_BINDING`
+  and the startup check.
+- `mcp-write/src/ops_mcp_write/execution.py` (Task 2): the replay rule in its module docstring.
 - `mcp-write/src/ops_mcp_write/server.py` (Task 1): the guard's mount.
 - `worker/src/ops_worker/handlers.py`, `main.py`, `mcp.py` (Task 1): `Deps.workload_azp`, the two mints, the pinned
   version from core.
@@ -307,7 +332,7 @@ Task 5 Step 3's "Plan J executed" block; in short:
   `tests/plan_d/test_persistence_pure.py`, `tests/plan_e/test_persistence_errors.py`,
   `tests/plan_e/test_transitions_table.py`, `tests/plan_h/test_worker_units.py`, `tests/plan_f/test_grant_deferred.py`,
   `tests/plan_b/test_evidence.py`, `tests/e2e/test_heartbeat_live.py`, `test_worker_live.py`,
-  `test_r105_walking_skeleton.py`.
+  `test_r105_walking_skeleton.py`, `test_migrations_and_persistence.py`.
 - Documentation (Task 5): `handoff/*`, `SESSION_STATE.md`, `STATUS.md`, `docs/ARCHITECTURE.md`,
   `docs/runbooks/mcp-read.md` (new), `docs/PROJECT_HISTORY.md`, `README.md`, `mcp-read/README.md`,
   `mcp-write/README.md`, `worker/README.md`; the two `TODO(T15)` markers in `core/src/ops_core/routing.py` and
@@ -316,22 +341,23 @@ Task 5 Step 3's "Plan J executed" block; in short:
 ## Task overview
 
 - **Task 1:** the debt list; the protocol-version guard on both servers; mcp-read's verifier; the workload azp at
-  mint; `tests/plan_j`. Tests: `test_protocol_guard.py` 8, `test_verifier_t15.py` 8, `test_mcp_read_http.py` 4,
-  `test_worker_azp.py` 2. Dev gate after: 1054 passed, 154 skipped; live 1187/21 (arithmetic).
-- **Task 2:** the run-state allowlist, revision 0009, the startup check, R105's replay step. Tests:
-  `test_allowlist.py` 6, `test_migration_0009.py` 4, `test_mcp_read_startup.py` 2, the transitions module +1
-  (parametrised); live `test_migration_0009_live.py` 3. Dev 1067/157, live 1203/21 (arithmetic).
+  mint; `tests/plan_j`. Tests: `test_protocol_guard.py` 8, `test_verifier_t15.py` 9, `test_mcp_read_http.py` 4,
+  `test_worker_azp.py` 3. Dev gate after: 1056 passed, 154 skipped; live 1189/21 (arithmetic).
+- **Task 2:** the run-state allowlist, revision 0009, the startup check, R105's replay step, the R006 populated
+  upgrade's handle step, `execution.py`'s replay docstring. Tests: `test_allowlist.py` 6, `test_migration_0009.py` 5,
+  `test_mcp_read_startup.py` 2, the transitions module +1 (parametrised); live `test_migration_0009_live.py` 3. Dev
+  1070/157, live 1206/21 (arithmetic).
 - **Task 3:** the handle, allowlist, ACL, protocol and log cases at mcp-read over HTTP. Tests: live
-  `test_mcp_read_t15_live.py` 5. Dev 1067/162, live 1208/21 (arithmetic).
+  `test_mcp_read_t15_live.py` 5. Dev 1070/162, live 1211/21 (arithmetic).
 - **Task 4:** the independent process and the foreign tokens. Tests: live `test_mcp_read_process_live.py` 2. Dev
-  1067/164, live 1210/21 (arithmetic).
+  1070/164, live 1213/21 (arithmetic).
 - **Task 5:** handoff records, acceptance rows, errata 72-81, runbook, history, READMEs, the `TODO(T15)` markers,
   final gates. No tests.
 
-The arithmetic, once: dev passed 1032 + 22 (Task 1: 8 + 8 + 4 + 2) = 1054, + 13 (Task 2: 6 + 4 + 2 + 1) = 1067, + 0
-(Tasks 3 and 4) = 1067; dev skipped 154, + 3 = 157, + 5 = 162, + 2 = 164. The live gate's passed count is the dev count
+The arithmetic, once: dev passed 1032 + 24 (Task 1: 8 + 9 + 4 + 3) = 1056, + 14 (Task 2: 6 + 5 + 2 + 1) = 1070, + 0
+(Tasks 3 and 4) = 1070; dev skipped 154, + 3 = 157, + 5 = 162, + 2 = 164. The live gate's passed count is the dev count
 plus the live-gated tests (the dev skips minus the 21 that skip in both gates: 133 today; 133, 136, 141, 143 after
-Tasks 1-4), so 1187, 1203, 1208, 1210, always with 21 skipped. The dev numbers were measured on a scratch copy; the
+Tasks 1-4), so 1189, 1206, 1211, 1213, always with 21 skipped. The dev numbers were measured on a scratch copy; the
 live ones are not measured (see "Counts").
 
 ---
@@ -343,9 +369,10 @@ live ones are not measured (see "Counts").
   `tests/plan_j/test_verifier_t15.py`, `tests/plan_j/test_mcp_read_http.py`, `tests/plan_j/test_worker_azp.py`
 - Modify: `SESSION_STATE.md:719` (new debt section before `## Environment (observed)`), `pyproject.toml:48-51`
   (`testpaths`), `core/src/ops_core/tokens.py:86-92`, `:101`, `:164-165`, `:222-225`,
-  `mcp-read/src/ops_mcp_read/server.py:3-5` (docstring), `:29`, `:114-135` (`McpVerifier`), `:191-198`, `:239-241`,
-  `:248-250`, `mcp-write/src/ops_mcp_write/server.py:26`, `:264-266`, `worker/src/ops_worker/handlers.py:52-59`
-  (`Deps`), `:109-111`, `:223-225`, `worker/src/ops_worker/main.py:156`, `worker/src/ops_worker/mcp.py:14`, `:64`,
+  `mcp-read/src/ops_mcp_read/server.py:3-4` (docstring), `:29`, `:114-135` (`McpVerifier`), `:191-198`, `:239-241`,
+  `:244-252` (`production_app`, and the new `read_verifier` before it), `mcp-write/src/ops_mcp_write/server.py:26`,
+  `:264-266`, `worker/src/ops_worker/handlers.py:52-59` (`Deps`), `:109-111`, `:223-225`,
+  `worker/src/ops_worker/main.py:156`, `worker/src/ops_worker/mcp.py:14`, `:64`,
   `tests/plan_h/test_worker_units.py:185-187`, `tests/plan_f/test_grant_deferred.py:98`,
   `tests/e2e/test_heartbeat_live.py:98`, `tests/e2e/test_worker_live.py:97-98`
 
@@ -358,12 +385,14 @@ live ones are not measured (see "Counts").
   `procedures.load_corpora`; `ops_mcp_write.server.State`, `build_server`, `build_app`; Plan D's synthetic key pair
   (`tests.plan_d.test_tokens.ISSUER`, `AUDIENCE`, `JWK1`, `mint`); Plan H's worker fakes
   (`tests.plan_h.test_worker_units.JOB`, `RUN`, `Log`, `make`, `patch`).
-- Produces: `ops_core.mcp_protocol.PROTOCOL_VERSION = "2026-07-28"`, `UNSUPPORTED_PROTOCOL_VERSION = -32022`,
-  `REFUSAL: bytes`, `route_path(scope) -> str`, `ProtocolVersionGuard(app, *, path="/mcp")`;
-  `TokenVerifier(..., token_type: str | None = None)` (compares the `typ` claim); `WorkloadTokenSource.client_id ->
-  str`; `handlers.Deps.workload_azp: str` (required, after `worker_name`); in `tests.plan_j.test_mcp_read_http`:
-  `FIXTURES`, `ISSUER`, `RESOURCE`, `BASE`, `TOOLS_LIST`, `KeyedVerifier`, `read_app()`, `headers(...)`,
-  `official_client(app)` (Task 2's startup test imports `FIXTURES`, `ISSUER`, `RESOURCE`, `KeyedVerifier`).
+- Produces: `ops_core.mcp_protocol.PROTOCOL_VERSION = "2026-07-28"`, `UNSUPPORTED_PROTOCOL_VERSION = -32022`, `REFUSAL:
+  bytes`, `route_path(scope) -> str`, `ProtocolVersionGuard(app, *, path="/mcp")`; `TokenVerifier(..., token_type: str |
+  None = None)` (compares the `typ` claim); `WorkloadTokenSource.client_id -> str`;
+  `ops_mcp_read.server.read_verifier(kc: settings.Keycloak, urls: settings.Urls) -> TokenVerifier` (the one
+  `production_app` and the unit tests use); `handlers.Deps.workload_azp: str` (required, after `worker_name`); in
+  `tests.plan_j.test_mcp_read_http`: `FIXTURES`, `ISSUER`, `RESOURCE`, `BASE`, `TOOLS_LIST`, `SEARCH`, `SEARCH_CALL`,
+  `KeyedVerifier`, `read_app()`, `headers(...)`, `official_client(app)` (Task 2's startup test imports `FIXTURES`,
+  `ISSUER`, `RESOURCE`, `KeyedVerifier`).
 
 - [ ] **Step 1a: Record both baselines**
 
@@ -644,30 +673,40 @@ Expected: `8 passed`.
 Create `tests/plan_j/test_verifier_t15.py`:
 
 ```python
-"""mcp-read's token checks with the verifier configured as `production_app` configures it, on Plan D's synthetic key
-pair (SA:557-558, Plan J rulings 2, 14 and 15).
+"""mcp-read's token checks with the verifier `production_app` builds (`read_verifier`), on Plan D's synthetic key pair
+(SA:557-558, Plan J rulings 2, 14 and 15).
 
 Catches: an ID or refresh token accepted as an access token (`typ` claim), a browser client's token (`azp` ops-web,
 the unit stand-in for a real `ops-web` access token, ruling 14), a token without `aud` (ruling 15: this synthetic case
 is the evidence), another server's audience, or another workload's `azp` accepted at mcp-read; an access token whose
-`resource` is stamped without the audience holding it; and the knob changing the other servers' verifiers, which
+`resource` is stamped without the audience holding it; a refactor that drops `token_type="Bearer"` from mcp-read's
+verifier or turns the SDK's `validate_token_resource` off; and the knob changing the other servers' verifiers, which
 leave `token_type` unset.
 """
 
 import asyncio
 
 import pytest
+from ops_core.settings import Keycloak, Urls
 from ops_core.tokens import TokenRejected, TokenVerifier, WorkloadTokenSource
+from ops_mcp_read import server
 from ops_mcp_read.server import McpVerifier
 
 from tests.plan_d.test_tokens import AUDIENCE, ISSUER, JWK1, mint  # Plan D's synthetic key pair and token minter
 
+URLS = Urls(
+    mcp_read_resource=AUDIENCE,
+    mcp_write_resource="http://mcp-write:8082/mcp",
+    mcp_read="http://127.0.0.1:8081/mcp",
+    mcp_write="http://127.0.0.1:8082/mcp",
+    incident_sim="http://127.0.0.1:8090",
+)
+
 
 def production_like() -> TokenVerifier:
-    """The arguments `ops_mcp_read.server.production_app` passes, with the synthetic key installed."""
-    verifier = TokenVerifier(
-        issuer=ISSUER, audience=AUDIENCE, allowed_azp=frozenset({"ops-worker"}), jwks_url="unused", token_type="Bearer"
-    )
+    """`ops_mcp_read.server.read_verifier`, the one `production_app` uses, with the synthetic key installed."""
+    kc = Keycloak(base_url="http://localhost:18080", issuer=ISSUER, server_url="http://127.0.0.1:18080")
+    verifier = server.read_verifier(kc, URLS)
     verifier.install_keys({"keys": [JWK1]})
     return verifier
 
@@ -710,15 +749,23 @@ def test_the_resource_is_stamped_only_from_the_audience() -> None:
     assert asyncio.run(McpVerifier(wrong, AUDIENCE).verify_token(mint(aud=["account"]))) is None
 
 
+def test_the_sdk_resource_check_is_on() -> None:
+    """A second layer behind McpVerifier's own audience check (it cannot refuse while the stamp is this server's URL),
+    pinned so a refactor cannot switch it off unnoticed."""
+    state = server.State(session=None, corpora={}, verifier=production_like())
+    mcp = server.build_server(state, issuer=ISSUER, resource_url=AUDIENCE)
+    assert mcp.settings.auth is not None and mcp.settings.auth.validate_token_resource is True
+
+
 def test_the_token_source_names_its_client() -> None:
     assert WorkloadTokenSource(token_url="u", client_id="ops-worker", client_secret="s").client_id == "ops-worker"
 ```
 
 Run: `uv run python -m pytest tests/plan_j/test_verifier_t15.py -q`
-Expected: `8 failed` (`TypeError: TokenVerifier.__init__() got an unexpected keyword argument 'token_type'` in the
-first seven, `AttributeError: 'WorkloadTokenSource' object has no attribute 'client_id'` in the last).
+Expected: `9 failed` (`AttributeError: module 'ops_mcp_read.server' has no attribute 'read_verifier'` in the eight tests
+that build the verifier, `AttributeError: 'WorkloadTokenSource' object has no attribute 'client_id'` in the last).
 
-- [ ] **Step 6: The `typ` claim, the token source's client and the adapter's audience check**
+- [ ] **Step 6: The `typ` claim, the token source's client, the adapter's audience check and `read_verifier`**
 
 Edit 1 (`core/src/ops_core/tokens.py`, `TokenVerifier.__init__`), replace:
 
@@ -821,9 +868,10 @@ with:
 class McpVerifier:
     """The SDK's TokenVerifier protocol: None means 401. The SDK re-checks `expires_at`, consistently with PyJWT.
 
-    The access token's `resource` is this server's URL only when the token's `aud` holds it, and the SDK compares the
-    two again (`validate_token_resource`), so a verifier configured for another audience cannot slip a token through
-    (Plan J ruling 2). The ops_core verifier already refuses such a token; this is the SDK's own check on top.
+    A token whose `aud` lacks this server's resource URL is refused here, whatever audience the wrapped verifier was
+    configured with, and only then is `resource` stamped with that URL (Plan J ruling 2). The SDK's own resource check
+    (`validate_token_resource`) stays on as a second layer; it cannot refuse anything while the stamp is this server's
+    own URL, and would decide only if the stamp ever came from the token.
     """
 
     def __init__(self, verifier: Verifier, resource_url: str) -> None:
@@ -841,22 +889,80 @@ class McpVerifier:
         return AccessToken(
 ```
 
+Edit 6 (`mcp-read/src/ops_mcp_read/server.py`, `build_server`), replace:
+
+```python
+            issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url), validate_token_resource=False
+        ),
+        token_verifier=McpVerifier(state.verifier, resource_url),
+        tools=[strict_tool(search_procedures)],
+```
+
+with:
+
+```python
+            issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url), validate_token_resource=True
+        ),
+        token_verifier=McpVerifier(state.verifier, resource_url),
+        tools=[strict_tool(search_procedures)],
+```
+
+Edit 7 (`mcp-read/src/ops_mcp_read/server.py`, `production_app`'s verifier, built by `read_verifier`), replace:
+
+```python
+def production_app() -> Starlette:
+    """The app wired from the environment and secret files, as `python -m ops_mcp_read` runs it."""
+    kc = settings.keycloak()
+    urls = settings.urls()
+    verifier = TokenVerifier(
+        issuer=kc.issuer, audience=urls.mcp_read_resource, allowed_azp=frozenset({"ops-worker"}), jwks_url=kc.jwks_url
+    )
+    state = State(session=None, corpora=procedures.load_corpora(settings.fixtures_dir()), verifier=verifier)
+    return build_app(build_server(state, issuer=kc.issuer, resource_url=urls.mcp_read_resource), state)
+```
+
+with:
+
+```python
+def read_verifier(kc: settings.Keycloak, urls: settings.Urls) -> TokenVerifier:
+    """mcp-read's token checks (SA:557, Plan J ruling 2): the realm's issuer and keys, this server's resource URL as the
+    audience, the worker as the only `azp`, and an access token's `typ` claim. `production_app` builds its verifier
+    here, and the unit tests build theirs here too, so they pin the wiring that runs."""
+    return TokenVerifier(
+        issuer=kc.issuer,
+        audience=urls.mcp_read_resource,
+        allowed_azp=frozenset({"ops-worker"}),
+        jwks_url=kc.jwks_url,
+        token_type="Bearer",  # an access token: Keycloak's ID and refresh tokens carry another `typ` (ruling 2)
+    )
+
+
+def production_app() -> Starlette:
+    """The app wired from the environment and secret files, as `python -m ops_mcp_read` runs it."""
+    kc = settings.keycloak()
+    urls = settings.urls()
+    state = State(
+        session=None, corpora=procedures.load_corpora(settings.fixtures_dir()), verifier=read_verifier(kc, urls)
+    )
+    return build_app(build_server(state, issuer=kc.issuer, resource_url=urls.mcp_read_resource), state)
+```
+
 Run: `uv run python -m pytest tests/plan_j/test_verifier_t15.py -q`
-Expected: `8 passed`.
+Expected: `9 passed`.
 
 - [ ] **Step 7: Write the failing HTTP tests**
 
 Create `tests/plan_j/test_mcp_read_http.py`:
 
 ```python
-"""mcp-read's HTTP stack in-process (the guard, the SDK's bearer auth with `validate_token_resource`, the transport's
-per-request ladder), with a stub key source and no database (Plan J rulings 2, 4 and 5).
+"""mcp-read's HTTP stack in-process (the guard, the SDK's bearer auth around McpVerifier's audience check, the
+transport's per-request ladder), with a stub key source and no database (Plan J rulings 2, 4 and 5).
 
 Catches: the guard mounted after auth (an unauthenticated client would learn whether its token was good), auth
 skipped once the version is right, a header/`_meta` mismatch that the SDK no longer rejects, a token whose verified
-audiences lack this server's resource accepted, the official client unable to list or call through the guard, and
-mcp-write left without the guard. The live versions of these cases, with Keycloak's tokens over a socket, are
-tests/e2e/test_mcp_read_t15_live.py.
+audiences lack this server's resource accepted, a raw `tools/call` shaped differently from what the live R026 test
+sends, the official client unable to list or call through the guard, and mcp-write left without the guard. The live
+versions of these cases, with Keycloak's tokens over a socket, are tests/e2e/test_mcp_read_t15_live.py.
 """
 
 import time
@@ -891,6 +997,10 @@ TOOLS_LIST = {
         }
     },
 }
+
+
+SEARCH = "search_procedures"
+SEARCH_CALL = {"name": SEARCH, "arguments": {"query": "x", "limit": 1, "mode": "lexical"}}
 
 
 class KeyedVerifier:
@@ -956,7 +1066,11 @@ def test_the_ladder_and_the_resource_check_behind_the_guard() -> None:
         refused = client.post("/mcp", json=mismatch, headers=headers())
         assert refused.status_code == 400 and refused.json()["error"]["code"] == -32020  # the SDK's HEADER_MISMATCH
         elsewhere = client.post("/mcp", json=TOOLS_LIST, headers=headers(token="elsewhere"))
-        assert elsewhere.status_code == 401  # its audiences lack this server's resource
+        assert elsewhere.status_code == 401  # its audiences lack this server's resource: McpVerifier refuses it
+        call = {**TOOLS_LIST, "method": "tools/call", "params": {**TOOLS_LIST["params"], **SEARCH_CALL}}
+        answered = client.post("/mcp", json=call, headers={**headers(method="tools/call"), "Mcp-Name": SEARCH})
+        assert answered.status_code == 200  # the shape the live R026 test posts; no handle, so the envelope refuses
+        assert answered.json()["result"]["structuredContent"]["error"]["code"] == "INVALID_HANDLE"
         assert client.get("/health/live").status_code == 200
         metadata = client.get("/.well-known/oauth-protected-resource/mcp")
         assert metadata.status_code == 200 and metadata.json()["resource"] == RESOURCE
@@ -998,7 +1112,7 @@ Expected: `3 failed, 1 passed` (the official client already passes; with no guar
 where it expects 400, the second gets 200 from the SDK's legacy path for the `2025-11-25` header, and mcp-write's
 request reaches the SDK, which has no task group outside its lifespan: `RuntimeError: Task group is not initialized`).
 
-- [ ] **Step 8: Mount the guard in both servers; the SDK's resource check; the access-token type**
+- [ ] **Step 8: Mount the guard in both servers**
 
 Edit 1 (`mcp-read/src/ops_mcp_read/server.py`, the module docstring), replace:
 
@@ -1032,37 +1146,10 @@ from ops_core.settings import Role
 from ops_core.tokens import Principal, TokenRejected, TokenVerifier
 ```
 
-Edit 3 (`mcp-read/src/ops_mcp_read/server.py`, `build_server`), replace:
-
-```python
-            issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url), validate_token_resource=False
-        ),
-        token_verifier=McpVerifier(state.verifier, resource_url),
-        tools=[strict_tool(search_procedures)],
-```
-
-with:
-
-```python
-            issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url), validate_token_resource=True
-        ),
-        token_verifier=McpVerifier(state.verifier, resource_url),
-        tools=[strict_tool(search_procedures)],
-```
-
-Edit 4 (`mcp-read/src/ops_mcp_read/server.py`, `build_app`'s routes and `production_app`'s verifier), replace:
+Edit 3 (`mcp-read/src/ops_mcp_read/server.py`, `build_app`'s routes), replace:
 
 ```python
         routes=[Route("/health/live", live), Route("/health/ready", ready), Mount("/", app=mcp_app)], lifespan=lifespan
-    )
-
-
-def production_app() -> Starlette:
-    """The app wired from the environment and secret files, as `python -m ops_mcp_read` runs it."""
-    kc = settings.keycloak()
-    urls = settings.urls()
-    verifier = TokenVerifier(
-        issuer=kc.issuer, audience=urls.mcp_read_resource, allowed_azp=frozenset({"ops-worker"}), jwks_url=kc.jwks_url
     )
 ```
 
@@ -1077,22 +1164,9 @@ with:
         ],
         lifespan=lifespan,
     )
-
-
-def production_app() -> Starlette:
-    """The app wired from the environment and secret files, as `python -m ops_mcp_read` runs it."""
-    kc = settings.keycloak()
-    urls = settings.urls()
-    verifier = TokenVerifier(
-        issuer=kc.issuer,
-        audience=urls.mcp_read_resource,
-        allowed_azp=frozenset({"ops-worker"}),
-        jwks_url=kc.jwks_url,
-        token_type="Bearer",  # an access token: Keycloak's ID and refresh tokens carry another `typ` (ruling 2)
-    )
 ```
 
-Edit 5 (`mcp-write/src/ops_mcp_write/server.py`, imports), replace:
+Edit 4 (`mcp-write/src/ops_mcp_write/server.py`, imports), replace:
 
 ```python
 from ops_core.jobs import Tool as ToolName
@@ -1107,7 +1181,7 @@ from ops_core.mcp_protocol import ProtocolVersionGuard
 from ops_core.outcomes import ActionOutcome, ToolOutcome
 ```
 
-Edit 6 (`mcp-write/src/ops_mcp_write/server.py`, `build_app`'s routes), replace:
+Edit 5 (`mcp-write/src/ops_mcp_write/server.py`, `build_app`'s routes), replace:
 
 ```python
         routes=[Route("/health/live", live), Route("/health/ready", ready), Mount("/", app=mcp_app)], lifespan=lifespan
@@ -1128,26 +1202,30 @@ with:
 ```
 
 Run: `uv run python -m pytest tests/plan_j -q`
-Expected: `20 passed`.
+Expected: `21 passed`.
 
 - [ ] **Step 9: Write the failing worker test**
 
 Create `tests/plan_j/test_worker_azp.py`:
 
 ```python
-"""The worker binds every handle it mints to its own workload client, not to a literal (Plan J ruling 17).
+"""The worker binds every handle it mints to its own workload client, not to a literal (Plan J ruling 17), and never
+hands a handle to the model (R027: "handle absent from model").
 
 Catches: an `azp` written into `invocation_context` that differs from the client id the worker's tokens are issued
 to, which `_resolve_handle` compares with the presented token's `azp`: a renamed client would refuse every call, and
-a literal would keep accepting a client the worker no longer uses.
+a literal would keep accepting a client the worker no longer uses; and a field added to the model's request that could
+carry a handle.
 """
 
 import asyncio
+from dataclasses import fields
 from typing import Any
 
 import pytest
 from ops_core import persistence
 from ops_worker import handlers
+from ops_worker.drafting import DraftRequest
 
 from tests.plan_h.test_worker_units import JOB, RUN, Log, make, patch
 
@@ -1180,10 +1258,15 @@ def test_a_minted_handle_carries_the_workload_client(
     deps.workload_azp = "ops-worker-renamed"
     asyncio.run(handlers.handle(deps, {**JOB, "type": job_type}, lease))
     assert [m["azp"] for m in minted] == ["ops-worker-renamed"]
+
+
+def test_the_model_request_has_no_field_for_a_handle() -> None:
+    assert [f.name for f in fields(DraftRequest)] == ["asset_id", "text", "start_at", "end_at"]
 ```
 
 Run: `uv run python -m pytest tests/plan_j/test_worker_azp.py -q`
-Expected: `2 failed` (`assert ['ops-worker'] == ['ops-worker-renamed']`: both mints write the literal).
+Expected: `2 failed, 1 passed` (`assert ['ops-worker'] == ['ops-worker-renamed']`: both mints write the literal;
+the model-request test passes already, since it pins what `DraftRequest` holds today).
 
 - [ ] **Step 10: The worker mints with its own client id**
 
@@ -1368,7 +1451,7 @@ with:
 ```
 
 Run: `uv run python -m pytest tests/plan_j tests/plan_h/test_worker_units.py tests/plan_f/test_grant_deferred.py -q`
-Expected: `45 passed` (22 in `tests/plan_j`, 23 in the two edited modules).
+Expected: `47 passed` (24 in `tests/plan_j`, 23 in the two edited modules).
 
 - [ ] **Step 11: Gates and commit**
 
@@ -1377,10 +1460,10 @@ Format, lint and count characters on `core/src/ops_core/mcp_protocol.py`, `core/
 under `tests/plan_j/` and the four edited test modules.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1054 passed, 154 skipped` (1032 + 22 in `tests/plan_j`).
+Expected: `CHECK: GREEN`; pytest `1056 passed, 154 skipped` (1032 + 24 in `tests/plan_j`).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1187 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 133
+Expected: `CHECK: GREEN`; pytest `1189 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 133
 live-gated tests, 154 − 21; the services changed, so the live suite runs: R105's worker passes the guard at both
 servers with the real client, and the existing mcp-read live test's persona and mcp-write tokens are still refused).
 Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases reports/events
@@ -1410,7 +1493,8 @@ git commit -m "feat(mcp): protocol-version guard on both servers, a stricter mcp
   `mcp-read/src/ops_mcp_read/server.py:41` (after the `procedures` import), `:220-221` (the lifespan's checks),
   `tests/plan_d/test_persistence_pure.py:14-27`, `tests/plan_e/test_persistence_errors.py:16`, `:54-69`,
   `tests/plan_e/test_transitions_table.py:93-94` (`REVISIONS`), `tests/e2e/test_r105_walking_skeleton.py:210-211`,
-  `:231`, `:238`
+  `:231`, `:238`, `tests/e2e/test_migrations_and_persistence.py:409-410` (the populated upgrade's handle step),
+  `mcp-write/src/ops_mcp_write/execution.py:4-8` (the replay rule in its module docstring)
 
 **Requirements:** SA:338/SA:459's allowlist by job type and run state (ruling 6), SA:496's job-derived binding (ruling
 6), R006 (an exact downgrade), the startup refusal of ruling 18; R027's "other run" at the definer, R085's
@@ -1422,7 +1506,7 @@ server-derived allowlist; T15 review notes 2 (the run-state half) and 4.
   `purge_tenant`, `new_run`, `refused` (`tests.e2e.test_definers_run_path_live`), `investigate_job`, `read_handle`,
   `resolve` (`tests.e2e.test_fenced_definers_live`), `FUNCTION_DETAILS`, `LEFTOVERS`
   (`tests.e2e.test_migration_0007_live`); Task 1's `tests.plan_j.test_mcp_read_http.FIXTURES`, `ISSUER`, `RESOURCE`,
-  `KeyedVerifier`.
+  `KeyedVerifier`; `tests.plan_e.test_transitions_table.REVISIONS`.
 - Produces: `persistence.allowed_tool(job_type: JobType, run_state: RunState, tool: Tool) -> None`;
   `persistence.assert_function_text(conn, signature: str, marker: str) -> None` (raises `PersistenceError`
   "<signature> predates this service; …"); `ops_mcp_read.server.HANDLE_BINDING = ("app._resolve_handle(text, text,
@@ -1531,8 +1615,8 @@ Create `tests/plan_j/test_allowlist.py`:
 
 Catches: a read handle still honoured once its run awaits approval, input or a decision (or ended), an execute handle
 honoured once its run succeeded, a tool outside the job type's set (R085: the worker names the tool, the server
-decides), a refusal whose message or log line says which check failed or carries the handle, and a resolution that
-reads the run state but does not hand it to the check.
+decides), a refusal whose message says which check failed or whose log line carries the handle, and a resolution
+that reads the run state but does not hand it to the check.
 """
 
 import asyncio
@@ -1601,11 +1685,13 @@ def test_resolution_hands_the_run_state_to_the_check(caplog: pytest.LogCaptureFi
     got = asyncio.run(
         persistence.resolve_invocation(conn, handle=handle, azp="ops-worker", tool=Tool.SEARCH_PROCEDURES)
     )
-    assert got.run_state is RunState.RETRIEVING and conn.params == (handle, "ops-worker")
+    passed = conn.params == (handle, "ops-worker")
+    assert got.run_state is RunState.RETRIEVING and passed
     conn.row = resolved_row("AWAITING_APPROVAL")
     with pytest.raises(persistence.HandleRejected):
         asyncio.run(persistence.resolve_invocation(conn, handle=handle, azp="ops-worker", tool=Tool.SEARCH_PROCEDURES))
-    assert "does not run in state AWAITING_APPROVAL" in caplog.text and handle not in caplog.text
+    leaked = handle in caplog.text  # a verdict, not an operand (Global Constraints: secrets)
+    assert "does not run in state AWAITING_APPROVAL" in caplog.text and not leaked
 ```
 
 Run: `uv run python -m pytest tests/plan_j/test_allowlist.py tests/plan_d/test_persistence_pure.py tests/plan_e/test_persistence_errors.py -q`
@@ -1727,7 +1813,8 @@ mcp-read's startup check looks for text only this revision's body carries.
 
 Catches: a revision that rewrites more of the body than the one read (the lease lock, the fence and expiry checks and
 the server binding are 0007's, proved live by Plan H), a body that grants EXECUTE on a helper, a downgrade that keeps
-the binding or touches a row, and a startup marker that an older body also contains (mcp-read would start on 0008).
+the binding or touches a row, a startup marker that an older body also contains (mcp-read would start on 0008), and a
+later revision that re-creates `_resolve_handle` without the marker (mcp-read would refuse a fully migrated database).
 """
 
 import importlib.util
@@ -1737,6 +1824,8 @@ from typing import Any
 import alembic.op
 import pytest
 from ops_mcp_read.server import HANDLE_BINDING
+
+from tests.plan_e.test_transitions_table import REVISIONS
 
 VERSIONS = Path(__file__).resolve().parents[2] / "migrations" / "app" / "versions"
 REVOKE = "REVOKE ALL ON FUNCTION app._resolve_handle(text, text, text) FROM PUBLIC"
@@ -1784,6 +1873,15 @@ def test_the_startup_marker_is_only_in_this_revisions_body() -> None:
     assert marker in revision().RESOLVE_HANDLE
     for older in ("0004_write_path_functions", "0007_leases_fences"):
         assert marker not in revision(older).RESOLVE_HANDLE, older
+
+
+def test_the_newest_body_of_resolve_handle_carries_the_startup_marker() -> None:
+    newest = None
+    for name in REVISIONS:  # Alembic order; the newest revision that re-creates the helper wins
+        for fn, _, _, body in getattr(revision(name), "FUNCTIONS", ()):
+            if fn == "_resolve_handle":
+                newest = (name, body)
+    assert newest is not None and HANDLE_BINDING[1] in newest[1], newest and newest[0]
 ```
 
 Create `tests/plan_j/test_mcp_read_startup.py`:
@@ -1983,7 +2081,8 @@ from ops_mcp_read import procedures
 
 # Revision 0009 (T15): `_resolve_handle` binds the handle's job to its run and refuses a finished one. Without it the
 # server would resolve handles the binding refuses, so it refuses to start, as the other services do without their
-# revision's relation (Plan J ruling 18).
+# revision's relation (Plan J ruling 18). A later revision that re-creates `_resolve_handle` must keep this text or
+# change it here in the same commit; a unit test checks the newest body carries it.
 HANDLE_BINDING = ("app._resolve_handle(text, text, text)", "j.run_id = v_ctx.run_id AND j.done_at IS NULL")
 
 ```
@@ -2007,9 +2106,9 @@ Run: `uv run ruff check --select ISC004 --fix --unsafe-fixes migrations/app/vers
 Expected: `All checks passed!`
 
 Run: `uv run python -m pytest tests/plan_j tests/plan_e/test_transitions_table.py -q`
-Expected: `48 passed` (34 in `tests/plan_j`, 14 in the transitions module).
+Expected: `51 passed` (37 in `tests/plan_j`, 14 in the transitions module).
 
-- [ ] **Step 5: R105's replay step under the binding**
+- [ ] **Step 5: The tests and the docstring that described a replay the binding now refuses**
 
 Edit 1 (`tests/e2e/test_r105_walking_skeleton.py`, the replay's comment), replace:
 
@@ -2024,8 +2123,9 @@ with:
     # Review focus 1 and 3 over the real transport, as T15 bound handles (Plan J ruling 6): a fresh execute handle
     # minted for the finished execute job of the SUCCEEDED run is refused at mcp-write (the job is done and the run is
     # past the execute job's states), so a replay after the outcome never reaches the grant and the destination keeps
-    # its one incident; the wrong tokens are refused at the transport. The idempotent replay inside an open execute
-    # job is tests/e2e/test_mcp_write_live.py's.
+    # its one incident; the wrong tokens are refused at the transport. Through the tool a replay is answered only while
+    # the run is APPROVED or EXECUTING (the re-queue re-sends under the same action id); the execution layer's stored-
+    # outcome replay is proved by direct calls in tests/e2e/test_mcp_write_live.py.
 ```
 
 Edit 2 (`tests/e2e/test_r105_walking_skeleton.py`, the replay's assertion), replace:
@@ -2052,6 +2152,54 @@ with:
     lines.append(
         "replay=refused_finished_job refusals=api:worker,destination:persona+worker,mcp-write:persona+mcp-read"
     )
+```
+
+`test_r006_populated_revision_1_database_upgrades_in_place` seeds its migrated SUCCEEDED run's execute job finished, so
+0009 refuses that job's handle; the test now proves the binding covers migrated rows and then reopens the job.
+
+Edit 4 (`tests/e2e/test_migrations_and_persistence.py`, the populated upgrade's handle step), replace:
+
+```python
+        grant = await persistence.lookup_action(mcp_exec, handle=handle)
+        assert grant.action_id == action and grant.attempt_state == "RESOLVED"
+```
+
+with:
+
+```python
+        # Revision 0009 (Plan J ruling 6): a handle naming a finished job is refused, migrated rows included; the same
+        # handle resolves once its job is open again, so the refusal is the binding's.
+        with pytest.raises(persistence.HandleRejected):
+            await persistence.lookup_action(mcp_exec, handle=handle)
+        await app_conn.execute("UPDATE app.jobs SET done_at = NULL WHERE id = %s", (execute_job,))
+        grant = await persistence.lookup_action(mcp_exec, handle=handle)
+        assert grant.action_id == action and grant.attempt_state == "RESOLVED"
+```
+
+(`pytest` is imported there already; `purge_run` removes the job in `finally`, and no worker runs in that module, so
+the reopened job is never claimed.)
+
+Edit 5 (`mcp-write/src/ops_mcp_write/execution.py`, the replay rule in the module docstring), replace:
+
+```python
+Replay rule (Plan D review focus 1): execution_grant is UNIQUE (run_id), so a second `create_incident` for the same run
+finds the existing grant; if its attempt is RESOLVED the stored outcome is returned without touching the destination,
+otherwise the same action id and bytes are re-sent and the destination's idempotent key answers. There is never a
+second action id for one run. A transport failure after SENT is reported as UNKNOWN and recorded by nobody here: the
+worker holds `mark_unknown` (SA:467; Plan E ruling 6).
+```
+
+with:
+
+```python
+Replay rule (Plan D review focus 1): execution_grant is UNIQUE (run_id), so a second `create_incident` for the same run
+finds the existing grant; if its attempt is RESOLVED the stored outcome is returned without touching the destination,
+otherwise the same action id and bytes are re-sent and the destination's idempotent key answers. There is never a second
+action id for one run. Through the tool, the stored branch is unreachable once the outcome is recorded: the run has left
+APPROVED and EXECUTING, so `server.create_incident`'s `resolve_invocation` refuses the handle first (T15, Plan J ruling
+6), which production never needed (the worker skips the call past EXECUTING). A direct caller
+(tests/e2e/test_mcp_write_live.py) or a second call inside the same open job still reaches it. A transport failure after
+SENT is reported as UNKNOWN and recorded by nobody here: the worker holds `mark_unknown` (SA:467; Plan E ruling 6).
 ```
 
 - [ ] **Step 6: The live revision test**
@@ -2220,13 +2368,14 @@ not a reason to weaken an assertion: stop and report.
 Format, lint and count characters on every file of this task (the revision after the ISC004 pass).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1067 passed, 157 skipped` (1054 + 12 in `tests/plan_j` + 1 parametrised revision; the
+Expected: `CHECK: GREEN`; pytest `1070 passed, 157 skipped` (1056 + 13 in `tests/plan_j` + 1 parametrised revision; the
 3 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1203 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 136
-live-gated tests, 157 − 21). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission
-reports/leases reports/events reports/outbox`.
+Expected: `CHECK: GREEN`; pytest `1206 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 136
+live-gated tests, 157 − 21; R105 and the R006 populated upgrade run with their Step 5 edits). Then
+`git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases reports/events
+reports/outbox`.
 
 Run: `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts`
 Expected: exit 0.
@@ -2236,6 +2385,7 @@ git add migrations/app/versions/0009_handle_binding.py core/src/ops_core/persist
 git add mcp-read/src/ops_mcp_read/server.py tests/plan_j tests/plan_d/test_persistence_pure.py
 git add tests/plan_e/test_persistence_errors.py tests/plan_e/test_transitions_table.py
 git add tests/e2e/test_r105_walking_skeleton.py tests/e2e/test_migration_0009_live.py
+git add tests/e2e/test_migrations_and_persistence.py mcp-write/src/ops_mcp_write/execution.py
 git commit -m "feat(migrations): revision 0009 binds a handle to its run's open job; the run-state allowlist (T15)"
 ```
 
@@ -2249,19 +2399,21 @@ git commit -m "feat(migrations): revision 0009 binds a handle to its run's open 
 
 **Requirements:** R027 ("Replay with other workload/run/expired fence/tool; server rejects; handle absent from
 model/logs"), R085 ("Worker-chosen tools ignored; handle used with a different azp rejected"), R131's read half (the
-`pg_proc` ACL, an execute handle at mcp-read), T15 DoD 2-4; rulings 5, 10, 11, 13 and 22. This task writes no
-production code: Tasks 1 and 2 built what it proves, so its tests pass the first time they run. The other-azp half of
+`pg_proc` ACL, a recover and an execute handle at mcp-read), T15 DoD 2-4; rulings 5, 10, 11, 13 and 22. This task writes
+no production code: Tasks 1 and 2 built what it proves, so its tests pass the first time they run. The other-azp half of
 R027/R085 is proved at the definer by the existing `tests/e2e/test_definers_write_path_live.py::
 test_resolve_invocation_binds_server_azp_expiry_and_revocation` (a read handle resolved with azp `ops-web` is `OC008`)
 and at the verifier by Task 1's synthetic tokens; no realm client other than `ops-worker` carries mcp-read's audience,
 so no live token can bring another azp to the definer over HTTP.
 
 **Interfaces:**
-- Consumes: `ops_mcp_read.server.production_app`; `ops_core.mcp_protocol.PROTOCOL_VERSION`; the e2e fixtures
-  `app_conn`, `role_conn`, `secret`, `lease_for`, `expire_lease`, `purge_run`, `new_run`, `refused`,
+- Consumes: `ops_mcp_read.server.production_app`; `ops_core.mcp_protocol.PROTOCOL_VERSION`; `persistence.mint_handle`;
+  the e2e fixtures `migrated`, `app_conn`, `role_conn`, `secret`, `lease_for`, `expire_lease`, `purge_run`, `new_run`,
+  `refused`,
   `investigate_job`, `read_handle`, `approved_run` (`tests.e2e.test_mcp_write_live`); `privileges.DEFINER_FUNCTIONS`.
-- Produces: in `tests.e2e.test_mcp_read_t15_live`: `QUERY`, `free_port()`, `serving()`, `worker_token(secret)`,
-  `call(url, token, handle, tool=…, arguments=…)`, `raw_headers(token, version)`, `tools_list(meta_version)` (Task 4
+- Produces: in `tests.e2e.test_mcp_read_t15_live`: `QUERY`, `UVICORN`, `free_port()`, `guarded(server)`,
+  `serving(log_level="warning")`, `worker_token(secret)`, `call(url, token, handle, tool=…, arguments=…)`,
+  `raw_headers(token, version, method="tools/list")`, `tools_list(meta_version)` (Task 4
   imports `QUERY`, `free_port`, `raw_headers`, `tools_list`, `worker_token`); `reports/mcp-read/t15-mcp-read.txt`
   (written only when all five tests passed).
 
@@ -2310,11 +2462,12 @@ Plan J rulings 5, 10, 11 and 22).
 The server is `production_app()` under uvicorn on a free loopback port in the test's own event loop; the
 independent-process run is tests/e2e/test_mcp_read_process_live.py. Catches: a handle that still answers once its job
 is pointed at another run's job, past its expiry, under a lapsed lease or a moved fence, after its release
-(revocation), or once its run left the job type's states; an execute handle answered at mcp-read, also when its
-stored `server` column lies; a tool mcp-read does not register answered; an EXECUTE grant `mcp_read` holds beyond
+(revocation), or once its run left the job type's states; an execute or recover handle answered at mcp-read, also when
+its stored `server` column lies; a tool mcp-read does not register answered; an EXECUTE grant `mcp_read` holds beyond
 `current_time` and `resolve_invocation`; a POST whose protocol version is absent, handshake-era or contradicted by its
-`_meta` reaching the tool; and a raw handle in any log record of the exchange. Every refusal must be the one plain
-`INVALID_HANDLE` envelope, with no hint of which check failed and never an `action_id` (SA:354-355).
+`_meta` reaching the tool; and a raw handle in any log record of the exchange (uvicorn's included, at DEBUG). Every
+refusal of a presented handle must be the one plain `INVALID_HANDLE` envelope, with no hint of which check failed and
+never an `action_id` (SA:354-355).
 """
 
 import asyncio
@@ -2335,6 +2488,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp_types import CallToolResult
 from ops_core import persistence, privileges, settings
+from ops_core.jobs import Server
 from ops_core.mcp_protocol import PROTOCOL_VERSION
 from ops_core.settings import Role
 from ops_core.tokens import WorkloadTokenSource
@@ -2353,6 +2507,7 @@ ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")  # the seeded tenant: only 
 QUERY = {"query": "reviewer inspect exact content", "limit": 2, "mode": "lexical"}
 REFUSAL = {"code": "INVALID_HANDLE", "message": "invocation handle rejected", "retryable": False}
 EVIDENCE = Path("reports/mcp-read/t15-mcp-read.txt")
+UVICORN = ("uvicorn", "uvicorn.error", "uvicorn.access", "uvicorn.asgi")
 EXPECTED_LINES = 5  # one per test below
 
 
@@ -2373,23 +2528,34 @@ def free_port() -> int:
         return int(probe.getsockname()[1])
 
 
+async def guarded(server: uvicorn.Server) -> None:
+    """`server.serve()`, with a failed start turned into an ordinary error: uvicorn answers a lifespan failure (a
+    database without revision 0009, keys it cannot load) with `sys.exit`, and a SystemExit escaping a task leaves the
+    event loop at once, so the test's `finally` (its purges) would never run."""
+    try:
+        await server.serve()
+    except SystemExit as exc:
+        raise RuntimeError("mcp-read did not start; see the log above") from exc
+
+
 @asynccontextmanager
-async def serving() -> AsyncIterator[str]:
+async def serving(log_level: str = "warning") -> AsyncIterator[str]:
     """`production_app()` on a free loopback port, logging as `serve_app` does (`log_config=None`, so every record
-    reaches the root logger); its URL; stopped in `finally` (uvicorn's own shutdown)."""
+    reaches the root logger) at `log_level` (`serve_app` pins "warning"; never "trace", at which uvicorn's message
+    logger writes every request's headers); its URL; stopped in `finally` (uvicorn's own shutdown, never a cancel)."""
     port = free_port()
-    config = uvicorn.Config(production_app(), host="127.0.0.1", port=port, log_level="warning", log_config=None)
+    config = uvicorn.Config(production_app(), host="127.0.0.1", port=port, log_level=log_level, log_config=None)
     server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
+    task = asyncio.create_task(guarded(server))
     try:
         while not server.started:
             if task.done():
-                task.result()  # a failed start raises here instead of waiting for ever
+                task.result()  # a failed start raises its RuntimeError here instead of waiting for ever
             await asyncio.sleep(0.05)
         yield f"http://127.0.0.1:{port}/mcp"
     finally:
         server.should_exit = True
-        await task
+        await asyncio.wait({task})  # settled, never cancelled; a failed start was raised above
 
 
 async def worker_token(secret: Callable[[str], str]) -> str:
@@ -2481,7 +2647,21 @@ async def test_r085_r131_the_server_derives_tool_server_and_state_from_the_job(
     _, _, read_run = await new_run(app_conn, ALPHA, api=api)
     token = await worker_token(secret)
     try:
+        # A recover job of the same run, staged by the superuser as mark_unknown would queue one (T15 DoD 4 names
+        # execute and recover handles); its handle is minted under the lease approved_run took.
+        recover = uuid4()
+        await app_conn.execute(
+            "INSERT INTO app.jobs (id, type, tenant_id, run_id, dedup_key) VALUES (%s, 'recover', %s, %s, %s)",
+            (recover, ALPHA, run, f"{uuid4()}:timeout"),
+        )
+        cur = await app_conn.execute("SELECT fence FROM app.run_lease WHERE run_id = %s", (run,))
+        fence = int((await cur.fetchone())["fence"])
+        async with worker.transaction():
+            recover_handle = await persistence.mint_handle(
+                worker, run_id=run, job_id=recover, server=Server.WRITE, azp="ops-worker", fence=fence
+            )
         async with serving() as url:
+            assert_refused(await call(url, token, recover_handle))  # a recover handle at mcp-read (R131, DoD 4)
             assert_refused(await call(url, token, execute_handle))  # an execute handle at mcp-read (R131)
             await app_conn.execute(
                 "UPDATE app.invocation_context SET server = 'read' WHERE handle_sha256 = %s",
@@ -2503,7 +2683,10 @@ async def test_r085_r131_the_server_derives_tool_server_and_state_from_the_job(
                     "SELECT app.transition_run(%s, 'RETRIEVING', 'AWAITING_INPUT', NULL, 2, '{}')", (read_run,)
                 )
             assert_refused(await call(url, token, handle))  # the run left investigate's states
-        lines.append("R085/R131 refused over HTTP: execute handle, lying server column, run state; unknown tool: SDK")
+        lines.append(
+            "R085/R131 refused over HTTP: recover and execute handles, lying server column, run state;"
+            " unknown tool: SDK"
+        )
     finally:
         await purge_run(app_conn, run)  # the seeded tenant ALPHA stays
         await purge_run(app_conn, read_run)
@@ -2527,12 +2710,12 @@ async def test_r131_mcp_read_can_execute_no_write_path_function(
     lines.append(f"R131 read half: mcp_read EXECUTE = current_time, resolve_invocation; {len(others)} others refused")
 
 
-def raw_headers(token: str, version: str | None) -> dict[str, str]:
+def raw_headers(token: str, version: str | None, method: str = "tools/list") -> dict[str, str]:
     out = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
-        "Mcp-Method": "tools/list",
+        "Mcp-Method": method,
     }
     if version is not None:
         out["MCP-Protocol-Version"] = version
@@ -2547,7 +2730,9 @@ def tools_list(meta_version: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"_meta": meta}}
 
 
-async def test_the_protocol_version_is_checked_on_every_request(secret: Callable[[str], str], lines: list[str]) -> None:
+async def test_the_protocol_version_is_checked_on_every_request(
+    migrated: None, secret: Callable[[str], str], lines: list[str]
+) -> None:
     """Ruling 5: raw POSTs with a valid worker token, so authentication passes and only the version decides."""
     token = await worker_token(secret)
     async with serving() as url, httpx2.AsyncClient() as http:
@@ -2570,14 +2755,20 @@ async def test_r027_no_log_record_carries_the_handle(
     caplog: pytest.LogCaptureFixture,
     lines: list[str],
 ) -> None:
-    """Every record of an answered call, a refused one and a refused raw POST, captured at DEBUG before any redaction
-    filter: the handle is in none of them (SA:566)."""
+    """Every record of an answered call, a refused one and a refused raw POST, with the server's loggers and uvicorn's
+    at DEBUG and no redaction filter installed: the handle is in none of them (SA:566). uvicorn's TRACE level, which
+    logs request headers, is enabled nowhere (`serve_app` pins "warning"); this test does not use it either."""
     caplog.set_level(logging.DEBUG)
+    # uvicorn's loggers, as Config left them: an earlier test's default dictConfig stops "uvicorn" and "uvicorn.access"
+    # propagating to the root logger caplog listens on, and Config(log_level=...) sets their levels process-wide.
+    saved = {name: (logging.getLogger(name).level, logging.getLogger(name).propagate) for name in UVICORN}
+    for name in UVICORN:
+        logging.getLogger(name).propagate = True
     worker = await role_conn(Role.WORKER)
     _, _, run = await new_run(app_conn, ALPHA, api=await role_conn(Role.API))
     token = await worker_token(secret)
     try:
-        async with serving() as url:
+        async with serving(log_level="debug") as url:
             lease = await lease_for(worker, run)
             handle = await read_handle(worker, run, await investigate_job(app_conn, run), lease)
             assert_answered(await call(url, token, handle))
@@ -2588,13 +2779,18 @@ async def test_r027_no_log_record_carries_the_handle(
                 raw = {**raw_headers(token, "2025-11-25"), "X-Ops-Invocation": handle}
                 assert (await http.post(url, json=tools_list("2025-11-25"), headers=raw)).status_code == 400
         texts = [record.getMessage() + (record.exc_text or "") for record in caplog.records]
-        assert len(texts) > 3  # the exchange was logged at all
+        names = {record.name.split(".")[0] for record in caplog.records}
+        assert {"uvicorn", "mcp", "httpx2"} <= names  # the server's HTTP layer, the SDK and the client were captured
         carrying = [i for i, text in enumerate(texts) if handle in text]  # indexes only: never the handle itself
         assert carrying == []
         lines.append(
-            f"R027 logs: {len(texts)} records at DEBUG across ok, refused and raw calls; none holds the handle"
+            f"R027 logs: {len(texts)} records at DEBUG (uvicorn, SDK, client) across ok, refused and raw calls; none"
+            " holds the handle"
         )
     finally:
+        for name, (level, propagate) in saved.items():
+            logging.getLogger(name).setLevel(level)
+            logging.getLogger(name).propagate = propagate
         await purge_run(app_conn, run)
 ```
 
@@ -2615,10 +2811,10 @@ record that carries the handle, is a finding against Tasks 1-2 or the SDK: stop 
 Format, lint and count characters on `tests/e2e/test_mcp_read_t15_live.py` and `tests/plan_b/test_evidence.py`.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1067 passed, 162 skipped` (the 5 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `1070 passed, 162 skipped` (the 5 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1208 passed, 21 skipped` (arithmetic, not measured: 1067 plus the 141 live-gated
+Expected: `CHECK: GREEN`; pytest `1211 passed, 21 skipped` (arithmetic, not measured: 1070 plus the 141 live-gated
 tests, 162 − 21). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission
 reports/leases reports/events reports/outbox`.
 
@@ -2641,7 +2837,8 @@ git commit -m "test(e2e): handle, allowlist, ACL, version and log cases at mcp-r
 
 **Requirements:** R025's read half ("An independent process lists and calls tools on both mcp-read and mcp-write over
 the network": mcp-read here, mcp-write with T47), R031's network half ("Install locked SDKs and run network tests"),
-R026 ("Use valid token for another service; resource server rejects it without downstream forwarding"), T15 DoD 1-2;
+R026 ("Use valid token for another service; resource server rejects it without downstream forwarding": each foreign
+token presents a valid handle on a real `tools/call`, so the refusal is shown to come before the tool), T15 DoD 1-2;
 rulings 12, 14 and 15; BS:378 and BS:589 ("Use a real remote client in integration tests; an in-process call is not
 sufficient"). No production code: its tests pass the first time they run.
 
@@ -2650,7 +2847,7 @@ sufficient"). No production code: its tests pass the first time they run.
   `tools_list`, `worker_token`; `tests.plan_b.live.kc.token_password`; `WorkloadTokenSource`; the e2e fixtures
   `app_conn`, `role_conn`, `secret`, `lease_for`, `purge_run`, `new_run`, `investigate_job`, `read_handle`;
   pytest's `tmp_path`.
-- Produces: `mcp_read_process(log)` (an async context manager yielding the child's MCP URL);
+- Produces: `mcp_read_process(log)` (an async context manager yielding the child's MCP URL), `tools_call()`;
   `reports/mcp-read/t15-independent-client.txt` (written only when both tests passed).
 
 - [ ] **Step 1: Write the independent-process tests**
@@ -2668,8 +2865,11 @@ server that only works in-process (BUILD_SPEC §10: "an in-process call is not s
 from the registered tool or advertises extra arguments, a locked SDK version other than AM-30's, a token for another
 audience or client (the persona token stands in for a browser token, ruling 14: no real `ops-web` access token is
 minted, the API stores none and minting one needs its client secret; a missing `aud` is the synthetic case in
-tests/plan_j/test_verifier_t15.py, ruling 15) answered with anything but 401 before the tool runs (mcp-read forwards
-nothing downstream in T15), and a handle in the child's own log.
+tests/plan_j/test_verifier_t15.py, ruling 15) answered with anything but 401 on a `tools/call` that carries a valid
+handle (the refusal comes before the tool and the handle lookup; mcp-read forwards nothing downstream in T15), and a
+handle in the child's own log. That log is written through the service's redaction filter (`serve()` installs it
+first) at uvicorn's "warning" level, so its check is weaker than the in-process DEBUG capture of
+tests/e2e/test_mcp_read_t15_live.py, which runs with no filter at all.
 """
 
 import asyncio
@@ -2680,6 +2880,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import httpx2
@@ -2774,16 +2975,26 @@ async def test_r025_an_independent_client_lists_and_calls_over_the_network(
         assert not result.is_error and isinstance(doc, dict) and doc["status"] == "ok"
         assert doc["data"]["results"][0]["evidence_id"] == "ALPHA-INCIDENT:v2:review"
         leaked = handle in log.read_text(encoding="utf-8", errors="replace")
-        assert not leaked  # the child's own log never holds the handle
+        assert not leaked  # the child's own log, written through its redaction filter, never holds the handle
         assert (version("mcp"), version("mcp-types")) == ("2.3.0", "2.3.0")  # AM-30's lock, R031
         lines.append("R025/R031: child process; official client mode 2026-07-28 listed [search_procedures], called ok")
     finally:
         await purge_run(app_conn, run)
 
 
+def tools_call() -> dict[str, Any]:
+    """A raw `tools/call` of `search_procedures` in the 2026-07-28 envelope (the shape Task 1 measured in-process)."""
+    call = tools_list(PROTOCOL_VERSION)
+    call["method"] = "tools/call"
+    call["params"].update({"name": "search_procedures", "arguments": QUERY})
+    return call
+
+
 async def test_r026_foreign_tokens_are_refused_before_the_tool(
-    secret: Callable[[str], str], tmp_path: Path, lines: list[str]
+    app_conn: persistence.Conn, role_conn: RoleConn, secret: Callable[[str], str], tmp_path: Path, lines: list[str]
 ) -> None:
+    """Each foreign token presents a valid handle on a real tool call and gets 401; the same call with the worker's
+    token then answers with data, so the refusals are the tokens' and come before the tool and the handle."""
     kcs = settings.keycloak()
     persona = kc.token_password(kcs.base_url, "ops-dev-direct", "alex", secret("kc_persona_alex_password"))
     foreign = {
@@ -2796,17 +3007,30 @@ async def test_r026_foreign_tokens_are_refused_before_the_tool(
         ).token(),
     }
     token = await worker_token(secret)
-    async with mcp_read_process(tmp_path / "mcp-read.log") as url, httpx2.AsyncClient() as http:
-        answers = {}
-        for name, value in foreign.items():
-            response = await http.post(
-                url, json=tools_list(PROTOCOL_VERSION), headers=raw_headers(value, PROTOCOL_VERSION)
-            )
-            answers[name] = (response.status_code, 'error="invalid_token"' in response.headers["www-authenticate"])
-        accepted = await http.post(url, json=tools_list(PROTOCOL_VERSION), headers=raw_headers(token, PROTOCOL_VERSION))
-    assert answers == {name: (401, True) for name in foreign}  # names and statuses only: never a token
-    assert accepted.status_code == 200  # the worker's token, the same request: the refusals are the tokens'
-    lines.append("R026: persona, ops-mcp-write and ops-mcp-read tokens 401 invalid_token; the worker's token 200")
+    worker = await role_conn(Role.WORKER)
+    _, _, run = await new_run(app_conn, ALPHA, api=await role_conn(Role.API))
+    try:
+        async with mcp_read_process(tmp_path / "mcp-read.log") as url, httpx2.AsyncClient() as http:
+            handle = await read_handle(worker, run, await investigate_job(app_conn, run), await lease_for(worker, run))
+
+            def headers(bearer: str) -> dict[str, str]:
+                base = raw_headers(bearer, PROTOCOL_VERSION, method="tools/call")
+                return {**base, "Mcp-Name": "search_procedures", "X-Ops-Invocation": handle}
+
+            answers = {}
+            for name, value in foreign.items():
+                response = await http.post(url, json=tools_call(), headers=headers(value))
+                answers[name] = (response.status_code, 'error="invalid_token"' in response.headers["www-authenticate"])
+            accepted = await http.post(url, json=tools_call(), headers=headers(token))
+        assert answers == {name: (401, True) for name in foreign}  # names and statuses only: never a token
+        assert accepted.status_code == 200  # the worker's token, the same call and handle: the refusals are the tokens'
+        assert accepted.json()["result"]["structuredContent"]["status"] == "ok"  # the handle was good all along
+        lines.append(
+            "R026: persona, ops-mcp-write and ops-mcp-read tokens 401 invalid_token on a tools/call with a valid"
+            " handle; the worker's token answers ok"
+        )
+    finally:
+        await purge_run(app_conn, run)
 ```
 
 - [ ] **Step 2: Run it**
@@ -2827,10 +3051,10 @@ outlived its test).
 Format, lint and count characters on `tests/e2e/test_mcp_read_process_live.py`.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1067 passed, 164 skipped` (the 2 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `1070 passed, 164 skipped` (the 2 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1210 passed, 21 skipped` (arithmetic, not measured: 1067 plus the 143 live-gated
+Expected: `CHECK: GREEN`; pytest `1213 passed, 21 skipped` (arithmetic, not measured: 1070 plus the 143 live-gated
 tests, 164 − 21). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission
 reports/leases reports/events reports/outbox`.
 
@@ -2953,15 +3177,18 @@ note = (
     "evidence over the existing mcp-read, no new tool or definer: ops_core.mcp_protocol.ProtocolVersionGuard in "
     "front of both MCP servers' SDK apps (a POST to /mcp without exactly MCP-Protocol-Version 2026-07-28 is HTTP "
     "400 with JSON-RPC -32022 before authentication; the SDK's legacy stateless path is closed; a header/_meta "
-    "mismatch stays the SDK's -32020); mcp-read's verifier requires the typ claim Bearer, stamps the SDK's resource "
-    "only from aud and has the SDK compare it (validate_token_resource); revision 0009_handle_binding re-creates "
-    "_resolve_handle with the handle's job bound to its own run and unfinished (0007's body with one statement "
-    "replaced; exact downgrade); persistence.allowed_tool checks the job type's run states as well as its tools; "
-    "mcp-read refuses to start without 0009 (persistence.assert_function_text on pg_proc); the worker binds each "
-    "handle to its token source's client id. Evidence: tests/e2e/test_mcp_read_t15_live.py, "
-    "test_mcp_read_process_live.py, test_migration_0009_live.py and reports/mcp-read/ (live), tests/plan_j/ for the "
-    "unit half. R105's replay of create_incident after the outcome is now refused (a finished job); the idempotent "
-    "replay inside an open execute job is test_mcp_write_live.py's. Deferred: mcp-write's verifier, its literal azp "
+    "mismatch stays the SDK's -32020); mcp-read's verifier, built by one constructor (read_verifier) for production "
+    "and the unit tests, requires the typ claim Bearer, and its SDK adapter refuses a token whose aud lacks the "
+    "server's URL before stamping the resource (the SDK's validate_token_resource stays on as a second layer); "
+    "revision 0009_handle_binding re-creates _resolve_handle with the handle's job bound to its own run and "
+    "unfinished (0007's body with one statement replaced; exact downgrade); persistence.allowed_tool checks the job "
+    "type's run states as well as its tools; mcp-read refuses to start without 0009 "
+    "(persistence.assert_function_text on pg_proc); the worker binds each handle to its token source's client id. "
+    "Evidence: tests/e2e/test_mcp_read_t15_live.py, test_mcp_read_process_live.py, test_migration_0009_live.py and "
+    "reports/mcp-read/ (live), tests/plan_j/ for the unit half. R105's replay of create_incident after the outcome "
+    "and the R006 populated upgrade's migrated finished job are now refused; through the tool a replay is answered "
+    "only while the run is APPROVED or EXECUTING (the re-queue's re-send), and test_mcp_write_live.py's direct "
+    "calls prove the execution layer's idempotency, not the tool's. Deferred: mcp-write's verifier, its literal azp "
     "in the write-path definers, the attempt-state allowlist and the write halves of R025/R131 -> T47; asset_scope, "
     "the asset tools and asset-sim -> T16; search_procedures_scoped and the governed store -> T17/T16; the worker's "
     "401 handling and resume_input -> T20; TLS, container hosts and per-service tests -> T30. Errata 72-81 are "
@@ -2981,23 +3208,26 @@ full = {
         ["tests/e2e/test_mcp_read_process_live.py", "reports/mcp-read/t15-independent-client.txt",
          "tests/plan_j/test_verifier_t15.py", "tests/plan_j/test_mcp_read_http.py"],
         "Plan J (T15): against mcp-read as an independent process, a persona token (aud ops-api, the stand-in for a "
-        "browser token: no ops-web access token is minted anywhere, the API stores none), an ops-mcp-write token "
-        "(aud incident-sim) and an ops-mcp-read token (aud asset-sim) each get 401 invalid_token on the same request "
-        "the worker's token gets 200; the tool never runs and mcp-read forwards nothing downstream. Missing aud, "
-        "azp ops-web, a non-access typ and another workload's azp are synthetic-key unit cases at mcp-read's "
-        "configuration (erratum 81); a token whose audiences lack the resource is 401 through the SDK's check.",
+        "browser token: no ops-web access token is minted anywhere, the API stores none), an ops-mcp-write token (aud "
+        "incident-sim) and an ops-mcp-read token (aud asset-sim) each get 401 invalid_token on a tools/call of "
+        "search_procedures that carries a valid handle, which the worker's token then answers with data: the refusal "
+        "comes before the tool and the handle lookup, and mcp-read forwards nothing downstream. Missing aud, azp "
+        "ops-web, a non-access typ and another workload's azp are synthetic-key unit cases at mcp-read's "
+        "configuration (erratum 81); a token whose audiences lack the resource is 401 through McpVerifier's audience "
+        "check (the SDK's validate_token_resource, pinned on by a unit test, is a second layer).",
     ),
     "R027": (
         ["tests/e2e/test_mcp_read_t15_live.py", "reports/mcp-read/t15-mcp-read.txt",
          "tests/e2e/test_migration_0009_live.py", "tests/plan_j/test_migration_0009.py",
-         "tests/plan_j/test_allowlist.py"],
+         "tests/plan_j/test_allowlist.py", "tests/plan_j/test_worker_azp.py"],
         "Plan J (T15): over HTTP, one read handle is refused (one INVALID_HANDLE envelope, no action id) when its job "
         "is pointed at another run's job, past its 60 s expiry on the test clock, under a lapsed lease, after the "
         "fence moved, and after its release (revocation), answering again between causes; at the definer it is "
         "refused once its job is finished, and another azp is refused (test_definers_write_path_live.py); the tool "
         "binding is the job type's tools and run states. No log record of an answered call, a refused call or a "
-        "refused raw POST, captured at DEBUG before any redaction, holds the handle, nor does the child process's "
-        "log; the handle never reaches the model (the draft request carries none).",
+        "refused raw POST, captured with uvicorn and the server at DEBUG and no redaction filter, holds the handle; "
+        "the child process's own log, written through its redaction filter, holds none either; the model's request "
+        "has no field for a handle (a unit test pins DraftRequest's four fields).",
     ),
     "R085": (
         ["tests/e2e/test_mcp_read_t15_live.py", "tests/plan_j/test_allowlist.py", "tests/plan_j/test_worker_azp.py",
@@ -3027,8 +3257,8 @@ half = {
         ["tests/e2e/test_mcp_read_t15_live.py", "reports/mcp-read/t15-mcp-read.txt"],
         "Read half only (Plan J, T15): mcp_read can EXECUTE current_time (erratum 15) and resolve_invocation and "
         "nothing else in app (asset_scope and search_procedures_scoped join with T16/T17, erratum 72); an attempted "
-        "grant_execution is 42501; an execute handle presented to mcp-read is refused over HTTP. The write half "
-        "(mcp_exec's set, a read handle at mcp-write, incident-sim refusing mcp-read's token) -> T47.",
+        "grant_execution is 42501; a recover and an execute handle presented to mcp-read are refused over HTTP. The "
+        "write half (mcp_exec's set, a read handle at mcp-write, incident-sim refusing mcp-read's token) -> T47.",
     ),
 }
 for row in matrix["requirements"]:
@@ -3124,7 +3354,8 @@ with:
   `test_mcp_read_process_live.py` (R025's read half and R031's network half: a child process and the official
   client; R026: three foreign tokens refused with 401), `test_migration_0009_live.py` (the round trip and the startup
   check against 0008, the job binding at the definer, the run-state rule) and `reports/mcp-read/`; the unit half is
-  in `tests/plan_j/`. R105's replay step now expects the refusal of a fresh handle for a finished execute job.
+  in `tests/plan_j/`. R105's replay step now expects the refusal of a fresh handle for a finished execute job, and the
+  R006 populated upgrade asserts its migrated finished job's refusal before reopening it.
 - Gates: `check.py` <dev passed> passed / <dev skipped> skipped; `check.py --profile test` <live passed> passed / 21
   skipped; `verify_handoff.py` exit 0 (STATUS.md, "Update — Plan J executed").
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan I's
@@ -3139,16 +3370,20 @@ with:
       version" (`id` null, the supported version listed, nothing echoed) before authentication, so the SDK's legacy
       stateless path is closed and an unauthenticated client learns only the version rule; a header/`_meta`
       disagreement is the SDK's own `HEADER_MISMATCH` (400, `-32020`).
-  74. SA:557 (the verifier): mcp-read also requires the access token's `typ` claim `Bearer`; it sets the SDK's
-      `AccessToken.resource` to its resource URL only when `aud` holds it, and the SDK compares the two
-      (`validate_token_resource`); every token refusal stays HTTP 401 (Plan D ruling 25); mcp-write follows in T47.
+  74. SA:557 (the verifier): mcp-read also requires the access token's `typ` claim `Bearer`; its SDK adapter
+      (`McpVerifier`) refuses a token whose `aud` lacks the server's resource URL and only then sets the SDK's
+      `AccessToken.resource` to that URL; the SDK's `validate_token_resource` is on as a second layer, which cannot
+      refuse while the stamp is the server's own URL; every token refusal stays HTTP 401 (Plan D ruling 25); mcp-write
+      follows in T47.
   75. SA:459 and SA:496 (the handle's binding): `_resolve_handle` resolves a handle only when its `job_id` names a
       job of the handle's own run that is not finished (`done_at IS NULL`); otherwise it refuses `OC008` like every
       other refusal (revision 0009).
-  76. SA:338 and T15 review note 2 (the allowlist): `persistence.allowed_tool(job_type, run_state, tool)` checks the
-      job type's tools and run states at every resolution; the attempt-state dimension (`create_incident` only while
-      the attempt is absent or INTENT, not cancelled, before the deadline) is mcp-write's, in `execution.next_step`
-      today and in its allowlist with T47.
+  76. SA:338 and T15 review note 2 (the allowlist): `persistence.allowed_tool(job_type, run_state, tool)` checks the job
+      type's tools and run states at the start of every MCP call (`persistence.resolve_invocation`; the definers' own
+      resolutions inside `grant_execution`, `mark_sent`, `record_outcome` and `lookup_action` do not apply it, since
+      `record_outcome` must answer after the run moved); the attempt-state dimension (`create_incident` only while the
+      attempt is absent or INTENT, not cancelled, before the deadline) is mcp-write's, in `execution.next_step` today
+      and in its allowlist with T47.
   77. SA:459 (the `resolve_invocation` row as amended): the only lock is `run_lease FOR SHARE` (erratum 53); it
       returns `run_id, job_id, job_type, tenant_id, conversation_id, run_state, attempt_state` (erratum 19); it
       binds the handle as erratum 75 says.
@@ -3257,10 +3492,11 @@ with:
   skipped`. `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `<live passed>
   passed, 21 skipped`. `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
 - **Evidenced** (acceptance matrix `RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R026, R027 and R085.
-  Tokens for another audience or client are refused with 401 before the tool runs; a read handle is refused when its
-  job is another run's or finished, when it expired, when its lease lapsed or its fence moved, after its release, and
-  once its run left the job type's states, each over HTTP; an execute handle is refused at mcp-read even when its
-  stored server column lies; no log record holds a handle.
+  Tokens for another audience or client are refused with 401 on a tool call that carries a valid handle; a read
+  handle is refused when its job is another run's, when it expired, when its lease lapsed or its fence moved, after
+  its release, and once its run left the job type's states, each over HTTP, and when its job is finished, at the
+  definer; recover and execute handles are refused at mcp-read, the execute one even when its stored server column
+  lies; no log record captured at DEBUG holds a handle.
 - **Evidenced in part** (`RECORDED_LOCALLY_LIVE`, still `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`): R025 and R131
   (mcp-read's halves; mcp-write's are T47's) and R031 (the network half for mcp-read): an independent mcp-read process
   is listed and called by the official client over the network, and `mcp_read` can execute `current_time` and
@@ -3295,9 +3531,12 @@ checked in this order; the first failure decides the answer.
    mcp-write applies the same guard.
 2. **A bearer token** that is the worker's access token: RS256 from the realm's keys, `iss` the realm, not expired,
    `aud` containing `MCP_READ_RESOURCE_URL` (default `http://mcp-read:8081/mcp`), `azp` `ops-worker`, a `sub`, and the
-   `typ` claim `Bearer`. Any failure is HTTP 401 `invalid_token` with a `WWW-Authenticate` header pointing at the
-   protected-resource metadata, which the SDK serves at `/.well-known/oauth-protected-resource/mcp` (it stays as the
-   pinned protocol's resource-server metadata; nothing else of the authorization spec is in scope).
+   `typ` claim `Bearer` (`read_verifier`); `McpVerifier` refuses again any token whose `aud` lacks this server's URL,
+   and only then stamps that URL as the token's resource. The SDK's resource check (`validate_token_resource`) is on
+   as a second layer, which cannot refuse anything while the stamp is this server's own URL. Any failure is HTTP 401
+   `invalid_token` with a `WWW-Authenticate` header pointing at the protected-resource metadata, which the SDK serves
+   at `/.well-known/oauth-protected-resource/mcp` (it stays as the pinned protocol's resource-server metadata; nothing
+   else of the authorization spec is in scope).
 3. **The SDK's own checks**: the `params._meta` protocol version must equal the header (else 400, `-32020`
    `HEADER_MISMATCH`), `Mcp-Method` and `Mcp-Name` must match the body, the tool must exist (an unknown tool is a tool
    error), and its arguments must match the strict input schema (extra keys such as `tenant_id` are refused).
@@ -3306,9 +3545,10 @@ checked in this order; the first failure decides the answer.
    known, the handle is not revoked or expired (60 s), its fence is the lease's and the lease is live, its `azp` is
    the token's, its job is its own run's and not finished, and the job type is a read type. Then Python requires the
    tool to be one of the job type's and the run to be in one of the job type's states (`investigate`: QUEUED,
-   RETRIEVING, DRAFTING; `resume_input`: AWAITING_INPUT, QUEUED). Every refusal is the same tool result: `status`
-   `error`, `error.code` `INVALID_HANDLE`, `error.message` "invocation handle rejected", never a hint of the cause and
-   never an action id.
+   RETRIEVING, DRAFTING; `resume_input`: AWAITING_INPUT, QUEUED). Every refusal of a presented handle is the same tool
+   result: `status` `error`, `error.code` `INVALID_HANDLE`, `error.message` "invocation handle rejected", never a hint
+   of the cause and never an action id. A call with no handle at all gets the same code with the message "missing
+   invocation handle", which tells the client only what it already knows.
 
 ## Starting it
 
@@ -3325,7 +3565,8 @@ owner migrates it. Readiness (`/health/ready`) needs the realm's signing keys an
 
 ## Looking at it
 
-As the superuser on the dev database, a run's handles (only hashes are stored):
+As the superuser on the dev database (after the owner's migration to 0009; `app.run_lease` arrives with 0007), a run's
+handles (only hashes are stored):
 
 ```sql
 SELECT ic.job_id, j.type, j.done_at, ic.server, ic.azp, ic.fence, l.fence AS lease_fence, l.lease_until,
@@ -3344,7 +3585,9 @@ SELECT state FROM app.runs WHERE run_id = '<run>';
 - **mcp-read will not start**: read the message. "predates this service" is the missing revision; "signing keys
   unavailable" is the realm.
 - **A handle in a log line** is a bug (SA:566): the live test `tests/e2e/test_mcp_read_t15_live.py` captures every
-  record at DEBUG and fails if one holds the handle.
+  record of the server, the SDK, uvicorn and the client at DEBUG, with no redaction filter, and fails if one holds the
+  handle. Never run mcp-read with uvicorn's `trace` level: its message logger writes every request's headers, the
+  handle and the bearer token included (`serve_app` pins `warning`).
 
 ## Not here yet
 
@@ -3378,7 +3621,8 @@ refused before it learns anything, and nothing about the handle is written down.
 - **The version first.** A guard in front of the SDK refuses any POST without `MCP-Protocol-Version: 2026-07-28`
   (400, `-32022`), before authentication; the SDK's own ladder then refuses a header that disagrees with `_meta`.
 - **The token second.** Signature, issuer, expiry, `aud` holding this server's resource URL, `azp` the worker, the
-  access-token `typ`; the SDK checks the resource again. Any failure is 401.
+  access-token `typ`; the SDK adapter refuses an `aud` without this server's URL before it stamps the resource (the
+  SDK's own resource check is a second layer). Any failure is 401.
 - **The handle third, in the database.** Its hash, the run's lease (shared lock), the fence and expiry, revocation, the
   `azp`, the job (its own run's, unfinished) and the server derived from the job type; then, in Python, the job
   type's tools and run states. Every refusal is the same plain envelope.
@@ -3420,12 +3664,13 @@ belonged to another run, or had finished, still resolved; and the allowlist igno
 brief of 25 rulings chose hardening and evidence over new tools: no asset tools and no new definer before their owners.
 
 **Change.** A small ASGI guard in `core` refuses any POST without the pinned version before authentication, in front of
-both MCP servers. mcp-read's verifier requires an access token's `typ` and lets the SDK compare the resource. Revision
-0009 replaces one statement of 0007's `_resolve_handle`, so the job must be its own run's and open; the Python allowlist
-checks the run state too; mcp-read refuses to start without the binding; the worker stamps each handle with its own
-client id. Live tests prove each refusal over HTTP, the ACL, the four version cases and that no log record carries a
-handle, and an independent mcp-read process is listed and called by the official client. One older test changed its
-meaning: the walking skeleton's replay after the outcome is now refused, because its handle names a finished job.
+both MCP servers. mcp-read's verifier requires an access token's `typ`, and its SDK adapter refuses a token without the
+server's audience before stamping the resource. Revision 0009 replaces one statement of 0007's `_resolve_handle`, so the
+job must be its own run's and open; the Python allowlist checks the run state too; mcp-read refuses to start without the
+binding; the worker stamps each handle with its own client id. Live tests prove each refusal over HTTP, the ACL, the
+four version cases and that no log record carries a handle, and an independent mcp-read process is listed and called by
+the official client. Two older tests changed their meaning: the walking skeleton's replay after the outcome and the
+populated upgrade's migrated execute job are now refused, because their handles name a finished job.
 
 ## 28. What the process taught
 ```
@@ -3508,12 +3753,13 @@ with:
 ## Runs (T08, T15)
 
 `python -m ops_mcp_write` on 127.0.0.1:8082 (`OPS_MCP_WRITE_PORT`), Streamable HTTP at `/mcp`. A POST without exactly
-`MCP-Protocol-Version: 2026-07-28` is 400 before authentication (T15). Verifies `aud ∋ MCP_WRITE_RESOURCE_URL`,
-`azp == ops-worker`; resolves `X-Ops-Invocation` for `execute` jobs that are still open while the run is APPROVED or
-EXECUTING (T15). One tool, `create_incident`: grant → INTENT → SENT (committed before I/O) → POST incident-sim with
-the `ops-mcp-write` workload token → RESOLVED. A replay within the open job returns the recorded outcome; a handle for
-a finished job is refused; a transport failure records OUTCOME_UNKNOWN (reconciliation: T22). The verifier's T15
-hardening and the recovery tools arrive with T47.
+`MCP-Protocol-Version: 2026-07-28` is 400 before authentication (T15). Verifies `aud ∋ MCP_WRITE_RESOURCE_URL`, `azp ==
+ops-worker`; resolves `X-Ops-Invocation` for `execute` jobs that are still open while the run is APPROVED or EXECUTING
+(T15). One tool, `create_incident`: grant → INTENT → SENT (committed before I/O) → POST incident-sim with the
+`ops-mcp-write` workload token → RESOLVED. A replay while the run is still APPROVED or EXECUTING (the re-queue after a
+transport failure) re-sends under the same action id and the destination's key answers; once the outcome is recorded,
+any replay is refused `INVALID_HANDLE` before the grant (T15). A transport failure records OUTCOME_UNKNOWN
+(reconciliation: T22). The verifier's T15 hardening and the recovery tools arrive with T47.
 ```
 
 Edit 6 (`worker/README.md`, the handle sentence), replace:
@@ -3537,7 +3783,7 @@ PYTHONUTF8=1 uv run python scripts/check.py --profile test
 uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts
 ```
 
-Expected: `CHECK: GREEN` with `1067 passed, 164 skipped`; `CHECK: GREEN` with `1210 passed, 21 skipped` (the live
+Expected: `CHECK: GREEN` with `1070 passed, 164 skipped`; `CHECK: GREEN` with `1213 passed, 21 skipped` (the live
 number is arithmetic until this run measures it); exit 0. Fill the `<dev passed>`, `<dev skipped>` and `<live
 passed>` placeholders of Steps 3 and 4 with the printed numbers. Then `git checkout -- reports/bootstrap
 reports/auth`; the live run rewrote `reports/skeleton` (R105's new replay line), `reports/admission`,
@@ -3577,7 +3823,8 @@ git commit -m "docs: close T15 - handoff records, acceptance rows, errata 72-81,
    the verifier (Task 1) and at the definer (`test_definers_write_path_live.py`, cited). DoD 3 "Protocol-version
    header/_meta mismatch rejected" → Task 1 in-process and Task 3 live (absent, 2025, mismatch, matching). DoD 4
    "mcp_read cannot execute any write-path function; an execute/recover handle presented to mcp-read is rejected" →
-   Task 3 (ACL, `42501`, an execute handle over HTTP, also with a lying `server` column). Review notes: 1 (error only
+   Task 3 (ACL, `42501`, a recover and an execute handle over HTTP, the latter also with a lying `server` column).
+   Review notes: 1 (error only
    before a grant for authorized callers; auth failures never reveal an action id) → every refusal asserted as the
    plain envelope with no `action_id` (Task 3), token refusals 401 (Task 4); 2 (attempt state) → the run-state half
    here, the attempt-state half a T47 debt line (ruling 7, erratum 76); 3 (`asset_scope`, asset-sim,
@@ -3604,35 +3851,111 @@ git commit -m "docs: close T15 - handoff records, acceptance rows, errata 72-81,
    markers Task 5 writes are ownership markers `docs/CODE_COMMENTS.md` requires, each on the debt list.
 3. **Type and name consistency.** `ProtocolVersionGuard(app, *, path="/mcp")`, `PROTOCOL_VERSION`,
    `UNSUPPORTED_PROTOCOL_VERSION` and `REFUSAL` are used with those names in both servers, the worker's client and the
-   tests. `TokenVerifier(token_type=…)` and `WorkloadTokenSource.client_id` match their callers (`production_app`,
-   `worker.main`) and tests. `allowed_tool(job_type, run_state, tool)` is called in that order by
-   `resolve_invocation` and the three test modules. `assert_function_text(conn, signature, marker)` is called with
-   `*HANDLE_BINDING` by mcp-read and by the live round trip; `HANDLE_BINDING[1]` is a substring of 0009's
-   `JOB_READ_0009` and of no earlier body (a unit test). `handlers.Deps(..., worker_name, workload_azp, ...)` is built
-   with the keyword in `main` and the four tests. Task 3's helpers `QUERY`, `free_port`, `raw_headers`, `tools_list`,
-   `worker_token` are imported by Task 4 under those names; Task 1's `FIXTURES`, `ISSUER`, `RESOURCE` and
-   `KeyedVerifier` by Task 2.
-4. **Review Focus.** (1) the replay after the outcome → R105's rewritten step and the exhaustive allowlist (Task 2),
-   `test_mcp_write_live.py` unchanged in the live gate; (2) the worker's client and the guard → the in-process official
+   tests. `TokenVerifier(token_type=…)`, `read_verifier(kc, urls)` and `WorkloadTokenSource.client_id` match their
+   callers (`production_app`, `worker.main`) and tests (`test_verifier_t15.production_like` calls `read_verifier`).
+   `allowed_tool(job_type, run_state, tool)` is called in that order by `resolve_invocation` and the three test modules.
+   `assert_function_text(conn, signature, marker)` is called with `*HANDLE_BINDING` by mcp-read and by the live round
+   trip; `HANDLE_BINDING[1]` is a substring of 0009's `JOB_READ_0009` and of no earlier body (a unit test).
+   `handlers.Deps(..., worker_name, workload_azp, ...)` is built with the keyword in `main` and the four tests. Task 3's
+   helpers `QUERY`, `free_port`, `raw_headers`, `tools_list`, `worker_token` are imported by Task 4 under those names
+   (`raw_headers` takes the method as its third argument); Task 1's `FIXTURES`, `ISSUER`, `RESOURCE` and `KeyedVerifier`
+   by Task 2; `tests.plan_e.test_transitions_table. REVISIONS` by Task 2's newest-marker test.
+4. **Review Focus.** (1) the replay after the outcome → R105's rewritten step, the R006 populated upgrade's refusal
+   and the exhaustive allowlist (Task 2), with `test_mcp_write_live.py`'s direct calls (the execution layer only)
+   unchanged in the live gate; (2) the worker's client and the guard → the in-process official
    client (Task 1), R105 and Task 4; (3) the guard before auth → Task 1's first HTTP test and Task 3's raw POSTs; (4) a
-   handle in a log → Task 3's DEBUG capture, Task 2's refusal log line, Task 4's child log; (5) a database before 0009 →
+   handle in a log → Task 3's DEBUG capture with uvicorn's records required, Task 2's refusal log line, Task 4's
+   redacted child log; (5) a database before 0009 →
    Task 2's startup tests and the live round trip.
 5. **Known risks the executor should watch** (none changes a ruling):
    - The live tests of Tasks 2-4 were written against the real fixtures, helpers and SDK but could not be run in the
      dry run; their first live run is in execution. The in-process unit tests of Task 1 exercise the same guard, SDK
      ladder, bearer middleware and official client, so the HTTP shapes (the raw `tools/list` body and headers, the
      `-32020` and `-32022` codes, the 401 header) were measured there.
-   - `test_r027_no_log_record_carries_the_handle` captures every record at DEBUG before any redaction filter; if a
-     library logs request headers at DEBUG in some path the dry run did not reach, the test fails. That is a finding
-     to report (and to fix by redaction or a logger level), never a reason to raise the capture level.
+   - `test_r027_no_log_record_carries_the_handle` runs the server with uvicorn at DEBUG, makes uvicorn's loggers
+     propagate for its duration (an earlier test's default uvicorn config stops them) and restores both afterwards;
+     the dry run measured that the same set-up captures `uvicorn.access`, `uvicorn.error`, `mcp.*` and `httpx2` records.
+     If a library logs request headers at DEBUG on a path the dry run did not reach, the test fails: a finding to
+     report (and to fix by redaction or a logger level), never a reason to raise the capture level.
    - Task 3's handle test moves the global test clock 120 s and resets it in `finally`; it relies on the suite running
      tests one at a time, as it does. The handle's lease is taken for 600 s so the clock step expires the handle, not
      the lease.
    - Task 4's child process inherits this session's environment through `process_environment()` (the `env` fixture
      exported `PROFILE=test` and the test databases); a port taken between `free_port()` and the child's bind would
      fail the readiness wait loudly within 60 s, not hang. The child is terminated in `finally` and killed after 15 s.
-   - R105's replay step now expects a refusal (ruling (a) above); if the controller overrules (a), the binding's
-     condition and the run-state rule change and R105's step stays as it was.
+   - R105's replay step and the R006 populated upgrade now expect a refusal (ruling (a) above); if the controller
+     overrules (a), the binding's condition and the run-state rule change and both steps stay as they were.
+   - `serving()` turns uvicorn's `sys.exit` on a failed lifespan start into a `RuntimeError`, so a missing revision or
+     an unreachable realm fails the test with its purges run, instead of a SystemExit leaving the event loop.
    - `assert_function_text` reads `pg_proc.prosrc`; the round trip runs it against the database at 0008 and at 0009 as
      `mcp_read`, which is the first live proof that the catalog is readable by that role.
 
+## Round 1 changes
+
+Inputs: the controller's rulings on the round-1 static review (`round1-rulings.md`: REVISE, 1 Blocking, 3 Important,
+11 Minor, all accepted) and the critic's evidence (`round1-static.md`). Every ruling is applied in this text; nothing
+was declined. The plan was re-applied task by task to a `git archive` copy of `afd7aaf` with `ruff format` between
+tasks: every quoted old text matched once, `ruff format` changed nothing, ruff, mypy strict and `verify_handoff` passed
+after every task, every red step was reproduced, and the dev counts below are the measured ones.
+
+- **B1 (Task 2; Global Constraints; ruling (a); Review Focus 1).** `tests/e2e/test_migrations_and_persistence.py::
+  test_r006_populated_revision_1_database_upgrades_in_place` seeds its migrated SUCCEEDED run's execute job finished,
+  which 0009 refuses. Task 2 Step 5 Edit 4 now asserts that refusal (`HandleRejected` from `lookup_action`), reopens the
+  job and asserts the grant, as the critic proposed; the module is in Task 2's Files, its commit and the Global
+  Constraints' list of edited tests. The live counts were never short a test, but every live gate from Task 2 on would
+  have been red; they now follow from the corrected dev counts.
+- **I1 (Tasks 1, 5; the Architecture, ruling 2, erratum 74).** mcp-read's verifier is built by one function,
+  `ops_mcp_read.server.read_verifier(kc, urls)`, which `production_app` calls and `test_verifier_t15.production_like`
+  calls with a stub `Keycloak` and `Urls`, so the `typ` refusals run through the real wiring; the new
+  `test_the_sdk_resource_check_is_on` pins `validate_token_resource is True` on the built server. `read_verifier`,
+  `validate_token_resource=True` and the new `McpVerifier` docstring moved from Step 8 to Step 6 (Step 6 makes the
+  verifier tests pass). `McpVerifier`'s docstring, erratum 74, the R026 note, the handoff note, the runbook and
+  ARCHITECTURE now credit the refusal to `McpVerifier`'s own `aud` check and call the SDK's resource check a second
+  layer that cannot fire while the stamp is the server's own URL.
+- **I2 (Task 3; Task 4's docstring; Review Focus 4; the R027 note; the runbook; the self-review).** `serving()` takes a
+  `log_level`; the log test runs it at `"debug"`, makes uvicorn's four loggers propagate for its duration (an earlier
+  test's default uvicorn dictConfig stops `uvicorn` and `uvicorn.access` propagating, measured in the dry run) and
+  restores their levels and propagation in `finally`, and fails unless `uvicorn`, `mcp` and `httpx2` records were
+  captured. Its docstring, `serving()`'s and the runbook's say that uvicorn's TRACE level logs headers and is enabled
+  nowhere. The child process's log is described as written through its redaction filter, a weaker check.
+- **I3 (Task 2; Task 5; Review Focus 1; ruling (a)).** Task 2 Step 5 Edit 5 rewrites `execution.py`'s replay rule: the
+  stored branch is unreachable through the tool once the outcome is recorded, which production never needed, and
+  reachable by a direct caller or a second call inside one open job. R105's comment, the mcp-write README edit, the
+  handoff note and Review Focus 1 say that through the tool a replay is answered only while the run is APPROVED or
+  EXECUTING, and that `test_mcp_write_live.py`'s direct calls prove the execution layer, not the tool.
+- **M1 (Task 3).** The R085/R131 test stages a recover job for the approved run (superuser insert, dedup key
+  `<uuid>:timeout`), mints a write handle for it under the run's lease and asserts it is refused at mcp-read; the R131
+  note, ruling 10 and the self-review name both handle types.
+- **M2 (Task 4; the R026 note; ruling 14).** The R026 test mints a valid read handle and posts a raw `tools/call` of
+  `search_procedures` carrying it with each foreign token (401 `invalid_token`), then the same call with the worker's
+  token, whose result envelope is `ok`. Task 1's HTTP test posts the same raw `tools/call` shape in-process (200, the
+  envelope refusing the missing handle), so the live body is measured.
+- **M3 (Tasks 3, 4).** The protocol test requests `migrated`; the R026 test now requests `app_conn`, which depends on
+  it.
+- **M4 (Task 3).** `serving()` runs uvicorn through `guarded()`, which turns uvicorn's `sys.exit` on a failed lifespan
+  start into a `RuntimeError`, and settles the task with `asyncio.wait` (never a cancel); the comment says why.
+- **M5 (the runbook; Global Constraints).** "Every refusal of a presented handle"; a call without a handle gets the same
+  code with "missing invocation handle".
+- **M6 (STATUS).** The finished-job refusal is attributed to the definer, the others to HTTP.
+- **M7 (erratum 76, short and full).** "At the start of every MCP call (`persistence.resolve_invocation`)", with the
+  definers' own resolutions named as not applying it.
+- **M8, M10 (Task 2).** `test_allowlist.py`'s docstring matches its test; the handle is bound to booleans before the
+  assertions.
+- **M9 (Task 2).** `test_the_newest_body_of_resolve_handle_carries_the_startup_marker` walks `REVISIONS` and requires
+  the newest `_resolve_handle` body to carry `HANDLE_BINDING[1]`; the comment at `HANDLE_BINDING` says a later body must
+  keep the text or change it in the same commit.
+- **M11 (the runbook; the R027 note; Task 1).** The runbook's query says it needs the owner's migration; the new unit
+  test `test_the_model_request_has_no_field_for_a_handle` pins `DraftRequest`'s four fields, and the R027 note cites it.
+- **Step Expected lines re-measured.** Task 1 Step 5 `9 failed` (all `AttributeError`), Step 6 `9 passed`, Step 8
+  `21 passed`, Step 9 `2 failed, 1 passed`, Step 10 `47 passed`; Task 2 Step 4 `51 passed`; the other red steps
+  print what round 0 recorded.
+- **Counts.** Dev (measured): Task 1 1056/154, Task 2 1070/157, Task 3 1070/162, Task 4 1070/164, Task 5 1070/164. Live
+  (arithmetic): 1189, 1206, 1211, 1213, with 21 skipped. Errata keep their numbers (72-81); 74 and 76 are reworded.
+
+## Round 1 open points
+
+- No live step has run in any dry run; the new and reworked live tests of this round (the R006 refusal, the recover
+  handle, the DEBUG capture with uvicorn's records required, the R026 `tools/call`, the guarded start) are first
+  exercised in execution.
+- The DEBUG capture changes uvicorn's logger levels and propagation for its duration and restores them; another test
+  that relied on uvicorn's default propagation after it would not notice, since both are put back exactly.
