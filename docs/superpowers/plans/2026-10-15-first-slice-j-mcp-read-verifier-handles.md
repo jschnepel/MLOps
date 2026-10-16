@@ -53,10 +53,11 @@ additions below win where the two differ:
   **nothing here sends anything to an external system or a person** (BS:730).
 - **Secrets** live only as files under `OPS_SECRETS_DIR`. No secret, token, raw handle, session id or password in an
   environment variable, a command line, a log line, an exception message, an assertion operand, an evidence file or a
-  document. A test that checks a handle or token is absent from text binds the verdict to a boolean or a list of
-  indexes first, so a failure never prints the value (pytest prints assertion operands). The child process of Task 4
-  gets its secrets the way the skeleton's children do: the environment names the secrets directory, the files hold
-  the values.
+  document. A test that checks a handle or token is absent from text binds the verdict to a boolean or a list of indexes
+  first, so a failure never prints the value (pytest prints assertion operands). The one exception is pytest's
+  captured-log report when the DEBUG log test fails: it prints the record that held the test handle (Task 3's docstring
+  and the Self-review's known risks say so). The child process of Task 4 gets its secrets the way the skeleton's
+  children do: the environment names the secrets directory, the files hold the values.
 - **Clock.** Every lease, expiry and fence comparison in SQL uses `app.current_time()` (unchanged in 0009). A test that
   moves `app.test_clock` does so only while no other lease matters and resets it in `finally` (the offset is global).
 - **One string per function**, binds and the ISC004 rule exactly as in Plan E; `tests/plan_e/test_transitions_table.py`
@@ -341,23 +342,23 @@ Task 5 Step 3's "Plan J executed" block; in short:
 ## Task overview
 
 - **Task 1:** the debt list; the protocol-version guard on both servers; mcp-read's verifier; the workload azp at
-  mint; `tests/plan_j`. Tests: `test_protocol_guard.py` 8, `test_verifier_t15.py` 9, `test_mcp_read_http.py` 4,
-  `test_worker_azp.py` 3. Dev gate after: 1056 passed, 154 skipped; live 1189/21 (arithmetic).
+  mint; `tests/plan_j`. Tests: `test_protocol_guard.py` 8, `test_verifier_t15.py` 10, `test_mcp_read_http.py` 4,
+  `test_worker_azp.py` 3. Dev gate after: 1057 passed, 154 skipped; live 1190/21 (arithmetic).
 - **Task 2:** the run-state allowlist, revision 0009, the startup check, R105's replay step, the R006 populated
   upgrade's handle step, `execution.py`'s replay docstring. Tests: `test_allowlist.py` 6, `test_migration_0009.py` 5,
   `test_mcp_read_startup.py` 2, the transitions module +1 (parametrised); live `test_migration_0009_live.py` 3. Dev
-  1070/157, live 1206/21 (arithmetic).
+  1071/157, live 1207/21 (arithmetic).
 - **Task 3:** the handle, allowlist, ACL, protocol and log cases at mcp-read over HTTP. Tests: live
-  `test_mcp_read_t15_live.py` 5. Dev 1070/162, live 1211/21 (arithmetic).
+  `test_mcp_read_t15_live.py` 5. Dev 1071/162, live 1212/21 (arithmetic).
 - **Task 4:** the independent process and the foreign tokens. Tests: live `test_mcp_read_process_live.py` 2. Dev
-  1070/164, live 1213/21 (arithmetic).
+  1071/164, live 1214/21 (arithmetic).
 - **Task 5:** handoff records, acceptance rows, errata 72-81, runbook, history, READMEs, the `TODO(T15)` markers,
   final gates. No tests.
 
-The arithmetic, once: dev passed 1032 + 24 (Task 1: 8 + 9 + 4 + 3) = 1056, + 14 (Task 2: 6 + 5 + 2 + 1) = 1070, + 0
-(Tasks 3 and 4) = 1070; dev skipped 154, + 3 = 157, + 5 = 162, + 2 = 164. The live gate's passed count is the dev count
+The arithmetic, once: dev passed 1032 + 25 (Task 1: 8 + 10 + 4 + 3) = 1057, + 14 (Task 2: 6 + 5 + 2 + 1) = 1071, + 0
+(Tasks 3 and 4) = 1071; dev skipped 154, + 3 = 157, + 5 = 162, + 2 = 164. The live gate's passed count is the dev count
 plus the live-gated tests (the dev skips minus the 21 that skip in both gates: 133 today; 133, 136, 141, 143 after
-Tasks 1-4), so 1189, 1206, 1211, 1213, always with 21 skipped. The dev numbers were measured on a scratch copy; the
+Tasks 1-4), so 1190, 1207, 1212, 1214, always with 21 skipped. The dev numbers were measured on a scratch copy; the
 live ones are not measured (see "Counts").
 
 ---
@@ -685,8 +686,11 @@ leave `token_type` unset.
 """
 
 import asyncio
+from pathlib import Path
+from typing import Any
 
 import pytest
+from ops_core import settings
 from ops_core.settings import Keycloak, Urls
 from ops_core.tokens import TokenRejected, TokenVerifier, WorkloadTokenSource
 from ops_mcp_read import server
@@ -703,10 +707,12 @@ URLS = Urls(
 )
 
 
+KC = Keycloak(base_url="http://localhost:18080", issuer=ISSUER, server_url="http://127.0.0.1:18080")
+
+
 def production_like() -> TokenVerifier:
     """`ops_mcp_read.server.read_verifier`, the one `production_app` uses, with the synthetic key installed."""
-    kc = Keycloak(base_url="http://localhost:18080", issuer=ISSUER, server_url="http://127.0.0.1:18080")
-    verifier = server.read_verifier(kc, URLS)
+    verifier = server.read_verifier(KC, URLS)
     verifier.install_keys({"keys": [JWK1]})
     return verifier
 
@@ -757,13 +763,32 @@ def test_the_sdk_resource_check_is_on() -> None:
     assert mcp.settings.auth is not None and mcp.settings.auth.validate_token_resource is True
 
 
+def test_production_app_builds_its_verifier_through_read_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tests above pin `read_verifier`; this pins that the app that runs uses it (a refactor that inlined a
+    `TokenVerifier` without `token_type` would pass every other unit and live test, since live tokens are `Bearer`)."""
+    calls: list[tuple[Any, Any]] = []
+    real = server.read_verifier
+
+    def recording(kc: Keycloak, urls: Urls) -> TokenVerifier:
+        calls.append((kc, urls))
+        return real(kc, urls)
+
+    monkeypatch.setattr(settings, "keycloak", lambda: KC)
+    monkeypatch.setattr(settings, "urls", lambda: URLS)
+    monkeypatch.setattr(settings, "fixtures_dir", lambda: Path("data/handoff-fixtures"))
+    monkeypatch.setattr(server, "read_verifier", recording)
+    server.production_app()
+    assert calls == [(KC, URLS)]
+
+
 def test_the_token_source_names_its_client() -> None:
     assert WorkloadTokenSource(token_url="u", client_id="ops-worker", client_secret="s").client_id == "ops-worker"
 ```
 
 Run: `uv run python -m pytest tests/plan_j/test_verifier_t15.py -q`
-Expected: `9 failed` (`AttributeError: module 'ops_mcp_read.server' has no attribute 'read_verifier'` in the eight tests
-that build the verifier, `AttributeError: 'WorkloadTokenSource' object has no attribute 'client_id'` in the last).
+Expected: `10 failed` (`AttributeError: module 'ops_mcp_read.server' has no attribute 'read_verifier'` in the nine tests
+that build or wrap the verifier, `AttributeError: 'WorkloadTokenSource' object has no attribute 'client_id'` in the
+last).
 
 - [ ] **Step 6: The `typ` claim, the token source's client, the adapter's audience check and `read_verifier`**
 
@@ -948,7 +973,7 @@ def production_app() -> Starlette:
 ```
 
 Run: `uv run python -m pytest tests/plan_j/test_verifier_t15.py -q`
-Expected: `9 passed`.
+Expected: `10 passed`.
 
 - [ ] **Step 7: Write the failing HTTP tests**
 
@@ -1202,7 +1227,7 @@ with:
 ```
 
 Run: `uv run python -m pytest tests/plan_j -q`
-Expected: `21 passed`.
+Expected: `22 passed`.
 
 - [ ] **Step 9: Write the failing worker test**
 
@@ -1451,7 +1476,7 @@ with:
 ```
 
 Run: `uv run python -m pytest tests/plan_j tests/plan_h/test_worker_units.py tests/plan_f/test_grant_deferred.py -q`
-Expected: `47 passed` (24 in `tests/plan_j`, 23 in the two edited modules).
+Expected: `48 passed` (25 in `tests/plan_j`, 23 in the two edited modules).
 
 - [ ] **Step 11: Gates and commit**
 
@@ -1460,10 +1485,10 @@ Format, lint and count characters on `core/src/ops_core/mcp_protocol.py`, `core/
 under `tests/plan_j/` and the four edited test modules.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1056 passed, 154 skipped` (1032 + 24 in `tests/plan_j`).
+Expected: `CHECK: GREEN`; pytest `1057 passed, 154 skipped` (1032 + 25 in `tests/plan_j`).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1189 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 133
+Expected: `CHECK: GREEN`; pytest `1190 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 133
 live-gated tests, 154 − 21; the services changed, so the live suite runs: R105's worker passes the guard at both
 servers with the real client, and the existing mcp-read live test's persona and mcp-write tokens are still refused).
 Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases reports/events
@@ -2106,7 +2131,7 @@ Run: `uv run ruff check --select ISC004 --fix --unsafe-fixes migrations/app/vers
 Expected: `All checks passed!`
 
 Run: `uv run python -m pytest tests/plan_j tests/plan_e/test_transitions_table.py -q`
-Expected: `51 passed` (37 in `tests/plan_j`, 14 in the transitions module).
+Expected: `52 passed` (38 in `tests/plan_j`, 14 in the transitions module).
 
 - [ ] **Step 5: The tests and the docstring that described a replay the binding now refuses**
 
@@ -2198,8 +2223,9 @@ otherwise the same action id and bytes are re-sent and the destination's idempot
 action id for one run. Through the tool, the stored branch is unreachable once the outcome is recorded: the run has left
 APPROVED and EXECUTING, so `server.create_incident`'s `resolve_invocation` refuses the handle first (T15, Plan J ruling
 6), which production never needed (the worker skips the call past EXECUTING). A direct caller
-(tests/e2e/test_mcp_write_live.py) or a second call inside the same open job still reaches it. A transport failure after
-SENT is reported as UNKNOWN and recorded by nobody here: the worker holds `mark_unknown` (SA:467; Plan E ruling 6).
+(tests/e2e/test_mcp_write_live.py), or an overlapping call that resolved its handle before the outcome was recorded,
+still reaches it. A transport failure after SENT is reported as UNKNOWN and recorded by nobody here: the worker holds
+`mark_unknown` (SA:467; Plan E ruling 6).
 ```
 
 - [ ] **Step 6: The live revision test**
@@ -2368,11 +2394,11 @@ not a reason to weaken an assertion: stop and report.
 Format, lint and count characters on every file of this task (the revision after the ISC004 pass).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1070 passed, 157 skipped` (1056 + 13 in `tests/plan_j` + 1 parametrised revision; the
+Expected: `CHECK: GREEN`; pytest `1071 passed, 157 skipped` (1057 + 13 in `tests/plan_j` + 1 parametrised revision; the
 3 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1206 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 136
+Expected: `CHECK: GREEN`; pytest `1207 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 136
 live-gated tests, 157 − 21; R105 and the R006 populated upgrade run with their Step 5 edits). Then
 `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases reports/events
 reports/outbox`.
@@ -2556,6 +2582,11 @@ async def serving(log_level: str = "warning") -> AsyncIterator[str]:
     finally:
         server.should_exit = True
         await asyncio.wait({task})  # settled, never cancelled; a failed start was raised above
+    # Reached only when the body did not raise: a failure after the start (the main loop, the shutdown) surfaces here
+    # rather than only in uvicorn's log.
+    failure = None if task.cancelled() else task.exception()
+    if failure is not None:
+        raise failure
 
 
 async def worker_token(secret: Callable[[str], str]) -> str:
@@ -2757,17 +2788,21 @@ async def test_r027_no_log_record_carries_the_handle(
 ) -> None:
     """Every record of an answered call, a refused one and a refused raw POST, with the server's loggers and uvicorn's
     at DEBUG and no redaction filter installed: the handle is in none of them (SA:566). uvicorn's TRACE level, which
-    logs request headers, is enabled nowhere (`serve_app` pins "warning"); this test does not use it either."""
+    logs request headers, is enabled nowhere (`serve_app` pins "warning"); this test does not use it either.
+
+    If this test fails, pytest's "Captured log call" section prints the captured records, the offending one included:
+    treat that output as sensitive. The handle is a test handle on `ops_test`, revoked inside the test, and the worker
+    token expires within minutes, so nothing needs rotating."""
     caplog.set_level(logging.DEBUG)
     # uvicorn's loggers, as Config left them: an earlier test's default dictConfig stops "uvicorn" and "uvicorn.access"
     # propagating to the root logger caplog listens on, and Config(log_level=...) sets their levels process-wide.
     saved = {name: (logging.getLogger(name).level, logging.getLogger(name).propagate) for name in UVICORN}
-    for name in UVICORN:
-        logging.getLogger(name).propagate = True
     worker = await role_conn(Role.WORKER)
     _, _, run = await new_run(app_conn, ALPHA, api=await role_conn(Role.API))
     token = await worker_token(secret)
     try:
+        for name in UVICORN:  # inside the try: the finally below always puts them back
+            logging.getLogger(name).propagate = True
         async with serving(log_level="debug") as url:
             lease = await lease_for(worker, run)
             handle = await read_handle(worker, run, await investigate_job(app_conn, run), lease)
@@ -2811,10 +2846,10 @@ record that carries the handle, is a finding against Tasks 1-2 or the SDK: stop 
 Format, lint and count characters on `tests/e2e/test_mcp_read_t15_live.py` and `tests/plan_b/test_evidence.py`.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1070 passed, 162 skipped` (the 5 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `1071 passed, 162 skipped` (the 5 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1211 passed, 21 skipped` (arithmetic, not measured: 1070 plus the 141 live-gated
+Expected: `CHECK: GREEN`; pytest `1212 passed, 21 skipped` (arithmetic, not measured: 1071 plus the 141 live-gated
 tests, 162 − 21). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission
 reports/leases reports/events reports/outbox`.
 
@@ -3051,10 +3086,10 @@ outlived its test).
 Format, lint and count characters on `tests/e2e/test_mcp_read_process_live.py`.
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1070 passed, 164 skipped` (the 2 new live tests skip).
+Expected: `CHECK: GREEN`; pytest `1071 passed, 164 skipped` (the 2 new live tests skip).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1213 passed, 21 skipped` (arithmetic, not measured: 1070 plus the 143 live-gated
+Expected: `CHECK: GREEN`; pytest `1214 passed, 21 skipped` (arithmetic, not measured: 1071 plus the 143 live-gated
 tests, 164 − 21). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission
 reports/leases reports/events reports/outbox`.
 
@@ -3213,8 +3248,9 @@ full = {
         "search_procedures that carries a valid handle, which the worker's token then answers with data: the refusal "
         "comes before the tool and the handle lookup, and mcp-read forwards nothing downstream. Missing aud, azp "
         "ops-web, a non-access typ and another workload's azp are synthetic-key unit cases at mcp-read's "
-        "configuration (erratum 81); a token whose audiences lack the resource is 401 through McpVerifier's audience "
-        "check (the SDK's validate_token_resource, pinned on by a unit test, is a second layer).",
+        "configuration (erratum 81); every foreign token above is 401 through read_verifier's audience check (PyJWT's "
+        "aud), with McpVerifier's own aud check behind it (unit-tested with a verifier that checks no audience) and "
+        "the SDK's validate_token_resource (pinned on by a unit test) a third, inert layer.",
     ),
     "R027": (
         ["tests/e2e/test_mcp_read_t15_live.py", "reports/mcp-read/t15-mcp-read.txt",
@@ -3635,7 +3671,7 @@ refused before it learns anything, and nothing about the handle is written down.
 | R026 | Tokens for another audience or client are 401 on the request the worker's token passes |
 | R027 | A handle dies with its job, expiry, lease, fence and release, over HTTP; no log record holds it |
 | R085 | The tools come from the job type and run state; an unregistered tool is the SDK's error |
-| R131 (read half) | `mcp_read` executes two functions only; an execute handle at mcp-read is refused |
+| R131 (read half) | `mcp_read` executes two functions only; a recover and an execute handle at mcp-read are refused |
 
 ---
 
@@ -3783,7 +3819,7 @@ PYTHONUTF8=1 uv run python scripts/check.py --profile test
 uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts
 ```
 
-Expected: `CHECK: GREEN` with `1070 passed, 164 skipped`; `CHECK: GREEN` with `1213 passed, 21 skipped` (the live
+Expected: `CHECK: GREEN` with `1071 passed, 164 skipped`; `CHECK: GREEN` with `1214 passed, 21 skipped` (the live
 number is arithmetic until this run measures it); exit 0. Fill the `<dev passed>`, `<dev skipped>` and `<live
 passed>` placeholders of Steps 3 and 4 with the printed numbers. Then `git checkout -- reports/bootstrap
 reports/auth`; the live run rewrote `reports/skeleton` (R105's new replay line), `reports/admission`,
@@ -3810,34 +3846,35 @@ git commit -m "docs: close T15 - handoff records, acceptance rows, errata 72-81,
 
 1. **Spec coverage.** T15's instructions: "mcp-read on official SDK 2.x over Streamable HTTP pinned to 2026-07-28" →
    already real (Plan D), now with the version guard (Task 1) and an independent-process client (Task 4); "custom
-   TokenVerifier (iss, aud = MCP_READ_RESOURCE_URL, azp, exp)" → real since Plan D, now also the `typ` claim and the
-   SDK's resource check (Task 1); "X-Ops-Invocation as lookup key only" → unchanged, proved absent from every log record
-   (Task 3) and from the child's log (Task 4); "resolve_invocation with azp binding, server binding (read handles only)
-   and server-derived allowlist" → the azp and server bindings are 0007's, proved over HTTP (Task 3), the allowlist
-   gains the run state (Task 2) and the handle its job binding (revision 0009, Task 2); "DB role mcp_read holds
-   EXECUTE on resolve_invocation, asset_scope and search_procedures_scoped only" → today's set, `current_time` and
-   `resolve_invocation`, asserted live (Task 3; erratum 72, the other two with T16/T17). DoD 1 "Independent-process
-   client lists and calls tools" → Task 4. DoD 2 "Missing/wrong aud, browser token, replayed/expired/other-run/other-azp
-   handle all rejected" → missing aud and the browser token as synthetic unit cases (Task 1) plus the persona
-   stand-in and two wrong audiences live (Task 4); replayed (revoked), expired, other-run (Task 3, HTTP); other-azp at
-   the verifier (Task 1) and at the definer (`test_definers_write_path_live.py`, cited). DoD 3 "Protocol-version
-   header/_meta mismatch rejected" → Task 1 in-process and Task 3 live (absent, 2025, mismatch, matching). DoD 4
-   "mcp_read cannot execute any write-path function; an execute/recover handle presented to mcp-read is rejected" →
-   Task 3 (ACL, `42501`, a recover and an execute handle over HTTP, the latter also with a lying `server` column).
-   Review notes: 1 (error only
-   before a grant for authorized callers; auth failures never reveal an action id) → every refusal asserted as the
-   plain envelope with no `action_id` (Task 3), token refusals 401 (Task 4); 2 (attempt state) → the run-state half
-   here, the attempt-state half a T47 debt line (ruling 7, erratum 76); 3 (`asset_scope`, asset-sim,
-   `search_procedures_scoped`, no table access) → debt lines T16/T17 and the ACL test; 4 (job type from the jobs row,
-   server from the job type, the stored column a hint) → 0007's derivation, proved with the lying column (Task 3). The
-   six requirement rows by their expected evidence:
+   TokenVerifier (iss, aud = MCP_READ_RESOURCE_URL, azp, exp)" → real since Plan D, now also the `typ` claim and
+   `McpVerifier`'s audience check, with the SDK's resource check on as an inert second layer (Task 1); "X-Ops-Invocation
+   as lookup key only" → unchanged, proved absent from every log record (Task 3) and from the child's log (Task 4);
+   "resolve_invocation with azp binding, server binding (read handles only) and server-derived allowlist" → the azp and
+   server bindings are 0007's, proved over HTTP (Task 3), the allowlist gains the run state (Task 2) and the handle its
+   job binding (revision 0009, Task 2); "DB role mcp_read holds EXECUTE on resolve_invocation, asset_scope and
+   search_procedures_scoped only" → today's set, `current_time` and `resolve_invocation`, asserted live (Task 3; erratum
+   72, the other two with T16/T17). DoD 1 "Independent-process client lists and calls tools" → Task 4. DoD 2
+   "Missing/wrong aud, browser token, replayed/expired/other-run/other-azp handle all rejected" → missing aud and the
+   browser token as synthetic unit cases (Task 1) plus the persona stand-in and two wrong audiences live (Task 4);
+   replayed (revoked), expired, other-run (Task 3, HTTP); other-azp at the verifier (Task 1) and at the definer
+   (`test_definers_write_path_live.py`, cited). DoD 3 "Protocol-version header/_meta mismatch rejected" → Task 1
+   in-process and Task 3 live (absent, 2025, mismatch, matching). DoD 4 "mcp_read cannot execute any write-path
+   function; an execute/recover handle presented to mcp-read is rejected" → Task 3 (ACL, `42501`, a recover and an
+   execute handle over HTTP, the latter also with a lying `server` column). Review notes: 1 (error only before a grant
+   for authorized callers; auth failures never reveal an action id) → every refusal asserted as the plain envelope with
+   no `action_id` (Task 3), token refusals 401 (Task 4); 2 (attempt state) → the run-state half here, the attempt-state
+   half a T47 debt line (ruling 7, erratum 76); 3 (`asset_scope`, asset-sim, `search_procedures_scoped`, no table
+   access) → debt lines T16/T17 and the ACL test; 4 (job type from the jobs row, server from the job type, the stored
+   column a hint) → 0007's derivation, proved with the lying column (Task 3). The six requirement rows by their expected
+   evidence:
    - **R025** "An independent process lists and calls tools on both mcp-read and mcp-write over the network." → the
      mcp-read half, `test_r025_an_independent_client_lists_and_calls_over_the_network` (Task 4); mcp-write → T47.
    - **R026** "Use valid token for another service; resource server rejects it without downstream forwarding." →
      `test_r026_foreign_tokens_are_refused_before_the_tool` (Task 4) and Task 1's synthetic cases.
-   - **R027** "Replay with other workload/run/expired fence/tool; server rejects; handle absent from model/logs." →
-     Task 3's handle test (run, expiry, lease, fence, release), the definer's azp case, the allowlist's tool and
-     state, the log test; the model never receives a handle (the draft request has no field for it, FS §3.11).
+   - **R027** "Replay with other workload/run/expired fence/tool; server rejects; handle absent from model/logs." → Task
+     3's handle test (run, expiry, lease, fence, release), the definer's azp case, the allowlist's tool and state, the
+     log test; the model never receives a handle (`test_the_model_request_has_no_field_for_a_handle` pins
+     `DraftRequest`'s four fields, Task 1).
    - **R031** "Install locked SDKs and run network tests" → the network half for mcp-read (Task 4 asserts the locked
      versions while its client crosses the network).
    - **R085** "Worker-chosen tools ignored; handle used with a different azp rejected." → Task 2's exhaustive table,
@@ -3859,7 +3896,7 @@ git commit -m "docs: close T15 - handoff records, acceptance rows, errata 72-81,
    `handlers.Deps(..., worker_name, workload_azp, ...)` is built with the keyword in `main` and the four tests. Task 3's
    helpers `QUERY`, `free_port`, `raw_headers`, `tools_list`, `worker_token` are imported by Task 4 under those names
    (`raw_headers` takes the method as its third argument); Task 1's `FIXTURES`, `ISSUER`, `RESOURCE` and `KeyedVerifier`
-   by Task 2; `tests.plan_e.test_transitions_table. REVISIONS` by Task 2's newest-marker test.
+   by Task 2; `tests.plan_e.test_transitions_table.REVISIONS` by Task 2's newest-marker test.
 4. **Review Focus.** (1) the replay after the outcome → R105's rewritten step, the R006 populated upgrade's refusal
    and the exhaustive allowlist (Task 2), with `test_mcp_write_live.py`'s direct calls (the execution layer only)
    unchanged in the live gate; (2) the worker's client and the guard → the in-process official
@@ -3872,6 +3909,10 @@ git commit -m "docs: close T15 - handoff records, acceptance rows, errata 72-81,
      dry run; their first live run is in execution. The in-process unit tests of Task 1 exercise the same guard, SDK
      ladder, bearer middleware and official client, so the HTTP shapes (the raw `tools/list` body and headers, the
      `-32020` and `-32022` codes, the 401 header) were measured there.
+   - If `test_r027_no_log_record_carries_the_handle` fails, pytest's "Captured log call" section prints the captured
+     records, the one holding the handle included (round 2, m2): treat that output as sensitive. The handle is a test
+     handle on `ops_test`, revoked inside the test, and the worker token expires within minutes; nothing needs
+     rotating. Its docstring says the same.
    - `test_r027_no_log_record_carries_the_handle` runs the server with uvicorn at DEBUG, makes uvicorn's loggers
      propagate for its duration (an earlier test's default uvicorn config stops them) and restores both afterwards;
      the dry run measured that the same set-up captures `uvicorn.access`, `uvicorn.error`, `mcp.*` and `httpx2` records.
@@ -3959,3 +4000,36 @@ after every task, every red step was reproduced, and the dev counts below are th
   exercised in execution.
 - The DEBUG capture changes uvicorn's logger levels and propagation for its duration and restores them; another test
   that relied on uvicorn's default propagation after it would not notice, since both are put back exactly.
+
+## Round 2 changes
+
+Inputs: the round-2 static review (`round2-static.md`: ACCEPT, 0 Blocking, 0 Important, 7 Minor) and the controller's
+instruction to fold m1-m7 in as the critic proposes. All seven are applied; nothing was declined. The plan was
+re-applied task by task to a `git archive` copy of `afd7aaf` with `ruff format` between tasks: every quoted old text
+matched once, `ruff format` changed nothing, ruff, mypy strict and `verify_handoff` passed after every task, every red
+step was reproduced, and the dev counts below are measured.
+
+- **m1 (Task 3).** The log test flips uvicorn's propagation inside its `try`, after the set-up, so the `finally` that
+  restores levels and propagation always runs once anything was changed; round 1's open point ("both are put back
+  exactly") now holds on a failed set-up too.
+- **m2 (Task 3's docstring; the Global Constraints' secrets rule; the Self-review's known risks).** A failing log test's
+  "Captured log call" section prints the record that held the handle: the test handle on `ops_test`, revoked inside
+  the test, beside a worker token that expires within minutes. The output is to be treated as sensitive; nothing needs
+  rotating.
+- **m3 (Task 3).** `serving()` re-raises the server task's exception after a normal exit of its body, so a failure in
+  uvicorn's main loop or shutdown after a successful start is surfaced, not only logged; a failed start is still
+  raised by the polling loop, and the task is still settled with `asyncio.wait`, never cancelled.
+- **m4 (Task 1).** `test_production_app_builds_its_verifier_through_read_verifier` stubs `settings.keycloak`, `urls` and
+  `fixtures_dir`, wraps `server.read_verifier` with a recorder, calls `server.production_app()` and asserts one call
+  with the stubs, so the wiring `read_verifier`'s docstring describes is pinned.
+- **m5 (Task 2 Step 5 Edit 5).** `execution.py`'s docstring now says the stored branch is reached by a direct caller or
+  by an overlapping call that resolved its handle before the outcome was recorded.
+- **m6 (Self-review; ARCHITECTURE).** Self-review item 1 credits `McpVerifier`'s audience check with the SDK's resource
+  check as an inert second layer, and its R027 bullet cites the `DraftRequest` test; the ARCHITECTURE R131 row names a
+  recover and an execute handle; two wraps are fixed.
+- **m7 (the R026 note).** It credits `read_verifier`'s audience check (PyJWT's `aud`) for the live refusals, with
+  `McpVerifier`'s own check behind it and the SDK's resource check a third, inert layer. Erratum 74 stays as worded.
+- **Step Expected lines re-measured.** Task 1 Step 5 `10 failed`, Step 6 `10 passed`, Step 8 `22 passed`, Step 10
+  `48 passed`; Task 2 Step 4 `52 passed`; the other steps print what round 1 recorded.
+- **Counts.** Dev (measured): Task 1 1057/154, Task 2 1071/157, Task 3 1071/162, Task 4 1071/164, Task 5 1071/164. Live
+  (arithmetic): 1190, 1207, 1212, 1214, with 21 skipped.
