@@ -73,10 +73,14 @@ def test_the_tick_reclaims_even_when_the_sync_fails(monkeypatch: pytest.MonkeyPa
         calls.append("reclaim")
         return [uuid4()]
 
+    async def deliver_outbox(_deps: Any) -> None:
+        calls.append("outbox")
+
     monkeypatch.setattr(main, "run_sync", failed_sync)
     monkeypatch.setattr(sync, "purge_expired", purge)
     monkeypatch.setattr(leases, "reclaim", reclaim)
+    monkeypatch.setattr(main, "deliver_outbox", deliver_outbox)
     none: Any = None
     deps = main.Deps(conn=none, admin=none, issuer="iss", tick_seconds=30.0, worker_name="sweeper:test")
     asyncio.run(main.tick(deps))
-    assert calls == ["sync", "purge", "reclaim"]
+    assert calls == ["sync", "purge", "reclaim", "outbox"]  # T14's delivery runs whether or not the sync did
