@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 import psycopg
@@ -173,6 +173,14 @@ async def assert_relation(conn: Conn, name: str) -> None:
     row = await cur.fetchone()
     if row is not None and row["missing"]:
         raise PersistenceError(f"{name} is missing; run scripts/skeleton.py migrate for this profile")
+
+
+# Revision 0009 (T15): `_resolve_handle` binds the handle's job to its run and refuses a finished one. Both MCP servers
+# resolve handles through it, so each refuses to start without it, as the other services do without their revision's
+# relation (Plan J ruling 18). It lives here because the two servers never import each other (ADR-0001). A later
+# revision that re-creates `_resolve_handle` must keep this text or change it here in the same commit; a unit test
+# checks the newest body carries it.
+HANDLE_BINDING: Final = ("app._resolve_handle(text, text, text)", "j.run_id = v_ctx.run_id AND j.done_at IS NULL")
 
 
 async def assert_function_text(conn: Conn, signature: str, marker: str) -> None:

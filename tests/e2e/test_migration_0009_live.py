@@ -1,10 +1,10 @@
 """Revision 0009 against the per-session test database (OPS_LIVE=1; Plan J rulings 6 and 18).
 
 Catches: a downgrade that leaves the bound `_resolve_handle` behind or restores it differently from a database that
-never saw 0009 (or an upgrade that does not bring the bound body back); mcp-read's startup check passing on a
-database at 0008; a handle whose job the superuser points at another run's job, or whose job is finished, still
-resolving at the definer; and a resolution that ignores the run's state (an investigate handle once its run awaits
-input), while the definer itself still answers for that run.
+never saw 0009 (or an upgrade that does not bring the bound body back); either MCP server's startup check passing on
+a database at 0008, as its own role; a handle whose job the superuser points at another run's job, or whose job is
+finished, still resolving at the definer; and a resolution that ignores the run's state (an investigate handle once its
+run awaits input), while the definer itself still answers for that run.
 """
 
 import importlib.util
@@ -16,9 +16,9 @@ from uuid import uuid4
 import psycopg
 import pytest
 from ops_core import persistence, settings
+from ops_core.persistence import HANDLE_BINDING
 from ops_core.settings import Profile, Role
 from ops_core.states import RunState
-from ops_mcp_read.server import HANDLE_BINDING
 from psycopg import sql
 from psycopg.rows import dict_row
 
@@ -75,10 +75,11 @@ async def test_the_round_trip_restores_0008(app_conn: persistence.Conn, role_con
     from scripts.skeleton import downgrade, migrate
 
     superuser = settings.superuser_postgres()
-    mcp_read = await role_conn(Role.MCP_READ)
+    mcp_read, mcp_exec = await role_conn(Role.MCP_READ), await role_conn(Role.MCP_EXEC)
     head = await details(app_conn)
     assert MARKER in head["body"]
     await persistence.assert_function_text(mcp_read, SIGNATURE, MARKER)  # mcp-read starts on the head
+    await persistence.assert_function_text(mcp_exec, SIGNATURE, MARKER)  # and so does mcp-write
     try:
         downgrade("app", superuser, "0008_journal_outbox")
         # The restored body is 0007's text exactly (its stored source is what lies between the dollar quotes), and its
@@ -88,9 +89,13 @@ async def test_the_round_trip_restores_0008(app_conn: persistence.Conn, role_con
         assert await details(app_conn) == built_to_0008(superuser)
         with pytest.raises(persistence.PersistenceError, match="predates this service"):
             await persistence.assert_function_text(mcp_read, SIGNATURE, MARKER)  # mcp-read refuses 0008
+        with pytest.raises(persistence.PersistenceError, match="predates this service"):
+            await persistence.assert_function_text(mcp_exec, SIGNATURE, MARKER)  # mcp-write refuses 0008
     finally:
         assert migrate(Profile.TEST) == 0  # every later test needs the head
     assert await details(app_conn) == head  # the upgrade brings back exactly what the downgrade took
+    await persistence.assert_function_text(mcp_exec, SIGNATURE, MARKER)  # both servers start again at the head
+    await persistence.assert_function_text(mcp_read, SIGNATURE, MARKER)
 
 
 async def test_a_handle_resolves_only_for_its_own_runs_open_job(

@@ -21,6 +21,9 @@ PROTOCOL_VERSION: Final = "2026-07-28"  # AM-30; the worker's client pins the sa
 # not depend on the SDK, so the value is copied here.
 UNSUPPORTED_PROTOCOL_VERSION: Final = -32022
 HEADER: Final = b"mcp-protocol-version"  # ASGI header names arrive lower-case
+# The streamable HTTP endpoint: both servers pass it to the SDK as `streamable_http_path` and the guard matches it, so
+# the two cannot drift apart. `/mcp/` is the inner router's 307 to this path, where the guard then answers.
+MCP_PATH: Final = "/mcp"
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -54,7 +57,7 @@ def route_path(scope: Scope) -> str:
 class ProtocolVersionGuard:
     """Refuse a POST to the MCP path that does not carry exactly `MCP-Protocol-Version: 2026-07-28`."""
 
-    def __init__(self, app: ASGIApp, *, path: str = "/mcp") -> None:
+    def __init__(self, app: ASGIApp, *, path: str = MCP_PATH) -> None:
         """Wrap the SDK's app; `path` is the streamable HTTP endpoint it serves."""
         self._app = app
         self._path = path

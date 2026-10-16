@@ -28,7 +28,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.tools.base import Tool
 from ops_core import persistence, redaction, settings
 from ops_core.jobs import Tool as ToolName
-from ops_core.mcp_protocol import ProtocolVersionGuard
+from ops_core.mcp_protocol import MCP_PATH, ProtocolVersionGuard
 from ops_core.settings import Role
 from ops_core.tokens import Principal, TokenRejected, TokenVerifier
 from pydantic import AnyHttpUrl, ConfigDict, Field
@@ -40,11 +40,9 @@ from starlette.types import ASGIApp
 
 from ops_mcp_read import procedures
 
-# Revision 0009 (T15): `_resolve_handle` binds the handle's job to its run and refuses a finished one. Without it the
-# server would resolve handles the binding refuses, so it refuses to start, as the other services do without their
-# revision's relation (Plan J ruling 18). A later revision that re-creates `_resolve_handle` must keep this text or
-# change it here in the same commit; a unit test checks the newest body carries it.
-HANDLE_BINDING = ("app._resolve_handle(text, text, text)", "j.run_id = v_ctx.run_id AND j.done_at IS NULL")
+# Revision 0009's startup marker, kept under this name for callers that read it here; the value is core's, which
+# mcp-write checks too (Plan J ruling 18 and the final review).
+HANDLE_BINDING = persistence.HANDLE_BINDING
 
 
 class ToolResult(TypedDict):
@@ -216,7 +214,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
 
 def build_app(server: MCPServer, state: State) -> Starlette:
     """Mount the MCP transport beside health routes and own the database session and key loading."""
-    mcp_app = server.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True)
+    mcp_app = server.streamable_http_app(streamable_http_path=MCP_PATH, stateless_http=True, json_response=True)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: Starlette) -> AsyncIterator[None]:

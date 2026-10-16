@@ -1,11 +1,12 @@
 """Revision 0009 without a database (Plan J rulings 6 and 18): `_resolve_handle` is 0007's body with the job read bound
 to the handle's run and to an open job, it stays a helper granted to nobody, the downgrade puts 0007's body back, and
-mcp-read's startup check looks for text only this revision's body carries.
+the MCP servers' startup check looks for text only this revision's body carries.
 
 Catches: a revision that rewrites more of the body than the one read (the lease lock, the fence and expiry checks and
 the server binding are 0007's, proved live by Plan H), a body that grants EXECUTE on a helper, a downgrade that keeps
-the binding or touches a row, a startup marker that an older body also contains (mcp-read would start on 0008), and a
-later revision that re-creates `_resolve_handle` without the marker (mcp-read would refuse a fully migrated database).
+the binding or touches a row, a startup marker that an older body also contains (either MCP server would start on 0008),
+and a later revision that re-creates `_resolve_handle` without the marker (both would refuse a fully migrated
+database).
 """
 
 import importlib.util
@@ -14,7 +15,7 @@ from typing import Any
 
 import alembic.op
 import pytest
-from ops_mcp_read.server import HANDLE_BINDING
+from ops_core.persistence import HANDLE_BINDING
 
 from tests.plan_e.test_transitions_table import REVISIONS
 

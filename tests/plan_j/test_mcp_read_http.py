@@ -4,7 +4,8 @@ transport's per-request ladder), with a stub key source and no database (Plan J 
 Catches: the guard mounted after auth (an unauthenticated client would learn whether its token was good), auth
 skipped once the version is right, a header/`_meta` mismatch that the SDK no longer rejects, a token whose verified
 audiences lack this server's resource accepted, a raw `tools/call` shaped differently from what the live R026 test
-sends, the official client unable to list or call through the guard, and mcp-write left without the guard. The live
+sends, the official client unable to list or call through the guard, a `POST /mcp/` without the version header that
+reaches the SDK instead of the router's redirect, and mcp-write left without the guard. The live
 versions of these cases, with Keycloak's tokens over a socket, are tests/e2e/test_mcp_read_t15_live.py.
 """
 
@@ -95,6 +96,17 @@ def test_the_version_rule_comes_before_authentication() -> None:
         assert refused.status_code == 400 and refused.json()["error"]["code"] == -32022
         unauthenticated = client.post("/mcp", json=TOOLS_LIST, headers=headers(token=None))
         assert unauthenticated.status_code == 401 and "resource_metadata" in unauthenticated.headers["www-authenticate"]
+
+
+def test_a_trailing_slash_does_not_get_past_the_guard() -> None:
+    """`/mcp/` is not the guard's path, so the guard passes it on; the inner router answers it with a redirect to
+    `/mcp`, never the SDK's 200, and following the redirect meets the guard. Pinned because the redirect is the SDK's
+    and Starlette's behaviour, which a version bump could change (final review T1-a)."""
+    with TestClient(read_app(), base_url=BASE) as client:
+        slash = client.post("/mcp/", json=TOOLS_LIST, headers=headers(version=None), follow_redirects=False)
+        assert slash.status_code == 307 and slash.headers["location"].endswith("/mcp")
+        followed = client.post("/mcp/", json=TOOLS_LIST, headers=headers(version=None))
+        assert followed.status_code == 400 and followed.json()["error"]["code"] == -32022  # the guard's
 
 
 def test_the_ladder_and_the_resource_check_behind_the_guard() -> None:

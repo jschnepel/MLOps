@@ -7,9 +7,9 @@ is pointed at another run's job, past its expiry, under a lapsed lease or a move
 (revocation), or once its run left the job type's states; an execute or recover handle answered at mcp-read, also when
 its stored `server` column lies; a tool mcp-read does not register answered; an EXECUTE grant `mcp_read` holds beyond
 `current_time` and `resolve_invocation`; a POST whose protocol version is absent, handshake-era or contradicted by its
-`_meta` reaching the tool; and a raw handle in any log record of the exchange (uvicorn's included, at DEBUG). Every
-refusal of a presented handle must be the one plain `INVALID_HANDLE` envelope, with no hint of which check failed and
-never an `action_id` (SA:354-355).
+`_meta` reaching the tool; and a raw handle or the worker's token in any log record of the exchange (uvicorn's
+included, at DEBUG). Every refusal of a presented handle must be the one plain `INVALID_HANDLE` envelope, with no hint
+of which check failed and never an `action_id` (SA:354-355).
 """
 
 import asyncio
@@ -32,6 +32,7 @@ from mcp_types import CallToolResult
 from ops_core import persistence, privileges, settings
 from ops_core.jobs import Server
 from ops_core.mcp_protocol import PROTOCOL_VERSION
+from ops_core.redaction import RedactingFilter
 from ops_core.settings import Role
 from ops_core.tokens import WorkloadTokenSource
 from ops_mcp_read.server import production_app
@@ -133,6 +134,22 @@ def assert_refused(result: CallToolResult) -> None:
     assert "action_id" not in json.dumps(doc)
 
 
+async def job_at_mcp_exec(mcp_exec: persistence.Conn, handle: str) -> UUID:
+    """The positive control for a write handle: mcp-write's role resolves it at the definer, so the handle is live and
+    an mcp-read refusal of it is the server binding's, not a dead handle's."""
+    cur = await mcp_exec.execute("SELECT job_id FROM app.resolve_invocation(%s, 'ops-worker')", (handle,))
+    return UUID(str((await cur.fetchone())["job_id"]))
+
+
+async def set_server(app_conn: persistence.Conn, handle: str, server: str) -> None:
+    """The superuser rewrites the handle's stored `server` column; exactly its one row must change."""
+    cur = await app_conn.execute(
+        "UPDATE app.invocation_context SET server = %s WHERE handle_sha256 = %s",
+        (server, persistence.handle_hash(handle)),
+    )
+    assert cur.rowcount == 1
+
+
 def assert_answered(result: CallToolResult) -> None:
     doc = result.structured_content
     assert not result.is_error and isinstance(doc, dict) and doc["status"] == "ok"
@@ -149,8 +166,8 @@ async def set_job(app_conn: persistence.Conn, handle: str, job: UUID) -> None:
 async def test_r027_a_handle_dies_with_its_job_expiry_lease_fence_and_release(
     app_conn: persistence.Conn, role_conn: RoleConn, secret: Callable[[str], str], lines: list[str]
 ) -> None:
-    """Each cause is undone before the next (the job put back, the clock reset), and the same handle answers again
-    in between, so each refusal is that cause's."""
+    """Each cause is undone before the next (the job put back, the clock reset), and a call answers in between (the
+    same handle until its lease lapses, then a fresh one under the new lease), so each refusal is that cause's."""
     api, worker, harness = await role_conn(Role.API), await role_conn(Role.WORKER), await role_conn(Role.TEST_HARNESS)
     _, _, run = await new_run(app_conn, ALPHA, api=api)
     _, _, other = await new_run(app_conn, ALPHA, api=api)
@@ -189,7 +206,10 @@ async def test_r027_a_handle_dies_with_its_job_expiry_lease_fence_and_release(
 async def test_r085_r131_the_server_derives_tool_server_and_state_from_the_job(
     app_conn: persistence.Conn, role_conn: RoleConn, secret: Callable[[str], str], lines: list[str]
 ) -> None:
-    api, worker = await role_conn(Role.API), await role_conn(Role.WORKER)
+    """Each write-handle refusal has its positive control beside it: mcp-write's role resolves the same handle at the
+    definer, so the handle was live when mcp-read refused it; the lying column is shown to have landed (mcp-write's
+    role now refuses the handle too) and, put back, the handle resolves there again."""
+    api, worker, mcp_exec = await role_conn(Role.API), await role_conn(Role.WORKER), await role_conn(Role.MCP_EXEC)
     _, run, _, execute_handle = await approved_run(app_conn, api=api, worker=worker)
     _, _, read_run = await new_run(app_conn, ALPHA, api=api)
     token = await worker_token(secret)
@@ -207,14 +227,19 @@ async def test_r085_r131_the_server_derives_tool_server_and_state_from_the_job(
             recover_handle = await persistence.mint_handle(
                 worker, run_id=run, job_id=recover, server=Server.WRITE, azp="ops-worker", fence=fence
             )
+        cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s AND type = 'execute'", (run,))
+        execute = UUID(str((await cur.fetchone())["id"]))
         async with serving() as url:
             assert_refused(await call(url, token, recover_handle))  # a recover handle at mcp-read (R131, DoD 4)
+            assert await job_at_mcp_exec(mcp_exec, recover_handle) == recover  # ... while it is live at mcp-write
             assert_refused(await call(url, token, execute_handle))  # an execute handle at mcp-read (R131)
-            await app_conn.execute(
-                "UPDATE app.invocation_context SET server = 'read' WHERE handle_sha256 = %s",
-                (persistence.handle_hash(execute_handle),),
-            )
+            assert await job_at_mcp_exec(mcp_exec, execute_handle) == execute  # ... while it is live at mcp-write
+            await set_server(app_conn, execute_handle, "read")
             assert_refused(await call(url, token, execute_handle))  # the lying column: the job type says write
+            resolve = "SELECT * FROM app.resolve_invocation(%s, 'ops-worker')"
+            assert await refused(mcp_exec, resolve, (execute_handle,)) == "OC008"  # the lie landed: write refuses too
+            await set_server(app_conn, execute_handle, "write")
+            assert await job_at_mcp_exec(mcp_exec, execute_handle) == execute  # put back, the handle is live again
             handle = await read_handle(
                 worker, read_run, await investigate_job(app_conn, read_run), await lease_for(worker, read_run)
             )
@@ -231,8 +256,8 @@ async def test_r085_r131_the_server_derives_tool_server_and_state_from_the_job(
                 )
             assert_refused(await call(url, token, handle))  # the run left investigate's states
         lines.append(
-            "R085/R131 refused over HTTP: recover and execute handles, lying server column, run state;"
-            " unknown tool: SDK"
+            "R085/R131 refused over HTTP: recover and execute handles (each live at mcp_exec), lying server column"
+            " (one row; refused at mcp_exec too, live again once put back), run state; unknown tool: SDK"
         )
     finally:
         await purge_run(app_conn, run)  # the seeded tenant ALPHA stays
@@ -303,13 +328,17 @@ async def test_r027_no_log_record_carries_the_handle(
     lines: list[str],
 ) -> None:
     """Every record of an answered call, a refused one and a refused raw POST, with the server's loggers and uvicorn's
-    at DEBUG and no redaction filter installed: the handle is in none of them (SA:566). uvicorn's TRACE level, which
-    logs request headers, is enabled nowhere (`serve_app` pins "warning"); this test does not use it either.
+    at DEBUG and no redaction filter on the capturing handler: neither the handle nor the worker's token is in any of
+    them (SA:566). uvicorn's TRACE level, which logs request headers, is enabled nowhere (`serve_app` pins "warning");
+    this test does not use it either.
 
     If this test fails, pytest's "Captured log call" section prints the captured records, the offending one included:
     treat that output as sensitive. The handle is a test handle on `ops_test`, revoked inside the test, and the worker
     token expires within minutes, so nothing needs rotating."""
     caplog.set_level(logging.DEBUG)
+    # The filter rewrites records in place, so one on caplog's handler would make "unredacted" false whatever the order
+    # the tests ran in; checked by type, not by trusting an earlier test to have restored the handlers.
+    assert not any(isinstance(f, RedactingFilter) for f in caplog.handler.filters)
     # uvicorn's loggers, as Config left them: an earlier test's default dictConfig stops "uvicorn" and "uvicorn.access"
     # propagating to the root logger caplog listens on, and Config(log_level=...) sets their levels process-wide.
     saved = {name: (logging.getLogger(name).level, logging.getLogger(name).propagate) for name in UVICORN}
@@ -332,11 +361,12 @@ async def test_r027_no_log_record_carries_the_handle(
         texts = [record.getMessage() + (record.exc_text or "") for record in caplog.records]
         names = {record.name.split(".")[0] for record in caplog.records}
         assert {"uvicorn", "mcp", "httpx2"} <= names  # the server's HTTP layer, the SDK and the client were captured
-        carrying = [i for i, text in enumerate(texts) if handle in text]  # indexes only: never the handle itself
+        # Indexes only, never a value: a failing assert prints its operands.
+        carrying = [i for i, text in enumerate(texts) if handle in text or token in text]
         assert carrying == []
         lines.append(
             f"R027 logs: {len(texts)} records at DEBUG (uvicorn, SDK, client) across ok, refused and raw calls; none"
-            " holds the handle"
+            " holds the handle or the worker's token"
         )
     finally:
         for name, (level, propagate) in saved.items():

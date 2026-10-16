@@ -10,9 +10,9 @@ audience or client (the persona token stands in for a browser token, ruling 14: 
 minted, the API stores none and minting one needs its client secret; a missing `aud` is the synthetic case in
 tests/plan_j/test_verifier_t15.py, ruling 15) answered with anything but 401 on a `tools/call` that carries a valid
 handle (the refusal comes before the tool and the handle lookup; mcp-read forwards nothing downstream in T15), and a
-handle in the child's own log. That log is written through the service's redaction filter (`serve()` installs it
-first) at uvicorn's "warning" level, so its check is weaker than the in-process DEBUG capture of
-tests/e2e/test_mcp_read_t15_live.py, which runs with no filter at all.
+handle or a token (the worker's, or a foreign one) in the child's own log. That log is written through the service's
+redaction filter (`serve()` installs it first) at uvicorn's "warning" level, so its check is weaker than the in-process
+DEBUG capture of tests/e2e/test_mcp_read_t15_live.py, which runs with no filter at all.
 """
 
 import asyncio
@@ -81,8 +81,9 @@ async def mcp_read_process(log: Path) -> AsyncIterator[str]:
         try:
             deadline = time.monotonic() + 60
             while not await asyncio.to_thread(healthy, f"http://127.0.0.1:{port}/health/ready"):
-                assert child.poll() is None, "mcp-read exited before it was ready"
-                assert time.monotonic() < deadline, "mcp-read was not ready within 60 s"
+                # The log's path, never its content: the child's log may hold what the leak checks look for.
+                assert child.poll() is None, f"mcp-read exited before it was ready; its log is {log}"
+                assert time.monotonic() < deadline, f"mcp-read was not ready within 60 s; its log is {log}"
                 await asyncio.sleep(0.25)
             yield f"http://127.0.0.1:{port}/mcp"
         finally:
@@ -117,10 +118,14 @@ async def test_r025_an_independent_client_lists_and_calls_over_the_network(
         doc = result.structured_content
         assert not result.is_error and isinstance(doc, dict) and doc["status"] == "ok"
         assert doc["data"]["results"][0]["evidence_id"] == "ALPHA-INCIDENT:v2:review"
-        leaked = handle in log.read_text(encoding="utf-8", errors="replace")
-        assert not leaked  # the child's own log, written through its redaction filter, never holds the handle
+        text = log.read_text(encoding="utf-8", errors="replace")
+        leaked = any(value in text for value in (handle, token))  # one boolean: a failing assert prints its operands
+        assert not leaked  # the child's own log, written through its redaction filter, holds neither
         assert (version("mcp"), version("mcp-types")) == ("2.3.0", "2.3.0")  # AM-30's lock, R031
-        lines.append("R025/R031: child process; official client mode 2026-07-28 listed [search_procedures], called ok")
+        lines.append(
+            f"R025 (read half; mcp-write with T47) / R031 (network half): child process; official client mode"
+            f" {PROTOCOL_VERSION} listed [search_procedures], called ok"
+        )
     finally:
         await purge_run(app_conn, run)
 
@@ -152,8 +157,9 @@ async def test_r026_foreign_tokens_are_refused_before_the_tool(
     token = await worker_token(secret)
     worker = await role_conn(Role.WORKER)
     _, _, run = await new_run(app_conn, ALPHA, api=await role_conn(Role.API))
+    log = tmp_path / "mcp-read.log"
     try:
-        async with mcp_read_process(tmp_path / "mcp-read.log") as url, httpx2.AsyncClient() as http:
+        async with mcp_read_process(log) as url, httpx2.AsyncClient() as http:
             handle = await read_handle(worker, run, await investigate_job(app_conn, run), await lease_for(worker, run))
 
             def headers(bearer: str) -> dict[str, str]:
@@ -163,11 +169,15 @@ async def test_r026_foreign_tokens_are_refused_before_the_tool(
             answers = {}
             for name, value in foreign.items():
                 response = await http.post(url, json=tools_call(), headers=headers(value))
-                answers[name] = (response.status_code, 'error="invalid_token"' in response.headers["www-authenticate"])
+                challenge = response.headers.get("www-authenticate", "")  # a missing header fails the comparison
+                answers[name] = (response.status_code, 'error="invalid_token"' in challenge)
             accepted = await http.post(url, json=tools_call(), headers=headers(token))
         assert answers == {name: (401, True) for name in foreign}  # names and statuses only: never a token
         assert accepted.status_code == 200  # the worker's token, the same call and handle: the refusals are the tokens'
         assert accepted.json()["result"]["structuredContent"]["status"] == "ok"  # the handle was good all along
+        text = log.read_text(encoding="utf-8", errors="replace")
+        leaked = any(value in text for value in (*foreign.values(), token, handle))  # one boolean, never a value
+        assert not leaked  # the child's log holds no foreign token, the worker's token or the handle
         lines.append(
             "R026: persona, ops-mcp-write and ops-mcp-read tokens 401 invalid_token on a tools/call with a valid"
             " handle; the worker's token answers ok"

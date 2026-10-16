@@ -1,10 +1,11 @@
 """The worker binds every handle it mints to its own workload client, not to a literal (Plan J ruling 17), and never
 hands a handle to the model (R027: "handle absent from model").
 
-Catches: an `azp` written into `invocation_context` that differs from the client id the worker's tokens are issued
-to, which `_resolve_handle` compares with the presented token's `azp`: a renamed client would refuse every call, and
-a literal would keep accepting a client the worker no longer uses; and a field added to the model's request that could
-carry a handle.
+Catches: an `azp` written into `invocation_context` that is not the client id of the token source the worker presents
+(`_resolve_handle` compares the two), and a field added to the model's request that could carry a handle. It proves
+only that the mint follows the token source. The mint is one of four places a rename of the worker client touches; the
+other three still name `"ops-worker"`: `main.py`'s token source, `read_verifier`'s `allowed_azp` and the write-path
+definers' literal (T47 debt, Plan J final review).
 """
 
 import asyncio
