@@ -20,6 +20,7 @@ from mcp.client.streamable_http import streamable_http_client
 from ops_core import persistence, settings
 from ops_core.jobs import Server
 from ops_core.settings import Role
+from ops_sweeper import wakeups
 from ops_worker.mcp import failure_leaf
 
 from scripts.skeleton import Skeleton, orphan_keys
@@ -49,6 +50,11 @@ def skeleton(migrated: None) -> Iterator[Skeleton]:
     own sweeper re-stamped them (this module opts out of the autouse stamp)."""
     with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
         conn.execute("UPDATE app.memberships SET synced_at = app.current_time() - interval '10 minutes'")
+        # T14: the skeleton's sweeper re-arms what the sweep's own query finds (here with a grace of 0, as the
+        # superuser, so in every tenant), and its worker would run it here; a run an earlier test left behind must fail
+        # this module loudly instead of joining it (round 1, M8; round 2, N4).
+        leftover = len(conn.execute(wakeups.LOST, (0,)).fetchall())
+        assert leftover == 0, f"{leftover} run(s) with a lost wake-up were left by an earlier test"
     sk = Skeleton()
     sk.start()
     try:
