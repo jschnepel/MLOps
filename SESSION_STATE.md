@@ -552,6 +552,44 @@ Allowed shortcuts in T13, each with its owning task:
   and a spent budget all end as the same FAILED reason, and no run event, distinct reason or metric records a loss or
   a reclaim → T28.
 
+## Plan I debt list (T14; committed before coding) [R6-B7]
+
+Allowed shortcuts in T14, each with its owning task:
+- the worker still finishes a `resume_input` job it does not handle, and the wake-up sweep does not look at
+  AWAITING_INPUT runs (no handler consumes the reply yet) → T20;
+- the worker still finishes a `recover` job it does not handle, and OUTCOME_UNKNOWN and ESCALATED runs are not swept
+  (the recover cadence of SA:506 included) → T22;
+- the wake-up sweep re-arms the `investigate` job of a run that sits in QUEUED with every investigate job done; a run
+  that T20's `resume_input` handler moves back to QUEUED would meet the same predicate, so T20 decides whether that is
+  its wake-up → T20;
+- the decision-to-processing crash test of R023 (inject a crash between decision, event, checkpoint and job
+  acknowledgement; the sweeper resumes exactly the accepted event) → T21;
+- `outcomes.Event` validates neither `append_event`'s input (the function assigns id, sequence and instant) nor the
+  events route's output → T26 (response schemas);
+- SSE, `Last-Event-ID` replay and the cursor-expiry reset (R053, BS:518's 200-event page) → T27; the events route
+  keeps `after`/`limit ≤ 500` → T26/T27;
+- no event and no outbox row is ever deleted (BS:578's 30-day replay, the outbox's delivered and dead-lettered rows)
+  → T32;
+- the only sink is `LogSink` (one log line per delivery, no egress); recipient mapping from approved identities,
+  per-channel redaction and a destination's own deduplication → T39 (Slack, M15);
+- a delivery slower than the 30 s outbox lease can be delivered twice (at-least-once, BS:76), and so can a delivery
+  whose result unit fails after the sink succeeded → T39 (a real channel's deduplication);
+- `run.escalated` and `run.abandoned_unverified` are notification triggers with no emitter yet (`escalate_run` and
+  `resolve_escalation` do not exist); today a run escalates only through `record_outcome`'s CONFLICT, whose
+  `action.conflict` is a trigger → T22;
+- a grant refusal the execute handler takes as final (an inactive membership, a missing approval) finishes the job
+  and leaves the run APPROVED, so the wake-up sweep re-dispatches it until the job has been claimed
+  `OPS_WAKEUP_MAX_ATTEMPTS` times; moving such a run out of APPROVED (BLOCKED_REVIEW, AM-10) so the sweep stops → T21;
+- `_idempotent`'s "not reusable yet" refusal tells the client to use a new key for a key that just became reusable
+  (harmless; moved from the Plan G line that named T14/T28) → T28;
+- operator visibility of a dead letter is the `notification.failed` event plus a log line; a wake-up past its re-arm
+  cap is a log line once per tick; dashboards and metrics → T28/T29;
+- `_append_event` bounds the payload's keys and `status`, not its size (BS:514 "bounded safe payload") → T45;
+- incident-sim's fault route accepts any `FaultKind`, so `outbox_sink_fail` can be armed there and is never consumed
+  → T47;
+- the dev database stays at revision 0005 until the owner migrates it (0006, 0007 and 0008 pending); until then the
+  API, the sweeper, the worker and mcp-write refuse to start on it → owner input.
+
 ## Environment (observed)
 
 | Item | Observed |
