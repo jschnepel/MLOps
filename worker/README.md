@@ -22,6 +22,7 @@ makes the run's deferred jobs due at once (T14). Polling is the v1 wake mechanis
 its run is re-armed by the sweeper (`docs/runbooks/events-and-outbox.md`).
 `investigate`: read tool on mcp-read → fake draft under the model permit (`MODEL_MODE=fake`, the only route until
 T19) → frozen proposal → AWAITING_APPROVAL. `execute`: `create_incident` on mcp-write.
-One `ops-worker` token carries both MCP audiences; one handle per call, bound to the lease's fence. Settings:
+One `ops-worker` token carries both MCP audiences; one handle per call, bound to the lease's fence and to the client
+id the tokens are issued to (T15). Settings:
 `OPS_LEASE_SECONDS` (30), `OPS_HEARTBEAT_SECONDS` (10), `OPS_LOOP_STALL_SECONDS` (28), `OPS_COMPUTE_BUDGET_SECONDS`
 (90); see `docs/runbooks/leases.md`. LangGraph: T20.

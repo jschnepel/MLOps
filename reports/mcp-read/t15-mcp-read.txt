@@ -1,0 +1,6 @@
+T15 mcp-read — 2026-10-16T06:28:33Z
+R027 refused over HTTP: other-run job, expired, lapsed lease, moved fence, released; ok between
+R085/R131 refused over HTTP: recover and execute handles, lying server column, run state; unknown tool: SDK
+R131 read half: mcp_read EXECUTE = current_time, resolve_invocation; 13 others refused
+protocol: absent 400/-32022, 2025-11-25 400/-32022, header/_meta mismatch 400/-32020, matching 200
+R027 logs: 137 records at DEBUG (uvicorn, SDK, client) across ok, refused and raw calls; none holds the handle

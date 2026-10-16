@@ -441,6 +441,36 @@ reserved in `append_event` → T26/T45; no live test of the real tick's T14 step
 re-dispatches an APPROVED run whose grant was refused where AM-10 wants BLOCKED_REVIEW, is left to the owner through
 erratum 63, which now states the trade-off and the conservative alternative.
 
-## 27. What the process taught
+## 27. The mcp-read plan closed a legacy door and bound the handle to its job
+
+**Problem.** Plan J takes T15: the authenticated mcp-read, its token verifier and invocation handles. The fact sheet
+found most of it already real since the walking skeleton (the custom verifier, the header-only handle, its hash and its
+fence), and three holes nobody had tested: the installed SDK sends a request without a protocol-version header down a
+legacy path that checks no version at all; `_resolve_handle` read the handle's job by id alone, so a handle whose job
+belonged to another run, or had finished, still resolved; and the allowlist ignored the run's state. The controller's
+brief of 25 rulings chose hardening and evidence over new tools: no asset tools and no new definer before their owners.
+
+**Change.** A small ASGI guard in `core` refuses any POST without the pinned version before authentication, in front of
+both MCP servers. mcp-read's verifier requires an access token's `typ`, and its SDK adapter refuses a token without the
+server's audience before stamping the resource. Revision 0009 replaces one statement of 0007's `_resolve_handle`, so the
+job must be its own run's and open; the Python allowlist checks the run state too; mcp-read refuses to start without the
+binding; the worker stamps each handle with its own client id. Live tests prove each refusal over HTTP, the ACL, the
+four version cases and that no log record carries a handle, and an independent mcp-read process is listed and called by
+the official client. Two older tests changed their meaning: the walking skeleton's replay after the outcome and the
+populated upgrade's migrated execute job are now refused, because their handles name a finished job.
+
+**Problem.** The plan's own review caught what a dry run could not: a populated-upgrade test (the R006 upgrade) seeded
+a finished execute job that the new binding refuses, so every live gate from the second task on would have been red;
+the verifier's new `typ` rule was only tested against a hand-built object, not the wiring `production_app` uses; and the
+log test could have passed with uvicorn's loggers silenced. **Change.** The first review round found 1 Blocking, 3
+Important and 11 Minor items; the second accepted with 7 Minor. The R006 test now asserts the refusal and then
+reopens the job, `read_verifier` is the one constructor both production and the tests use, and the log test requires
+uvicorn's, the SDK's and httpx2's records before it trusts a clean result.
+
+**Execution.** Five tasks (the debt list and the guard, the binding and the allowlist, the handle cases over HTTP, the
+independent process, the close-out). The four building tasks were each reviewed once with Minor findings only and no
+fix round, and their live halves passed on their first run. Execution found nothing the plan had not ruled on.
+
+## 28. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.

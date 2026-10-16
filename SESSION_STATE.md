@@ -2,18 +2,17 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan I (T14) is executed and closed on branch `plan-i` (`4aa5f92..e485c56`, on top of `plan-h`: the debt
-list, then six tasks, the sixth the close-out `9ce23a0`, and the final-review fix wave `e485c56`; a docs commit after
-it records the wave). Owner inputs: (1) the holdout seal (T03 step 9), then the live probe
-(T02); (2) merge the stacked PRs in order and open the plan-h -> plan-g and plan-i -> plan-h PRs; (3) T44 step 10
-(`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F, G, H and I (I: 60-71
-below); (5) migrate the dev database to revision 0008 (`uv run python scripts/skeleton.py migrate`, dev profile: from
-0005 it applies 0006, 0007 and 0008 together; 0008 adds `app.outbox`, gives the sweeper DELETE on `jobs` and
-re-creates `_append_event` with the payload rules; it deletes nothing). Next is Plan J = T15 (mcp-read, the
-earliest dependency-satisfied PLANNED task in `handoff/tasks.json`, unblocked by T13; T14 also unblocks T20 and T27
-once their other dependencies are done).
+**Next task:** Plan J (T15) is executed on branch `plan-j` (on top of `plan-i`: `00c76e4..f0c8ca8` holds the debt list and
+the four tasks, and the close-out is the commit after `f0c8ca8`). Owner inputs: (1) the holdout seal (T03 step 9), then
+the live probe (T02); (2) merge the stacked PRs in order and open the plan-h -> plan-g, plan-i -> plan-h and plan-j ->
+plan-i PRs; (3) T44 step 10 (`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F,
+G, H, I and J (J: 72-81 below); (5) migrate the dev database to revision 0009 (`uv run python scripts/skeleton.py
+migrate`, dev profile: from 0005 it applies 0006, 0007, 0008 and 0009 together; 0009 re-creates `_resolve_handle` with
+the handle's job binding and changes no row; mcp-read now also refuses to start without it). Next is Plan K = T47
+(mcp-write, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T15, unblocked by T15 and T10;
+T17 is also unblocked).
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-i` (Plan I work on top of `plan-h`, on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09 (`origin/plan-e` is two docs commits behind local `plan-e`; a `git push origin plan-e` brings it level before the plan-f -> plan-e PR). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`). Merging them in order is the owner's call.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-j` (Plan J work on top of `plan-i`, on top of `plan-h`, on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09 (`origin/plan-e` is two docs commits behind local `plan-e`; a `git push origin plan-e` brings it level before the plan-f -> plan-e PR). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`). Merging them in order is the owner's call.
 
 ## Done in the planning session (2026-10-06)
 
@@ -542,6 +541,94 @@ once their other dependencies are done).
     does and its failure would only be logged → T30 (R105 could assert a delivered intent meanwhile); T32's plan must
     give some role DELETE on `app.outbox`, ordered before events, before any event retention can run.
 
+## Plan J executed (2026-10-15, branch `plan-j`)
+
+- T15 = `00c76e4..f0c8ca8` (the debt list first, then the four tasks; the close-out is the commit after `f0c8ca8`). The
+  plan (`docs/superpowers/plans/2026-10-15-first-slice-j-mcp-read-verifier-handles.md`) holds the 25 rulings of the
+  controller's brief as implemented; the input is `docs/superpowers/research/2026-10-15-plan-j-inputs.md`.
+  Evidence: `tests/e2e/test_mcp_read_t15_live.py` (R027's handle cases over HTTP, R085 and R131's read half at
+  mcp-read, the `mcp_read` ACL, the four protocol-version requests, no handle in any log record),
+  `test_mcp_read_process_live.py` (R025's read half and R031's network half: a child process and the official
+  client; R026: three foreign tokens refused with 401), `test_migration_0009_live.py` (the round trip and the startup
+  check against 0008, the job binding at the definer, the run-state rule) and `reports/mcp-read/`; the unit half is
+  in `tests/plan_j/`. R105's replay step now expects the refusal of a fresh handle for a finished execute job, and the
+  R006 populated upgrade asserts its migrated finished job's refusal before reopening it.
+- Gates: `check.py` 1071 passed / 164 skipped; `check.py --profile test` 1214 passed / 21
+  skipped; `verify_handoff.py` exit 0 (STATUS.md, "Update — Plan J executed").
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan I's
+  seventy-one:
+  72. R131 and SA:400/SA:459 (`mcp_read`'s functions): `mcp_read` holds EXECUTE on `current_time` (erratum 15) and
+      `resolve_invocation` and on nothing else in `app`; `asset_scope` arrives with T16 and
+      `search_procedures_scoped` with T17/T16, each in its owner's revision (Plan E ruling 1: no definer without a
+      caller), so R131's three-function set is the target, not today's.
+  73. SA:571-572 and BS:378 (per-request version): both MCP servers mount `ops_core.mcp_protocol.
+      ProtocolVersionGuard` before the SDK app: a POST to `/mcp` without exactly one `MCP-Protocol-Version:
+      2026-07-28` header is answered HTTP 400 with the constant JSON-RPC error `-32022` "Unsupported protocol
+      version" (`id` null, the supported version listed, nothing echoed) before authentication, so the SDK's legacy
+      stateless path is closed and an unauthenticated client learns only the version rule; a header/`_meta`
+      disagreement is the SDK's own `HEADER_MISMATCH` (400, `-32020`).
+  74. SA:557 (the verifier): mcp-read also requires the access token's `typ` claim `Bearer`; its SDK adapter
+      (`McpVerifier`) refuses a token whose `aud` lacks the server's resource URL and only then sets the SDK's
+      `AccessToken.resource` to that URL; the SDK's `validate_token_resource` is on as a second layer, which cannot
+      refuse while the stamp is the server's own URL; every token refusal stays HTTP 401 (Plan D ruling 25); mcp-write
+      follows in T47.
+  75. SA:459 and SA:496 (the handle's binding): `_resolve_handle` resolves a handle only when its `job_id` names a
+      job of the handle's own run that is not finished (`done_at IS NULL`); otherwise it refuses `OC008` like every
+      other refusal (revision 0009).
+  76. SA:338 and T15 review note 2 (the allowlist): `persistence.allowed_tool(job_type, run_state, tool)` checks the job
+      type's tools and run states at the start of every MCP call (`persistence.resolve_invocation`; the definers' own
+      resolutions inside `grant_execution`, `mark_sent`, `record_outcome` and `lookup_action` do not apply it, since
+      `record_outcome` must answer after the run moved); the attempt-state dimension (`create_incident` only while the
+      attempt is absent or INTENT, not cancelled, before the deadline) is mcp-write's, in `execution.next_step` today
+      and in its allowlist with T47.
+  77. SA:459 (the `resolve_invocation` row as amended): the only lock is `run_lease FOR SHARE` (erratum 53); it
+      returns `run_id, job_id, job_type, tenant_id, conversation_id, run_state, attempt_state` (erratum 19); it
+      binds the handle as erratum 75 says.
+  78. SA:34 (AM-00 §9): the `ops-mcp` audience and "distinct service scope" wording is replaced by AM-20.7 item 6
+      (the resource-URL audiences), not by AM-20.6 (the test clock).
+  79. BS:360 ("Refresh it only while the lease is current"): there is no refresh; a handle is minted per call under
+      the lease, lives 60 s, and is bound at use to the lease's fence and liveness (erratum 58).
+  80. SA:460-461 with SA:176-184 (reads and the fence): a read tool is served after the handle resolved in its own
+      committed unit; a fence that moves during the read cannot cause a write, and the worker's next fenced unit
+      fails.
+  81. SA:558 (the three token tests): the missing-`aud` and browser-token cases are synthetic-key unit tests at
+      mcp-read's configuration (`azp=ops-web`, no `aud`); live, a persona token (aud `ops-api`) stands in for a
+      browser token, because no `ops-web` access token is minted anywhere (the API stores none, erratum 31, and
+      minting one needs the client secret).
+- Earlier debt lines that named T15 and what became of them: the raw, unhashed handle (walking skeleton) was done by
+  Plan E (revision 0002); "handles are not revoked at job end" was done by Plan H (`release_lease`); "resolution
+  ignores run and attempt state" is half done (the run state, Task 2) and half re-homed (the attempt state → T47);
+  Plan D's "the same `INVALID_HANDLE` for every rejection" is kept on purpose (SA:357, ruling 13); Plan E's
+  `asset_scope` and `search_procedures_scoped` ("T15/T16/T17") now name T16 and T17/T16; Plan E's untested "write
+  handle at mcp_read" (re-homed to T22 by Plan H) is now tested over HTTP (Task 3); Plan D's silent excerpt
+  truncation stays with the tool's contract (T16).
+- Rulings made during execution: none beyond the plan. Each of the four tasks followed its brief verbatim, had one
+  review (clean: Minor findings only) and needed no fix round; the live halves of Tasks 1-4 passed on their first run.
+- **Open items for later** (Minor findings the task reviews deferred; none changes a verdict; the final review takes
+  the ones marked "fix"):
+  - fix: pin that `POST /mcp/` without the version header is not 200 (the guard's `path` default and the SDK's
+    `streamable_http_path` are separate literals; the review probed `/mcp`, `/mcp/`, `/mcp/x`, `/MCP`, `//mcp`,
+    `%6Dcp` and non-POST methods and found no bypass);
+  - fix: mcp-write's startup check asks only for `app.model_permit`; add `assert_function_text(conn, *HANDLE_BINDING)`
+    so it also refuses a database without 0009 (the binding applies to both servers);
+  - fix: `test_mcp_read_t15_live.py`: the DEBUG log test checks the handle only (add the worker token to its
+    "carrying" check and assert no `RedactingFilter` sits on `caplog.handler`); the lying-column `UPDATE` asserts no
+    row count (lines 230-234); the recover and execute handle refusals have no positive control in the same test;
+  - fix: `test_mcp_read_process_live.py`: the child-log leak check covers the handle only (add the worker token, and
+    read the child log in the R026 test for the three foreign tokens); the evidence line should say "R025 (read half;
+    mcp-write with T47) / R031 (network half)" and interpolate `PROTOCOL_VERSION`; `response.headers["www-authenticate"]`
+    should be `.get(..., "")`; start-failure messages should name the child log's path (not its content);
+  - `tests/plan_j/test_verifier_t15.py:67,73` put an `AccessToken` repr holding a synthetic JWT in an assert operand
+    (plan-mandated; synthetic key only); `test_mcp_read_http.py:8`'s docstring cites a live module created later;
+  - the newest-body guard for `_resolve_handle` finds re-creations only through a `FUNCTIONS` attribute (a
+    convention); the live tests create runs and tokens before their `try` (a purge gap on a failed set-up; the test
+    database is dropped per session); wording: "13 others refused" means `has_function_privilege` is false, the R027
+    docstring's "the same handle answers again" holds only until the lapsed lease, and the evidence record count varies
+    run to run (119 vs 137); `free_port()` races and the child's failed-start and kill paths were verified by reading
+    only.
+
+## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
+
 Allowed shortcuts in T08, each with its owning task:
 - single owner DB role, no AM-20.2 grants, no RLS → T09;
 - both MCP servers run but with the single owner DB role (their function-only roles arrive in T09; the server split itself is NOT debt);
@@ -752,7 +839,7 @@ Allowed shortcuts in T15, each with its owning task:
 | Python | 3.13.7 (`python`), 3.14.6 (`py`) |
 | uv | 0.11.8 |
 | Docker | Docker Desktop 29.6.2 |
-| Ollama | 0.33.3, with `qwen3:8b` and `nomic-embed-text` installed |
+| Ollama | Observed at 0.40.4 on 2026-10-15 (recorded 0.33.3 before; Plan J did not change it, and per AM-30 an upgrade is the owner's decision, so this records the observation and claims nothing either way); `qwen3:8b` and `nomic-embed-text` installed as last recorded |
 | Node | 24.15.0 |
 | git | 2.54 |
 | Not installed | psql, helm (kubectl present) |
@@ -790,11 +877,16 @@ sweeper also refuses to start (it needs `app.outbox`). 0008 creates `app.outbox`
 `jobs`, and re-creates `_append_event` with the payload rules and the notification intent; every event the dev
 database holds was written under the old rules and stays as it is (the rules apply to new events); it deletes nothing.
 
+**Update (2026-10-15):** Plan J adds revision 0009. The dev `ops` database stays at 0005 until the owner runs
+`uv run python scripts/skeleton.py migrate` (dev profile), which applies 0006, 0007, 0008 and 0009 together; until then
+mcp-read also refuses to start (it checks that `_resolve_handle` carries 0009's job binding). 0009 re-creates
+`app._resolve_handle` only; every handle in the dev database is long expired, and it changes no row.
+
 ## Open owner inputs
 
-- Migrate the dev database to revision 0008 (`uv run python scripts/skeleton.py migrate`, dev profile; it applies
-  0006, 0007 and 0008 together), then decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed") and
-  60-71 (see "Plan I executed").
+- Migrate the dev database to revision 0009 (`uv run python scripts/skeleton.py migrate`, dev profile; it applies
+  0006, 0007, 0008 and 0009 together), then decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H
+  executed"), 60-71 (see "Plan I executed") and 72-81 (see "Plan J executed").
 - Merge the stacked PRs #1-#5 in order (opened 2026-10-09, all green on CI; the first merge also exercises the push-to-main trigger).
 - Decide on the nine proposed contract errata (see "Plan C executed").
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
@@ -827,6 +919,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A; the dev database migration to 0008; the proposed errata of Plans C-I, up to 71) and write Plan J for T15 (mcp-read, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json`; T17 is also unblocked).
+Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A; the dev database migration to 0009; the proposed errata of Plans C-J, up to 81) and write Plan K for T47 (mcp-write, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T15; T17 is also unblocked).
 
 Do not store secrets or private reasoning in this file.

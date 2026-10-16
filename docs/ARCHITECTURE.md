@@ -242,6 +242,33 @@ or dead-lettered; and a wake-up the worker consumed without moving its run is no
 
 ---
 
+## 7. mcp-read's door (built in T15)
+
+**Claim.** A read tool answers only a request in the pinned protocol, carrying the worker's own access token and a
+handle that still belongs to an open job of a live run in one of its job type's states; every other request is
+refused before it learns anything, and nothing about the handle is written down.
+
+- **The version first.** A guard in front of the SDK refuses any POST without `MCP-Protocol-Version: 2026-07-28`
+  (400, `-32022`), before authentication; the SDK's own ladder then refuses a header that disagrees with `_meta`.
+- **The token second.** Signature, issuer, expiry, `aud` holding this server's resource URL, `azp` the worker, the
+  access-token `typ`; the SDK adapter refuses an `aud` without this server's URL before it stamps the resource (the
+  SDK's own resource check is a second layer). Any failure is 401.
+- **The handle third, in the database.** Its hash, the run's lease (shared lock), the fence and expiry, revocation, the
+  `azp`, the job (its own run's, unfinished) and the server derived from the job type; then, in Python, the job
+  type's tools and run states. Every refusal is the same plain envelope.
+- **Least privilege.** `mcp_read` can execute `current_time` and `resolve_invocation` and nothing else; the search
+  itself still reads the fixture corpus (T17 brings the governed store, T16 the asset tools).
+
+| Requirement | What its test shows |
+|---|---|
+| R025 (read half) | An independent mcp-read process is listed and called by the official client over the network |
+| R026 | Tokens for another audience or client are 401 on the request the worker's token passes |
+| R027 | A handle dies with its job, expiry, lease, fence and release, over HTTP; no log record holds it |
+| R085 | The tools come from the job type and run state; an unregistered tool is the SDK's error |
+| R131 (read half) | `mcp_read` executes two functions only; a recover and an execute handle at mcp-read are refused |
+
+---
+
 ## Where the code will live (not yet written)
 
 | Directory | What to look at first |

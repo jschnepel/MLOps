@@ -395,7 +395,7 @@ live ones are not measured (see "Counts").
   `KeyedVerifier`, `read_app()`, `headers(...)`, `official_client(app)` (Task 2's startup test imports `FIXTURES`,
   `ISSUER`, `RESOURCE`, `KeyedVerifier`).
 
-- [ ] **Step 1a: Record both baselines**
+- [x] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN` with pytest `1032 passed, 154 skipped`; with the
 dev stack up and `uv run python scripts/skeleton.py status` showing every process down, run
@@ -404,13 +404,13 @@ dev stack up and `uv run python scripts/skeleton.py status` showing every proces
 reports/outbox`. Record both lines in the report (Global Constraints, "Counts"). A gate that is not GREEN stops the
 plan here, before anything is committed.
 
-- [ ] **Step 1b: Record the base**
+- [x] **Step 1b: Record the base**
 
 Run `git rev-parse --short HEAD` and write the hash it prints as `BASE=<hash>` in the report and in the SDD ledger
 (`.superpowers/sdd/2026-10-15-first-slice-j-mcp-read-verifier-handles/progress.md`). Task 5's commit span is
 `<base>..<last>`.
 
-- [ ] **Step 1c: Commit the debt list (before any code)**
+- [x] **Step 1c: Commit the debt list (before any code)**
 
 Edit 1 (`SESSION_STATE.md`, the heading after the Plan I debt list), replace:
 
@@ -455,7 +455,7 @@ git add SESSION_STATE.md
 git commit -m "docs: declare Plan J's shortcuts before coding (T15 debt list)"
 ```
 
-- [ ] **Step 2: Put `tests/plan_j` on the test path**
+- [x] **Step 2: Put `tests/plan_j` on the test path**
 
 Edit 1 (`pyproject.toml`, `testpaths`), replace:
 
@@ -481,7 +481,7 @@ Create `tests/plan_j/__init__.py`:
 """Plan J (T15): mcp-read's verifier, protocol-version guard and handle binding, without a database."""
 ```
 
-- [ ] **Step 3: Write the failing guard test**
+- [x] **Step 3: Write the failing guard test**
 
 Create `tests/plan_j/test_protocol_guard.py`:
 
@@ -580,7 +580,7 @@ def test_a_guard_mounted_under_a_prefix_still_matches_its_path() -> None:
 Run: `uv run python -m pytest tests/plan_j/test_protocol_guard.py -q`
 Expected: `1 error in` (collection stops: `ModuleNotFoundError: No module named 'ops_core.mcp_protocol'`).
 
-- [ ] **Step 4: The guard**
+- [x] **Step 4: The guard**
 
 Create `core/src/ops_core/mcp_protocol.py`:
 
@@ -669,7 +669,7 @@ class ProtocolVersionGuard:
 Run: `uv run python -m pytest tests/plan_j/test_protocol_guard.py -q`
 Expected: `8 passed`.
 
-- [ ] **Step 5: Write the failing verifier tests**
+- [x] **Step 5: Write the failing verifier tests**
 
 Create `tests/plan_j/test_verifier_t15.py`:
 
@@ -790,7 +790,7 @@ Expected: `10 failed` (`AttributeError: module 'ops_mcp_read.server' has no attr
 that build or wrap the verifier, `AttributeError: 'WorkloadTokenSource' object has no attribute 'client_id'` in the
 last).
 
-- [ ] **Step 6: The `typ` claim, the token source's client, the adapter's audience check and `read_verifier`**
+- [x] **Step 6: The `typ` claim, the token source's client, the adapter's audience check and `read_verifier`**
 
 Edit 1 (`core/src/ops_core/tokens.py`, `TokenVerifier.__init__`), replace:
 
@@ -975,7 +975,7 @@ def production_app() -> Starlette:
 Run: `uv run python -m pytest tests/plan_j/test_verifier_t15.py -q`
 Expected: `10 passed`.
 
-- [ ] **Step 7: Write the failing HTTP tests**
+- [x] **Step 7: Write the failing HTTP tests**
 
 Create `tests/plan_j/test_mcp_read_http.py`:
 
@@ -1137,7 +1137,7 @@ Expected: `3 failed, 1 passed` (the official client already passes; with no guar
 where it expects 400, the second gets 200 from the SDK's legacy path for the `2025-11-25` header, and mcp-write's
 request reaches the SDK, which has no task group outside its lifespan: `RuntimeError: Task group is not initialized`).
 
-- [ ] **Step 8: Mount the guard in both servers**
+- [x] **Step 8: Mount the guard in both servers**
 
 Edit 1 (`mcp-read/src/ops_mcp_read/server.py`, the module docstring), replace:
 
@@ -1229,7 +1229,7 @@ with:
 Run: `uv run python -m pytest tests/plan_j -q`
 Expected: `22 passed`.
 
-- [ ] **Step 9: Write the failing worker test**
+- [x] **Step 9: Write the failing worker test**
 
 Create `tests/plan_j/test_worker_azp.py`:
 
@@ -1293,7 +1293,7 @@ Run: `uv run python -m pytest tests/plan_j/test_worker_azp.py -q`
 Expected: `2 failed, 1 passed` (`assert ['ops-worker'] == ['ops-worker-renamed']`: both mints write the literal;
 the model-request test passes already, since it pins what `DraftRequest` holds today).
 
-- [ ] **Step 10: The worker mints with its own client id**
+- [x] **Step 10: The worker mints with its own client id**
 
 Edit 1 (`worker/src/ops_worker/handlers.py`, `Deps`), replace:
 
@@ -1478,7 +1478,7 @@ with:
 Run: `uv run python -m pytest tests/plan_j tests/plan_h/test_worker_units.py tests/plan_f/test_grant_deferred.py -q`
 Expected: `48 passed` (25 in `tests/plan_j`, 23 in the two edited modules).
 
-- [ ] **Step 11: Gates and commit**
+- [x] **Step 11: Gates and commit**
 
 Format, lint and count characters on `core/src/ops_core/mcp_protocol.py`, `core/src/ops_core/tokens.py`,
 `mcp-read/src/ops_mcp_read/server.py`, `mcp-write/src/ops_mcp_write/server.py`, the three worker modules, every file
@@ -1538,7 +1538,7 @@ server-derived allowlist; T15 review notes 2 (the run-state half) and 4.
   text)", "j.run_id = v_ctx.run_id AND j.done_at IS NULL")`; in the revision: `JOB_READ_0007`, `JOB_READ_0009`,
   `RESOLVE_HANDLE`, `FUNCTIONS`, `RESTORED`.
 
-- [ ] **Step 1: Write the failing allowlist tests (and move the two existing ones to the new signature)**
+- [x] **Step 1: Write the failing allowlist tests (and move the two existing ones to the new signature)**
 
 Edit 1 (`tests/plan_d/test_persistence_pure.py`, the rejections), replace:
 
@@ -1724,7 +1724,7 @@ Expected: `12 failed, 12 passed` (`TypeError: allowed_tool() takes 2 positional 
 eleven calls that pass a state; `Failed: DID NOT RAISE` in the resolution test, whose AWAITING_APPROVAL row still
 resolves).
 
-- [ ] **Step 2: The run-state dimension**
+- [x] **Step 2: The run-state dimension**
 
 Edit 1 (`core/src/ops_core/persistence.py`, `allowed_tool`), replace:
 
@@ -1812,7 +1812,7 @@ with:
 Run: `uv run python -m pytest tests/plan_j/test_allowlist.py tests/plan_d/test_persistence_pure.py tests/plan_e/test_persistence_errors.py -q`
 Expected: `24 passed` (6 in `test_allowlist.py`, 18 in the two edited modules).
 
-- [ ] **Step 3: Write the failing revision and startup tests**
+- [x] **Step 3: Write the failing revision and startup tests**
 
 Edit 1 (`tests/plan_e/test_transitions_table.py`, `REVISIONS`), replace:
 
@@ -1981,7 +1981,7 @@ Expected: `2 errors in` (collection stops: `ImportError: cannot import name 'HAN
 'ops_mcp_read.server'`, and the transitions module's check that every listed revision exists fails on
 `0009_handle_binding`).
 
-- [ ] **Step 4: The revision, the catalog check and the startup refusal**
+- [x] **Step 4: The revision, the catalog check and the startup refusal**
 
 Create `migrations/app/versions/0009_handle_binding.py`:
 
@@ -2133,7 +2133,7 @@ Expected: `All checks passed!`
 Run: `uv run python -m pytest tests/plan_j tests/plan_e/test_transitions_table.py -q`
 Expected: `52 passed` (38 in `tests/plan_j`, 14 in the transitions module).
 
-- [ ] **Step 5: The tests and the docstring that described a replay the binding now refuses**
+- [x] **Step 5: The tests and the docstring that described a replay the binding now refuses**
 
 Edit 1 (`tests/e2e/test_r105_walking_skeleton.py`, the replay's comment), replace:
 
@@ -2228,7 +2228,7 @@ still reaches it. A transport failure after SENT is reported as UNKNOWN and reco
 `mark_unknown` (SA:467; Plan E ruling 6).
 ```
 
-- [ ] **Step 6: The live revision test**
+- [x] **Step 6: The live revision test**
 
 Create `tests/e2e/test_migration_0009_live.py`:
 
@@ -2389,7 +2389,7 @@ Expected: `3 passed` (the round trip builds and drops a scratch database prefixe
 not measured: the plan's dry run cannot run live steps. A failure in the binding test is a finding against the revision,
 not a reason to weaken an assertion: stop and report.
 
-- [ ] **Step 7: Gates and commit**
+- [x] **Step 7: Gates and commit**
 
 Format, lint and count characters on every file of this task (the revision after the ISC004 pass).
 
@@ -2443,7 +2443,7 @@ so no live token can bring another azp to the definer over HTTP.
   imports `QUERY`, `free_port`, `raw_headers`, `tools_list`, `worker_token`); `reports/mcp-read/t15-mcp-read.txt`
   (written only when all five tests passed).
 
-- [ ] **Step 1: Scan the new evidence root for secrets**
+- [x] **Step 1: Scan the new evidence root for secrets**
 
 Edit 1 (`tests/plan_b/test_evidence.py`, docstring), replace:
 
@@ -2477,7 +2477,7 @@ with:
 )
 ```
 
-- [ ] **Step 2: Write the live cases**
+- [x] **Step 2: Write the live cases**
 
 Create `tests/e2e/test_mcp_read_t15_live.py`:
 
@@ -2829,7 +2829,7 @@ async def test_r027_no_log_record_carries_the_handle(
         await purge_run(app_conn, run)
 ```
 
-- [ ] **Step 3: Run it**
+- [x] **Step 3: Run it**
 
 Run (dev stack up, no skeleton process running):
 
@@ -2841,7 +2841,7 @@ Expected: `5 passed`, and `reports/mcp-read/t15-mcp-read.txt` exists with six li
 measured: the plan's dry run cannot run live steps. A refusal that does not come back as the plain envelope, or a
 record that carries the handle, is a finding against Tasks 1-2 or the SDK: stop and report, never weaken an assertion.
 
-- [ ] **Step 4: Gates and commit**
+- [x] **Step 4: Gates and commit**
 
 Format, lint and count characters on `tests/e2e/test_mcp_read_t15_live.py` and `tests/plan_b/test_evidence.py`.
 
@@ -2885,7 +2885,7 @@ sufficient"). No production code: its tests pass the first time they run.
 - Produces: `mcp_read_process(log)` (an async context manager yielding the child's MCP URL), `tools_call()`;
   `reports/mcp-read/t15-independent-client.txt` (written only when both tests passed).
 
-- [ ] **Step 1: Write the independent-process tests**
+- [x] **Step 1: Write the independent-process tests**
 
 Create `tests/e2e/test_mcp_read_process_live.py`:
 
@@ -3068,7 +3068,7 @@ async def test_r026_foreign_tokens_are_refused_before_the_tool(
         await purge_run(app_conn, run)
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 Run (dev stack up, no skeleton process running):
 
@@ -3081,7 +3081,7 @@ Expected: `2 passed` (each test starts and stops its own child process), and
 cannot run live steps. `uv run python scripts/skeleton.py status` afterwards shows every process down (no child
 outlived its test).
 
-- [ ] **Step 3: Gates and commit**
+- [x] **Step 3: Gates and commit**
 
 Format, lint and count characters on `tests/e2e/test_mcp_read_process_live.py`.
 
@@ -3126,7 +3126,7 @@ Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-
 task's own (`LAST=$(git rev-parse --short HEAD)`, run before this task commits). `<date>` is `date -u +%F` on the day
 of the close-out.
 
-- [ ] **Step 1: No `TODO(T15)` is left in live code**
+- [x] **Step 1: No `TODO(T15)` is left in live code**
 
 Edit 1 (`core/src/ops_core/routing.py`, the manifest's retrieval mode), replace:
 
@@ -3190,7 +3190,7 @@ summary line, `schemas/: 25 schema documents (19 contracts, 6 tool inputs); 89 e
 index.json version 1.3.3`, and no changed file (the edited line is a comment). If the first prints a line, give that
 TODO its owner from the debt list (T16, T17, T20, T30 or T47) in a separate commit before continuing.
 
-- [ ] **Step 2: Handoff records**
+- [x] **Step 2: Handoff records**
 
 Run this once from the repository root, with `BASE` set to the hash Task 1 Step 1b recorded (it rewrites the two JSON
 files in their own format: two-space indent, non-ASCII kept, one trailing newline):
@@ -3326,7 +3326,7 @@ EOF
 Expected: it prints the span (for example `1a2b3c4..5d6e7f8`). `git diff --stat handoff` shows three files changed;
 `git diff handoff/acceptance-matrix.json` shows six rows: R025, R026, R027, R031, R085 and R131.
 
-- [ ] **Step 3: Project state**
+- [x] **Step 3: Project state**
 
 In `SESSION_STATE.md`:
 
@@ -3503,7 +3503,7 @@ the plan.`) and `- **Open items for later:**` (from the SDD ledger
 `.superpowers/sdd/2026-10-15-first-slice-j-mcp-read-verifier-handles/progress.md`; or `- **Open items for later:**
 none recorded.`).
 
-- [ ] **Step 4: Status, history, the runbook and the documents**
+- [x] **Step 4: Status, history, the runbook and the documents**
 
 Edit 1 (`STATUS.md`, its last lines), replace:
 
@@ -3811,7 +3811,7 @@ One `ops-worker` token carries both MCP audiences; one handle per call, bound to
 id the tokens are issued to (T15). Settings:
 ```
 
-- [ ] **Step 5: Final gates**
+- [x] **Step 5: Final gates**
 
 ```bash
 PYTHONUTF8=1 uv run python scripts/check.py
@@ -3826,7 +3826,7 @@ reports/auth`; the live run rewrote `reports/skeleton` (R105's new replay line),
 `reports/leases`, `reports/events` and `reports/outbox` and wrote `reports/mcp-read`, and Step 6 commits them. Tick
 this plan's checkboxes (`- [ ]` → `- [x]`) for every step executed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add handoff SESSION_STATE.md STATUS.md README.md mcp-read/README.md mcp-write/README.md worker/README.md

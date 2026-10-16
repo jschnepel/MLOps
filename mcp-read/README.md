@@ -6,13 +6,17 @@ MCP server for read tools only
 Asset status, alerts, procedure search
 
 ## Trusts
-Workload token with its audience; definer functions `resolve_invocation`, `asset_scope`, `search_procedures_scoped`
+The worker's workload access token with this server's audience; the definer function `resolve_invocation`
+(`asset_scope` and `search_procedures_scoped` arrive with T16 and T17)
 
 ## Never
 Any write-path function; incident-sim
 
-## Runs (T08)
+## Runs (T08, T15)
 
 `python -m ops_mcp_read` on 127.0.0.1:8081 (`OPS_MCP_READ_PORT`), Streamable HTTP at `/mcp`, protocol 2026-07-28,
-stateless. Verifies `aud ∋ MCP_READ_RESOURCE_URL`, `azp == ops-worker`; resolves `X-Ops-Invocation` for `investigate`
-jobs. One tool, `search_procedures` (lexical, fixture-backed until T17).
+stateless. A POST without exactly `MCP-Protocol-Version: 2026-07-28` is 400 before authentication. Verifies
+`aud ∋ MCP_READ_RESOURCE_URL`, `azp == ops-worker` and the access token's `typ`; resolves `X-Ops-Invocation` for read
+jobs whose run is in one of the job type's states, and only for the handle's own run's open job (revision 0009, which
+it checks at start). One tool, `search_procedures` (lexical, fixture-backed until T17). See
+`docs/runbooks/mcp-read.md`.

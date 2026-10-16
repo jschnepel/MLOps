@@ -1,4 +1,4 @@
-T13 stress and reclaim — 2026-10-16T02:03:27Z
-R107 stress 8 workers x 20 s on 3 runs: 24359 operations, 40P01=0, 55P03=0, acquisitions 8, highest fence 42, re-fences 38, refused 75, lost 0, drops 7, reclaim passes 99 (jobs handed back 0); at each of 1165 row samples at most one actor believed it held a run, the live owner
+T13 stress and reclaim — 2026-10-16T06:27:56Z
+R107 stress 8 workers x 20 s on 3 runs: 24162 operations, 40P01=0, 55P03=0, acquisitions 6, highest fence 23, re-fences 20, refused 46, lost 0, drops 6, reclaim passes 99 (jobs handed back 0); at each of 1165 row samples at most one actor believed it held a run, the live owner
 R019 killed owner: claim kept while live, reclaimed after expiry, next at fence 2
 reclaim: a live owner's claim is kept; a finished job is never handed back

@@ -42,7 +42,7 @@ MODELS: dict[str, type[BaseModel]] = {
 }
 NO_MODEL = {
     "schemas/tool-result.schema.json": (
-        "envelopes are built by the MCP servers (T15/T47); the data shapes are ActionOutcome"
+        "envelopes are built by the MCP servers (T16/T47); the data shapes are ActionOutcome"
     ),
     "schemas/evidence.schema.json": "retrieval rows are produced by mcp-read (T17)",
     "schemas/route.schema.json": "enums only; the table is pinned in test_jobs_routes_outcomes",
@@ -55,7 +55,7 @@ def test_code_and_schema_agree(item):
     text = Path(item["path"]).read_text(encoding="utf-8")
     schema = item["schema"]
     if schema.startswith("schemas/tools/") or schema in NO_MODEL:
-        pytest.skip(NO_MODEL.get(schema, "tool input schema: enforced by the MCP server's argument validation (T15)"))
+        pytest.skip(NO_MODEL.get(schema, "tool input schema: enforced by the MCP server's argument validation (T16)"))
     model = MODELS[schema]
     if item["valid"]:
         model.model_validate_json(text)
