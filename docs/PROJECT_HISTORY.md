@@ -520,8 +520,8 @@ process; `docs/threat-model.md` says plainly that v1 trusts mcp-write for outcom
 it sees neither the cancel flag nor the grant's time, so the function chooses it under the lock. The abort tool's
 result schema had no way to say "the destination did not answer", so the schema gained UNKNOWN and CONFLICT. And two
 of the faults the rulings named act only on the incident POST, so their effect on the recovery tools is shown through
-the POST's consequences, with a scripted reply for a rate limit at the lookup itself. The plan then went through two static reviews, each
-applying it task by task to a fresh copy of the tree.
+the POST's consequences, with a scripted reply for a rate limit at the lookup itself. The plan then went through
+two static reviews, each applying it task by task to a fresh copy of the tree.
 
 **Problem.** The plan's first review (0 Blocking, 1 Important, 11 Minor) found a hole the plan said was closed: the
 execute job's re-send of a SENT attempt skipped `mark_sent`, so after a lost reply a re-queued job could still POST
@@ -538,8 +538,8 @@ through.
 
 **Execution.** Six tasks (the debt list and the verifier, revision 0010, the allowlist and the recovery tools, the
 live evidence, the independent process with the threat model, and the close-out). Each passed its task review with no
-Critical and no Important finding, except the last, and the live counts were measured for the first time at Tasks 2
-to 5 (1251, 1300, 1310, 1311 passed, 21 skipped), matching the plan's arithmetic. Task 1 had 3 Minor findings, such
+Critical and no Important finding, except the last, and from Task 2 on the live counts were measured, not computed
+(1251, 1300, 1310, 1311 passed, 21 skipped), matching the plan's arithmetic. Task 1 had 3 Minor findings, such
 as a verifier test whose failure message could print a token object, and a setting that does not strip whitespace.
 Task 2 had 6: among them the interim gap that the re-send of a SENT attempt did not yet pass `mark_sent` (the plan
 gave it to Task 3, which closed it), a stale R131 count in the mcp-read evidence (regenerated at the close-out), and
