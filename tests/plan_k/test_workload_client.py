@@ -29,6 +29,15 @@ def test_the_default_is_the_realms_worker_client(monkeypatch: pytest.MonkeyPatch
     assert settings.workload_client_id() == "ops-worker"
 
 
+def test_a_padded_client_id_is_trimmed_and_a_blank_one_is_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No token carries " ops-worker-renamed": a padded value would turn an editing slip into an opaque 401 at both
+    servers, and an all-blank one would name no client at all."""
+    monkeypatch.setenv("OPS_WORKLOAD_CLIENT_ID", " ops-worker-renamed\t\n")
+    assert settings.workload_client_id() == "ops-worker-renamed"
+    monkeypatch.setenv("OPS_WORKLOAD_CLIENT_ID", " \t ")
+    assert settings.workload_client_id() == "ops-worker"
+
+
 def test_the_worker_asks_for_tokens_as_the_named_client(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPS_WORKLOAD_CLIENT_ID", "ops-worker-renamed")
     asked: list[str] = []

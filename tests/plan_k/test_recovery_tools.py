@@ -4,7 +4,8 @@ table; SA:348, SA:465; Plan K rulings 3, 10, 18, 19 and 24).
 The definers are scripted stand-ins that record their calls; the destination calls are scripted too, except where the
 real request is built against `httpx2.MockTransport`. Catches: a cancelled or expired attempt answered UNKNOWN (the old
 conservative branch) or POSTed instead of aborted; an abort POSTed before its request was recorded, or with a reason
-the function did not choose; anything sent once an abort request exists; an answer of `mark_sent` the code does not
+the function did not choose or never gives; an abort request answered `resolved` that POSTs instead of reading the
+recorded outcome back; anything sent once an abort request exists; an answer of `mark_sent` the code does not
 know read as "go ahead"; a re-send of a SENT attempt that skips mark_sent's checks (round 1, I1), or a recover job's
 re-send; a lookup or an abort that records UNKNOWN, a 404 or a 429 recorded as anything but UNKNOWN; a
 receipt for another hash accepted; a resolved attempt that calls the destination again; a recovery call for another
@@ -31,6 +32,9 @@ PROPOSAL = UUID(int=22)
 SHA = "c" * 64
 RECEIPT = {"receipt_id": str(UUID(int=23)), "incident_id": "INC-000021", "committed_at": "2026-10-16T12:00:00Z"}
 DECIDED = "2026-10-16T12:00:00Z"
+# A resolved grant's stored detail: the SUCCEEDED outcome the destination's receipt proved.
+STORED = {"status": "SUCCEEDED", "action_id": str(ACTION), "payload_sha256": SHA, "receipt": RECEIPT}
+STORED |= {"tombstone": None, "reason": None}
 
 
 def grant(attempt: str, detail: dict[str, Any] | None = None, proposal: UUID = PROPOSAL) -> persistence.Grant:
@@ -228,10 +232,8 @@ def test_a_receipt_for_another_hash_is_recorded_as_a_conflict(monkeypatch: pytes
 
 
 def test_a_resolved_attempt_answers_its_stored_outcome_without_a_call(monkeypatch: pytest.MonkeyPatch) -> None:
-    stored = {"status": "SUCCEEDED", "action_id": str(ACTION), "payload_sha256": SHA, "receipt": RECEIPT}
-    stored |= {"tombstone": None, "reason": None}
     for call in (receipt, abort):
-        script = Script(monkeypatch, attempt="RESOLVED", detail=stored)
+        script = Script(monkeypatch, attempt="RESOLVED", detail=STORED)
         assert call(script).status is ToolOutcome.SUCCEEDED and script.calls == ["lookup_action"]
 
 
@@ -265,6 +267,33 @@ def test_an_abort_that_is_not_due_sends_nothing(monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(persistence.Refused):  # server.py answers the plain, retryable ABORT_NOT_DUE
         abort(script)
     assert script.calls == ["lookup_action", "request_abort"]
+
+
+def test_an_abort_that_finds_the_outcome_recorded_reads_it_back_without_a_post(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A concurrent caller recorded the outcome between the grant's read and the abort request: `request_abort`
+    answers `resolved`, and the outcome that stands is read back in its own unit, with nothing POSTed."""
+    script = Script(monkeypatch, attempt="SENT", request_abort="resolved", detail=STORED)
+    assert abort(script).status is ToolOutcome.SUCCEEDED
+    assert script.calls == ["lookup_action", "request_abort", "lookup_action"] and script.recorded == []
+    created = Script(monkeypatch, attempt="INTENT", mark_sent="cancelled", request_abort="resolved", detail=STORED)
+    assert create(created).status is ToolOutcome.SUCCEEDED
+    assert created.calls == ["grant_execution", "mark_sent", "request_abort", "lookup_action"]
+
+
+@pytest.mark.parametrize("answer", ["aborted", "maybe", ""])
+def test_an_abort_reason_request_abort_never_gives_is_never_posted(
+    monkeypatch: pytest.MonkeyPatch, answer: str
+) -> None:
+    """Only the three reasons the function chooses may leave as the abort's reason (and `resolved` reads back); any
+    other answer is a fault in this code or the database, refused before the POST."""
+    script = Script(monkeypatch, attempt="SENT", request_abort=answer)
+    with pytest.raises(persistence.PersistenceError, match="request_abort answered"):
+        abort(script)
+    assert script.calls == ["lookup_action", "request_abort"] and script.abort_reasons == []
+    created = Script(monkeypatch, attempt="INTENT", mark_sent="cancelled", request_abort=answer)
+    with pytest.raises(persistence.PersistenceError, match="request_abort answered"):
+        create(created)
+    assert created.calls == ["grant_execution", "mark_sent", "request_abort"]
 
 
 def test_a_recovery_call_for_another_proposal_is_refused_before_any_call(monkeypatch: pytest.MonkeyPatch) -> None:

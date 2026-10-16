@@ -65,7 +65,8 @@ def test_only_an_access_token_passes() -> None:
 )
 def test_the_adapter_answers_none_for_every_foreign_token(over: dict[str, object], why: str) -> None:
     adapter = McpVerifier(production_like(), WRITE)
-    assert asyncio.run(adapter.verify_token(for_write(**over))) is None, why  # None is the SDK's 401
+    refused = asyncio.run(adapter.verify_token(for_write(**over))) is None  # None is the SDK's 401
+    assert refused, why  # a verdict, not the AccessToken: its repr would hold the (synthetic) token
 
 
 def test_the_resource_is_stamped_only_from_the_audience() -> None:

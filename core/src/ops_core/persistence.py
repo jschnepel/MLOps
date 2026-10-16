@@ -472,12 +472,13 @@ def _grant(row: DictRow) -> Grant:
     )
 
 
-# The write-path definers take the presented token's `azp` (revision 0010, Plan K ruling 12): `_resolve_handle`
-# compares it with the one the handle was minted for, as `resolve_invocation` always did.
-
-
 async def grant_execution(conn: Conn, *, handle: str, azp: str, proposal_id: UUID) -> Grant:
-    """The §13 gate inside the function; a replay returns the grant the run already has (SA:462)."""
+    """The §13 gate inside the function; a replay returns the grant the run already has (SA:462).
+
+    `azp` is the presented token's. This definer and the four after it (`lookup_action`, `mark_sent`, `request_abort`,
+    `record_outcome`) pass it to `_resolve_handle`, which compares it with the one the handle was minted for, as
+    `resolve_invocation` always did (revision 0010, Plan K ruling 12).
+    """
     row = await _call(conn, "SELECT * FROM app.grant_execution(%s, %s, %s)", (handle, azp, proposal_id))
     if row is None:
         raise PersistenceError("grant_execution returned nothing")

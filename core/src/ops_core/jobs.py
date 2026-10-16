@@ -110,10 +110,14 @@ _A = AttemptState
 # The attempt-state dimension (AM-15, SA:338; Plan K rulings 4 and 5): the latest attempt state a write tool may be
 # called in, per job type; None is "no attempt yet" (no grant). A (job type, tool) pair not listed has no attempt rule
 # (the read tools). An execute job re-sends a SENT attempt under the same action id (the re-queue after a lost reply,
-# Plan E ruling 6); a recover job redispatches INTENT only (SA:345 over SA:334), looks up any attempt that may have
-# reached the destination (a resolved one answers its stored outcome), and aborts one that is not resolved.
+# Plan E ruling 6). It is also admitted at ABORT_REQUESTED: when mcp-write fails after an abort request but before the
+# outcome is recorded, the worker re-queues the job, and its next call must reach `create_incident`'s UNKNOWN (no
+# destination call), which the worker turns into OUTCOME_UNKNOWN and a recover job. A refusal there would close the
+# job as final and leave the run EXECUTING with no job (final review I1). A recover job redispatches INTENT only
+# (SA:345 over SA:334), looks up any attempt that may have reached the destination (a resolved one answers its stored
+# outcome), and aborts one that is not resolved.
 ATTEMPT_STATES: Final[dict[tuple[JobType, Tool], frozenset[AttemptState | None]]] = {
-    (JobType.EXECUTE, Tool.CREATE_INCIDENT): frozenset({None, _A.INTENT, _A.SENT}),
+    (JobType.EXECUTE, Tool.CREATE_INCIDENT): frozenset({None, _A.INTENT, _A.SENT, _A.ABORT_REQUESTED}),
     (JobType.RECOVER, Tool.CREATE_INCIDENT): frozenset({_A.INTENT}),
     (JobType.RECOVER, Tool.GET_INCIDENT_RECEIPT): frozenset({_A.SENT, _A.ABORT_REQUESTED, _A.RESOLVED}),
     (JobType.RECOVER, Tool.ABORT_INCIDENT): frozenset({_A.INTENT, _A.SENT, _A.ABORT_REQUESTED}),

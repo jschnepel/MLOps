@@ -3,8 +3,10 @@ replaced (Plan K rulings 1, 9, 10, 20 and 26).
 
 Catches: a tool missing from the list or listed with a schema other than its `schemas/tools/` contract (an extra
 argument accepted, SA:350); a tool that does its work before resolving the handle, or resolves it for another tool's
-allowlist; a call without a handle that reaches anything; a refused handle, a premature abort or a stale run answered
-with an action id; the worker's `azp` not handed to the work; envelopes for the recovery tools that do not validate
+allowlist; a call without a handle that reaches anything; a recovery tool that does any work for a handle its
+allowlist refuses; a re-queued execute job refused at an abort request instead of answered UNKNOWN with nothing sent
+(final review I1); a refused handle, a premature abort or a stale run answered with an action id; the worker's `azp`
+not handed to the work; envelopes for the recovery tools that do not validate
 against `schemas/tool-result.schema.json` for every outcome (the abort's UNKNOWN and CONFLICT included), or `ok`
 around anything but SUCCEEDED (R083).
 """
@@ -29,7 +31,8 @@ from ops_core.outcomes import ActionOutcome, ToolOutcome
 from ops_core.tokens import Principal, TokenRejected
 from ops_mcp_write import destination, execution, server
 
-from tests.plan_k.test_recovery_tools import ACTION, PROPOSAL, SHA, committed, tombstone
+from tests.plan_j.test_allowlist import resolved_row
+from tests.plan_k.test_recovery_tools import ACTION, PROPOSAL, SHA, Script, committed, tombstone
 
 ISSUER = "http://localhost:18080/realms/ops-dev"
 RESOURCE = "http://mcp-write:8082/mcp"
@@ -193,6 +196,62 @@ async def test_a_refusal_before_the_destination_is_a_plain_error(
         assert doc["error"]["code"] == code and doc["error"]["retryable"] is retryable
         assert "action_id" not in json.dumps(doc)  # a refusal never names the action (SA:355)
         TOOL_RESULT.validate(doc)
+
+
+def resolving(monkeypatch: pytest.MonkeyPatch, job_type: str, run_state: str, attempt: str | None) -> None:
+    """`resolve_invocation` runs for real over a scripted definer row, so the allowlist itself decides."""
+
+    async def one_row(_conn: Any, _query: str, _params: tuple[object, ...]) -> dict[str, Any]:
+        return {**resolved_row(run_state), "job_type": job_type, "attempt_state": attempt}
+
+    monkeypatch.setattr(persistence, "_call", one_row)
+
+
+@pytest.mark.asyncio
+async def test_a_re_queued_execute_job_at_an_abort_request_answers_unknown_without_a_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Final review I1: the abort request committed, then mcp-write failed before the outcome was recorded, and the
+    worker re-queued the execute job. Its fresh handle is answered UNKNOWN (which the worker turns into OUTCOME_UNKNOWN
+    and a recover job), with nothing sent; a refused handle would close the job and strand the run EXECUTING."""
+    resolving(monkeypatch, "execute", "EXECUTING", "ABORT_REQUESTED")
+    script = Script(monkeypatch, attempt="ABORT_REQUESTED")
+    async with client(write_app()) as mcp:
+        doc = (await mcp.call_tool("create_incident", {"proposal_id": str(PROPOSAL)})).structured_content
+    assert isinstance(doc, dict) and doc["status"] == "outcome" and doc["error"] is None
+    assert doc["data"]["status"] == "UNKNOWN" and doc["data"]["action_id"] == str(ACTION)
+    assert script.calls == ["grant_execution"]  # no mark_sent, no abort, no destination call of any kind
+    TOOL_RESULT.validate(doc)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("job_type", "run_state", "attempt"),
+    [("execute", "EXECUTING", "SENT"), ("recover", "OUTCOME_UNKNOWN", None)],
+    ids=["execute-handle", "recover-without-a-grant"],
+)
+async def test_the_recovery_tools_refuse_a_handle_at_resolution_before_any_work(
+    monkeypatch: pytest.MonkeyPatch, job_type: str, run_state: str, attempt: str | None
+) -> None:
+    resolving(monkeypatch, job_type, run_state, attempt)
+    worked: list[str] = []
+
+    async def work(_deps: Any, **_: Any) -> ActionOutcome:
+        worked.append("work")
+        return outcome(ToolOutcome.SUCCEEDED)
+
+    for name in ("get_incident_receipt", "abort_incident"):
+        monkeypatch.setattr(execution, name, work)
+    async with client(write_app()) as mcp:
+        docs = [
+            (await mcp.call_tool(name, {"proposal_id": str(PROPOSAL)})).structured_content
+            for name in ("get_incident_receipt", "abort_incident")
+        ]
+    for doc in docs:
+        assert isinstance(doc, dict) and doc["status"] == "error" and doc["data"] is None
+        assert doc["error"] == {"code": "INVALID_HANDLE", "message": "invocation handle rejected", "retryable": False}
+        TOOL_RESULT.validate(doc)
+    assert worked == []  # refused by the allowlist at resolution, before the tool's work began
 
 
 @pytest.mark.parametrize("status", list(ToolOutcome))

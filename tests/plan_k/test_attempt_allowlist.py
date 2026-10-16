@@ -3,9 +3,10 @@
 Catches: a receipt lookup or an abort honoured for an execute handle, or a lookup before anything could have been sent
 (R030: "unavailable outside recover jobs"); a recover job redispatching an attempt already SENT (SA:345) or anything
 after an abort request; an execute job's re-send of a SENT attempt refused (Plan E ruling 6, the re-queue after a lost
-reply); an abort of a resolved attempt; a recovery tool for a run with no grant at all (it would have nothing to
-recover, and must create nothing); a refusal whose message says which check failed or whose log carries the handle;
-and a resolution that reads the attempt state but does not hand it to the check.
+reply), or its re-queue refused once an abort was requested (final review I1: the job would close as final and leave
+the run EXECUTING with no job); an abort of a resolved attempt; a recovery tool for a run with no grant at all (it
+would have nothing to recover, and must create nothing); a refusal whose message says which check failed or whose log
+carries the handle; and a resolution that reads the attempt state but does not hand it to the check.
 """
 
 import asyncio
@@ -26,7 +27,8 @@ WRITE = {Tool.CREATE_INCIDENT, Tool.GET_INCIDENT_RECEIPT, Tool.ABORT_INCIDENT}
 
 def test_the_attempt_rules_are_the_rulings() -> None:
     assert ATTEMPT_STATES == {
-        (JobType.EXECUTE, Tool.CREATE_INCIDENT): {None, A.INTENT, A.SENT},  # the SENT re-send stays (ruling 5)
+        # The SENT re-send stays (ruling 5); ABORT_REQUESTED reaches the UNKNOWN that parks the run (final review I1).
+        (JobType.EXECUTE, Tool.CREATE_INCIDENT): {None, A.INTENT, A.SENT, A.ABORT_REQUESTED},
         (JobType.RECOVER, Tool.CREATE_INCIDENT): {A.INTENT},  # SA:345 over SA:334
         (JobType.RECOVER, Tool.GET_INCIDENT_RECEIPT): {A.SENT, A.ABORT_REQUESTED, A.RESOLVED},
         (JobType.RECOVER, Tool.ABORT_INCIDENT): {A.INTENT, A.SENT, A.ABORT_REQUESTED},
@@ -63,6 +65,15 @@ def test_receipt_lookup_is_for_recover_jobs_with_something_to_look_up() -> None:
         with pytest.raises(persistence.HandleRejected):
             persistence.allowed_tool(JobType.RECOVER, RunState.OUTCOME_UNKNOWN, None, tool)  # no grant, no recovery
     persistence.allowed_tool(JobType.RECOVER, RunState.ESCALATED, A.RESOLVED, Tool.GET_INCIDENT_RECEIPT)
+
+
+def test_a_re_queued_execute_job_reaches_an_abort_request() -> None:
+    """Final review I1: an abort was requested, then mcp-write failed before the outcome was recorded, and the worker
+    re-queued the execute job. Its fresh handle must reach `create_incident`'s UNKNOWN (no destination call), which
+    the worker turns into OUTCOME_UNKNOWN and a recover job; a refusal would close the job and strand the run."""
+    persistence.allowed_tool(JobType.EXECUTE, RunState.EXECUTING, A.ABORT_REQUESTED, Tool.CREATE_INCIDENT)
+    with pytest.raises(persistence.HandleRejected):  # a resolved attempt is still refused: the run has moved on
+        persistence.allowed_tool(JobType.EXECUTE, RunState.EXECUTING, A.RESOLVED, Tool.CREATE_INCIDENT)
 
 
 def recover_row(state: str, attempt: str | None) -> dict[str, Any]:

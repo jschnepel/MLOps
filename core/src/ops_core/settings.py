@@ -440,8 +440,10 @@ def workload_client_id() -> str:
     """The worker's Keycloak client, named here once (T47, Plan K ruling 12): the worker's token source asks for tokens
     as this client, both MCP servers' verifiers accept no other `azp`, and the worker binds every handle it mints to
     it, which the definers compare with the presented token's `azp`. `OPS_WORKLOAD_CLIENT_ID`, default `ops-worker`
-    (the realm's client); the secret file keeps its name, `kc_client_secret_ops_worker`."""
-    return env("OPS_WORKLOAD_CLIENT_ID", "ops-worker")
+    (the realm's client); the secret file keeps its name, `kc_client_secret_ops_worker`. Surrounding whitespace is
+    dropped and an all-blank value counts as unset: no token's `azp` carries a space, so a padded value would only
+    turn an editing slip into an opaque 401 at both servers (Plan K final fix wave)."""
+    return os.environ.get("OPS_WORKLOAD_CLIENT_ID", "").strip() or "ops-worker"
 
 
 def fixtures_dir() -> Path:

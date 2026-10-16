@@ -28,7 +28,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Final, Literal
 from uuid import UUID
 
 import httpx2
@@ -48,6 +48,9 @@ log = logging.getLogger(__name__)
 _POST_SENT_REFUSALS = (persistence.PersistenceError, IllegalTransition, EventRuleViolation)
 # One destination request, given mcp-write's workload token.
 Ask = Callable[[str], Awaitable[destination.Reply | None]]
+# The reasons `request_abort` chooses (revision 0010, Plan K ruling 3), the same three incident-sim accepts. Any other
+# answer is a fault, refused before the abort POST rather than left to the destination's 422 (final review T3-a).
+ABORT_REASONS: Final = frozenset({"cancelled_before_send", "expired", "deadline"})
 
 
 def next_step(attempt_state: str | None) -> Literal["stored", "send", "resend", "aborting"]:
@@ -115,7 +118,10 @@ async def create_incident(deps: Deps, *, handle: str, azp: str, proposal_id: UUI
     step = next_step(grant.attempt_state)
     if step == "stored":
         return _stored(grant)
-    if step == "aborting":  # the abort's own record decides; until then this call cannot know (T22 reconciles)
+    if step == "aborting":
+        # The abort's own record decides, and this call cannot know it, so nothing is sent and the answer is UNKNOWN,
+        # which the worker turns into OUTCOME_UNKNOWN for T22. Reached by a re-queued execute job after an abort
+        # request whose outcome was never recorded (final review I1), or by an overlapping call.
         return destination.unknown(grant.action_id, grant.payload_sha256)
     # A first send and a re-send of a SENT attempt both pass mark_sent, which re-checks the abort request, the cancel,
     # the dispatch deadline and (for a re-send) the job type under the runs lock (round 1, I1). The window between its
@@ -181,11 +187,18 @@ async def abort_incident(deps: Deps, *, handle: str, azp: str, proposal_id: UUID
 
 
 async def _abort(deps: Deps, handle: str, azp: str, grant: persistence.Grant) -> ActionOutcome:
-    """request_abort (its reason, committed before the abort leaves), the abort POST, the record (SA:465)."""
+    """request_abort (its reason, committed before the abort leaves), the abort POST, the record (SA:465).
+
+    Raises:
+        PersistenceError: request_abort answered something other than `resolved` or one of `ABORT_REASONS`; nothing
+            is POSTed.
+    """
     async with deps.session.unit() as conn:
         reason = await persistence.request_abort(conn, handle=handle, azp=azp, action_id=grant.action_id)
     if reason == "resolved":  # the outcome already stands
         return await _read_back(deps, handle, azp, grant)
+    if reason not in ABORT_REASONS:  # only a reason the function chooses may reach the destination as the abort's
+        raise persistence.PersistenceError(f"request_abort answered {reason}")
 
     async def abort(token: str) -> destination.Reply | None:
         return await destination.post_abort(
@@ -206,9 +219,13 @@ async def _record(deps: Deps, handle: str, azp: str, grant: persistence.Grant, o
         # A lost reply, a 404, a 429, a 503 or a malformed document: nothing is recorded here; the worker holds
         # mark_unknown (SA:467, Plan E ruling 6), and record_outcome refuses UNKNOWN by design.
         return outcome
-    # An unmapped database failure (psycopg.Error) still escapes as a 500, and the worker's next call meets the same
-    # action id (nothing was recorded). A mapped refusal is answered UNKNOWN so the worker reconciles it: the
-    # destination has answered, so an error envelope would hide an outcome that may exist (AM-13).
+    # An unmapped database failure (psycopg.Error: a lock timeout, a dropped connection) still escapes as the SDK's
+    # tool error, and the worker re-queues the execute job with nothing recorded. Its next call meets the same action
+    # id: after a send it passes mark_sent again, as any re-send of a SENT attempt does; after an abort request the
+    # attempt is ABORT_REQUESTED, which the allowlist admits for an execute job, so the call answers UNKNOWN with
+    # nothing sent and the worker's mark_unknown parks the run in OUTCOME_UNKNOWN for T22 (final review I1). A mapped
+    # refusal is answered UNKNOWN at once so the worker reconciles it: the destination has answered, so an error
+    # envelope would hide an outcome that may exist (AM-13).
     try:
         async with deps.session.unit() as conn:
             standing = await persistence.record_outcome(
