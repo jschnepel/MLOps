@@ -1,0 +1,11 @@
+T47 mcp-write — 2026-10-16T11:30:24Z
+R131 write half: mcp_exec EXECUTE = the seven write-path functions; 18 others refused (mark_unknown 42501)
+R131 write half: investigate and resume_input handles refused at all three tools (each live at mcp_read), lying server column refused (and at mcp_exec); no grant; the execute handle answered SUCCEEDED
+R131/DoD 3 token half: ops-mcp-read token 403 at incidents, lookup and abort; ops-mcp-write 404
+R030: execute, investigate and APPROVED-run (no grant) recover handles refused at the recovery tools; recover lookup: delay_receipt 404 -> UNKNOWN unrecorded, then SUCCEEDED (minimal outcome); GETs only; counts unchanged
+re-send (review note 3): lose_after_commit -> UNKNOWN; fresh execute handle -> same action_id
+receipt_hash_mismatch -> CONFLICT (ESCALATED); recover lookup replays it, no call; abort refused
+rate_limit -> UNKNOWN; lookup 404 -> UNKNOWN; abort not due refused; cancel -> abort 'deadline' -> FAILED aborted_no_commit; grant/attempt/job/proposal counts unchanged around the lookup and the abort; the destination gained only the tombstone
+cancel before send: create_incident -> abort -> FAILED_NO_COMMIT cancelled_before_send; no POST
+past the dispatch deadline: create_incident -> abort -> FAILED_NO_COMMIT expired; no POST
+recover create_incident on INTENT in OUTCOME_UNKNOWN -> STALE_RUN, nothing sent; abort not due, then cancel -> FAILED_NO_COMMIT cancelled_before_send

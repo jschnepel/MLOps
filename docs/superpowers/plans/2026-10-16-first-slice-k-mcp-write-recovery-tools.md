@@ -404,7 +404,7 @@ the Plan K debt list (SA:698).
   urls: settings.Urls) -> TokenVerifier`; `ops_worker.main.token_source(kc: settings.Keycloak) -> WorkloadTokenSource`;
   in `tests.plan_k.test_verifier_t47`: `WRITE`, `URLS`, `KC`, `production_like()`, `for_write(**over)`.
 
-- [ ] **Step 1a: Record both baselines**
+- [x] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN` with pytest `1075 passed, 164 skipped`; with the
 dev stack up and `uv run python scripts/skeleton.py status` showing every process down, run
@@ -413,13 +413,13 @@ dev stack up and `uv run python scripts/skeleton.py status` showing every proces
 reports/outbox reports/mcp-read`. Record both lines in the report (Global Constraints, "Counts"). A gate that is not
 GREEN stops the plan here, before anything is committed.
 
-- [ ] **Step 1b: Record the base**
+- [x] **Step 1b: Record the base**
 
 Run `git rev-parse --short HEAD` and write the hash it prints as `BASE=<hash>` in the report and in the SDD ledger
 (`.superpowers/sdd/2026-10-16-first-slice-k-mcp-write-recovery-tools/progress.md`). Task 6's commit span is
 `<base>..<last>`.
 
-- [ ] **Step 1c: Commit the debt list (before any code)**
+- [x] **Step 1c: Commit the debt list (before any code)**
 
 Edit 1 (`SESSION_STATE.md`, at the end of "Plan J debt list (T15; committed before coding) [R6-B7]"), replace:
 
@@ -465,7 +465,7 @@ git add SESSION_STATE.md
 git commit -m "docs: declare Plan K's shortcuts before coding (T47 debt list)"
 ```
 
-- [ ] **Step 2: Put `tests/plan_k` on the test path**
+- [x] **Step 2: Put `tests/plan_k` on the test path**
 
 Edit 1 (`pyproject.toml`, the changed lines), replace:
 
@@ -486,7 +486,7 @@ Create `tests/plan_k/__init__.py`:
 without a database."""
 ```
 
-- [ ] **Step 3: Write the failing verifier tests**
+- [x] **Step 3: Write the failing verifier tests**
 
 Create `tests/plan_k/test_verifier_t47.py`:
 
@@ -602,7 +602,7 @@ def test_production_app_builds_its_verifier_through_write_verifier(monkeypatch: 
 Run: `uv run python -m pytest tests/plan_k/test_verifier_t47.py -q`
 Expected: `10 failed` (each with `AttributeError: module 'ops_mcp_write.server' has no attribute 'write_verifier'`).
 
-- [ ] **Step 4: The setting, mcp-write's audience check and `write_verifier`**
+- [x] **Step 4: The setting, mcp-write's audience check and `write_verifier`**
 
 Edit 1 (`core/src/ops_core/settings.py`, in `fixtures_dir`), replace:
 
@@ -718,7 +718,7 @@ with:
 Run: `uv run python -m pytest tests/plan_k/test_verifier_t47.py -q`
 Expected: `10 passed`.
 
-- [ ] **Step 5: Write the failing setting tests**
+- [x] **Step 5: Write the failing setting tests**
 
 Create `tests/plan_k/test_workload_client.py`:
 
@@ -788,7 +788,7 @@ Expected: `2 failed, 2 passed` (`AttributeError: module 'ops_worker.main' has no
 mcp-read case's `ops_core.tokens.WrongAudience: token was issued to a client this server does not accept`: its
 verifier still names `ops-worker`; the default and the mcp-write case pass already).
 
-- [ ] **Step 6: The worker's token source and mcp-read's verifier read the setting**
+- [x] **Step 6: The worker's token source and mcp-read's verifier read the setting**
 
 Edit 1 (`worker/src/ops_worker/main.py`, in `_main`), replace:
 
@@ -870,7 +870,7 @@ with:
 Run: `uv run python -m pytest tests/plan_k -q`
 Expected: `14 passed`.
 
-- [ ] **Step 7: Gates and commit**
+- [x] **Step 7: Gates and commit**
 
 Format, lint and count characters on `core/src/ops_core/settings.py`, `worker/src/ops_worker/main.py`,
 `mcp-read/src/ops_mcp_read/server.py`, `mcp-write/src/ops_mcp_write/server.py` and every file under `tests/plan_k/`.
@@ -930,7 +930,7 @@ the moment between `mark_sent`'s commit and the POST is AM-13's own and the same
   in `tests.e2e.test_migration_0010_live`: `AZP`, `LATE`, `NOW`, `execute_handle(worker, run, *, azp, fence)`,
   `fence_of(app_conn, run)`, `recover_handle(app_conn, worker, run, trigger)`, `cancel(api, run)`.
 
-- [ ] **Step 1: Write the failing revision and startup tests**
+- [x] **Step 1: Write the failing revision and startup tests**
 
 Edit 1 (`tests/plan_e/test_transitions_table.py`, in `REVISIONS`), replace:
 
@@ -1221,7 +1221,7 @@ in `test_migration_0010.py`, `AttributeError: module 'ops_core.persistence' has 
 `test_mcp_write_startup.py`, and the transitions module's check that every listed revision exists fails on
 `0010_write_path`).
 
-- [ ] **Step 2: The revision**
+- [x] **Step 2: The revision**
 
 Create `migrations/app/versions/0010_write_path.py`:
 
@@ -1521,7 +1521,7 @@ def downgrade() -> None:
 Run: `uv run ruff check --select ISC004 --fix --unsafe-fixes migrations/app/versions/0010_write_path.py`
 Expected: `All checks passed!` (the file above is already in its fixed form).
 
-- [ ] **Step 3: The matrix and the persistence wrappers**
+- [x] **Step 3: The matrix and the persistence wrappers**
 
 Edit 1 (`core/src/ops_core/privileges.py`, in `DEFINER_FUNCTIONS`), replace:
 
@@ -1670,7 +1670,7 @@ with:
         (handle, azp, action_id, outcome.status.value, Jsonb(outcome.model_dump(mode="json"))),
 ```
 
-- [ ] **Step 4: mcp-write hands the token's azp on and checks for 0010 at start**
+- [x] **Step 4: mcp-write hands the token's azp on and checks for 0010 at start**
 
 `mark_sent`'s new answers mean "nothing was sent"; until Task 3 builds the abort, `create_incident` answers them as it
 answered `cancelled`.
@@ -1802,7 +1802,7 @@ with:
 Run: `uv run python -m pytest tests/plan_k tests/plan_e/test_transitions_table.py -q`
 Expected: `42 passed` (27 in `tests/plan_k`, 15 in the transitions module).
 
-- [ ] **Step 5: Every write-path call site in the tests**
+- [x] **Step 5: Every write-path call site in the tests**
 
 Ten test modules call the four functions with the old signatures, as SQL strings or through the persistence wrappers
 and `execution.create_incident`, and one Plan H module fakes them. Every live handle there is minted for `ops-worker`,
@@ -1883,7 +1883,7 @@ with:
 Run: `uv run python -m pytest tests/plan_k tests/plan_e/test_transitions_table.py tests/plan_h tests/plan_j -q`
 Expected: `213 passed`.
 
-- [ ] **Step 6: The live revision test**
+- [x] **Step 6: The live revision test**
 
 Create `tests/e2e/test_migration_0010_live.py`:
 
@@ -2260,7 +2260,7 @@ Expected: `5 passed` (the round trip builds and drops a scratch database prefixe
 not measured: the plan's dry run cannot run live steps. A failure is a finding against the revision, not a reason to
 weaken an assertion: stop and report.
 
-- [ ] **Step 7: Gates and commit**
+- [x] **Step 7: Gates and commit**
 
 Format, lint and count characters on every file of this task (the revision after the ISC004 pass).
 
@@ -2321,7 +2321,7 @@ table (SA:240-244).
   `refusal_error("ABORT_NOT_DUE")`; in `tests.plan_k.test_recovery_tools`: `ACTION`, `PROPOSAL`, `SHA`,
   `committed(sha=SHA)`, `tombstone(state, reason)`.
 
-- [ ] **Step 1: Write the failing allowlist tests (and move the three existing ones to the new signature)**
+- [x] **Step 1: Write the failing allowlist tests (and move the three existing ones to the new signature)**
 
 Create `tests/plan_k/test_attempt_allowlist.py`:
 
@@ -2544,7 +2544,7 @@ Run: `uv run python -m pytest tests/plan_k/test_attempt_allowlist.py tests/plan_
 Expected: `2 errors in` (collection stops: `ImportError: cannot import name 'ATTEMPT_STATES' from 'ops_core.jobs'` in
 the new module and in Plan J's).
 
-- [ ] **Step 2: The attempt-state dimension**
+- [x] **Step 2: The attempt-state dimension**
 
 Edit 1 (`core/src/ops_core/jobs.py`, the module header), replace:
 
@@ -2696,7 +2696,7 @@ with:
 Run: the Step 1 command again.
 Expected: `31 passed`.
 
-- [ ] **Step 3: Write the failing tool tests**
+- [x] **Step 3: Write the failing tool tests**
 
 Create `tests/plan_k/test_recovery_tools.py`:
 
@@ -3294,7 +3294,7 @@ were given`, `ValueError: attempt state ABORT_REQUESTED is not handled by the wa
 reasons mapped to `aborted_no_commit`, `'GRANT_REFUSED' == 'ABORT_NOT_DUE'` and `== 'NOT_REDISPATCHABLE'`, the
 example's `'cancelled before send'`, and the one listed tool).
 
-- [ ] **Step 4: The lookup and abort clients**
+- [x] **Step 4: The lookup and abort clients**
 
 Edit 1 (`mcp-write/src/ops_mcp_write/destination.py`, the module header), replace:
 
@@ -3404,7 +3404,7 @@ with:
         outcome, reason = outcome_from_destination(state, sent=sent, cancel_requested=cancelled)
 ```
 
-- [ ] **Step 5: The recovery calls and `create_incident`'s abort**
+- [x] **Step 5: The recovery calls and `create_incident`'s abort**
 
 Edit 1 (`mcp-write/src/ops_mcp_write/execution.py`, the module header), replace:
 
@@ -3682,7 +3682,7 @@ with:
         log.exception("recording the outcome of action %s failed after the destination answered", grant.action_id)
 ```
 
-- [ ] **Step 6: The three tools and their envelopes**
+- [x] **Step 6: The three tools and their envelopes**
 
 Edit 1 (`mcp-write/src/ops_mcp_write/server.py`, the module header), replace:
 
@@ -3898,7 +3898,7 @@ with:
         tools=[strict_tool(create_incident), strict_tool(get_incident_receipt), strict_tool(abort_incident)],
 ```
 
-- [ ] **Step 7: The abort's result schema and the example's reason**
+- [x] **Step 7: The abort's result schema and the example's reason**
 
 Edit 1 (`scripts/build_schemas.py`, in `abort_outcome`), replace:
 
@@ -3993,7 +3993,7 @@ Expected: `50 passed`.
 Run: `uv run python -m pytest tests/plan_k tests/plan_c tests/plan_d tests/plan_e tests/plan_h tests/plan_j -q`
 Expected: `688 passed, 19 skipped`.
 
-- [ ] **Step 8: Gates and commit**
+- [x] **Step 8: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
@@ -4042,7 +4042,7 @@ are read as role `incident`.
   token, kind)`, `at_destination(incident_conn, action)`, `keys_total(incident_conn)`, and `recover_handle` as it
   imported it from Task 2.
 
-- [ ] **Step 1: Scan the new evidence root for secrets**
+- [x] **Step 1: Scan the new evidence root for secrets**
 
 Edit 1 (`tests/plan_b/test_evidence.py`, the module header), replace:
 
@@ -4074,7 +4074,7 @@ with:
 )
 ```
 
-- [ ] **Step 2: Write the live cases**
+- [x] **Step 2: Write the live cases**
 
 Create `tests/e2e/test_mcp_write_t47_live.py`:
 
@@ -4662,7 +4662,7 @@ async def test_a_redispatch_outside_executing_sends_nothing(
         await purge_run(app_conn, run)
 ```
 
-- [ ] **Step 3: Run it**
+- [x] **Step 3: Run it**
 
 Run (dev stack up, no skeleton process running):
 
@@ -4674,7 +4674,7 @@ Expected: `10 passed`, and `reports/mcp-write/t47-mcp-write.txt` holds a header 
 arithmetic, not measured. A failure is a finding against Tasks 1-3, not a reason to weaken an assertion: stop and
 report.
 
-- [ ] **Step 4: Gates and commit**
+- [x] **Step 4: Gates and commit**
 
 Format, lint and count characters on the two files of this task.
 
@@ -4711,7 +4711,7 @@ outcome-truth statement).
   `execution.Deps`, `execution.create_incident`.
 - Produces: `reports/mcp-write/t47-independent-client.txt`; `docs/threat-model.md`.
 
-- [ ] **Step 1: Write the independent-process test**
+- [x] **Step 1: Write the independent-process test**
 
 Create `tests/e2e/test_mcp_write_process_live.py`:
 
@@ -4882,7 +4882,7 @@ async def test_r025_an_independent_client_lists_the_write_tools_and_looks_up_a_r
         await purge_run(app_conn, run)
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 Run (dev stack up, no skeleton process running):
 
@@ -4893,7 +4893,7 @@ OPS_LIVE=1 PROFILE=test PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_mcp_
 Expected: `1 passed`, and `reports/mcp-write/t47-independent-client.txt` holds a header and one line. This count is
 arithmetic, not measured.
 
-- [ ] **Step 3: The threat model**
+- [x] **Step 3: The threat model**
 
 Create `docs/threat-model.md`:
 
@@ -4950,7 +4950,7 @@ Network isolation between the containers (mcp-read cannot reach incident-sim at 
 checks above are the only barrier. The worker's recovery loop (backoff, scheduled recover jobs, escalation) is T22's.
 ```
 
-- [ ] **Step 4: Gates and commit**
+- [x] **Step 4: Gates and commit**
 
 Format, lint and count characters on the test module.
 
@@ -4993,7 +4993,7 @@ Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-
 task's own (`LAST=$(git rev-parse --short HEAD)`, run before this task commits). `<date>` is `date -u +%F` on the day
 of the close-out. Step 5 replaces every one of them.
 
-- [ ] **Step 1: No deferral to T47 is left in live code**
+- [x] **Step 1: No deferral to T47 is left in live code**
 
 Edit 1 (`tests/plan_j/test_worker_azp.py`, the module header), replace:
 
@@ -5023,7 +5023,7 @@ with:
 
 The two deferral greps run at the end of Step 4, once `mcp-write/README.md` (Edit 8 there) is rewritten too.
 
-- [ ] **Step 2: Handoff records**
+- [x] **Step 2: Handoff records**
 
 Run this once from the repository root, with `BASE` set to the hash Task 1 Step 1b recorded (it rewrites the two JSON
 files in their own format: two-space indent, non-ASCII kept, one trailing newline):
@@ -5175,7 +5175,7 @@ EOF
 Expected: it prints the span (for example `1a2b3c4..5d6e7f8`). `git diff --stat handoff` shows three files changed;
 `git diff handoff/acceptance-matrix.json` shows four rows: R025, R030, R031 and R131.
 
-- [ ] **Step 3: Project state**
+- [x] **Step 3: Project state**
 
 Edit 1 (`SESSION_STATE.md`, under "Session state"), replace:
 
@@ -5349,7 +5349,7 @@ each, with its reason; or `- Rulings made during execution: none beyond the plan
 `- **Open items for later:** none recorded.`). The "Exact next step" above is computed from `handoff/tasks.json` with
 T47 `DONE`: T17 is the one PLANNED task whose dependencies (`T09`) are all done; T16 still waits for T17.
 
-- [ ] **Step 4: Status, the runbooks, the architecture, history and the READMEs**
+- [x] **Step 4: Status, the runbooks, the architecture, history and the READMEs**
 
 Edit 1 (`STATUS.md`, under "Update — Plan J executed (2026-10-15, branch `plan-j`)"), replace:
 
@@ -5717,7 +5717,7 @@ and the mcp-read runbook). The live evidence line in `tests/e2e/test_mcp_read_pr
 mcp-write with T47)") stays: it says where the other half lives, and changing it would only rewrite T15's committed
 evidence.
 
-- [ ] **Step 5: Final gates and the placeholders**
+- [x] **Step 5: Final gates and the placeholders**
 
 ```bash
 PYTHONUTF8=1 uv run python scripts/check.py
@@ -5734,7 +5734,7 @@ reports/bootstrap reports/auth reports/mcp-read`; the live run rewrote `reports/
 `reports/leases`, `reports/events` and `reports/outbox` and wrote `reports/mcp-write`, and Step 6 commits them. Tick
 this plan's checkboxes (`- [ ]` → `- [x]`) for every step executed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add handoff SESSION_STATE.md STATUS.md README.md mcp-write/README.md mcp-read/README.md worker/README.md

@@ -499,6 +499,36 @@ and 76. Two items went to T47 as debt: an over-the-wire test of the EXECUTING re
 the three remaining `"ops-worker"` literals. The lesson: when two servers share a protection, the check that it is
 installed has to be shared too, or one of them is protected only on paper.
 
-## 28. What the process taught
+## 28. The mcp-write plan finished the write door and gave recovery its tools
+
+**Problem.** Plan K takes T47: the authenticated mcp-write and the recovery tools. The fact sheet found the write path
+itself real since the walking skeleton, and the server around it behind mcp-read: its verifier stamped its own
+audience whatever the token held, the write-path functions named the worker's client with a literal, the allowlist
+ignored the attempt state, a cancelled attempt was answered UNKNOWN instead of being aborted, and neither
+`get_incident_receipt` nor `abort_incident` existed. The controller's brief of 27 rulings split recovery in two: the
+server side (every tool body, every function they call, their refusals) now, the worker's recover loop with T22.
+
+**Change.** mcp-write's verifier now matches mcp-read's, and one setting names the worker's client for the worker's
+token source and both verifiers. Revision 0010 passes the token's `azp` to the write-path functions, gives `mark_sent`
+the dispatch deadline, adds `request_abort`, which chooses the abort's reason itself, and lets a receipt be recorded
+after an abort request. The allowlist gained the attempt state, the two recovery tools got full bodies, and
+`create_incident` aborts a cancelled or expired attempt itself. Live tests drive the destination's faults at the
+recovery tools, the re-send of an EXECUTING run over HTTP, the cancel and the deadline, and an independent mcp-write
+process; `docs/threat-model.md` says plainly that v1 trusts mcp-write for outcome truth.
+
+**Review.** Writing the plan against the code moved three rulings. The abort's reason could not be mcp-write's choice:
+it sees neither the cancel flag nor the grant's time, so the function chooses it under the lock. The abort tool's
+result schema had no way to say "the destination did not answer", so the schema gained UNKNOWN and CONFLICT. And two
+of the faults the rulings named act only on the incident POST, so their effect on the recovery tools is shown through
+the POST's consequences, with a scripted reply for a rate limit at the lookup itself.
+
+**Problem.** The plan's first review (0 Blocking, 1 Important, 11 Minor) found a hole the plan said was closed: the
+execute job's re-send of a SENT attempt skipped `mark_sent`, so after a lost reply a re-queued job could still POST
+after a cancel or past the dispatch deadline, and a recover job could re-send too. **Change.** Every send now passes
+`mark_sent`, which checks a re-send as it checks a first send and refuses a recover job's; a receipt after an abort is
+accepted only when the abort followed SENT; the hash-mismatch pin follows every function mcp-write reaches; and the
+counts and destination keys are checked around the abort as well as the lookups.
+
+## 29. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.

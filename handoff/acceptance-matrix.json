@@ -458,12 +458,14 @@
       "evidence_paths": [
         "tests/e2e/test_mcp_read_process_live.py",
         "reports/mcp-read/t15-independent-client.txt",
-        "tests/plan_j/test_mcp_read_http.py"
+        "tests/plan_j/test_mcp_read_http.py",
+        "tests/e2e/test_mcp_write_process_live.py",
+        "reports/mcp-write/t47-independent-client.txt"
       ],
       "owning_tasks": [
         "T15"
       ],
-      "note": "Read half only (Plan J, T15): python -m ops_mcp_read runs as a child process on a loopback port and the official SDK Client (mode 2026-07-28) in the test process lists exactly search_procedures and calls it with a valid handle over the network. mcp-write's half -> T47."
+      "note": "Read half (Plan J, T15): python -m ops_mcp_read runs as a child process on a loopback port and the official SDK Client (mode 2026-07-28) in the test process lists exactly search_procedures and calls it with a valid handle over the network. Write half (Plan K, T47): python -m ops_mcp_write runs as a child process pointed at incident-sim, lists exactly the three write tools to the official client and answers get_incident_receipt with a recover handle for an existing action (SUCCEEDED; no grant, attempt, job or incident created). Both halves are evidenced; the row's status is left to its owner, T15."
     },
     {
       "id": "R026",
@@ -547,14 +549,21 @@
       "category": "recovery",
       "requirement": "Receipt lookup is restricted and cannot create actions",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r030_receipt_lookup_is_restricted_and_cannot_create_a.py",
       "expected_evidence": "Normal/model tools cannot call lookup; reconciliation workload sees minimal existing-action outcome only.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_mcp_write_t47_live.py",
+        "reports/mcp-write/t47-mcp-write.txt",
+        "tests/plan_k/test_attempt_allowlist.py",
+        "tests/plan_k/test_recovery_tools.py",
+        "tests/plan_k/test_write_tools_server.py"
+      ],
       "owning_tasks": [
         "T47"
-      ]
+      ],
+      "note": "Plan K (T47): get_incident_receipt answers only a recover job's handle whose attempt is SENT, ABORT_REQUESTED or RESOLVED (persistence.allowed_tool with jobs.ATTEMPT_STATES, every combination tabled in a unit test). Over HTTP an execute handle, an investigate handle and a recover handle of an APPROVED run (no grant; refused by the run-state rule, since a run in a recover state without a grant cannot arise through the definers) are refused at both recovery tools with the plain INVALID_HANDLE envelope and no action id; a recover handle's lookup is one GET (a delayed receipt's 404 is UNKNOWN and recorded by nobody), then the minimal ActionOutcome (status, action_id, payload_sha256, receipt, tombstone, reason), recorded; the execution_grant, action_attempt, jobs and proposals counts do not move and nothing is POSTed; around an abort they do not move either, and the destination gains only the tombstone; refusals make no destination call and a lookup writes no destination key. The model holds no tool (BS:395), and only the worker's workload can authenticate at mcp-write (erratum 90)."
     },
     {
       "id": "R031",
@@ -568,13 +577,15 @@
       "evidence_status": "RECORDED_LOCALLY_LIVE",
       "evidence_paths": [
         "tests/e2e/test_mcp_read_process_live.py",
-        "reports/mcp-read/t15-independent-client.txt"
+        "reports/mcp-read/t15-independent-client.txt",
+        "tests/e2e/test_mcp_write_process_live.py",
+        "reports/mcp-write/t47-independent-client.txt"
       ],
       "owning_tasks": [
         "T04",
         "T15"
       ],
-      "note": "Network half for mcp-read (Plan J, T15): the locked mcp 2.3.0 and mcp-types 2.3.0 are asserted in a live test whose official client crosses the network to an independent mcp-read; T04's import half is the workspace import test. mcp-write's own network test -> T47."
+      "note": "Network half (Plan J, T15; Plan K, T47): the locked mcp 2.3.0 and mcp-types 2.3.0 are asserted in live tests whose official client crosses the network to an independent mcp-read and an independent mcp-write; T04's import half is the workspace import test."
     },
     {
       "id": "R032",
@@ -2236,12 +2247,15 @@
       "id": "R131",
       "category": "security",
       "requirement": "The read and write MCP servers hold disjoint tool functions and reject each other's handles",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "mcp_read can EXECUTE only resolve_invocation, asset_scope, search_procedures_scoped; mcp_exec only resolve_invocation, grant_execution, mark_sent, record_outcome, request_abort, lookup_action (pg_proc ACL test); an execute/recover handle at mcp-read and a read handle at mcp-write are rejected; incident-sim rejects mcp-read's token.",
       "evidence_status": "RECORDED_LOCALLY_LIVE",
       "evidence_paths": [
         "tests/e2e/test_mcp_read_t15_live.py",
-        "reports/mcp-read/t15-mcp-read.txt"
+        "reports/mcp-read/t15-mcp-read.txt",
+        "tests/e2e/test_mcp_write_t47_live.py",
+        "reports/mcp-write/t47-mcp-write.txt",
+        "tests/plan_k/test_migration_0010.py"
       ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r131_the_read_and_write_mcp_servers_hold_disjoint_fun.py",
@@ -2251,7 +2265,7 @@
         "T47"
       ],
       "blocking_for_v1": true,
-      "note": "Read half only (Plan J, T15): mcp_read can EXECUTE current_time (erratum 15) and resolve_invocation and nothing else in app (asset_scope and search_procedures_scoped join with T16/T17, erratum 72); an attempted grant_execution is 42501; a recover and an execute handle presented to mcp-read are refused over HTTP. The write half (mcp_exec's set, a read handle at mcp-write, incident-sim refusing mcp-read's token) -> T47."
+      "note": "Read half (Plan J, T15): mcp_read can EXECUTE current_time (erratum 15) and resolve_invocation and nothing else in app (asset_scope and search_procedures_scoped join with T16/T17, erratum 72); an attempted grant_execution is 42501; a recover and an execute handle presented to mcp-read are refused over HTTP. Write half (Plan K, T47): mcp_exec can EXECUTE exactly current_time (erratum 15), resolve_invocation, grant_execution, mark_sent, record_outcome, request_abort and lookup_action and nothing else in app (no read function exists yet to refuse, erratum 91); an attempted mark_unknown is 42501; an investigate and a resume_input handle are refused over HTTP at all three write tools, also when the stored server column lies, each live at mcp_read; incident-sim answers ops-mcp-read's workload token 403 at all three routes. That mcp-read cannot reach incident-sim over the network is T30's Docker network test."
     }
   ]
 }

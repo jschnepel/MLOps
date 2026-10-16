@@ -14,7 +14,8 @@ checked in this order; the first failure decides the answer.
    only this rule. The SDK would otherwise send such a request down its legacy path, where no version is checked.
    mcp-write applies the same guard.
 2. **A bearer token** that is the worker's access token: RS256 from the realm's keys, `iss` the realm, not expired,
-   `aud` containing `MCP_READ_RESOURCE_URL` (default `http://mcp-read:8081/mcp`), `azp` `ops-worker`, a `sub`, and the
+   `aud` containing `MCP_READ_RESOURCE_URL` (default `http://mcp-read:8081/mcp`), `azp` the worker's client
+   (`OPS_WORKLOAD_CLIENT_ID`, default `ops-worker`, T47), a `sub`, and the
    `typ` claim `Bearer` (`read_verifier`); `McpVerifier` refuses again any token whose `aud` lacks this server's URL,
    and only then stamps that URL as the token's resource. The SDK's resource check (`validate_token_resource`) is on
    as a second layer, which cannot refuse anything while the stamp is this server's own URL. Any failure is HTTP 401
@@ -76,5 +77,5 @@ SELECT state FROM app.runs WHERE run_id = '<run>';
 
 ## Not here yet
 
-The asset tools and asset-sim (T16), the governed store and vector search (T17), mcp-write's equivalents of the
-verifier hardening (T47), TLS and container host names (T30).
+The asset tools and asset-sim (T16), the governed store and vector search (T17), TLS and container host names (T30).
+mcp-write's door, with the same verifier rules, is `docs/runbooks/mcp-write.md` (T47).

@@ -1,0 +1,2 @@
+T47 independent client — 2026-10-16T11:30:21Z
+R025 (write half) / R031 (network half, mcp-write): child process; official client mode 2026-07-28 listed [abort_incident, create_incident, get_incident_receipt]; get_incident_receipt with a recover handle answered SUCCEEDED for the existing action; no grant, attempt, job or incident created

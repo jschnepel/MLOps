@@ -257,3 +257,31 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   was mcp-write starting without revision 0009 while the binding was claimed for both servers; it now refuses, as
   mcp-read does. Two items went to T47 as debt: an over-the-wire test of the EXECUTING re-queue's re-send through
   mcp-write, and the remaining `"ops-worker"` literals.
+
+
+## Update — Plan K executed (2026-10-16, branch `plan-k`)
+
+- Plan K (T47: the authenticated mcp-write and its recovery tools) executed on branch `plan-k` (`dd9f7b1..ea0bf54`, on
+  top of `plan-j`). The plan is `docs/superpowers/plans/2026-10-16-first-slice-k-mcp-write-recovery-tools.md`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1152 passed, 180 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1311 passed, 21 skipped`.
+  `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
+- **Evidenced** (`RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R030 and R131. The receipt lookup answers
+  only a recover job's handle whose attempt may have reached the destination; execute and investigate handles, and a
+  recover handle of an APPROVED run (no grant), are refused at both recovery tools; a lookup is a GET that creates
+  nothing and answers the minimal outcome, and an abort writes only its state rows and the destination's tombstone.
+  `mcp_exec` executes exactly its seven functions; investigate and resume_input handles, and one whose stored server
+  column lies, are refused at all three write tools; incident-sim refuses mcp-read's token with 403.
+- **Write halves recorded** in R025's and R031's notes (both rows are T15's): an independent mcp-write process is
+  listed and called by the official client over the network, with the locked SDK versions.
+- Also built: mcp-write's verifier at mcp-read's level; the worker's client named once (`OPS_WORKLOAD_CLIENT_ID`);
+  revision 0010 (the token's `azp` in the write-path functions, the 300 s dispatch deadline, `request_abort`, a
+  receipt recorded after an abort request); the attempt-state allowlist; `get_incident_receipt` and `abort_incident`
+  with full bodies; `create_incident` aborting a cancelled or expired attempt itself; `docs/threat-model.md` (v1 trusts
+  mcp-write for outcome truth, with T10's detective check as the control).
+- The dev `ops` database needs revisions 0006 to 0010 (an owner input); the API, the sweeper, the worker, mcp-read and
+  mcp-write refuse to start until then.
+- Deferred, each with its owner in `SESSION_STATE.md`: the worker's recover handler, the lookup backoff, scheduled
+  recover jobs, redispatch from OUTCOME_UNKNOWN, escalation and late evidence after RESOLVED -> T22; the deadline as a
+  setting -> T29; the network half of T47 DoD 3 and per-service tests -> T30; signed receipts -> v1.1. Eleven errata
+  (82-92) are proposed. T47 is DONE subject to the owner's decisions on errata 72, 84 and 91.
