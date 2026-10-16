@@ -43,15 +43,16 @@ that never arrived. The design is AM-12, AM-14 and AM-20 in `SPEC_AMENDMENTS.md`
 - **A sweeper that dies mid-delivery** (killed, or its database connection lost) records nothing for the row it was
   delivering: the row keeps its counted attempt and is claimed again when its lease ends, and once its attempts
   reached `OPS_OUTBOX_MAX_ATTEMPTS` the next claim dead-letters it and the tick announces it. A database error during
-  delivery logs `sweeper tick failed` (or ends the process, if the connection is gone) after the minute's record and
-  the wake-up sweep have run.
+  delivery logs `sweeper tick failed` (a transient connection error logs `transient database error; the loop
+  continues` instead, and a lost connection ends the process) after the minute's record and the wake-up sweep have
+  run.
 - **At least once.** A delivery slower than its lease, or a sweeper that dies after the sink but before the result,
   is delivered again later (BUILD_SPEC §2: "At-least-once dispatch can occur").
 
 ## Wake-ups
 
 - **A wake-up is a job committed with the event that needs it**: the investigate job with the run, the execute job
-  with the approving decision, the reply job with the clarification. The worker polls every 0.5 s per tenant; there is
+  with the approving decision, the reply job with the reply. The worker polls every 0.5 s per tenant; there is
   no LISTEN/NOTIFY (erratum 64).
 - **A released lease makes the run's deferred jobs due at once**: a job a claim moved behind a busy lease no longer
   waits for that lease's old end once its holder releases it. A job delayed beyond that end on purpose (a re-queue
@@ -104,8 +105,9 @@ SELECT id, type, run_id, attempts, done_at, claimed_by FROM app.jobs WHERE run_i
 - **A run sits in QUEUED or APPROVED with its job done**: the sweep re-arms it after the grace; if the log says
   `wake-up not re-armed: … claimed N times`, the job's handler keeps returning without moving the run (for an
   execute job, a grant refused for good: an inactive membership, an approval no longer active; a stale membership is
-  different, it re-queues the job instead of finishing it). Fix the cause; the next decision or revision makes a new
-  wake-up.
+  different, it re-queues the job instead of finishing it). Today there is no operator remedy for such a run: no
+  revision or decision path exists for these runs yet (T21 adds revision and BLOCKED_REVIEW). What an operator can
+  observe is that log line, once per tick.
 - **An append is refused with OC006**: the payload carries a key the event schema does not define, or a `status` on
   a non-destination type. The writer, not the database, is wrong.
 

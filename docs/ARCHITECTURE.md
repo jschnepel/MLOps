@@ -223,8 +223,7 @@ even if it does not know yet.
 
 **Claim.** A run's events are numbered without gaps in the order they commit, whoever writes them; a notification
 is promised in the same transaction as the event that needs it and attempted, apart from the run, until delivered
-or dead-lettered; and
-a wake-up the worker consumed without moving its run is noticed and re-armed.
+or dead-lettered; and a wake-up the worker consumed without moving its run is noticed and re-armed.
 
 - **One counter under one lock.** `_append_event` takes the run row `FOR UPDATE`, `next_event_seq + 1` and the
   insert in the writer's transaction; a cursor on the events route therefore never skips.

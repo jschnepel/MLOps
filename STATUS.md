@@ -200,11 +200,14 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 ## Update — Plan I executed (2026-10-15, branch `plan-i`)
 
-- Plan I (T14: the gap-free event journal, wake-ups and the outbox) executed on branch `plan-i` (`4aa5f92..b56b5a4`, on
-  top of `plan-h`). The plan is `docs/superpowers/plans/2026-10-15-first-slice-i-journal-wakeups-outbox.md`.
+- Plan I (T14: the gap-free event journal, wake-ups and the outbox) executed on branch `plan-i` (`4aa5f92..e485c56`, on
+  top of `plan-h`: the debt list, then six tasks, the sixth the close-out `9ce23a0`, and the final-review fix wave
+  `e485c56`; a docs commit after it records the wave). The plan is
+  `docs/superpowers/plans/2026-10-15-first-slice-i-journal-wakeups-outbox.md`.
 - `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1031 passed, 154
   skipped`. `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1164
-  passed, 21 skipped`. `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
+  passed, 21 skipped`; the final-review wave added one unit test (1032 / 154 and 1165 / 21, both green).
+  `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
 - **Evidenced** (acceptance matrix `RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R024 and R089. A
   delivery that fails after the outcome committed leaves the run's state and events untouched, retries on a capped,
   jittered backoff, dead-letters at the fifth failure and announces it once with `notification.failed`; a replayed

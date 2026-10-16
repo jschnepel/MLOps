@@ -417,14 +417,29 @@ sweeper that dies mid-delivery. No result may overwrite a dead letter any more, 
 before the purge, the skeleton's leftover check uses the sweep's own query, and two wording claims were narrowed to
 what the tests show.
 
-**Execution.** Six tasks, each reviewed once and clean (Minor findings only), no fix rounds, and the live half passed
-on its first run in every task. The stepped pairs passed on the first live run, and removing `FOR UPDATE` from
+**Execution.** Six tasks (the sixth the close-out), each reviewed once and clean (Minor findings only), no fix
+rounds. Tasks 2 to 5 had a live half and each passed it on its first run; Tasks 1 and 6 had none. The stepped pairs
+passed on the first live run, and removing `FOR UPDATE` from
 `_append_event` made them and the stress run fail on a duplicate sequence, so the proof bites. Three rulings were test
 or ordering choices, not spec errata. The stress run's gathers collect exceptions and always release the readers
 before the purge, and `stepped` always settles its second writer, so a failing run reports its real error instead of
 cancelling a database unit. The R024 dedup re-append runs as `app_definer`, because a replayed outcome returns before
 `_append_event` and only the definer's insert-only grant and the outbox's forced row security exercise the conflict
 clause. A database error in the wake-up sweep skips that tick's delivery, and both retry on the next tick.
+
+**Final whole-branch review (0 Critical, 1 Important, 10 Minor).** The authority boundaries, the concurrency proof
+(the gap-free body of `_append_event` is byte-identical to revision 0003's apart from the two payload checks before
+the lock and the intent insert after the event) and liveness all held. The one Important finding was that the
+handoff's restart pointer was stale: SESSION_STATE still told the next session to write a plan for T14 and named a
+range that stopped before the close-out. Fixed in the wave: the pointer now names Plan J (T15) and the real range;
+the wake-up scan's state-to-job-type `CASE` is built from `WAKEUPS`, so a pair added there alone is no longer
+silently skipped (a unit test pins it); this section's overclaim about the live halves was corrected; the runbook
+now says plainly that a run past its wake-up cap has no operator remedy until T21 and that the reply, not the
+clarification, commits the resume job; and three small text slips were mended. Four findings became debt lines
+(random order inside a delivery batch → T22; a claim UPDATE that is not SKIP LOCKED → T30; `notification.*` not
+reserved in `append_event` → T26/T45; no live test of the real tick's T14 steps → T30). The sixth, that the re-arm
+re-dispatches an APPROVED run whose grant was refused where AM-10 wants BLOCKED_REVIEW, is left to the owner through
+erratum 63, which now states the trade-off and the conservative alternative.
 
 ## 27. What the process taught
 
