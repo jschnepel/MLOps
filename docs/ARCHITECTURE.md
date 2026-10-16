@@ -284,10 +284,11 @@ it leaves, and a recovery call can observe or end an existing action but never s
   aborts INTENT, SENT or ABORT_REQUESTED.
 - **Nothing leaves before it is written.** `mark_sent` commits SENT before the POST, and every send passes it, a
   re-send of a SENT attempt included: under the runs lock it refuses a cancelled run (`cancelled`), one past the
-  five-minute dispatch deadline (`expired`), an attempt with an abort requested, and a recover job's re-send;
-  `create_incident` then aborts instead of sending. `request_abort` commits ABORT_REQUESTED, with the reason it chose,
-  before the abort POST; nothing is sent after it. Only the moment between `mark_sent`'s commit and the POST itself is
-  left, as AM-13 has it.
+  five-minute dispatch deadline (`expired`), an attempt with an abort requested, and a recover job's re-send, writing
+  nothing. On `cancelled` or `expired` `create_incident` aborts instead of sending; on an abort already requested it
+  answers UNKNOWN; a recover job's re-send is a plain `NOT_REDISPATCHABLE` error. `request_abort` commits
+  ABORT_REQUESTED, with the reason it chose, before the abort POST; no incident POST ever follows it. Only the moment
+  between `mark_sent`'s commit and the POST itself is left, as AM-13 has it.
 - **Recovery observes.** `get_incident_receipt` is one GET of the action's key: a matching receipt, a tombstone or
   another hash is recorded; a 404 or no answer stays UNKNOWN. It creates no grant, attempt, job or key; an abort adds
   only its attempt-state rows and the destination's tombstone.
