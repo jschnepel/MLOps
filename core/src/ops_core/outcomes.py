@@ -183,6 +183,30 @@ OUTCOME_EVENT_TYPES: Final = frozenset(
     {EventType.ACTION_CONFIRMED, EventType.ACTION_FAILED, EventType.ACTION_LATE_EVIDENCE}
 )
 
+# The event schema's payload keys (its payload object is closed). T14 added the clarification reply's
+# `question_id`/`message_id` and the dead letter's `outbox_id`, the keys today's writers already use (Plan I
+# ruling 4, erratum 65); revision 0008's `_append_event` refuses any other key, and so does `event_rules_ok`.
+PAYLOAD_KEYS: Final = frozenset(
+    {
+        "message",
+        "status",
+        "evidence_refs",
+        "proposal_id",
+        "action_id",
+        "code",
+        "reason",
+        "outcome",
+        "receipt",
+        "tombstone",
+        "question_id",
+        "message_id",
+        "outbox_id",
+    }
+)
+# A `status` is the destination's assertion about the run (AM-14), so only the four destination-evidence types carry
+# one, and they come only from record_outcome (T14 review note 2: never from api, worker or sweeper).
+STATUS_EVENT_TYPES: Final = DESTINATION_EVIDENCE
+
 
 class EventRuleViolation(ValueError):
     """The event asserts something its source may not assert (AM-14 'who may assert outcomes')."""
@@ -203,15 +227,18 @@ def _validated(model: type[BaseModel], value: object, what: str) -> None:
 def event_rules_ok(event_type: EventType, source: EventSource, payload: Mapping[str, object]) -> None:
     """Raise EventRuleViolation unless (type, source, payload) obeys AM-14's authority rules.
 
-    Code enforces who may assert what and the evidence each outcome event must carry; the shape of every other payload
-    key is the JSON schema's job, so unknown keys are not rejected here (except for the closed model_summary payload).
-    Evidence keys are the exception: they are an authority claim, so types that do not vouch for them refuse them,
-    and each outcome type refuses the other kind of proof (a receipt on action.failed, a tombstone on
-    action.confirmed).
+    Code enforces who may assert what and the evidence each outcome event must carry. The payload is closed over the
+    schema's keys (PAYLOAD_KEYS) and a `status` belongs to the destination's four types only (Plan I ruling 4, the
+    rules revision 0008's `_append_event` enforces in SQL); the shape of each key's value is the JSON schema's job.
+    Evidence keys are an authority claim, so types that do not vouch for them refuse them, and each outcome type
+    refuses the other kind of proof (a receipt on action.failed, a tombstone on action.confirmed).
     """
     if not isinstance(payload, Mapping):
         # Callers pass decoded JSON, which can be any value; a list or string payload asserts nothing checkable.
         raise EventRuleViolation("an event payload must be an object")
+    if not set(payload) <= PAYLOAD_KEYS:
+        # The message never repeats the key: a caller's key is caller text, and this message reaches logs.
+        raise EventRuleViolation("the payload carries a key the event schema does not define")
     if source is EventSource.MODEL_SUMMARY:
         # The schema's closed summary_payload, mirrored: a non-empty message, optional evidence_refs, nothing else
         # (so no status, AM-14).
@@ -234,6 +261,8 @@ def event_rules_ok(event_type: EventType, source: EventSource, payload: Mapping[
     # application callers, so an application-sourced copy is a forgery.
     if event_type in DESTINATION_EVIDENCE and source is not EventSource.DESTINATION:
         raise EventRuleViolation(f"{event_type} comes only from record_outcome with source=destination")
+    if "status" in payload and event_type not in STATUS_EVENT_TYPES:
+        raise EventRuleViolation("only the destination's outcome events carry a status")
     if event_type not in OUTCOME_EVENT_TYPES and not {"outcome", "receipt", "tombstone"}.isdisjoint(payload):
         raise EventRuleViolation(
             "only action.confirmed, action.failed and action.late_evidence may carry an outcome, receipt or tombstone"
@@ -275,7 +304,9 @@ class Event(BaseModel):
     event missing one is refused here rather than at the first query that needs it. The payload's evidence and
     source rules are `event_rules_ok`; the shape of the payload's other keys is the schema's.
 
-    TODO(T14): append_event and the event stream validate through this model; until then only the tests call it.
+    It cannot validate `append_event`'s input, whose id, sequence and instant the function assigns; the rules it runs
+    are enforced on the way in by `app._append_event` (revision 0008). TODO(T26): the events route and the stream
+    validate their output through this model (the response schemas); until then the tests call it.
     """
 
     model_config = _Strict

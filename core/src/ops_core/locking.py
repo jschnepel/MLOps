@@ -29,6 +29,7 @@ from typing import Final
 LOCK_ORDER: Final = (
     "advisory:idempotency",  # erratum 37: pg_advisory_xact_lock(1, hashtext(scope)), the API's units only
     "advisory:asset",  # SA:189: pg_advisory_xact_lock(hashtextextended(tenant || ':' || asset, 0)); taken by T21
+    "advisory:notification",  # T14: pg_advisory_xact_lock(2, hashtext(outbox_id)), a dead letter's announcement
     "jobs:claim",  # SKIP LOCKED only (Plan H ruling 3)
     "run_lease",
     "runs",
@@ -62,6 +63,8 @@ OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "worker draft and freeze": ("run_lease", "runs"),
     "worker execute start": ("run_lease", "runs", "jobs:finish"),
     "worker mark_unknown": ("run_lease", "runs", "invocation_context"),
+    # T14 (Plan I ruling 10): the release also makes the run's other deferred jobs due; that UPDATE picks its rows
+    # with SKIP LOCKED, so it never waits, and it sits at the finish position with the release's own job.
     "worker release (persistence.release_lease)": ("run_lease", "invocation_context", "jobs:finish"),
     "worker abandon (lease lost)": ("run_lease", "invocation_context", "jobs:finish"),
     "heartbeat renewal (lease.renew)": ("run_lease",),
@@ -75,6 +78,20 @@ OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "sweeper membership sync": ("memberships",),
     "sweeper reclaim (leases.reclaim)": ("jobs:finish",),
     "sweeper sync job record": ("jobs:claim",),
+    # T14 (Plan I ruling 22). Every event append writes its notification intent last: the runs row lock, the event,
+    # then the outbox row (revision 0008's _append_event; a fresh row, its unique key serialised by the runs lock).
+    "event append with notification intent (_append_event)": ("runs", "events", "outbox"),
+    # The delivery loop claims and records in units of their own, and appends notification.failed in a separate
+    # transaction, so it never takes runs after outbox (SA:188); that unit first takes the dead letter's advisory lock
+    # and then re-checks, so a second sweeper waits for the first and finds the event (round 1, M5).
+    "sweeper outbox claim (outbox.deliver)": ("outbox",),
+    "sweeper outbox result (outbox.deliver)": ("outbox",),
+    "sweeper notification.failed (outbox.notify_dead_letters)": ("advisory:notification", "runs", "events"),
+    # The wake-up sweep reads runs and jobs without a lock and re-arms one job per unit; the purge deletes finished
+    # maintenance rows, which belong to no run.
+    "sweeper wake-up re-arm (wakeups.sweep)": ("jobs:finish",),
+    "sweeper maintenance purge (wakeups.purge_maintenance)": ("jobs:finish",),
+    "sweeper deliver_outbox and sweep_wakeups job records": ("jobs:claim",),
 }
 OWN_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "worker model permit (take, release)": ("model_permit",),

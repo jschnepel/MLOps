@@ -361,6 +361,63 @@ def leases() -> LeaseSettings:
 
 
 @dataclass(frozen=True)
+class OutboxSettings:
+    """The notification outbox's delivery loop (BS:524, Plan I rulings 15 and 16) as validated configuration (BS:542):
+    how long a claimed row is leased, how many rows a tenant's claim takes per tick, the capped exponential backoff
+    between failed attempts and the attempt whose failure dead-letters the row."""
+
+    lease_seconds: int = 30  # a delivery still unanswered after this is claimed again (at least once, BS:76)
+    batch: int = 10
+    backoff_base_seconds: int = 2  # the first retry waits about this long, then twice as long each time
+    backoff_cap_seconds: int = 300  # BS:562: the backoff is capped
+    max_attempts: int = 5  # the fifth failure is final: the row is dead-lettered
+
+
+def check_outbox(chosen: OutboxSettings) -> None:
+    """Refuse a backoff whose cap sits below its base (every retry would wait the cap, and the base would mean nothing).
+
+    Raises:
+        SettingsError: naming the rule, never a value.
+    """
+    if chosen.backoff_cap_seconds < chosen.backoff_base_seconds:
+        raise SettingsError("OPS_OUTBOX_BACKOFF_CAP_SECONDS must be at least OPS_OUTBOX_BACKOFF_BASE_SECONDS")
+
+
+def outbox() -> OutboxSettings:
+    """`OPS_OUTBOX_LEASE_SECONDS`, `OPS_OUTBOX_BATCH`, `OPS_OUTBOX_BACKOFF_BASE_SECONDS`,
+    `OPS_OUTBOX_BACKOFF_CAP_SECONDS` and `OPS_OUTBOX_MAX_ATTEMPTS`, each bounded, then checked together."""
+    chosen = OutboxSettings(
+        lease_seconds=_bounded("OPS_OUTBOX_LEASE_SECONDS", 30, 5, 3600),
+        batch=_bounded("OPS_OUTBOX_BATCH", 10, 1, 1000),
+        backoff_base_seconds=_bounded("OPS_OUTBOX_BACKOFF_BASE_SECONDS", 2, 1, 3600),
+        backoff_cap_seconds=_bounded("OPS_OUTBOX_BACKOFF_CAP_SECONDS", 300, 2, 86400),
+        max_attempts=_bounded("OPS_OUTBOX_MAX_ATTEMPTS", 5, 1, 100),
+    )
+    check_outbox(chosen)
+    return chosen
+
+
+@dataclass(frozen=True)
+class WakeupSettings:
+    """The wake-up sweep (BS:340, Plan I rulings 7, 8 and 20): how long a consumed wake-up may sit without its run
+    moving before it is re-armed, how many claims a job may have had before the sweep stops re-arming it, and how long
+    a finished maintenance row is kept."""
+
+    grace_seconds: int = 60  # a job done this long ago whose run still waits in the job's state was lost
+    max_attempts: int = 10  # a job claimed this often is not re-armed again; the sweep logs it instead
+    maintenance_retention_hours: int = 24  # finished sweeper rows older than this are deleted (run jobs never are)
+
+
+def wakeups() -> WakeupSettings:
+    """`OPS_WAKEUP_GRACE_SECONDS`, `OPS_WAKEUP_MAX_ATTEMPTS` and `OPS_MAINTENANCE_RETENTION_HOURS`, each bounded."""
+    return WakeupSettings(
+        grace_seconds=_bounded("OPS_WAKEUP_GRACE_SECONDS", 60, 10, 86400),
+        max_attempts=_bounded("OPS_WAKEUP_MAX_ATTEMPTS", 10, 1, 1000),
+        maintenance_retention_hours=_bounded("OPS_MAINTENANCE_RETENTION_HOURS", 24, 1, 8760),
+    )
+
+
+@dataclass(frozen=True)
 class Urls:
     mcp_read_resource: str
     mcp_write_resource: str
