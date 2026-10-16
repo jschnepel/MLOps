@@ -855,6 +855,33 @@ Allowed shortcuts in T15, each with its owning task:
   `allowed_azp` and the write-path definers' literal `'ops-worker'` still name it; settings should name the worker
   client once → T47.
 
+## Plan K debt list (T47; committed before coding) [R6-B7]
+
+Allowed shortcuts in T47, each with its owning task:
+- the worker's side of recovery: a `recover` job handler that calls `get_incident_receipt` and `abort_incident`, the
+  1, 2, 4, 8 s backoff with jitter between lookups, scheduled recover jobs, the worker's own recover job after a
+  `cancelled`/`expired` answer, the redispatch of an unsent attempt from OUTCOME_UNKNOWN (attempt row 2,
+  `action.redispatched`), the escalation deadline (`escalate_run`) and the operator's `resolve_escalation` → T22 (Plan
+  K rulings 1, 6, 18 and 23); until then the worker finishes every `recover` job unhandled, the live tests stage
+  recover jobs and handles directly, and a recover job's `create_incident` on an unsent attempt of a run that left
+  EXECUTING is refused `STALE_RUN` by `mark_sent`'s EXECUTING guard;
+- late destination evidence once the attempt is RESOLVED (an abort on an ABANDONED_UNVERIFIED run recorded as
+  `action.late_evidence`) → T22 (ruling 7);
+- a SUCCEEDED answer to an abort after a cancel carries no "cancellation arrived after dispatch" note (SA:248;
+  `ActionOutcome` has no field for it), and a `create_incident` that meets an abort request in flight answers UNKNOWN
+  (the abort's own record decides) → T22;
+- the dispatch deadline is a constant in SQL (`app._dispatch_seconds()`, 300 s), not a setting → T29 (ruling 17);
+- the destination's faults reach the recovery tools only through the send's consequences: `rate_limit` and
+  `receipt_hash_mismatch` act on `POST /internal/incidents` alone and the abort route has no fault hook, so a 429 at
+  the lookup or at the abort is proved with a scripted reply; incident-sim's fault route still accepts any
+  `FaultKind` (`outbox_sink_fail` can be armed there and is never consumed) → T22 (ruling 19);
+- receipts and tombstones signed by incident-sim with a key only `app_definer` can read (T47 review note 2's option)
+  → v1.1, no task (`docs/threat-model.md`, ruling 22);
+- the network half of T47 DoD 3 and R131 (mcp-read cannot reach incident-sim at all) → T30 (ruling 15);
+- mcp-write has no `tests/` directory and no Dockerfile of its own (AM-01) → T30;
+- the dev database stays at revision 0005 until the owner migrates it (0006 to 0010 pending); until then the API, the
+  sweeper, the worker, mcp-read and mcp-write refuse to start on it, mcp-write now also without 0010 → owner input.
+
 ## Environment (observed)
 
 | Item | Observed |
