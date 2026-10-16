@@ -380,6 +380,52 @@ logs (T28). Erratum 59, which answers a stale-fence refusal after SENT with UNKN
 was judged sound. The lesson: a check that every other unit makes has to be made by the last unit too, because the
 last unit is the one that decides whether the work is ever done again.
 
-## 26. What the process taught
+## 26. The journal plan proved an old lock and put the outbox behind it
+
+**Problem.** Plan I takes T14: the gap-free event journal, wake-ups and the notification outbox. The fact sheet found
+that the journal's mechanism already existed (revision 0003 had put the counter under the run row lock) but had never
+been exercised by concurrent writers, that "wake-up" meant two things in the repository (a job committed with its
+event, and a signal to stop polling), and that the outbox did not exist at all. The controller's brief of 29 rulings
+chose to prove the journal rather than redesign it, to read "wake-up" as the job plus a sweep that re-arms a lost
+one, and to deliver the outbox from the sweeper to a log line, with no external channel before Slack.
+
+**Change.** A stepped test holds one writer's sequence open and shows the next writer waiting on it from each of the
+four roles; a stress run with rollbacks and two readers ends gap-free. The payload rules review note 2 asked for went
+into `_append_event`, the schema and `event_rules_ok` together, checked on one table of cases, and the schema gained
+the keys today's writers already used. Revision 0008 added the outbox, written by `_append_event` and delivered by the
+sweeper per tenant with a lease, a capped backoff and a dead letter announced in a transaction of its own. The sweep
+re-arms the investigate and execute jobs of runs that did not move, and a release makes a deferred job due at once.
+
+**Round 1 (static critic: 1 Blocking, 7 Important, 12 Minor; every splice, format check and dev count held).** The
+blocking finding was in a test, not the code: the rollback test asked for the waiting connection's pid while that
+connection's statement could already be waiting on the row lock the test itself held, so asyncio and PostgreSQL could
+wait on each other for ever and the live gate would hang instead of failing. Every pid is now read before any
+transaction opens, and no writer task is cancelled inside a database unit. The important findings were about bounds
+and claims: a delivery that crashed instead of failing was claimed forever and stopped every later step of the tick,
+so the claim now dead-letters a row at its cap and the wake-up sweep runs first; two of the four notification types
+had no emitter, so `action.conflict`, the escalation that exists today, became a trigger; the sweep would re-dispatch
+a cancelled run, and repeated none of its checks on the row it re-armed; the stress readers could pass having read
+nothing; the downgrade's evidence was weaker than its claim; and the sweeper's new DELETE reached every tenant's run
+jobs, which a restrictive policy now forbids.
+
+**Round 2 (static critic: 0 Blocking, 1 Important, 5 Minor).** Round 1's bound for a crashing delivery had a cost the
+first review had not seen: the crash left the rest of its batch claimed and unrecorded, so rows that were never
+handed to the sink burned an attempt per crash and were finally dead-lettered and announced as undeliverable. The
+crash is now caught at the sink boundary and recorded as that row's failed attempt, the one broad catch the plan adds,
+so the rest of the batch, the later tenants and the announcements go on; the claim-time dead letter stays for a
+sweeper that dies mid-delivery. No result may overwrite a dead letter any more, the rollback test settles its writer
+before the purge, the skeleton's leftover check uses the sweep's own query, and two wording claims were narrowed to
+what the tests show.
+
+**Execution.** Six tasks, each reviewed once and clean (Minor findings only), no fix rounds, and the live half passed
+on its first run in every task. The stepped pairs passed on the first live run, and removing `FOR UPDATE` from
+`_append_event` made them and the stress run fail on a duplicate sequence, so the proof bites. Three rulings were test
+or ordering choices, not spec errata. The stress run's gathers collect exceptions and always release the readers
+before the purge, and `stepped` always settles its second writer, so a failing run reports its real error instead of
+cancelling a database unit. The R024 dedup re-append runs as `app_definer`, because a replayed outcome returns before
+`_append_event` and only the definer's insert-only grant and the outbox's forced row security exercise the conflict
+clause. A database error in the wake-up sweep skips that tick's delivery, and both retry on the next tick.
+
+## 27. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.

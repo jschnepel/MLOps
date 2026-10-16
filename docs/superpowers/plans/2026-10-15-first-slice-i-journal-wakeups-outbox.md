@@ -382,7 +382,7 @@ settings of rulings 8, 15, 16 and 20; the lock-order entries of ruling 22; rulin
   `Case(name, type, source, payload, ok)` and `event_document(case) -> dict` (Task 2's live test reuses both); seven
   new `OBSERVED_UNITS` entries named exactly as below (Tasks 4 and 5 implement them).
 
-- [ ] **Step 1a: Record both baselines**
+- [x] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN` with pytest `939 passed, 134 skipped`; with the
 dev stack up and `uv run python scripts/skeleton.py status` showing every process down, run
@@ -391,13 +391,13 @@ dev stack up and `uv run python scripts/skeleton.py status` showing every proces
 lines in the report (Global Constraints, "Counts"). A gate that is not GREEN stops the plan here, before anything is
 committed.
 
-- [ ] **Step 1b: Record the base**
+- [x] **Step 1b: Record the base**
 
 Run `git rev-parse --short HEAD` and write the hash it prints as `BASE=<hash>` in the report and in the SDD ledger
 (`.superpowers/sdd/2026-10-15-first-slice-i-journal-wakeups-outbox/progress.md`). Task 6's commit span is
 `<base>..<last>`.
 
-- [ ] **Step 1c: Commit the debt list (before any code)**
+- [x] **Step 1c: Commit the debt list (before any code)**
 
 Edit 1 (`SESSION_STATE.md`, the heading after the Plan H debt list), replace:
 
@@ -454,7 +454,7 @@ git add SESSION_STATE.md
 git commit -m "docs: declare Plan I's shortcuts before coding (T14 debt list)"
 ```
 
-- [ ] **Step 2: Put `tests/plan_i` on the test path**
+- [x] **Step 2: Put `tests/plan_i` on the test path**
 
 Edit 1 (`pyproject.toml`, `testpaths`), replace:
 
@@ -480,7 +480,7 @@ Create `tests/plan_i/__init__.py`:
 """Plan I (T14): the event journal's payload rules, the outbox and the wake-up sweep, without a database."""
 ```
 
-- [ ] **Step 3: Write the failing settings test**
+- [x] **Step 3: Write the failing settings test**
 
 Create `tests/plan_i/test_settings_t14.py`:
 
@@ -564,7 +564,7 @@ def test_a_cap_below_the_base_is_refused(monkeypatch: pytest.MonkeyPatch) -> Non
 Run: `uv run python -m pytest tests/plan_i/test_settings_t14.py -q`
 Expected: `1 error in` (collection stops: `ImportError: cannot import name 'OutboxSettings' from 'ops_core.settings'`).
 
-- [ ] **Step 4: Add the outbox and wake-up settings**
+- [x] **Step 4: Add the outbox and wake-up settings**
 
 Edit 1 (`core/src/ops_core/settings.py`, before `class Urls`), replace:
 
@@ -640,7 +640,7 @@ class Urls:
 Run: `uv run python -m pytest tests/plan_i/test_settings_t14.py -q`
 Expected: `10 passed`.
 
-- [ ] **Step 5: Write the failing payload-rule tests**
+- [x] **Step 5: Write the failing payload-rule tests**
 
 Create `tests/plan_i/event_cases.py`:
 
@@ -838,7 +838,7 @@ def test_the_refusals_name_the_rule_and_never_the_key() -> None:
 Run: `uv run python -m pytest tests/plan_i/test_event_rules.py -q`
 Expected: `1 error in` (collection stops: `ImportError: cannot import name 'PAYLOAD_KEYS' from 'ops_core.outcomes'`).
 
-- [ ] **Step 6: The rules in the Python twin**
+- [x] **Step 6: The rules in the Python twin**
 
 Edit 1 (`core/src/ops_core/outcomes.py`, after `OUTCOME_EVENT_TYPES`), replace:
 
@@ -945,7 +945,7 @@ with:
     validate their output through this model (the response schemas); until then the tests call it.
 ```
 
-- [ ] **Step 7: The rules in the schema, and the schema regenerated**
+- [x] **Step 7: The rules in the schema, and the schema regenerated**
 
 Edit 1 (`scripts/build_schemas.py`, the event payload), replace:
 
@@ -1084,7 +1084,7 @@ Expected: the line `PASS: 26 JSON Schema documents; 35 accepted examples; 54 neg
 reason; governed files LF-only` and exit 0 (the new negative fails for its stated reason, and `event-invalid-
 destination-granted`, which also carries a `status`, still fails for its type first: rule 9 is last in the list).
 
-- [ ] **Step 8: The lock-order entries of the new units**
+- [x] **Step 8: The lock-order entries of the new units**
 
 Edit 1 (`core/src/ops_core/locking.py`, the worker release entry), replace:
 
@@ -1186,7 +1186,7 @@ def test_no_unit_takes_runs_after_the_outbox() -> None:
 Run: `uv run python -m pytest tests/plan_i tests/plan_h/test_locking.py -q`
 Expected: `89 passed` (the lock-order module's 30, now 37 with the seven new units, and Plan I's 52).
 
-- [ ] **Step 9: Gates and commit**
+- [x] **Step 9: Gates and commit**
 
 Format, lint and count characters on `core/src/ops_core/settings.py`, `core/src/ops_core/outcomes.py`,
 `core/src/ops_core/locking.py`, `scripts/build_schemas.py` and every file under `tests/plan_i/`.
@@ -1237,7 +1237,7 @@ git commit -m "feat(core): outbox and wake-up settings, the event payload rules,
   `NOTIFY_TYPES_0008`, `EVENT_TYPES_0008`, `GRANTS_0008`, `JOB_CELLS_0002`, `PURGE_POLICY`, `FUNCTIONS`, `RESTORED`,
   `DOWNGRADE`.
 
-- [ ] **Step 1: Write the failing revision tests**
+- [x] **Step 1: Write the failing revision tests**
 
 Create `tests/plan_i/test_migration_0008.py`:
 
@@ -1407,7 +1407,7 @@ Expected: `1 error in` (collection of `test_transitions_table.py` stops at its m
 the file `0008_journal_outbox.py` does not exist yet; `test_migration_0008.py` collects, and its five tests are not
 run because of the collection error).
 
-- [ ] **Step 2: Write the revision**
+- [x] **Step 2: Write the revision**
 
 Create `migrations/app/versions/0008_journal_outbox.py`:
 
@@ -1726,7 +1726,7 @@ cell carries DELETE, the matrix's does not; the walk meets `jobs` first, because
 dictionary before 0008 added `outbox`). The other tests pass already: the revision renders its own frozen cells and
 policies, so nothing else reads the matrix.
 
-- [ ] **Step 3: The matrix rows**
+- [x] **Step 3: The matrix rows**
 
 Edit 1 (`core/src/ops_core/privileges.py`, docstring), replace:
 
@@ -1849,7 +1849,7 @@ uv run python -m pytest tests/plan_i/test_migration_0008.py tests/plan_e/test_tr
 Expected: `63 passed` (the new module's 5, the transitions module's 13 with one more parametrised revision, Plan E's
 privileges 6, the lock-order 37, Plan I's lock-order 2).
 
-- [ ] **Step 4: Keep the live fixtures in step with the revision**
+- [x] **Step 4: Keep the live fixtures in step with the revision**
 
 Edit 1 (`tests/e2e/conftest.py`, `PURGE_ORDER`), replace:
 
@@ -1894,7 +1894,7 @@ with:
     for (table, name), row in policies.items():
 ```
 
-- [ ] **Step 5: The live revision test**
+- [x] **Step 5: The live revision test**
 
 Create `tests/e2e/test_migration_0008_live.py`:
 
@@ -2223,7 +2223,7 @@ policy; the persistence module's 7; the run-path definers' 8, whose `append_even
 write-path definers' 11, whose `record_outcome` now also writes an intent that `purge_run` removes). This count is
 arithmetic, not measured: the plan's dry run cannot run live steps.
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
 Format, lint and count characters on every file of this task (the revision after the ISC004 pass).
 
@@ -2267,7 +2267,7 @@ is T27's; the reader here is the existing events route's query (`DbStore.events`
   `ops_api.store.DbStore(conn).events(tenant_id, run_id, *, after, limit)`; `persistence.set_tenant`.
 - Produces: `reports/events/t14-events.txt` (written only when all four tests passed).
 
-- [ ] **Step 1: Scan the new evidence root for secrets**
+- [x] **Step 1: Scan the new evidence root for secrets**
 
 Edit 1 (`tests/plan_b/test_evidence.py`, docstring), replace:
 
@@ -2301,7 +2301,7 @@ with:
 )
 ```
 
-- [ ] **Step 2: Write the journal proof**
+- [x] **Step 2: Write the journal proof**
 
 Create `tests/e2e/test_event_journal_live.py`:
 
@@ -2721,7 +2721,7 @@ async def test_r089_stress_four_roles_three_runs_with_rollbacks(
             await purge_run(app_conn, run)
 ```
 
-- [ ] **Step 3: Run it**
+- [x] **Step 3: Run it**
 
 Run (dev stack up, no skeleton process running):
 
@@ -2733,7 +2733,7 @@ Expected: `4 passed` (about 20 s; the stress run takes 10 s plus its staging), a
 exists with five lines. This count is arithmetic, not measured: the plan's dry run cannot run live steps. A failure
 here is a finding against revision 0003's mechanism (ruling 1), not a reason to weaken an assertion: stop and report.
 
-- [ ] **Step 4: Gates and commit**
+- [x] **Step 4: Gates and commit**
 
 Format, lint and count characters on `tests/e2e/test_event_journal_live.py` and `tests/plan_b/test_evidence.py`.
 
@@ -2790,7 +2790,7 @@ rulings 14-19 and 25; DEV-029's "fault-injectable outbox sink" (T24 review note)
   `Deps.outbox_settings`, `main.deliver_outbox(deps)`, `main.record(deps, job_type)` (Task 5 calls it for
   `sweep_wakeups`).
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Create `tests/plan_i/test_outbox.py`:
 
@@ -3147,7 +3147,7 @@ Run: `uv run python -m pytest tests/plan_i/test_outbox.py tests/plan_h/test_faul
 Expected: `2 errors in` (both modules stop at collection: `ImportError: cannot import name 'SWEEPER_FAULTS' from
 'ops_core.testing.faults'`).
 
-- [ ] **Step 2: The fault kind**
+- [x] **Step 2: The fault kind**
 
 Edit 1 (`core/src/ops_core/testing/faults.py`, docstring), replace:
 
@@ -3199,7 +3199,7 @@ Run: `uv run python -m pytest tests/plan_i/test_outbox.py tests/plan_h/test_faul
 Expected: `1 error in` (only `test_outbox.py` stops at collection now: `ImportError: cannot import name 'outbox'
 from 'ops_sweeper'`).
 
-- [ ] **Step 3: The tenant iteration and the delivery loop**
+- [x] **Step 3: The tenant iteration and the delivery loop**
 
 Create `sweeper/src/ops_sweeper/tenants.py`:
 
@@ -3530,7 +3530,7 @@ async def notify_dead_letters(conn: persistence.Conn, *, tenants: Sequence[UUID]
 Run: `uv run python -m pytest tests/plan_i/test_outbox.py tests/plan_h/test_faults_t13.py -q`
 Expected: `18 passed` (the new module's 14, three of them the parametrised deliveries; Plan H's faults module's 4).
 
-- [ ] **Step 4: The tick delivers, re-checks and records its minute**
+- [x] **Step 4: The tick delivers, re-checks and records its minute**
 
 Edit 1 (`sweeper/src/ops_sweeper/main.py`, docstring), replace:
 
@@ -3823,7 +3823,7 @@ Run: `uv run python -m pytest tests/plan_i tests/plan_h/test_reclaim.py tests/pl
 Expected: `84 passed` (Plan I's 73: 52 from Task 1, 5 from Task 2, the outbox's 14 and the tick's 2; the reclaim
 module's 2, its tick test now patching the delivery; Plan F's sweeper module's 9, whose `Deps` gains defaulted fields).
 
-- [ ] **Step 5: The live R024 test**
+- [x] **Step 5: The live R024 test**
 
 Create `tests/e2e/test_outbox_live.py`:
 
@@ -4224,7 +4224,7 @@ Expected: `15 passed` (the new 5, the sweeper module's 4, the 0008 module's 6), 
 `reports/outbox/t14-outbox.txt` exists with six lines. This count is arithmetic, not measured: the plan's dry run
 cannot run live steps.
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
@@ -4274,7 +4274,7 @@ lease, per-tenant polling) this plan owns.
   `persistence.pull_forward(conn, run_id, *, except_job) -> int`, called by `release_lease` in the job's final unit;
   `ops_sweeper.main.Deps.wakeup_settings`, `main.sweep_wakeups(deps)`.
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Create `tests/plan_i/test_wakeups.py`:
 
@@ -4439,7 +4439,7 @@ def test_the_pull_forward_takes_only_free_rows_of_the_run() -> None:
 Run: `uv run python -m pytest tests/plan_i/test_wakeups.py -q`
 Expected: `1 error in` (collection stops: `ImportError: cannot import name 'wakeups' from 'ops_sweeper'`).
 
-- [ ] **Step 2: The pull-forward in the job's final unit**
+- [x] **Step 2: The pull-forward in the job's final unit**
 
 Edit 1 (`core/src/ops_core/persistence.py`, `claim_next`'s docstring), replace:
 
@@ -4548,7 +4548,7 @@ Run: `uv run python -m pytest tests/plan_h/test_worker_units.py -q`
 Expected: `20 passed` (unchanged in number; the release test now sees `pull_forward` between the finish and the
 release).
 
-- [ ] **Step 3: The sweep and the purge**
+- [x] **Step 3: The sweep and the purge**
 
 Create `sweeper/src/ops_sweeper/wakeups.py`:
 
@@ -4703,7 +4703,7 @@ lost wake-ups (those are `wakeups.sweep`'s: it reopens done jobs of stuck runs, 
 Run: `uv run python -m pytest tests/plan_i/test_wakeups.py -q`
 Expected: `7 passed`.
 
-- [ ] **Step 4: The tick sweeps, purges and records its minute**
+- [x] **Step 4: The tick sweeps, purges and records its minute**
 
 Edit 1 (`sweeper/src/ops_sweeper/main.py`, docstring), replace:
 
@@ -4929,7 +4929,7 @@ Run: `uv run python -m pytest tests/plan_i tests/plan_h/test_reclaim.py tests/pl
 Expected: `103 passed` (Plan I's 81: Task 4's 73, the wake-up module's 7 and the tick's third test; the reclaim
 module's 2; the worker-units module's 20).
 
-- [ ] **Step 5: The live wake-up tests**
+- [x] **Step 5: The live wake-up tests**
 
 Edit 12 (`tests/e2e/test_r105_walking_skeleton.py`, the skeleton fixture), replace:
 
@@ -5182,7 +5182,7 @@ whose R087 test still sees the original job claimed; the worker module's 4; the 
 arithmetic, not measured: the plan's dry run cannot run live steps. The R105 module's new leftover check runs in the
 live gate (Step 6), where its skeleton starts.
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
 Format, lint and count characters on every file of this task.
 
@@ -5226,7 +5226,7 @@ Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-
 task's own (`LAST=$(git rev-parse --short HEAD)`, run before this task commits). `<date>` is `date -u +%F` on the day
 of the close-out.
 
-- [ ] **Step 1: No `TODO(T14)` is left in live code**
+- [x] **Step 1: No `TODO(T14)` is left in live code**
 
 Run:
 
@@ -5242,7 +5242,7 @@ forward references; the applied revisions 0002-0007 carry no `TODO(T14)`). The s
 prints a line, give that TODO its owner from the debt list (T20, T21, T22, T26, T27, T28, T29, T32, T39, T45 or T47)
 in a separate commit before continuing.
 
-- [ ] **Step 2: Handoff records**
+- [x] **Step 2: Handoff records**
 
 Run this once from the repository root, with `BASE` set to the hash Task 1 Step 1b recorded (it rewrites the two JSON
 files in their own format: two-space indent, non-ASCII kept, one trailing newline):
@@ -5358,7 +5358,7 @@ EOF
 Expected: it prints the span (for example `1a2b3c4..5d6e7f8`). `git diff --stat handoff` shows three files changed;
 `git diff handoff/acceptance-matrix.json` shows only two rows: R024 and R089.
 
-- [ ] **Step 3: Project state**
+- [x] **Step 3: Project state**
 
 In `SESSION_STATE.md`:
 
@@ -5521,7 +5521,7 @@ the plan.`) and `- **Open items for later:**` (from the SDD ledger
 `.superpowers/sdd/2026-10-15-first-slice-i-journal-wakeups-outbox/progress.md`; or `- **Open items for later:** none
 recorded.`).
 
-- [ ] **Step 4: Status, history, the runbook and the documents**
+- [x] **Step 4: Status, history, the runbook and the documents**
 
 Edit 1 (`STATUS.md`, its last lines), replace:
 
@@ -5896,7 +5896,7 @@ health on 127.0.0.1:8071 (`OPS_SWEEPER_HEALTH_PORT`), ready only while the last 
 120 s. Settings and what to look at: `docs/runbooks/events-and-outbox.md`. Proposal expiry: T21.
 ```
 
-- [ ] **Step 5: Final gates**
+- [x] **Step 5: Final gates**
 
 ```bash
 PYTHONUTF8=1 uv run python scripts/check.py
@@ -5911,7 +5911,7 @@ reports/auth`; the live run rewrote `reports/admission`, `reports/skeleton`, `re
 `reports/events` and `reports/outbox`, and Step 6 commits them. Tick this plan's checkboxes (`- [ ]` → `- [x]`) for
 every step executed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add handoff SESSION_STATE.md STATUS.md README.md worker/README.md sweeper/README.md docs/ARCHITECTURE.md
