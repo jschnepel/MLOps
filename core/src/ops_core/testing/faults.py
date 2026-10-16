@@ -2,8 +2,9 @@
 kind that a server consumes on its hot path. `Faults` is the factory: it refuses to exist outside the test profile,
 which is what makes the hooks unreachable in dev and demo; each service mounts its own arming route over the object
 its factory built (incident-sim's destination faults, the API's admission faults; Plan H ruling 22). `BS405` maps
-BUILD_SPEC's nine faults to the hooks. The worker and the sweeper have none: their failure, a lost lease, is produced
-for real by the tests (Plan H ruling 20).
+BUILD_SPEC's nine faults to the hooks. The worker has none: its failure, a lost lease, is produced for real by the
+tests (Plan H ruling 20). The sweeper has one, `outbox_sink_fail`, and no route: the live tests build its outbox sink
+with a test-profile `Faults` (Plan I ruling 14; T24's DEV-029 needs a fault-injectable sink).
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ class FaultKind(StrEnum):
     MALFORMED_RESPONSE = "malformed_response"  # the next POST commits and answers a body that is no receipt
     RECEIPT_HASH_MISMATCH = "receipt_hash_mismatch"  # the next POST commits and answers another payload hash
     DELAY_RECEIPT = "delay_receipt"  # the next lookup of a committed key answers 404, as if not yet visible
+    OUTBOX_SINK_FAIL = "outbox_sink_fail"  # the sweeper's next notification delivery fails (T14, R024)
 
 
 # BS:405's nine faults, phrase by phrase. Concurrent same-key submission is a harness behaviour, not a hook: two
@@ -41,6 +43,8 @@ BS405: Final[dict[str, FaultKind | None]] = {
     "definitive no-commit failure": FaultKind.REJECT_NEXT,
     "concurrent same-key submission": None,
 }
+# The sweeper's own hook: not one of BS:405's destination faults, and armed only through its sink's factory argument.
+SWEEPER_FAULTS: Final = frozenset({FaultKind.OUTBOX_SINK_FAIL})
 TIMED: Final = frozenset({FaultKind.TIMEOUT_BEFORE_ACCEPT})  # the kinds that take `seconds`
 DEFAULT_SECONDS: Final = 5
 
