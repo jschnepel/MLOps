@@ -13,14 +13,14 @@ halves of R025 and R031).
 refusal, proved by staging jobs, handles and destination faults directly; the worker's recover loop stays T22's. One
 setting, `OPS_WORKLOAD_CLIENT_ID`, names the worker's client for its token source and both verifiers, and
 `write_verifier` gives mcp-write mcp-read's three token rules. Revision `0010_write_path` re-creates `grant_execution`,
-`lookup_action`, `mark_sent` and `record_outcome` with the token's `azp` as their second argument, gives `mark_sent`
-the 300 s dispatch deadline (`app._dispatch_seconds()`) and an `abort_requested` answer, lets `record_outcome` accept a
-receipt after an abort request, and adds `request_abort`, which chooses the abort's reason under the runs lock; the
-downgrade re-runs 0004's and 0007's applied bodies. `persistence.allowed_tool` gains the attempt state
-(`jobs.ATTEMPT_STATES`). `get_incident_receipt` is one GET of the action's key and `abort_incident` one abort POST
-after `request_abort`, both recorded through `record_outcome`; `create_incident` aborts a cancelled or expired attempt
-itself. The abort tool's result schema gains UNKNOWN and CONFLICT. `docs/threat-model.md` states that v1 trusts
-mcp-write for outcome truth.
+`lookup_action`, `mark_sent` and `record_outcome` with the token's `azp` as their second argument, gives `mark_sent` the
+300 s dispatch deadline (`app._dispatch_seconds()`) and an `abort_requested` answer, lets `record_outcome` accept a
+receipt after an abort requested after SENT (reason `deadline`), and adds `request_abort`, which chooses the abort's
+reason under the runs lock; the downgrade re-runs 0004's and 0007's applied bodies. `persistence.allowed_tool` gains the
+attempt state (`jobs.ATTEMPT_STATES`). `get_incident_receipt` is one GET of the action's key and `abort_incident` one
+abort POST after `request_abort`, both recorded through `record_outcome`; `create_incident` aborts a cancelled or
+expired attempt itself. The abort tool's result schema gains UNKNOWN and CONFLICT. `docs/threat-model.md` states that v1
+trusts mcp-write for outcome truth.
 
 **Tech Stack:** as Plan J; no new dependency. `mcp` 2.3.0 and `mcp-types` 2.3.0 (`MCPServer`, `Client`, the bearer
 middleware), Starlette 1.7, `httpx2` 2.13 (`MockTransport`, `ASGITransport`), FastAPI (incident-sim), PyJWT 2.15,
@@ -321,8 +321,8 @@ Task 6 Step 3's "Plan K executed" block; in short:
 87. **SA:280 with SA:241-242**: the FAILED reason after an abort; `deadline` is a destination reason only; mcp-write
     reads the case from the tombstone's reason.
 88. **SA:356**: `abort_incident`'s data may say UNKNOWN or CONFLICT, with neither receipt nor tombstone.
-89. **SA:354-355**: `ABORT_NOT_DUE`, a recover redispatch's `STALE_RUN` and `OTHER_PROPOSAL` are plain errors after a
-    grant, each before any destination call.
+89. **SA:354-355**: `ABORT_NOT_DUE`, a recover redispatch's `STALE_RUN`, a recover job's re-send's
+    `NOT_REDISPATCHABLE` and `OTHER_PROPOSAL` are plain errors after a grant, each before any destination call.
 90. **BS:393**: the recovery tools are registered on mcp-write only and refused for every handle but a recover job's.
 91. **R131, SA:401**: `mcp_exec` also holds `current_time`; "no read function" is shown on today's function set.
 92. **SA:242, BS:502**: one destination request per recovery tool call; the backoff is the worker's (T22).
@@ -1303,9 +1303,10 @@ GUARD_0010 = (
     "    -- SENT is committed before any dispatch, so a receipt or conflict without SENT is a protocol violation;\n"
     "    -- FAILED_NO_COMMIT from INTENT stays allowed for a cancellation before send. An abort after SENT may be\n"
     "    -- answered by the receipt that already exists (SA:242; T47, Plan K ruling 7).\n"
-    "    -- Only an abort requested after SENT (its reason `deadline`) can meet a receipt.\n"
+    "    -- Only an abort requested after SENT (its reason `deadline`) can meet a receipt; a NULL reason is refused.\n"
     "    IF p_outcome IN ('SUCCEEDED', 'CONFLICT') AND v_latest.state <> 'SENT'\n"
-    "       AND NOT (v_latest.state = 'ABORT_REQUESTED' AND v_latest.detail->>'reason' = 'deadline') THEN\n"
+    "       AND NOT (v_latest.state = 'ABORT_REQUESTED'\n"
+    "                AND v_latest.detail->>'reason' IS NOT DISTINCT FROM 'deadline') THEN\n"
 )
 RECORD_SIGNATURE_0007 = "app.record_outcome(p_raw_handle text, p_action_id uuid, p_outcome text, p_document jsonb)"
 RECORD_SIGNATURE_0010 = (
@@ -3422,37 +3423,36 @@ Edit 2 (`mcp-write/src/ops_mcp_write/execution.py`, the module header), replace:
 
 ```python
 otherwise the same action id and bytes are re-sent and the destination's idempotent key answers. There is never a second
+action id for one run. Through the tool, the stored branch is unreachable once the outcome is recorded: the run has left
+APPROVED and EXECUTING, so `server.create_incident`'s `resolve_invocation` refuses the handle first (T15, Plan J ruling
+6), which production never needed (the worker skips the call past EXECUTING). A direct caller
+(tests/e2e/test_mcp_write_live.py), or an overlapping call that resolved its handle before the outcome was recorded,
+still reaches it. A transport failure after SENT is reported as UNKNOWN and recorded by nobody here: the worker holds
+`mark_unknown` (SA:467; Plan E ruling 6).
 ```
 
 with:
 
 ```python
 otherwise `mark_sent` re-checks the run (T47) and the same action id and bytes are re-sent, and the destination's
-idempotent key answers. There is never a second
+idempotent key answers. There is never a second action id for one run. Through the tool, the stored branch is
+unreachable once the outcome is recorded: the run has left APPROVED and EXECUTING, so `server.create_incident`'s
+`resolve_invocation` refuses the handle first (T15, Plan J ruling 6), which production never needed (the worker skips
+the call past EXECUTING). A direct caller (tests/e2e/test_mcp_write_live.py), or an overlapping call that resolved its
+handle before the outcome was recorded, still reaches it. A transport failure after SENT is reported as UNKNOWN and
+recorded by nobody here: the worker holds `mark_unknown` (SA:467; Plan E ruling 6).
+
+Abort rule (SA:348, SA:465; Plan K rulings 3 and 24): when `mark_sent` answers `cancelled` or `expired`,
+`create_incident` itself requests the abort (the function records ABORT_REQUESTED with the reason it chose), POSTs it
+and records what the destination answers. For an attempt never sent nothing has left, and the run ends FAILED with
+`cancelled_before_send` or `expired`; for the re-send of a SENT attempt the abort goes at once (`deadline`) and the
+destination's answer decides: the receipt that already exists, or `aborted_no_commit`. `abort_incident` does the same
+for a recover job, from INTENT or SENT. `get_incident_receipt` reads the key that stands and records it; it never writes
+one. Each destination call is one request with a 10 s timeout; the backoff between calls, the scheduled recover jobs and
+the redispatch of an unsent attempt are the worker's (T22).
 ```
 
 Edit 3 (`mcp-write/src/ops_mcp_write/execution.py`, the module header), replace:
-
-```python
-`mark_unknown` (SA:467; Plan E ruling 6).
-"""
-```
-
-with:
-
-```python
-`mark_unknown` (SA:467; Plan E ruling 6).
-
-Abort rule (SA:348, SA:465; Plan K rulings 3 and 24): when `mark_sent` answers `cancelled` or `expired`, nothing was
-sent, and `create_incident` itself requests the abort (the function records ABORT_REQUESTED with the reason it chose),
-POSTs it and records the tombstone, so the run ends FAILED with `cancelled_before_send` or `expired`. `abort_incident`
-does the same for a recover job, from INTENT or SENT. `get_incident_receipt` reads the key that stands and records it;
-it never writes one. Each destination call is one request with a 10 s timeout; the backoff between calls, the
-scheduled recover jobs and the redispatch of an unsent attempt are the worker's (T22).
-"""
-```
-
-Edit 4 (`mcp-write/src/ops_mcp_write/execution.py`, the module header), replace:
 
 ```python
 from dataclasses import dataclass
@@ -3465,7 +3465,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 ```
 
-Edit 5 (`mcp-write/src/ops_mcp_write/execution.py`, the module header), replace:
+Edit 4 (`mcp-write/src/ops_mcp_write/execution.py`, the module header), replace:
 
 ```python
 from ops_core.states import IllegalTransition
@@ -3477,7 +3477,7 @@ with:
 from ops_core.states import AttemptState, IllegalTransition
 ```
 
-Edit 6 (`mcp-write/src/ops_mcp_write/execution.py`, in `_POST_SENT_REFUSALS`), replace:
+Edit 5 (`mcp-write/src/ops_mcp_write/execution.py`, in `_POST_SENT_REFUSALS`), replace:
 
 ```python
 
@@ -3513,7 +3513,7 @@ def next_step(attempt_state: str | None) -> Literal["stored", "send", "resend", 
     raise ValueError(f"attempt state {attempt_state} is not one a grant can have")
 ```
 
-Edit 7 (`mcp-write/src/ops_mcp_write/execution.py`, in `create_incident`), replace:
+Edit 6 (`mcp-write/src/ops_mcp_write/execution.py`, in `create_incident`), replace:
 
 ```python
 async def create_incident(deps: Deps, *, handle: str, azp: str, proposal_id: UUID) -> ActionOutcome:
@@ -3536,7 +3536,7 @@ async def _ask(deps: Deps, grant: persistence.Grant, what: str, ask: Ask) -> Act
 async def create_incident(deps: Deps, *, handle: str, azp: str, proposal_id: UUID) -> ActionOutcome:
 ```
 
-Edit 8 (`mcp-write/src/ops_mcp_write/execution.py`, in `create_incident`), replace:
+Edit 7 (`mcp-write/src/ops_mcp_write/execution.py`, in `create_incident`), replace:
 
 ```python
     if step == "send":
@@ -3585,7 +3585,7 @@ with:
             token=token,
 ```
 
-Edit 9 (`mcp-write/src/ops_mcp_write/execution.py`, in `create_incident`), replace:
+Edit 8 (`mcp-write/src/ops_mcp_write/execution.py`, in `create_incident`), replace:
 
 ```python
         outcome = destination.classify(reply, action_id=grant.action_id, payload_sha256=grant.payload_sha256)
@@ -3670,7 +3670,7 @@ async def _record(deps: Deps, handle: str, azp: str, grant: persistence.Grant, o
     # destination has answered, so an error envelope would hide an outcome that may exist (AM-13).
 ```
 
-Edit 10 (`mcp-write/src/ops_mcp_write/execution.py`, in `create_incident`), replace:
+Edit 9 (`mcp-write/src/ops_mcp_write/execution.py`, in `create_incident`), replace:
 
 ```python
         log.exception("recording the outcome of action %s failed after SENT", grant.action_id)
@@ -5048,8 +5048,9 @@ note = (
     "0010_write_path: grant_execution, lookup_action, mark_sent and record_outcome take the presented token's azp, "
     "mark_sent answers expired past the dispatch deadline (app._dispatch_seconds(), 300 s, after the runs lock; a "
     "cancel comes first) and abort_requested once an abort was requested, record_outcome accepts a receipt or a "
-    "conflict after ABORT_REQUESTED, and request_abort chooses the reason itself (cancelled_before_send, expired or "
-    "deadline) and records ABORT_REQUESTED, or refuses ABORT_NOT_DUE; exact downgrade to 0009; mcp-write refuses to "
+    "conflict after an abort requested after SENT (reason deadline), and request_abort chooses the reason itself "
+    "(cancelled_before_send, expired or deadline) and records ABORT_REQUESTED, or refuses ABORT_NOT_DUE; exact "
+    "downgrade to 0009; mcp-write refuses to "
     "start without it. The attempt-state allowlist is persistence.allowed_tool's third dimension (jobs.ATTEMPT_STATES; "
     "an execute job re-sends a SENT attempt while mark_sent finds it still due, a recover job redispatches INTENT "
     "only and never re-sends). get_incident_receipt (one GET, "
@@ -5260,7 +5261,9 @@ with:
       first send and a re-send alike, not the allowlist's.
   85. SA:229-231 and SA:463 (`mark_sent`): it answers `expired`, writing nothing, when `app.current_time()` is past
       `granted_at` plus `app._dispatch_seconds()` (300 s, SA:295), compared after the runs lock and after the cancel
-      check; it answers `abort_requested`, writing nothing, once the latest state is ABORT_REQUESTED (SA:334).
+      check, for a first send and a re-send of a SENT attempt alike; it answers `abort_requested`, writing nothing,
+      once the latest state is ABORT_REQUESTED (SA:334), and `not_redispatchable`, writing nothing, to a recover job's
+      re-send of a SENT attempt.
   86. SA:464 (`record_outcome`): SUCCEEDED and CONFLICT are accepted when the latest state is SENT, or ABORT_REQUESTED
       with the reason `deadline` (an abort after SENT answered by the receipt that already exists, SA:242); after an
       abort of an attempt never sent they stay refused.
@@ -5273,8 +5276,9 @@ with:
       token, `cancelled_before_send`.
   89. SA:354-355 (errors after a grant): an abort before it is due is the plain, retryable `ABORT_NOT_DUE`; a recover
       job's redispatch of an unsent attempt whose run left EXECUTING is the plain `STALE_RUN` (redispatch from
-      OUTCOME_UNKNOWN is T22's); a recovery call naming another proposal is `GRANT_REFUSED` `OTHER_PROPOSAL` (SA:538);
-      each comes before any destination call and names no action.
+      OUTCOME_UNKNOWN is T22's); a recover job's re-send of a SENT attempt is the plain `NOT_REDISPATCHABLE`; a
+      recovery call naming another proposal is `GRANT_REFUSED` `OTHER_PROPOSAL` (SA:538); each comes before any
+      destination call and names no action.
   90. BS:393 (discovery): "register it only for the reconciliation workload" is met by registering the recovery tools
       on mcp-write alone, where only the worker's workload can authenticate, and refusing every handle but a recover
       job's; the tools are listed to that caller.
@@ -5896,5 +5900,24 @@ measured.
 - None of the controller's rulings was impossible as written. One choice the rulings left open: `not_redispatchable` is
   checked after `cancelled` and `expired`, as the ruling orders it. So a recover job's `create_incident` on a SENT
   attempt of a cancelled or overdue run aborts the action (`deadline`) rather than being refused. The outcome is the one
-  `abort_incident` would reach, and nothing is sent.
+  `abort_incident` would reach, and nothing is sent. **Resolved in round 2:** the controller confirmed this order.
 - The live halves (now 5 + 10 + 1 live tests) still run first in execution; their counts are arithmetic.
+
+## Round 2 changes
+
+Round 2 accepted the plan (0 Blocking, 0 Important); its four minors are applied as proposed.
+
+- **N1.** The Architecture paragraph and Task 6 Step 2's handoff note (which goes into `handoff/tasks.json` and
+  `BUILD_BACKLOG.md`) now say `record_outcome` accepts a receipt or a conflict only after an abort requested after SENT
+  (reason `deadline`), as ruling 7, erratum 86 and the revision's docstring already did.
+- **N2.** `execution.py`'s module docstring (Task 3 Step 5): the abort rule covers the re-send of a SENT attempt
+  too (the immediate abort, `deadline`, whose answer decides: the existing receipt or `aborted_no_commit`), and the
+  replay paragraph is reflowed, so Step 5 has one edit fewer (its old Edits 2 and 3 are one edit now).
+- **N3.** The owner-facing errata in Task 6 Step 3: full erratum 85 gains "for a first send and a re-send of a SENT
+  attempt alike" and `not_redispatchable`; erratum 89 (full and summary) gains the plain `NOT_REDISPATCHABLE` for a
+  recover job's re-send of a SENT attempt.
+- **N4.** `GUARD_0010` compares `v_latest.detail->>'reason' IS NOT DISTINCT FROM 'deadline'`, so an ABORT_REQUESTED row
+  without a reason refuses a receipt instead of letting it through (the backstop fails closed). The derived-body unit
+  test is unchanged: it undoes the constant.
+- The round-1 open point (the order `cancelled`, `expired`, then `not_redispatchable`) is confirmed and marked resolved.
+- No count changes: dev and live counts per task are as in round 1, and no red or intermediate Expected line moves.
