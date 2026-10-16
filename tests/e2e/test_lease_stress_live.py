@@ -181,7 +181,7 @@ async def test_r107_eight_workers_and_the_sweeper_never_deadlock_and_fences_neve
         _, executing, proposal, handle = await approved_run(app_conn, api=api, worker=seeder)
         runs.append(executing)
         async with mcp_exec.transaction():
-            await persistence.grant_execution(mcp_exec, handle=handle, proposal_id=proposal)
+            await persistence.grant_execution(mcp_exec, handle=handle, azp="ops-worker", proposal_id=proposal)
         await expire_lease(app_conn, executing)
         cur = await app_conn.execute("SELECT run_id, id FROM app.jobs WHERE run_id = ANY(%s)", (runs,))
         jobs = {UUID(str(row["run_id"])): UUID(str(row["id"])) for row in await cur.fetchall()}

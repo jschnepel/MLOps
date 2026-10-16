@@ -65,7 +65,7 @@ def test_a_moved_fence_before_sent_refuses_and_sends_nothing(monkeypatch: pytest
     async def grant(_conn: Any, **_: Any) -> persistence.Grant:
         return GRANT
 
-    async def stale_mark_sent(_conn: Any, *, handle: str, action_id: Any) -> str:
+    async def stale_mark_sent(_conn: Any, *, handle: str, azp: str, action_id: Any) -> str:
         raise persistence.HandleRejected("invocation handle rejected")
 
     async def post(*_: Any, **__: Any) -> None:
@@ -75,7 +75,7 @@ def test_a_moved_fence_before_sent_refuses_and_sends_nothing(monkeypatch: pytest
     monkeypatch.setattr(persistence, "mark_sent", stale_mark_sent)
     monkeypatch.setattr(destination, "post_incident", post)
     with pytest.raises(persistence.HandleRejected):  # server.py answers INVALID_HANDLE for exactly this
-        asyncio.run(execution.create_incident(deps(), handle="h", proposal_id=uuid4()))
+        asyncio.run(execution.create_incident(deps(), handle="h", azp="ops-worker", proposal_id=uuid4()))
     assert posts == []
 
 
@@ -83,13 +83,13 @@ def test_a_moved_fence_after_sent_is_unknown_never_an_error(monkeypatch: pytest.
     async def grant(_conn: Any, **_: Any) -> persistence.Grant:
         return GRANT
 
-    async def mark_sent(_conn: Any, *, handle: str, action_id: Any) -> str:
+    async def mark_sent(_conn: Any, *, handle: str, azp: str, action_id: Any) -> str:
         return "sent"
 
     async def post(*_: Any, **__: Any) -> destination.Reply:
         return destination.Reply(200, {})
 
-    async def stale_record(_conn: Any, *, handle: str, action_id: Any, outcome: ActionOutcome) -> ToolOutcome:
+    async def stale_record(_conn: Any, *, handle: str, azp: str, action_id: Any, outcome: ActionOutcome) -> ToolOutcome:
         raise persistence.HandleRejected("invocation handle rejected")
 
     monkeypatch.setattr(persistence, "grant_execution", grant)
@@ -97,6 +97,6 @@ def test_a_moved_fence_after_sent_is_unknown_never_an_error(monkeypatch: pytest.
     monkeypatch.setattr(destination, "post_incident", post)
     monkeypatch.setattr(destination, "classify", lambda *_, **__: SUCCEEDED)
     monkeypatch.setattr(persistence, "record_outcome", stale_record)
-    outcome = asyncio.run(execution.create_incident(deps(), handle="h", proposal_id=uuid4()))
+    outcome = asyncio.run(execution.create_incident(deps(), handle="h", azp="ops-worker", proposal_id=uuid4()))
     doc = outcome_envelope(outcome)
     assert outcome.status is ToolOutcome.UNKNOWN and doc["status"] == "outcome" and doc["error"] is None

@@ -173,14 +173,14 @@ async def test_r089_mark_sent_and_sweeper_append_commit_in_order(
         proposal, _, digest = await freeze(app_conn, worker, run)
         await approve(api, proposal, digest)
         handle = await handle_for(app_conn, run, "execute", expires_in=600)
-        cur = await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal))
+        cur = await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", (handle, proposal))
         action = (await cur.fetchone())["action_id"]
         n = await stepped(
             app_conn,
             DbStore(reader),
             ALPHA,
             run,
-            (mcp_exec, "SELECT app.mark_sent(%s, %s)", (handle, action)),
+            (mcp_exec, "SELECT app.mark_sent(%s, 'ops-worker', %s)", (handle, action)),
             (sweeper, APPEND, (run, "tool.completed", Jsonb({"message": "sweeper"}))),
         )
         lines.append(f"R089 stepped: mcp_exec mark_sent took {n}, sweeper append_event waited and took {n + 1}")
@@ -257,9 +257,9 @@ async def mcp_actor(conn: persistence.Conn, work: list[dict[str, Any]], tally: T
     """Grant, SENT and the outcome of each of its runs, through the definers; each step's first attempt rolls back
     after the definer appended its event, the second commits."""
     calls = (
-        ("grant", "SELECT * FROM app.grant_execution(%s, %s)"),
-        ("sent", "SELECT app.mark_sent(%s, %s) AS r"),
-        ("outcome", "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s) AS r"),
+        ("grant", "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)"),
+        ("sent", "SELECT app.mark_sent(%s, 'ops-worker', %s) AS r"),
+        ("outcome", "SELECT app.record_outcome(%s, 'ops-worker', %s, 'SUCCEEDED', %s) AS r"),
     )
     for item in work:
         for name, sql in calls:

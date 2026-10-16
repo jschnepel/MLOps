@@ -95,11 +95,11 @@ async def succeeded_run(app_conn: persistence.Conn, role_conn: RoleConn, tenant:
     proposal, _, digest = await freeze(app_conn, worker, run, tenant)
     await approve(api, proposal, digest, SAM, tenant)
     handle = await handle_for(app_conn, run, "execute", expires_in=600)
-    cur = await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal))
+    cur = await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", (handle, proposal))
     action = (await cur.fetchone())["action_id"]
-    assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s, %s) AS r", (handle, action))).fetchone())[
-        "r"
-    ] == "sent"
+    assert (
+        await (await mcp_exec.execute("SELECT app.mark_sent(%s, 'ops-worker', %s) AS r", (handle, action))).fetchone()
+    )["r"] == "sent"
     document = {
         "status": "SUCCEEDED",
         "action_id": str(action),
@@ -109,7 +109,7 @@ async def succeeded_run(app_conn: persistence.Conn, role_conn: RoleConn, tenant:
         "reason": None,
     }
     cur = await mcp_exec.execute(
-        "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s) AS r", (handle, action, Jsonb(document))
+        "SELECT app.record_outcome(%s, 'ops-worker', %s, 'SUCCEEDED', %s) AS r", (handle, action, Jsonb(document))
     )
     assert (await cur.fetchone())["r"] == "SUCCEEDED"
     return Outcome(tenant, run, handle, action, document)
@@ -181,7 +181,7 @@ async def test_r024_a_failed_delivery_keeps_the_outcome_and_one_intent(
         # The dedup key preserves the intent: a replayed outcome returns what stands and writes nothing, and the
         # outcome event appended again (inside a transaction rolled back after the check) adds an event, no intent.
         cur = await mcp_exec.execute(
-            "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s) AS r",
+            "SELECT app.record_outcome(%s, 'ops-worker', %s, 'SUCCEEDED', %s) AS r",
             (staged.handle, staged.action, Jsonb(staged.document)),
         )
         assert (await cur.fetchone())["r"] == "SUCCEEDED"

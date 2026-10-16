@@ -65,7 +65,7 @@ def _stored(grant: persistence.Grant) -> ActionOutcome:
     return ActionOutcome.model_validate_json(json.dumps(grant.detail))
 
 
-async def _read_back(deps: Deps, handle: str, grant: persistence.Grant) -> ActionOutcome:
+async def _read_back(deps: Deps, handle: str, azp: str, grant: persistence.Grant) -> ActionOutcome:
     """The recorded outcome, read in its own unit; a handle that expired meanwhile reports UNKNOWN, not a handle error.
 
     The outcome is already recorded, and lookup_action re-checks the handle's expiry: a handle that expired during a
@@ -73,7 +73,7 @@ async def _read_back(deps: Deps, handle: str, grant: persistence.Grant) -> Actio
     """
     try:
         async with deps.session.unit() as conn:
-            return _stored(await persistence.lookup_action(conn, handle=handle))
+            return _stored(await persistence.lookup_action(conn, handle=handle, azp=azp))
     except persistence.HandleRejected:
         return destination.unknown(grant.action_id, grant.payload_sha256)
     except _POST_SENT_REFUSALS:  # SENT is committed: a mapped refusal here must not become an error envelope
@@ -81,22 +81,22 @@ async def _read_back(deps: Deps, handle: str, grant: persistence.Grant) -> Actio
         return destination.unknown(grant.action_id, grant.payload_sha256)
 
 
-async def create_incident(deps: Deps, *, handle: str, proposal_id: UUID) -> ActionOutcome:
-    """Four units of work in AM-13 order; the destination call sits between two commits, never inside one."""
+async def create_incident(deps: Deps, *, handle: str, azp: str, proposal_id: UUID) -> ActionOutcome:
+    """Four units of work in AM-13 order; the destination call sits between two commits, never inside one. `azp` is
+    the presented token's, which every definer compares with the handle's (revision 0010)."""
     async with deps.session.unit() as conn:  # the functions resolve the handle and set the tenant themselves
-        grant = await persistence.grant_execution(conn, handle=handle, proposal_id=proposal_id)
+        grant = await persistence.grant_execution(conn, handle=handle, azp=azp, proposal_id=proposal_id)
     step = next_step(grant.attempt_state)
     if step == "stored":
         return _stored(grant)
     if step == "send":
-        async with deps.session.unit() as conn:
-            sent = await persistence.mark_sent(conn, handle=handle, action_id=grant.action_id)  # committed before I/O
+        async with deps.session.unit() as conn:  # committed before I/O
+            sent = await persistence.mark_sent(conn, handle=handle, azp=azp, action_id=grant.action_id)
         if sent == "resolved":  # a concurrent caller finished first
-            return await _read_back(deps, handle, grant)
-        if sent == "cancelled":
-            # The UNKNOWN envelope makes the worker call mark_unknown, which moves the run to OUTCOME_UNKNOWN and
-            # queues a recover job although nothing was sent: conservative. TODO(T22): request_abort and the abort
-            # POST replace this.
+            return await _read_back(deps, handle, azp, grant)
+        if sent in ("cancelled", "expired", "abort_requested"):
+            # Nothing was sent. The UNKNOWN envelope makes the worker call mark_unknown, which moves the run to
+            # OUTCOME_UNKNOWN and queues a recover job: conservative. TODO(T47): the abort replaces this (SA:348).
             return destination.unknown(grant.action_id, grant.payload_sha256)
     try:
         reply = await destination.post_incident(
@@ -119,11 +119,13 @@ async def create_incident(deps: Deps, *, handle: str, proposal_id: UUID) -> Acti
     # action id (the attempt is still SENT). A mapped refusal is answered UNKNOWN so the worker reconciles it.
     try:
         async with deps.session.unit() as conn:
-            standing = await persistence.record_outcome(conn, handle=handle, action_id=grant.action_id, outcome=outcome)
+            standing = await persistence.record_outcome(
+                conn, handle=handle, azp=azp, action_id=grant.action_id, outcome=outcome
+            )
     except _POST_SENT_REFUSALS:
         log.exception("recording the outcome of action %s failed after SENT", grant.action_id)
         return destination.unknown(grant.action_id, grant.payload_sha256)
     if standing is outcome.status:
         return outcome
     # A concurrent caller's record stands: read it back in its own unit.
-    return await _read_back(deps, handle, grant)
+    return await _read_back(deps, handle, azp, grant)

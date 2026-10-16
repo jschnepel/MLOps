@@ -192,7 +192,9 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
                 await persistence.resolve_invocation(
                     conn, handle=handle, azp=token.client_id, tool=ToolName.CREATE_INCIDENT
                 )  # binds server, azp, expiry and the tool allowlist before any work (SA:459)
-            outcome = await execution.create_incident(state.deps, handle=handle, proposal_id=proposal_id)
+            outcome = await execution.create_incident(
+                state.deps, handle=handle, azp=token.client_id, proposal_id=proposal_id
+            )
         except persistence.HandleRejected as exc:
             return envelope("create_incident", error=tool_error("INVALID_HANDLE", str(exc)))
         except persistence.Refused as exc:
@@ -236,6 +238,8 @@ def build_app(server: MCPServer, state: State) -> Starlette:
                 # Revision 0009: without the handle's job binding this server would resolve execute handles whose job
                 # is another run's or finished, as 0007 did, so it refuses to start, as mcp-read does (T15).
                 await persistence.assert_function_text(conn, *persistence.HANDLE_BINDING)
+                # Revision 0010: the definers this server calls take the token's azp, and request_abort exists (T47).
+                await persistence.assert_function_text(conn, *persistence.WRITE_PATH)
             except BaseException:  # a failed start must leak no connection
                 await conn.close()
                 raise
