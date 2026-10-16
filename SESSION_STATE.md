@@ -716,6 +716,32 @@ Allowed shortcuts in T14, each with its owning task:
 - the dev database stays at revision 0005 until the owner migrates it (0006, 0007 and 0008 pending); until then the
   API, the sweeper, the worker and mcp-write refuse to start on it → owner input.
 
+## Plan J debt list (T15; committed before coding) [R6-B7]
+
+Allowed shortcuts in T15, each with its owning task:
+- mcp-write's verifier keeps stamping its own resource whatever `aud` holds, leaves `validate_token_resource` off and
+  does not require the `typ` claim `Bearer` (mcp-read does all three, Plan J ruling 2) → T47;
+- the write-path definers (`grant_execution`, `lookup_action`, `mark_sent`, `record_outcome`) call `_resolve_handle`
+  with a literal `'ops-worker'` instead of the presented token's `azp` (`resolve_invocation` compares the real one
+  first, so a mismatch is refused there) → T47;
+- the attempt-state dimension of the allowlist (`create_incident` only while the attempt is absent or INTENT, not
+  cancelled, before the deadline; T15 review note 2) stays in mcp-write's `execution.next_step` → T47 (recover: T22);
+- mcp-write's half of R025 (an independent client lists and calls mcp-write) and of R131 (`mcp_exec`'s function set, a
+  read handle at mcp-write) → T47;
+- `asset_scope`, `get_asset_status`, `get_recent_alerts` and asset-sim → T16; `search_procedures_scoped`, the governed
+  store and the `vector_exact` → `mode=vector` translation by its caller → T17/T16; `search_procedures` stays lexical
+  over `data/handoff-fixtures/` (Plan J rulings 8, 9);
+- mcp-read's tool arguments (the optional `asset_type`), the order of its `UNSUPPORTED_MODE` check and its fallback
+  `corpus_version` → T16/T17 (ruling 20);
+- the worker's client does no tool discovery and no result-schema check (R029) → T16; it does not tell a 401 from
+  other transport failures (both become "retrieval failed" or a re-queue) → T20; it holds no `resume_input` handle →
+  T20;
+- TLS outside localhost, and container host names (the SDK's DNS-rebinding allowed hosts; audience URLs that equal the
+  listen URLs) → T30 (ruling 16);
+- mcp-read has no `tests/` directory and no Dockerfile of its own (AM-01) → T30 (ruling 25);
+- the dev database stays at revision 0005 until the owner migrates it (0006, 0007, 0008 and 0009 pending); until then
+  the API, the sweeper, the worker, mcp-write and now mcp-read refuse to start on it → owner input.
+
 ## Environment (observed)
 
 | Item | Observed |
