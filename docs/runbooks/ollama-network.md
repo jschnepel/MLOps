@@ -109,7 +109,7 @@ No block rule is added on purpose: an explicit Block rule wins over an Allow rul
 
 | Date | Step in force (A or B) | Listener (`Get-NetTCPConnection`) | Container test | LAN test from (device) | Result |
 |---|---|---|---|---|---|
-| | | | | | |
+| 2026-10-16 | A (applied by the agent on the owner's instruction: `OLLAMA_HOST=127.0.0.1:11434` at User scope, Machine scope empty, Ollama restarted) | `127.0.0.1 11434` only | `tests/plan_b/live/test_ollama_bridge.py`: 1 passed | this host only, against its own Ethernet, Tailscale, NordLynx and Radmin VPN addresses (no other device yet) | port 11434 closed on every non-loopback address; the test from another device and disabling the allow-any `ollama.exe` firewall rules (elevated) are still the owner's |
 
 ## Proposed spec errata (for the owner's next revision)
 

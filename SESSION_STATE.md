@@ -6,7 +6,7 @@
 the five building tasks, the close-out is `a335e1b..6ec740f`, the final-review fix wave `b2ba317..5c96f0d`, the final review record `30f47d4`). T47 is DONE subject to the owner's decisions on errata
 72, 84 and 91 (R131's function sets and the attempt-state allowlist). Owner inputs: (1) the holdout seal (T03 step 9),
 then the live probe (T02); (2) merge the stacked PRs #1-#10 in order (plan-b -> main through plan-k -> plan-j; #10 is
-https://github.com/jschnepel/MLOps/pull/10); (3) T44 step 10
+https://github.com/jschnepel/MLOps/pull/10); (3) T44 step 10 (step A applied 2026-10-16; the other-device LAN check and the firewall rules remain)
 (`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F, G, H, I, J and K (K: 82-92
 below); (5) migrate the dev database to revision 0010 (`uv run python scripts/skeleton.py migrate`, dev profile: from
 0005 it applies 0006 to 0010 together; 0010 re-creates the write-path functions with the token's `azp`, adds
@@ -1067,7 +1067,7 @@ creates `request_abort` and the helper `_dispatch_seconds()`, and changes no row
 - Decide on the nine proposed contract errata (see "Plan C executed").
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
 - T06 is closed (public repo, PRs green). The first CI runs were red on ruff EXE001 (a shebang on a non-executable file, a rule ruff skips on Windows) with every test green; fixed by a file-mode commit on each branch.
-- T44 step 10: run `docs/runbooks/ollama-network.md` step A (`OLLAMA_HOST=127.0.0.1:11434` at User scope, restart Ollama), verify with the three checks, fill the attestation table, and decide whether to adopt the proposed AM-31 errata (loopback bind primary, firewall fallback).
+- T44 step 10: step A was applied on 2026-10-16 (see the runbook's attestation row: listener on 127.0.0.1 only, the container test passes, port closed on this host's own non-loopback addresses). Still the owner's: the LAN check from another device, disabling the allow-any `ollama.exe` firewall rules (elevated), and whether to adopt the proposed AM-31 errata (loopback bind primary, firewall fallback).
 
 ## Exact next step
 
