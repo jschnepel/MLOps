@@ -116,6 +116,31 @@ def test_a_successor_cannot_be_pulled_back_or_postponed(change: dict[str, Any], 
         assert step.problems == () and [d.version for d, _ in step.restated] == ["2"], allowed
 
 
+@pytest.mark.parametrize(
+    ("held", "now", "refused"),
+    [
+        ("superseded", "approved", True),
+        ("superseded", "revoked", False),
+        ("approved", "superseded", False),
+        ("draft", "approved", False),
+    ],
+)
+def test_a_superseded_version_is_not_approved_again(held: str, now: str, refused: bool) -> None:
+    """A superseded version approved again would compete with its successor; only a new version may follow."""
+    key = ("ALPHA-ALERT-REVIEW", "1")
+    kept = stored(ALPHA_DOCS)
+    kept[key] = replace(kept[key], lifecycle=(held, kept[key].lifecycle[1], None))
+    changed = [replace(d, status=now) if (d.document_id, d.version) == key else d for d in ALPHA_DOCS]
+    step = ingest.plan(replace(GOVERNED, documents=tuple(changed)), "alpha", ALPHA, kept, current())
+    if refused:
+        assert step.problems == (
+            "alpha ALPHA-ALERT-REVIEW v1: a superseded version cannot be approved again; publish a new version instead",
+        )
+        assert (step.new, step.restated, step.record) == ((), (), False)
+    else:
+        assert step.problems == () and [d.version for d, _ in step.restated] == ["1"]
+
+
 def test_no_refusal_quotes_document_text() -> None:
     held = {key: replace(value, content_sha256="0" * 64) for key, value in stored(ALPHA_DOCS).items()}
     step = ingest.plan(GOVERNED, "alpha", ALPHA, held, current())

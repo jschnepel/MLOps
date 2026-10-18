@@ -266,6 +266,11 @@ def ingest() -> int:
             reports = asyncio.run(_ingest(pg, governed), loop_factory=asyncio.SelectorEventLoop)
         else:
             reports = asyncio.run(_ingest(pg, governed))
+    except (persistence.PersistenceError, psycopg.Error) as error:
+        # Only the class is printed: a driver message can name the host, and a store failure has no document text.
+        written = getattr(error, "written", ())  # set by ingest() when earlier tenants had committed
+        print(f"INGEST: failed ({type(error).__name__})" + (f" after writing {', '.join(written)}" if written else ""))
+        return 1
     except (corpus.CorpusError, corpus_ingest.IngestRefused) as error:
         written = getattr(error, "written", ())
         print(f"INGEST: refused after writing {', '.join(written)}" if written else "INGEST: refused, nothing written")

@@ -9,9 +9,11 @@ it writes each tenant in one transaction, re-planning inside it so that what it 
 - a version not stored yet: its document row, one chunk per section and its first state row;
 - the same version with the same hash and the same immutable attributes (path, sections, asset family, label,
   supersedes, conflicts_with): nothing, unless its lifecycle (status, effective interval) changed, which appends one
-  state row (AM-20.2 grants no UPDATE, so the history is the rows); a revoked version never changes again, and a
-  version that has left `draft` never returns to it and keeps its `effective_from` (round 2, I1: either change
-  would un-retire its predecessors, which the search retires by the latest state of every later version);
+  state row (AM-20.2 grants no UPDATE, so the history is the rows). The allowed changes are draft to any status,
+  approved to superseded or revoked, superseded to revoked, and a new `effective_to`. Refused: any change of a
+  revoked version; a superseded version approved again; a version that has left `draft` returning to it or changing
+  its `effective_from` (round 2, I1: either of those two would un-retire its predecessors, which the search retires
+  by the latest state of every later version);
 - the same version with another hash or another immutable attribute: refused (BS:413), as is a stored version the
   catalog no longer lists (a version is revoked, never removed).
 
@@ -30,6 +32,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from uuid import UUID
+
+import psycopg
 
 from ops_core import persistence
 from ops_core.corpus import Corpus, Document
@@ -133,6 +137,11 @@ def plan(
             unchanged += 1
         elif held.lifecycle[0] == "revoked":
             problems.append(f"{tenant} {key[0]} v{key[1]}: a revoked version cannot change again")
+        elif held.lifecycle[0] == "superseded" and doc.status == "approved":
+            problems.append(
+                f"{tenant} {key[0]} v{key[1]}: a superseded version cannot be approved again; "
+                "publish a new version instead"
+            )
         elif held.lifecycle[0] != "draft" and doc.status == "draft":
             problems.append(f"{tenant} {key[0]} v{key[1]}: a version that has left draft cannot return to it")
         elif held.lifecycle[0] != "draft" and held.lifecycle[1] != doc.effective_from:
@@ -283,12 +292,17 @@ async def ingest(conn: persistence.Conn, corpus: Corpus, tenants: Mapping[str, U
         raise IngestRefused(problems)
     reports: list[Report] = []
     for tenant, tenant_id in order:  # phase 2: one transaction per tenant, re-planned under its own setting
-        async with conn.transaction():
-            step = await _planned(conn, corpus, tenant, tenant_id)
-            if step.problems:  # the store moved since phase 1: this tenant rolls back, earlier ones stay written
-                raise IngestRefused(list(step.problems), written=tuple(r.tenant for r in reports if r.recorded))
-            if step.record:
-                await _write(conn, corpus, step)
+        try:
+            async with conn.transaction():
+                step = await _planned(conn, corpus, tenant, tenant_id)
+                if step.problems:  # the store moved since phase 1: this tenant rolls back, earlier ones stay written
+                    raise IngestRefused(list(step.problems), written=tuple(r.tenant for r in reports if r.recorded))
+                if step.record:
+                    await _write(conn, corpus, step)
+        except (psycopg.Error, persistence.PersistenceError) as error:
+            # The failing tenant rolled back; tell the command which earlier ones stayed (it prints the class only).
+            error.written = tuple(r.tenant for r in reports if r.recorded)  # type: ignore[union-attr]
+            raise
         reports.append(
             Report(tenant, corpus.corpus_version, len(step.new), len(step.restated), step.unchanged, step.record)
         )

@@ -102,6 +102,19 @@ async def test_r032_repeat_change_revoke_and_supersede(
         assert await counts(app_conn, [alpha, beta]) == stored  # refused as a whole: beta got nothing either
         review.write_bytes(original)
 
+        # All-or-nothing across tenants: the refusal sits in beta, which sorts after alpha, and the new corpus version
+        # would give alpha an ingestion row if tenants were planned and written one after the other.
+        memo = root / "beta-contractor-memo.md"
+        memo_original = memo.read_bytes()
+        memo.write_bytes(memo_original + b"A sentence added under the same version.\n")
+        alpha_stored = await counts(app_conn, [alpha])
+        with pytest.raises(ingest.IngestRefused, match="BETA-CONTRACTOR-MEMO v1: the content changed") as refused:
+            await ingest.ingest(worker, edit(root, "live-2b"), tenants)
+        assert refused.value.written == ()
+        assert await counts(app_conn, [alpha]) == alpha_stored  # alpha, planned first, wrote nothing
+        assert await counts(app_conn, [alpha, beta]) == stored
+        memo.write_bytes(memo_original)
+
         before = await search(app_conn, role_conn, run, lease, "repeated alerts summarized in one incident draft")
         assert "ALPHA-ALERT-REVIEW:v1:repeated-alerts" in [h.evidence_id for h in before.results]
         assert before.corpus_version == "live-1"
