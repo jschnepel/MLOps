@@ -32,6 +32,19 @@ FIXTURES = ROOT / "data" / "handoff-fixtures"
 # A fixed instant after every effective_from of corpus-1, inside no effective interval that ends: the lifecycle cases
 # below are labelled against it, so they do not drift with the wall clock.
 AS_OF = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
+# The hand-written answer to "which versions may be shown at AS_OF": the one anchor of the lifecycle rules that is
+# not a restatement of them. tests/e2e/test_retrieval_baseline_live.py imports it to pin the measurement's permitted
+# set.
+RETURNABLE_AT_AS_OF = {
+    ("alpha", "ALPHA-ALERT-REVIEW", "1"),
+    ("alpha", "ALPHA-COMPRESSOR-COOLDOWN", "1"),
+    ("alpha", "ALPHA-COMPRESSOR-TRIP", "1"),
+    ("alpha", "ALPHA-PUMP-SEAL", "2"),
+    ("alpha", "ALPHA-VENDOR-PORTAL", "1"),
+    ("beta", "BETA-COMPRESSOR-OIL", "1"),
+    ("beta", "BETA-CONTRACTOR-MEMO", "1"),
+    ("beta", "BETA-PUMP-ALIGN", "2"),
+}
 
 
 def loaded() -> corpus.Corpus:
@@ -68,16 +81,7 @@ def test_each_tenant_has_every_lifecycle_case_and_the_corpus_a_conflicting_pair(
 def test_the_returnable_set_at_the_labelling_instant() -> None:
     """Ruling 7 on corpus-1: the derived supersession (alpha), the explicit one (beta), the expired, revoked and draft
     versions, and both halves of the conflicting pair."""
-    assert corpus.returnable(loaded(), AS_OF) == {
-        ("alpha", "ALPHA-ALERT-REVIEW", "1"),
-        ("alpha", "ALPHA-COMPRESSOR-COOLDOWN", "1"),
-        ("alpha", "ALPHA-COMPRESSOR-TRIP", "1"),
-        ("alpha", "ALPHA-PUMP-SEAL", "2"),
-        ("alpha", "ALPHA-VENDOR-PORTAL", "1"),
-        ("beta", "BETA-COMPRESSOR-OIL", "1"),
-        ("beta", "BETA-CONTRACTOR-MEMO", "1"),
-        ("beta", "BETA-PUMP-ALIGN", "2"),
-    }
+    assert corpus.returnable(loaded(), AS_OF) == RETURNABLE_AT_AS_OF
 
 
 def test_a_retired_version_never_comes_back_in_the_oracle() -> None:

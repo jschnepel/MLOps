@@ -129,11 +129,13 @@ def wilson(successes: int, n: int, z: float = 1.959964) -> tuple[float, float]:
 
 def proportion(successes: int, n: int) -> dict[str, Any]:
     """A count, its denominator, the rate and its Wilson 95% interval, rounded for the report."""
+    if n == 0:  # no case, no interval: (0, 1) would read as a measured range
+        return {"successes": successes, "n": n, "rate": None, "wilson95": None}
     low, high = wilson(successes, n)
     return {
         "successes": successes,
         "n": n,
-        "rate": round(successes / n, 4) if n else None,
+        "rate": round(successes / n, 4),
         "wilson95": [round(low, 4), round(high, 4)],
     }
 
@@ -177,6 +179,9 @@ def summarize(outcomes: Sequence[Outcome]) -> dict[str, Any]:
         "expect_none": len(nones),
         "recall_at_k": mean([o.relevant / len(o.case.expected) for o in answerable]),
         "precision_at_k": mean([o.relevant / K for o in answerable]),  # the standard P@k: over k, not over rows
+        # The most P@k can be: a case with m expected sections has at most min(m, K) relevant rows among K. With
+        # recall 1.0 the two are equal, so a low P@k then is the labels' size, not the ranker's fault.
+        "precision_ceiling_at_k": mean([min(len(o.case.expected), K) / K for o in answerable]),
         "mrr_at_k": mean([reciprocal(o) for o in answerable]),
         "hit_at_k": proportion(sum(o.relevant > 0 for o in answerable), len(answerable)),
         "all_expected_at_k": proportion(sum(o.relevant == len(o.case.expected) for o in answerable), len(answerable)),
@@ -198,16 +203,22 @@ def report(
     corpus_version: str,
     lock_sha256: str,
     measured_at: str,
+    as_of: str,
+    queries_sha256: str,
     chunk_words: Sequence[int],
 ) -> dict[str, Any]:
     """The machine-readable report: what was measured, how, the chunk sizes, every case's ranked answer, and the
-    summary."""
+    summary. `measured_at` is the wall-clock time of the run; `as_of` is the database-clock instant the lifecycle
+    rules were evaluated at (corpus-1's labelling instant), which is what makes the figures reproducible on any date;
+    `queries_sha256` names the exact query file."""
     return {
         "report": "t17-lexical-baseline",
         "measured_at": measured_at,
+        "as_of": as_of,
         "corpus_version": corpus_version,
         "lock_sha256": lock_sha256,
         "queries": "evals/retrieval/dev-queries.jsonl",
+        "queries_sha256": queries_sha256,
         "settings": dict(SETTINGS),
         "chunk_words": chunk_sizes(chunk_words),
         "summary": summarize(outcomes),
@@ -239,12 +250,16 @@ def markdown(doc: Mapping[str, Any]) -> str:
     s = doc["summary"]
     k = s["k"]
     intro = (
-        f"Measured {doc['measured_at']} on corpus `{doc['corpus_version']}` (lock `{doc['lock_sha256'][:12]}`) with "
+        f"Measured {doc['measured_at']} (lifecycle rules evaluated at {doc['as_of']}, the labelling instant, on the "
+        f"database test clock) on corpus `{doc['corpus_version']}` (lock `{doc['lock_sha256'][:12]}`) with "
         f"the {s['cases']} development queries in `{doc['queries']}` ({s['answerable']} with labelled sections, "
         f"{s['expect_none']} with no permitted source), through `app.search_procedures_scoped` as `mcp_read`, k = {k}. "
         "Development data only: no holdout case was read or used. Written by "
-        "`tests/e2e/test_retrieval_baseline_live.py`; the settings and how to read a score are in `docs/retrieval.md`."
+        "`tests/e2e/test_retrieval_baseline_live.py`; the settings and how to read a score are in `docs/retrieval.md`. "
+        f"Development figure, not held-out: the minimum rank is {doc['settings']['minimum_rank']}; ts_rank_cd is "
+        "unnormalised, so the rank threshold depends on query length."
     )
+    precision = f"{s['precision_at_k']} (ceiling {s['precision_ceiling_at_k']}: all expected sections found, no other)"
     forbidden = f"{s['forbidden_rows']['forbidden']}/{s['forbidden_rows']['returned']}"
     words = doc["chunk_words"]
     sizes = (
@@ -263,7 +278,7 @@ def markdown(doc: Mapping[str, Any]) -> str:
         "| Metric | Value |",
         "|---|---|",
         f"| recall@{k} (mean over {s['answerable']} labelled cases) | {s['recall_at_k']} |",
-        f"| precision@{k} (top-{k} hits over {k}; mean over {s['answerable']} cases) | {s['precision_at_k']} |",
+        f"| precision@{k} (top-{k} hits over {k}; mean over {s['answerable']} cases) | {precision} |",
         f"| MRR@{k} (mean over {s['answerable']} labelled cases) | {s['mrr_at_k']} |",
         f"| hit@{k} | {_rate(s['hit_at_k'])} |",
         f"| every expected section in the top {k} | {_rate(s['all_expected_at_k'])} |",
@@ -292,7 +307,7 @@ def markdown(doc: Mapping[str, Any]) -> str:
         f"- Labelled cases with no expected section in the top {k}: {', '.join(missed) or 'none'}.",
         f"- No-source cases that still returned sections (permitted, but no answer): {', '.join(answered) or 'none'}.",
         "- Lexical OR-matching returns any permitted section that shares a word with the question; deciding that the",
-        "  evidence is insufficient is the graph's code rule (SA:377, T20), not the search's.",
+        "  evidence is insufficient is the graph's code rule (SA:377, T20; erratum 102), not the search's.",
         "",
     ]
     return "\n".join(lines)

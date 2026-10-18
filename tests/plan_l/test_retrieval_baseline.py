@@ -1,10 +1,10 @@
 """The baseline's queries, metrics and report without a database (R033; Plan L ruling 19; SA:665).
 
-Catches: fewer than 40 queries or a tenant without one of the lifecycle, probe or filter categories; a label citing a
-section that is not permitted for its tenant at corpus-1's labelling instant, or that the case's asset type would
-filter out; a case with both labels or none; a Wilson interval that is not Wilson's; a metric computed over the wrong
-denominator (precision of an empty answer, recall of a no-source case); a forbidden section not counted; and a
-report that drops a denominator or a missed case.
+Catches: a report that does not say it is a development figure; fewer than 40 queries or a tenant without one of the
+lifecycle, probe or filter categories; a label citing a section that is not permitted for its tenant at corpus-1's
+labelling instant, or that the case's asset type would filter out; a case with both labels or none; a Wilson interval
+that is not Wilson's; a metric computed over the wrong denominator (precision of an empty answer, recall of a no-
+source case); a forbidden section not counted; and a report that drops a denominator or a missed case.
 """
 
 import json
@@ -62,6 +62,7 @@ def test_wilson_is_the_wilson_score_interval() -> None:
     assert rounded(0, 10) == [0.0, 0.2775] and rounded(10, 10) == [0.7225, 1.0]
     assert rounded(5, 10) == [0.2366, 0.7634] and rounded(3, 4) == [0.3006, 0.9544]
     assert rb.wilson(0, 0) == (0.0, 1.0)
+    assert rb.proportion(0, 0) == {"successes": 0, "n": 0, "rate": None, "wilson95": None}  # no case, no interval
 
 
 def case(id_: str, expected: tuple[str, ...], category: str = "answerable") -> rb.Case:
@@ -79,6 +80,7 @@ def test_the_summary_uses_the_right_denominators() -> None:
     s = rb.summarize(outcomes)
     assert (s["cases"], s["answerable"], s["expect_none"]) == (4, 2, 2)
     assert (s["recall_at_k"], s["precision_at_k"], s["mrr_at_k"]) == (0.5, 0.1, 0.25)  # precision over k = 5
+    assert s["precision_ceiling_at_k"] == 0.3  # (1 + 2) / (5 * 2): the most any ranker could score on these labels
     assert (s["hit_at_k"]["successes"], s["hit_at_k"]["n"]) == (1, 2)
     assert (s["none_answered_empty"]["successes"], s["none_answered_empty"]["n"]) == (1, 2)
     assert s["forbidden_rows"] == {"forbidden": 1, "returned": 3}
@@ -89,12 +91,19 @@ def test_the_summary_uses_the_right_denominators() -> None:
         corpus_version="corpus-1",
         lock_sha256="f" * 64,
         measured_at="2026-10-16T12:00:00Z",
+        as_of="2026-10-16T12:00:00Z",
+        queries_sha256="e" * 64,
         chunk_words=[40, 90, 60],
     )
+    assert doc["as_of"] == "2026-10-16T12:00:00Z" and doc["queries_sha256"] == "e" * 64
     assert doc["cases"][3]["forbidden"] == ["E:v1:x"] and doc["settings"]["k"] == 5
     text = rb.markdown(doc)
     assert "| hit@5 | 1/2 = 0.50 (Wilson 95% 0.09-0.91) |" in text
     assert "| forbidden sections among all returned rows | 1/3 |" in text
     assert doc["chunk_words"] == {"n": 3, "min": 40, "median": 60, "max": 90}
     assert "Chunks: 3 sections; words per section (`[a-z0-9]+`) min 40, median 60, max 90." in text
+    assert "(ceiling 0.3: " in text and "erratum 102" in text
+    threshold = rb.SETTINGS["minimum_rank"]  # the sentence renders the stored setting, so the two cannot drift
+    assert f"Development figure, not held-out: the minimum rank is {threshold}; ts_rank_cd is unnormalised" in text
+    assert "so the rank threshold depends on query length." in text
     assert "no expected section in the top 5: C2." in text and "but no answer): C4." in text

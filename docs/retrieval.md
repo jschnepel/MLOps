@@ -107,6 +107,11 @@ cases, hit@5, every-expected@5, the no-source
 cases answered with nothing and the cases without a forbidden section as proportions with Wilson 95% intervals and
 their denominators (SA:665), the forbidden rows over every returned row, and every case's ranked answer. A forbidden
 section (another tenant's, retired, expired, revoked or draft) fails the test; the other numbers are measurements.
-The forbidden check uses `ops_core.corpus.returnable`, which states the same rule as the SQL; the hand-written labels
-of the queries (which sections answer, and that the superseded, expired, revoked and draft ones do not) are the
-check that is independent of both. T18 compares exact vector search against the same JSON.
+The query labels carry no forbidden IDs: they name only the permitted sections that answer a question. Inside the
+measurement the forbidden check compares the SQL's answer with `ops_core.corpus.returnable`, which states the same
+rule as the SQL, so that comparison alone is circular. The independent anchor is the hand-written returnable set in
+`tests/plan_l/test_corpus_files.py` (`test_the_returnable_set_at_the_labelling_instant`): the live test sets the
+database test clock to that labelling instant (so the figures hold on any date; reset afterwards) and asserts that
+the permitted set it uses equals both `corpus.returnable` at that instant and the hand-written set. The report
+records `as_of`, the SHA-256 of the query file, the ceiling of precision@5 (the most it can be given the labels'
+size) and, for a proportion with no cases, no interval. T18 compares exact vector search against the same JSON.
