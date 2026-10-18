@@ -67,22 +67,34 @@ def tool_error(code: str, message: str) -> dict[str, Any]:
     return {"code": code, "message": message, "retryable": False}
 
 
-def envelope(tool_name: str, *, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None) -> ToolResult:
-    """Wrap data or an error in the AM-80 envelope with a fresh request_id."""
+def envelope(
+    tool_name: str,
+    *,
+    data: dict[str, Any] | None = None,
+    error: dict[str, Any] | None = None,
+    observed_at: datetime | None = None,
+    truncated: bool = False,
+) -> ToolResult:
+    """Wrap data or an error in the AM-80 envelope with a fresh request_id. `observed_at` is the database instant the
+    answer was decided at (Plan M ruling 3); a refusal before any database unit has none and takes the wall clock."""
     return {
         "tool_name": tool_name,
         "request_id": str(uuid4()),
         "status": "error" if error is not None else "ok",
-        "observed_at": stamp(datetime.now(UTC)),
-        "truncated": False,
+        "observed_at": stamp(datetime.now(UTC) if observed_at is None else observed_at),
+        "truncated": truncated,
         "data": None if error is not None else data,
         "error": error,
     }
 
 
-def search_response(found: persistence.Procedures, *, now: datetime) -> ToolResult:
+def search_response(found: persistence.Procedures) -> ToolResult:
     """The tool's answer from what `search_procedures_scoped` returned; database-free so the contract test can validate
-    it. The rank stays behind: the contract has no score, and the model never sees one (docs/retrieval.md)."""
+    it. The rank stays behind: the contract has no score, and the model never sees one (docs/retrieval.md). Every
+    `retrieved_at` and the envelope's `observed_at` are the instant the definer decided permission at, never the wall
+    clock (Plan M ruling 3, Plan L final review M4), and a section cut at the contract's bound sets `truncated`
+    (ruling 11)."""
+    retrieved_at = stamp(found.retrieved_at)
     results = [
         {
             "evidence_id": hit.evidence_id,
@@ -92,13 +104,15 @@ def search_response(found: persistence.Procedures, *, now: datetime) -> ToolResu
             "content_sha256": hit.content_sha256,
             "excerpt": hit.excerpt,
             "effective_from": stamp(hit.effective_from),
-            "retrieved_at": stamp(now),
+            "retrieved_at": retrieved_at,
         }
         for hit in found.results
     ]
     return envelope(
         "search_procedures",
         data={"results": results, "retrieval_mode": "lexical", "corpus_version": found.corpus_version},
+        observed_at=found.retrieved_at,
+        truncated=found.truncated,
     )
 
 
@@ -224,7 +238,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
             return envelope("search_procedures", error=tool_error("INVALID_HANDLE", str(exc)))
         except persistence.Refused as exc:
             return envelope("search_procedures", error=tool_error("REFUSED", exc.code))
-        return search_response(found, now=datetime.now(UTC))
+        return search_response(found)
 
     return MCPServer(
         name="mcp-read",
@@ -249,6 +263,8 @@ def build_app(server: MCPServer, state: State) -> Starlette:
                 await persistence.assert_clock_profile(conn, settings.profile())
                 await persistence.assert_function_text(conn, *HANDLE_BINDING)
                 await persistence.assert_function_text(conn, *persistence.GOVERNED_CORPUS)  # 0011 (T17)
+                await persistence.assert_function_text(conn, *persistence.ASSET_SCOPE)  # 0012 (T16)
+                await persistence.assert_function_text(conn, *persistence.SEARCH_INSTANT)  # 0012 (T16)
             except BaseException:  # a failed start must leak no connection, and a re-entered lifespan re-asserts
                 await conn.close()
                 raise

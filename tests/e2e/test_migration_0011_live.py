@@ -27,10 +27,10 @@ import pytest
 from ops_core import persistence, settings
 from ops_core.settings import Profile, Role
 
-from tests.e2e.conftest import lease_for, purge_corpus, purge_run, purge_tenant
+from tests.e2e.conftest import add_requester, lease_for, purge_corpus, purge_run, purge_tenant
 from tests.e2e.test_definers_run_path_live import refused
 from tests.e2e.test_fenced_definers_live import investigate_job, read_handle
-from tests.e2e.test_migrations_and_persistence import new_run
+from tests.e2e.test_migrations_and_persistence import ALEX, new_run
 
 pytestmark = pytest.mark.asyncio
 
@@ -107,9 +107,12 @@ async def stage(
 
 
 async def handle_for(app_conn: persistence.Conn, role_conn: RoleConn, tenant: UUID | None) -> tuple[UUID, UUID, str]:
-    """A run in `tenant` (a fresh random tenant when None), its lease and a read handle: (tenant, run, handle)."""
+    """A run in `tenant` (a fresh random tenant when None), its lease and a read handle: (tenant, run, handle). A
+    fresh tenant gets ALEX as its requester: the definer re-checks the run's requester since revision 0012 (T16)."""
     api, worker = await role_conn(Role.API), await role_conn(Role.WORKER)
     tenant_id, _, run = await new_run(app_conn, tenant, api=api)
+    if tenant is None:
+        await add_requester(app_conn, tenant_id, ALEX)
     lease = await lease_for(worker, run, owner="t17-live", seconds=600)
     return tenant_id, run, await read_handle(worker, run, await investigate_job(app_conn, run), lease)
 
@@ -376,6 +379,7 @@ def revision_0011() -> Any:
 
 REVISION = revision_0011()
 OWN_FUNCTIONS = tuple(f"app.{name}(" for name, _, _, _ in REVISION.FUNCTIONS)
+LATER_FUNCTIONS = ("app.asset_scope(",)  # revision 0012's own function (T16): a downgrade to 0010 drops it too
 OWN_RELATIONS = tuple(f"app.{table}" for table in REVISION.TABLES_0011) + tuple(
     f"app.{m.group(1)}" for s in REVISION.SCHEMA_CHANGES if (m := re.match(r"CREATE INDEX (\w+) ON", s))
 )
@@ -406,8 +410,8 @@ async def test_the_round_trip_restores_0010_and_keeps_the_extension(
         downgrade("app", superuser, "0010_write_path")
         assert not any((await relations(app_conn)).values())
         after = await snapshot(app_conn)
-        assert not any(s.startswith(OWN_FUNCTIONS) for s in after)
-        assert {s for s in head if not s.startswith(OWN_FUNCTIONS)} == set(after)
+        assert not any(s.startswith(OWN_FUNCTIONS + LATER_FUNCTIONS) for s in after)
+        assert {s for s in head if not s.startswith(OWN_FUNCTIONS + LATER_FUNCTIONS)} == set(after)
         cur = await app_conn.execute("SELECT to_regtype('public.vector') IS NOT NULL AS present")
         assert (await cur.fetchone() or {})["present"]  # the bootstrap's extension stays
         with pytest.raises(persistence.PersistenceError, match="predates this service"):

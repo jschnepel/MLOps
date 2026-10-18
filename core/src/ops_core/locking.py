@@ -77,6 +77,8 @@ OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "heartbeat renewal (lease.renew)": ("run_lease",),
     "mcp resolve_invocation and lookup_action": ("run_lease",),
     "mcp-read search_procedures_scoped": ("run_lease",),  # T17: the handle's lease FOR SHARE, then plain reads
+    # T16 (revision 0012): the same lease FOR SHARE; the run and its requester's membership are plain reads.
+    "mcp-read asset_scope": ("run_lease",),
     "mcp-write grant_execution": ("run_lease", "runs"),
     "mcp-write mark_sent": ("run_lease", "runs"),
     "mcp-write record_outcome": ("run_lease", "runs"),

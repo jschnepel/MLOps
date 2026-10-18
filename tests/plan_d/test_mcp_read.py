@@ -46,12 +46,12 @@ def found_in_corpus(document_id: str, names: tuple[str, ...]) -> persistence.Pro
         )
         for i, s in enumerate(x for x in doc.sections if x.name in names)
     )
-    return persistence.Procedures("corpus-1", hits)
+    return persistence.Procedures("corpus-1", hits, NOW)
 
 
 def test_search_response_matches_the_tool_result_contract() -> None:
     found = found_in_corpus("ALPHA-ALERT-REVIEW", ("repeated-alerts", "evidence"))
-    doc = server.search_response(found, now=NOW)
+    doc = server.search_response(found)
     TOOL_RESULT.validate(doc)
     assert doc["status"] == "ok" and doc["data"]["retrieval_mode"] == "lexical"
     assert doc["data"]["corpus_version"] == "corpus-1"
@@ -62,7 +62,7 @@ def test_search_response_matches_the_tool_result_contract() -> None:
     first = doc["data"]["results"][0]
     assert (first["effective_from"], first["retrieved_at"]) == ("2026-09-01T00:00:00Z", "2026-10-16T12:00:00Z")
     assert all("rank" not in r for r in doc["data"]["results"])  # the score stays in the database's answer
-    nothing = server.search_response(persistence.Procedures("none", ()), now=NOW)
+    nothing = server.search_response(persistence.Procedures("none", (), NOW))
     TOOL_RESULT.validate(nothing)
     assert nothing["data"] == {"results": [], "retrieval_mode": "lexical", "corpus_version": "none"}
     err = server.envelope("search_procedures", error=server.tool_error("INVALID_HANDLE", "missing invocation handle"))

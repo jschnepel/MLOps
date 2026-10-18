@@ -35,6 +35,11 @@ from tests.plan_l.test_corpus_files import AS_OF, RETURNABLE_AT_AS_OF
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested")]
 
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
+# Each tenant's seeded requester (data/seed-ids.json): the definer re-checks the run's requester since 0012 (T16).
+REQUESTERS = {
+    "alpha": UUID("2fc05986-c7ec-544c-b628-fdb112bbf18a"),
+    "beta": UUID("2f73af91-4906-5b79-9144-22c0df4e2316"),
+}
 ROOT = Path(__file__).resolve().parents[2]
 QUERIES = ROOT / "evals" / "retrieval" / "dev-queries.jsonl"
 REPORT = ROOT / "reports" / "retrieval" / "t17-lexical-baseline"  # absolute: the test must not depend on the cwd
@@ -53,7 +58,7 @@ async def test_r033_the_lexical_baseline_on_the_development_queries(
         # Before the runs and leases exist: everything they stamp then lives on the moved clock, which keeps ticking.
         await harness.execute("UPDATE app.test_clock SET clock_offset = %s - clock_timestamp()", (AS_OF,))
         for slug, tenant in tenants.items():
-            _, _, runs[slug] = await new_run(app_conn, tenant, api=api)
+            _, _, runs[slug] = await new_run(app_conn, tenant, api=api, requester=REQUESTERS[slug])
         leases = {slug: await lease_for(worker, run, owner="t17-baseline", seconds=600) for slug, run in runs.items()}
         cur = await app_conn.execute("SELECT app.current_time() AS now")
         now = (await cur.fetchone() or {})["now"]

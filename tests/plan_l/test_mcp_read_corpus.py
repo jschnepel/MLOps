@@ -70,7 +70,7 @@ class Database:
         self.calls.append(("search", self.conn.units, kwargs))
         if self.search_error is not None:
             raise self.search_error
-        return persistence.Procedures("corpus-1", (HIT,))
+        return persistence.Procedures("corpus-1", (HIT,), datetime(2026, 10, 16, 12, 0, tzinfo=UTC))
 
 
 async def call(monkeypatch: pytest.MonkeyPatch, db: Database, arguments: dict[str, Any]) -> CallToolResult:

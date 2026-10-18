@@ -212,6 +212,21 @@ async def purge_corpus(conn: persistence.Conn, tenant_id: object) -> None:
 
 
 SEEDED_TENANTS = {"3ea79c95-914c-52cb-9d10-c4e19dda8ff7", "5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201"}
+SEEDED_ALPHA = "3ea79c95-914c-52cb-9d10-c4e19dda8ff7"
+
+
+async def add_requester(conn: persistence.Conn, tenant_id: object, subject: object) -> None:
+    """An active requester membership for `subject` in a random test tenant (T16): `asset_scope` and
+    `search_procedures_scoped` re-check the run's requester at read time (revision 0012, R028), and a fresh tenant
+    has no members. The issuer is the seeded rows' own; `purge_tenant` removes the row with the tenant."""
+    if str(tenant_id) in SEEDED_TENANTS:
+        raise ValueError("a seeded tenant's memberships are the migration's, never a test's")
+    await conn.execute(
+        "INSERT INTO app.memberships (tenant_id, issuer, subject, role, synced_at)"
+        " SELECT %s, m.issuer, %s, 'requester', app.current_time() FROM app.memberships m"
+        " WHERE m.tenant_id = %s LIMIT 1",
+        (tenant_id, subject, SEEDED_ALPHA),
+    )
 
 
 async def purge_tenant(conn: persistence.Conn, tenant_id: object) -> None:

@@ -269,14 +269,14 @@ async def test_r085_r131_the_server_derives_tool_server_and_state_from_the_job(
 async def test_r131_mcp_read_can_execute_no_write_path_function(
     app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
 ) -> None:
-    """The pg_proc ACL as it is today: `current_time` (erratum 15), `resolve_invocation` and, since T17,
-    `search_procedures_scoped`; `asset_scope` joins with its owner, T16 (erratum 72 as erratum 96 narrows it)."""
+    """The pg_proc ACL: `current_time` (erratum 15), `resolve_invocation`, `search_procedures_scoped` (T17) and, since
+    T16, `asset_scope`: R131's read half is complete (errata 96 and 104)."""
     cur = await app_conn.execute(
         "SELECT p.proname AS name, has_function_privilege('mcp_read', p.oid, 'EXECUTE') AS allowed"
         " FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app'"
     )
     rows = await cur.fetchall()
-    allowed = {"current_time", "resolve_invocation", "search_procedures_scoped"}
+    allowed = {"current_time", "resolve_invocation", "search_procedures_scoped", "asset_scope"}
     assert {row["name"] for row in rows if row["allowed"]} == allowed
     others = set(privileges.DEFINER_FUNCTIONS) - allowed
     assert others <= {row["name"] for row in rows}  # every other definer exists, so the line above is not vacuous
@@ -286,7 +286,8 @@ async def test_r131_mcp_read_can_execute_no_write_path_function(
         == "42501"
     )
     lines.append(
-        "R131 read half: mcp_read EXECUTE = current_time, resolve_invocation, search_procedures_scoped;"
+        "R131 read half: mcp_read EXECUTE = current_time, resolve_invocation, search_procedures_scoped,"
+        " asset_scope;"
         f" {len(others)} others refused"
     )
 
