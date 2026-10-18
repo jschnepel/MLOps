@@ -7,8 +7,8 @@ the five building tasks, and the close-out is the commit after `bbba69c`). T17 i
 on erratum 102 (R033's "missing source remains missing": 15/20 no-source development questions answered with
 nothing at the 0.25 minimum rank; the other 5/20 stay open: SA:377 as written would not abstain on them, so T20 must add a relevance criterion beyond it); R131's read half is met subject to the
 owner's decision on erratum 96 (`asset_scope` still arrives with T16). Owner inputs: (1) the holdout seal (T03
-step 9), then the live probe (T02); (2) merge the stacked PRs #1-#10 in order (plan-b -> main through plan-k ->
-plan-j), then a plan-l -> plan-k PR after Plan L's final review; (3) T44 step 10 (step A applied 2026-10-16; the
+step 9), then the live probe (T02); (2) merge the stacked PRs #1-#11 in order (plan-b -> main through plan-l ->
+plan-k; #11 is https://github.com/jschnepel/MLOps/pull/11); (3) T44 step 10 (step A applied 2026-10-16; the
 other-device LAN check and the firewall rules remain) (`docs/runbooks/ollama-network.md` step A); (4) decide the
 proposed errata of Plans C, E, F, G, H, I, J, K and L (L: 93-102 below); (5) migrate the dev database to revision 0011
 (`uv run python scripts/skeleton.py migrate`, dev profile: it creates the `vector` extension if missing, then applies
@@ -17,7 +17,7 @@ scripts/skeleton.py ingest`: corpus-1 into alpha and beta as the worker); until 
 start on it. Next is Plan M = T16 (the read tools and asset-sim, the earliest dependency-satisfied PLANNED task in
 `handoff/tasks.json` after T17, now unblocked; T18 and T23 are unblocked too; T19 and T41 wait on owner steps).
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-l` (Plan L work on top of `plan-k`, on top of `plan-j`, on top of `plan-i`, on top of `plan-h`, on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#10 (plan-b -> main through plan-k -> plan-j) are open now; `plan-j` and `plan-k` are pushed (2026-10-16); `plan-l` is not pushed. Merging them in order is the owner's call.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-l` (Plan L work on top of `plan-k`, on top of `plan-j`, on top of `plan-i`, on top of `plan-h`, on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) are open now; `plan-j` and `plan-k` are pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11). Merging them in order is the owner's call.
 
 ## Done in the planning session (2026-10-06)
 
@@ -1198,7 +1198,7 @@ investigation ends INSUFFICIENT_EVIDENCE.
 - R025 and R031 have every half evidenced (mcp-read by T15, mcp-write by T47, the import half by T04) but keep
   `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`, because no open task owns them: flipping their status is the owner's call
   (or T15's re-close).
-- Merge the stacked PRs #1-#10 in order (plan-b -> main through plan-k -> plan-j, all open; #1-#5 opened 2026-10-09 and green on CI; the first merge also exercises the push-to-main trigger).
+- Merge the stacked PRs #1-#11 in order (plan-b -> main through plan-l -> plan-k, all open; #1-#5 opened 2026-10-09 and green on CI; the first merge also exercises the push-to-main trigger).
 - Decide on the nine proposed contract errata (see "Plan C executed").
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
 - T06 is closed (public repo, PRs green). The first CI runs were red on ruff EXE001 (a shebang on a non-executable file, a rule ruff skips on Windows) with every test green; fixed by a file-mode commit on each branch.
