@@ -8,7 +8,8 @@ from a `URL` object, so the password is never rendered into a string. Roles and 
 concern, schema and grants are the migrations' (SA:395): every AM-20.1 login role is created or re-keyed from its
 secret file on each run, the NOLOGIN owner roles are created, and database CONNECT is narrowed to the roles that use
 each database, all before Alembic runs. The profile picks the Alembic target: only the test profile applies the
-`testclock` branch (SA:529), and `up` refuses to start the dev skeleton against a database that carries it.
+`testclock` branch (SA:529), and `up` refuses to start the dev skeleton against a database that carries it. The
+`vector` extension is bootstrap infrastructure too (`ensure_extensions`, T17).
 """
 
 from __future__ import annotations
@@ -165,6 +166,20 @@ def ensure_roles(superuser: settings.Postgres, app_db: str, incident_db: str, pr
         narrow_connect(conn, incident_db, ("incident",))
 
 
+# Extensions are bootstrap infrastructure, like the roles (Plan L ruling 2): pgvector's type appears in
+# `search_procedures_scoped`'s signature (SA:461), and a revision that created the extension could not drop it again
+# exactly. The Compose init script creates it in `ops` on the volume's first start; this covers every database
+# `migrate` targets, the live suite's freshly created `ops_test` included.
+EXTENSIONS: tuple[str, ...] = ("vector",)
+
+
+def ensure_extensions(pg: settings.Postgres) -> None:
+    """CREATE EXTENSION IF NOT EXISTS for each bootstrap extension, as the superuser, in the database `pg` names."""
+    with psycopg.connect(pg.conninfo(), autocommit=True) as conn:
+        for name in EXTENSIONS:
+            conn.execute(sql.SQL("CREATE EXTENSION IF NOT EXISTS {}").format(sql.Identifier(name)))
+
+
 def _config(tree: str, connection: object) -> Config:
     cfg = Config()
     cfg.set_main_option("script_location", str(MIGRATIONS[tree]))
@@ -201,7 +216,8 @@ def migrate_target(profile: Profile) -> str:
 
 
 def migrate(profile: Profile | None = None) -> int:
-    """Roles first, then both trees; the profile (default `PROFILE`, else dev) decides if the test clock exists."""
+    """Roles, then the bootstrap extensions, then both trees; the profile (default `PROFILE`, else dev) decides if the
+    test clock exists."""
     export_environment(load_dotenv(ROOT / ".env"))
     profile = profile or settings.profile()
     superuser = settings.superuser_postgres()
@@ -210,6 +226,7 @@ def migrate(profile: Profile | None = None) -> int:
         superuser.host, superuser.port, superuser.user, incident_db, superuser.password
     )
     ensure_roles(superuser, superuser.dbname, incident_db, profile)
+    ensure_extensions(superuser)
     target = migrate_target(profile)
     upgrade("app", superuser, target)
     upgrade("incident", incident_as_superuser, "head")

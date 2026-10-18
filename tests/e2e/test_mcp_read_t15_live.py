@@ -267,22 +267,26 @@ async def test_r085_r131_the_server_derives_tool_server_and_state_from_the_job(
 async def test_r131_mcp_read_can_execute_no_write_path_function(
     app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
 ) -> None:
-    """The pg_proc ACL as it is today: `current_time` (erratum 15) and `resolve_invocation`; `asset_scope` and
-    `search_procedures_scoped` join with their owners, T16 and T17 (erratum 72)."""
+    """The pg_proc ACL as it is today: `current_time` (erratum 15), `resolve_invocation` and, since T17,
+    `search_procedures_scoped`; `asset_scope` joins with its owner, T16 (erratum 72 as erratum 96 narrows it)."""
     cur = await app_conn.execute(
         "SELECT p.proname AS name, has_function_privilege('mcp_read', p.oid, 'EXECUTE') AS allowed"
         " FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app'"
     )
     rows = await cur.fetchall()
-    assert {row["name"] for row in rows if row["allowed"]} == {"current_time", "resolve_invocation"}
-    others = set(privileges.DEFINER_FUNCTIONS) - {"current_time", "resolve_invocation"}
+    allowed = {"current_time", "resolve_invocation", "search_procedures_scoped"}
+    assert {row["name"] for row in rows if row["allowed"]} == allowed
+    others = set(privileges.DEFINER_FUNCTIONS) - allowed
     assert others <= {row["name"] for row in rows}  # every other definer exists, so the line above is not vacuous
     mcp_read = await role_conn(Role.MCP_READ)
     assert (
         await refused(mcp_read, "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", ("not-a-handle", uuid4()))
         == "42501"
     )
-    lines.append(f"R131 read half: mcp_read EXECUTE = current_time, resolve_invocation; {len(others)} others refused")
+    lines.append(
+        "R131 read half: mcp_read EXECUTE = current_time, resolve_invocation, search_procedures_scoped;"
+        f" {len(others)} others refused"
+    )
 
 
 def raw_headers(token: str, version: str | None, method: str = "tools/list") -> dict[str, str]:

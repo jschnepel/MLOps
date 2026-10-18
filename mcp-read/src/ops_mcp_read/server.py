@@ -224,6 +224,7 @@ def build_app(server: MCPServer, state: State) -> Starlette:
             try:
                 await persistence.assert_clock_profile(conn, settings.profile())
                 await persistence.assert_function_text(conn, *HANDLE_BINDING)
+                await persistence.assert_function_text(conn, *persistence.GOVERNED_CORPUS)  # 0011 (T17)
             except BaseException:  # a failed start must leak no connection, and a re-entered lifespan re-asserts
                 await conn.close()
                 raise

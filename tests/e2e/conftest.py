@@ -188,6 +188,16 @@ async def purge_conversation(conn: persistence.Conn, conversation_id: object) ->
         await conn.execute("DELETE FROM app.conversations WHERE conversation_id = %s", (conversation_id,))
 
 
+async def purge_corpus(conn: persistence.Conn, tenant_id: object) -> None:
+    """Remove a test tenant's corpus rows (T17), children first; the seeded tenants' corpus is the ingested one and
+    stays."""
+    if str(tenant_id) in SEEDED_TENANTS:
+        return
+    async with conn.transaction():
+        for table in ("chunks", "document_states", "documents", "corpus_ingestions"):
+            await conn.execute(f"DELETE FROM app.{table} WHERE tenant_id = %s", (tenant_id,))
+
+
 SEEDED_TENANTS = {"3ea79c95-914c-52cb-9d10-c4e19dda8ff7", "5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201"}
 
 

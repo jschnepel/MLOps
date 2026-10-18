@@ -186,8 +186,8 @@ async def run_state(app_conn: persistence.Conn, run: UUID) -> tuple[str, str | N
 async def test_r131_mcp_exec_executes_exactly_the_write_path_functions(
     app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
 ) -> None:
-    """Ruling 13: the pg_proc ACL. `asset_scope` and `search_procedures_scoped`, the read functions R131 names, do not
-    exist yet (T16/T17), so "no read function" is shown as no EXECUTE on any `app` function outside the seven."""
+    """Ruling 13: the pg_proc ACL. "No read function" is no EXECUTE on any `app` function outside the seven, the
+    read function `search_procedures_scoped` (T17) among them, refused when called; `asset_scope` arrives with T16."""
     cur = await app_conn.execute(
         "SELECT p.proname AS name, has_function_privilege('mcp_exec', p.oid, 'EXECUTE') AS allowed"
         " FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app'"
@@ -199,6 +199,9 @@ async def test_r131_mcp_exec_executes_exactly_the_write_path_functions(
     mcp_exec = await role_conn(Role.MCP_EXEC)
     code = await refused(mcp_exec, "SELECT * FROM app.mark_unknown(%s, 1)", (uuid4(),))
     assert code == "42501"  # the worker's
+    assert "search_procedures_scoped" in others  # mcp-read's (T17)
+    search = "SELECT * FROM app.search_procedures_scoped('h', 'ops-worker', 'x', NULL, NULL, 1, 'lexical')"
+    assert await refused(mcp_exec, search, ()) == "42501"
     lines.append(
         f"R131 write half: mcp_exec EXECUTE = the seven write-path functions; {len(others)} others refused"
         " (mark_unknown 42501)"
