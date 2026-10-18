@@ -114,18 +114,23 @@ async def test_r025_an_independent_client_lists_and_calls_over_the_network(
             ):
                 tools = (await client.list_tools()).tools
                 result = await client.call_tool("search_procedures", QUERY)
+                # T16 (ruling 17): an asset tool through the child, which reaches asset-sim with its own token.
+                status = await client.call_tool("get_asset_status", {"asset_id": "A17"})
         assert [tool.name for tool in tools] == ["get_asset_status", "get_recent_alerts", "search_procedures"]  # T16
         assert all(tool.input_schema["additionalProperties"] is False for tool in tools)
         doc = result.structured_content
         assert not result.is_error and isinstance(doc, dict) and doc["status"] == "ok"
         assert doc["data"]["results"][0]["evidence_id"] == ANSWER  # first by a wide margin (round 1, M10)
+        answered = status.structured_content
+        assert not status.is_error and isinstance(answered, dict) and answered["status"] == "ok"
+        assert answered["data"]["asset_id"] == "A17" and answered["data"]["data_source"] == "synthetic"
         text = log.read_text(encoding="utf-8", errors="replace")
         leaked = any(value in text for value in (handle, token))  # one boolean: a failing assert prints its operands
         assert not leaked  # the child's own log, written through its redaction filter, holds neither
         assert (version("mcp"), version("mcp-types")) == ("2.3.0", "2.3.0")  # AM-30's lock, R031
         lines.append(
             f"R025 (read half; mcp-write with T47) / R031 (network half): child process; official client mode"
-            f" {PROTOCOL_VERSION} listed the three read tools, called search_procedures ok"
+            f" {PROTOCOL_VERSION} listed the three read tools, called search_procedures and get_asset_status ok"
         )
     finally:
         await purge_run(app_conn, run)

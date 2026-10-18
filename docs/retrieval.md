@@ -83,7 +83,9 @@ the handle in a unit of its own.
 | Rank | `ts_rank_cd` with its default normalization, which is none: a longer query reaches a higher rank |
 | Ties | `evidence_id` ascending in byte order (`COLLATE "C"`, whatever the database's collation), so a retry cites the same evidence |
 | Threshold | rank greater than 0.25 (`app._min_rank()`, granted to nobody), chosen on the 47 development queries: the same queries measure it, so the baseline is a development figure, not a held-out one. Because the rank is not normalised the threshold depends on query length; tuning it is T18's, with the comparison |
-| Results | `limit` 1 to 8 (the worker asks for 3; the measurement uses 5); excerpt the first 500 characters |
+| Results | `limit` 1 to 8 (the worker asks for 3; the measurement uses 5); the excerpt is the whole section up to the contract's 8000 characters, and a cut one sets the envelope's `truncated` (revision 0012, T16; corpus-1's sections are 45-119 words, so no excerpt and no rank of the T17 baseline changed) |
+| Asset type | the run's own, from asset-sim (T16): a caller may only repeat it; an asset asset-sim does not know leaves the caller's type or none |
+| Instant | `retrieved_at` is the database instant the effectiveness rule ran at (`search_procedures_scoped`'s own column since revision 0012), never the wall clock |
 | Vector mode | refused (`VECTOR_MODE_UNAVAILABLE`) until T18; mcp-read answers `vector_exact` with `UNSUPPORTED_MODE` first |
 
 **How to read a score.** `ts_rank_cd` orders the sections of one query: a higher rank means more of the query's

@@ -28,7 +28,11 @@ same 404. The rules (`ops_asset_sim.data`):
   else `normal`; `revision` the highest among its alerts raised at or before T, or 1; `observed_at` T;
   `data_source` `synthetic`;
 - alerts: `start_at <= occurred_at < end_at` and `occurred_at <= T`, ordered by `(occurred_at, alert_id)`, one page
-  of `limit`, with a cursor bound to the tenant, the asset and the interval.
+  of `limit` (1-100), with a cursor (canonical unpadded base64url) bound to the tenant, the asset and the interval;
+  a forged or foreign cursor is a 400.
+
+Instants (`X-Ops-As-Of`, `start_at`, `end_at`) are RFC 3339 UTC: `YYYY-MM-DDTHH:MM:SS[.fraction]` then `Z` or
+`+00:00`; anything else is a 400.
 
 Fault hooks (`POST /internal/faults/{kind}`: `asset_unavailable`, `drop_before_commit`, `malformed_response`,
 `timeout_before_accept`) exist only under `PROFILE=test`. See `docs/runbooks/asset-sim.md`.

@@ -54,7 +54,7 @@ async def sync_memberships(
 ) -> SyncResult:
     """Apply `plan` to every active membership of `issuer`, then stamp all of the issuer's rows, in one transaction.
     `allow_mass` is the owner's override of the listing guard: `OPS_SYNC_ALLOW_MASS_DEACTIVATION=1 uv run python
-    scripts/skeleton.py up` restarts all six processes, and the sweeper clears it after its first successful sync.
+    scripts/skeleton.py up` restarts all seven processes, and the sweeper clears it after its first successful sync.
 
     Raises:
         MassDeactivation: the listing misses too many active subjects; nothing is written or stamped.

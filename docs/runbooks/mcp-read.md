@@ -37,24 +37,57 @@ checked in this order; the first failure decides the answer.
 
 ## Starting it
 
-`python -m ops_mcp_read` (or `scripts/skeleton.py up`) needs the database at revision 0011: at start it refuses when
-`app.test_clock` exists outside the test profile, when `app._resolve_handle` lacks 0009's job binding, and when
-`app.search_procedures_scoped` (0011) is missing ("… predates this service; run scripts/skeleton.py migrate for this
-profile"). mcp-write makes the 0009 check at its own start. The tool answers from the governed corpus, so a database
-that was never ingested (`scripts/skeleton.py ingest`) answers every search with no results and `corpus_version`
-`none`. Readiness (`/health/ready`) needs the realm's signing keys and the database.
+`python -m ops_mcp_read` (or `scripts/skeleton.py up`) needs the database at revision 0012: at start it refuses when
+`app.test_clock` exists outside the test profile, when `app._resolve_handle` lacks 0009's job binding, when
+`app.search_procedures_scoped` (0011) is missing, and when `app.asset_scope` or the search's `retrieved_at` (0012) is
+missing ("… predates this service; run scripts/skeleton.py migrate for this profile"). It also reads its own
+workload secret (`kc_client_secret_ops_mcp_read`) at start, for asset-sim. mcp-write makes the 0009 check at its own
+start. The search answers from the governed corpus, so a database that was never ingested (`scripts/skeleton.py
+ingest`) answers every search with no results and `corpus_version` `none`. Readiness (`/health/ready`) needs the
+realm's signing keys and the database; asset-sim is a dependency of a call, not of readiness.
 
-The tool `search_procedures` takes `query` (1-500 characters), `limit` (1-8), `mode` (`lexical`; `vector_exact` is
-refused `UNSUPPORTED_MODE` until T18) and an optional `asset_type` (1-40 characters: documents of that family or of
-none). It resolves the handle in one unit, then calls `app.search_procedures_scoped` in a second, which resolves the
-handle again and decides the tenant from it; a handle refused at either is the same `INVALID_HANDLE` envelope. The
-settings and how to read the ranking are in `docs/retrieval.md`.
+## The three read tools (T16)
+
+Each tool advertises exactly its committed input schema (`schemas/tools/<tool>.input.schema.json`); the worker
+compares what it is shown with the same file and refuses to call a server that lists another tool set (R029). It also
+refuses an answer over 256 KiB (measured as the UTF-8 JSON of the structured result), one that fails the committed
+result contract, and any other failure inside the read session: each is the same failed run, "retrieval failed". Every
+call resolves the handle and checks the tool in one committed unit, then (a `vector_exact` search stops after the
+first) reads the run's scope through `app.asset_scope` in a second (the handle again, and the run's requester must
+still hold an active requester membership in the run's tenant: R028); a handle refused at any unit, or a requester who
+lost the membership, is the same `INVALID_HANDLE` envelope. The tenant, the asset and the interval come from the run,
+never from an argument.
+
+- `get_asset_status(asset_id)` and `get_recent_alerts(asset_id, start_at, end_at, limit 1-100[, cursor])` answer for
+  the run's own asset and fixed `[start_at, end_at)` only: another asset is `ASSET_OUT_OF_SCOPE` and another interval
+  (compared as instants: `Z` and `+00:00` agree) is `INTERVAL_OUT_OF_SCOPE`, both before asset-sim is asked. Then
+  mcp-read calls asset-sim (`OPS_ASSET_SIM_URL`) with its own `ops-mcp-read` token, the run's tenant and the database
+  instant `as_of`, outside any transaction, no retry, with one 10-second budget for fetching its token and asking.
+  asset-sim unreachable, slow, failing (5xx), refusing the token (401) or a token fetch that fails is `UNAVAILABLE`
+  (`retryable: true`); an asset asset-sim does not know for this tenant (another tenant's included) is `NOT_FOUND`; a
+  cursor asset-sim refuses is `INVALID_CURSOR`; an answer outside the tool-result contract or the run's scope is
+  `UPSTREAM_INVALID`, and so is any HTTP status above that mcp-read has no meaning for (a 403, a 400 to a request
+  without a cursor). The scope check holds a status to `observed_at` equal to `as_of` and a page of alerts to at most
+  `limit` alerts, all of the run's asset and interval and none after `as_of`. The envelope's `observed_at` is `as_of`
+  (to the second); for alerts, `truncated` is true exactly when `next_cursor` is set. The rules asset-sim answers by
+  are in `docs/runbooks/asset-sim.md`.
+- `search_procedures(query 1-500, limit 1-8, mode[, asset_type])`: `vector_exact` is refused `UNSUPPORTED_MODE`
+  after the handle resolution and before anything else (T18). mcp-read asks asset-sim for the run's asset type and
+  searches that type (documents of that family or of none), whether or not the caller named one; a caller's
+  `asset_type` may only repeat it, compared exactly, case included (`ASSET_TYPE_OUT_OF_SCOPE`). Only when asset-sim
+  does not know the run's asset does the caller's `asset_type` stand, or, with none given, any asset type. A third
+  unit calls `app.search_procedures_scoped`, which returns the instant it decided permission at: every result's
+  `retrieved_at` and the envelope's `observed_at` are that instant. An excerpt is the whole section up to 8000
+  characters, and a cut one sets `truncated`. The settings and how to read the ranking are in `docs/retrieval.md`.
+
+## Variables
 
 | Variable | Default | What it is |
 |---|---|---|
 | `OPS_MCP_READ_PORT` | 8081 | the loopback port it listens on |
 | `MCP_READ_RESOURCE_URL` | `http://mcp-read:8081/mcp` | its token audience and resource URL, not the listen URL |
 | `OPS_MCP_READ_URL` | `http://127.0.0.1:8081/mcp` | where the worker calls it |
+| `OPS_ASSET_SIM_URL` | `http://127.0.0.1:8091` | where it calls asset-sim (T16) |
 
 ## Looking at it
 
@@ -76,7 +109,12 @@ SELECT state FROM app.runs WHERE run_id = '<run>';
   handle no longer fits its run (the lease lapsed or moved to another worker, the job finished, the run moved on).
   Use the query above; the server says nothing more on purpose.
 - **mcp-read will not start**: read the message. "predates this service" is the missing revision; "signing keys
-  unavailable" is the realm.
+  unavailable" is the realm; "secret file kc_client_secret_ops_mcp_read is missing" is `OPS_SECRETS_DIR`.
+- **Every asset tool answers `UNAVAILABLE`**: asset-sim is down or not at `OPS_ASSET_SIM_URL` (`scripts/skeleton.py
+  status`), or it answers 401 to mcp-read's token (its log shows it), or the realm's token endpoint does not answer.
+  The search answers `UNAVAILABLE` for the same reasons: it asks asset-sim for the run's type. If the realm's
+  `ops-mcp-read` client lost its `asset-sim` audience, asset-sim answers 403 instead, and the tools say
+  `UPSTREAM_INVALID`.
 - **A handle in a log line** is a bug (SA:566): the live test `tests/e2e/test_mcp_read_t15_live.py` captures every
   record of the server, the SDK, uvicorn and the client at DEBUG, with no redaction filter, and fails if one holds the
   handle. Never run mcp-read with uvicorn's `trace` level: its message logger writes every request's headers, the
@@ -84,5 +122,8 @@ SELECT state FROM app.runs WHERE run_id = '<run>';
 
 ## Not here yet
 
-The asset tools and asset-sim (T16), vector search (T18), TLS and container host names (T30).
+Vector search and the `search_query:` embedding (T18), the worker's own asset reads and the evidence bundle (T20),
+recording the status observation for the grant's freshness check (T21), TLS and container host names (T30). The
+worker's check of the tool list sees only what the SDK keeps: the SDK drops a tool whose `x-mcp-header` annotation is
+invalid before the check runs, and a check on the raw list waits for T30.
 mcp-write's door, with the same verifier rules, is `docs/runbooks/mcp-write.md` (T47).
