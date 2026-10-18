@@ -183,7 +183,12 @@ def patch(monkeypatch: pytest.MonkeyPatch, log: Log, *, lost_at: int | None = No
 def make(log: Log, clock: Callable[[], float] = time.monotonic) -> tuple[handlers.Deps, Lease]:
     conn: Any = FakeConn(log)
     deps = handlers.Deps(
-        conn=conn, mcp=ScriptedMcp(log), generator=FakeDraftGenerator(), urls=settings.urls(), worker_name="w:test"
+        conn=conn,
+        mcp=ScriptedMcp(log),
+        generator=FakeDraftGenerator(),
+        urls=settings.urls(),
+        worker_name="w:test",
+        workload_azp="ops-worker",
     )
     return deps, Lease(run_id=RUN_ID, owner="w:test", fence=3, lease_seconds=30, started=clock(), clock=clock)
 

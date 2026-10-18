@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 import psycopg
@@ -173,6 +173,26 @@ async def assert_relation(conn: Conn, name: str) -> None:
     row = await cur.fetchone()
     if row is not None and row["missing"]:
         raise PersistenceError(f"{name} is missing; run scripts/skeleton.py migrate for this profile")
+
+
+# Revision 0009 (T15): `_resolve_handle` binds the handle's job to its run and refuses a finished one. Both MCP servers
+# resolve handles through it, so each refuses to start without it, as the other services do without their revision's
+# relation (Plan J ruling 18). It lives here because the two servers never import each other (ADR-0001). A later
+# revision that re-creates `_resolve_handle` must keep this text or change it here in the same commit; a unit test
+# checks the newest body carries it.
+HANDLE_BINDING: Final = ("app._resolve_handle(text, text, text)", "j.run_id = v_ctx.run_id AND j.done_at IS NULL")
+
+
+async def assert_function_text(conn: Conn, signature: str, marker: str) -> None:
+    """Refuse to start when a function's stored body lacks the text a later revision put there: a revision that only
+    re-creates a function adds no relation for `assert_relation` to find (`pg_proc` is readable by any role)."""
+    cur = await conn.execute(
+        "SELECT coalesce(strpos(p.prosrc, %s) > 0, false) AS present FROM pg_proc p WHERE p.oid = to_regprocedure(%s)",
+        (marker, signature),
+    )
+    row = await cur.fetchone()
+    if row is None or not row["present"]:
+        raise PersistenceError(f"{signature} predates this service; run scripts/skeleton.py migrate for this profile")
 
 
 async def tenants(conn: Conn) -> list[UUID]:
@@ -372,11 +392,18 @@ class Invocation:
     attempt_state: str | None
 
 
-def allowed_tool(job_type: JobType, tool: Tool) -> None:
-    """The AM-15 allowlist stays in Python (ruling 21); the function has already bound server, azp and expiry."""
-    if tool not in JOB_RULES[job_type].allowed_tools:
+def allowed_tool(job_type: JobType, run_state: RunState, tool: Tool) -> None:
+    """The AM-15 allowlist stays in Python (Plan E ruling 21, erratum 19): the tool must be one of the job type's and
+    the run must be in one of the job type's states (Plan J ruling 6); the function has already bound server, azp,
+    expiry, fence and the handle's job. A run that moved on (a read handle once the run awaits approval, an execute
+    handle once the run succeeded) is refused like any other handle."""
+    rule = JOB_RULES[job_type]
+    if tool not in rule.allowed_tools:
         log.info("tool %s is not allowed for job type %s", tool.value, job_type.value)  # never the handle
         raise HandleRejected("invocation handle rejected")  # the one fixed message (SA:357)
+    if run_state not in rule.run_states:
+        log.info("job type %s does not run in state %s", job_type.value, run_state.value)  # never the handle
+        raise HandleRejected("invocation handle rejected")
 
 
 def handle_hash(handle: str) -> str:
@@ -390,14 +417,15 @@ async def resolve_invocation(conn: Conn, *, handle: str, azp: str, tool: Tool) -
     if row is None:
         raise HandleRejected("invocation handle rejected")
     job_type = JobType(str(row["job_type"]))
-    allowed_tool(job_type, tool)
+    run_state = RunState(str(row["run_state"]))
+    allowed_tool(job_type, run_state, tool)
     return Invocation(
         UUID(str(row["run_id"])),
         UUID(str(row["job_id"])),
         job_type,
         UUID(str(row["tenant_id"])),
         UUID(str(row["conversation_id"])),
-        RunState(str(row["run_state"])),
+        run_state,
         None if row["attempt_state"] is None else str(row["attempt_state"]),
     )
 

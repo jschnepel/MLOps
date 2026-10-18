@@ -24,6 +24,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.tools.base import Tool
 from ops_core import persistence, redaction, settings
 from ops_core.jobs import Tool as ToolName
+from ops_core.mcp_protocol import MCP_PATH, ProtocolVersionGuard
 from ops_core.outcomes import ActionOutcome, ToolOutcome
 from ops_core.settings import Role
 from ops_core.tokens import Principal, TokenRejected, TokenVerifier, WorkloadTokenSource
@@ -212,7 +213,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
 
 def build_app(server: MCPServer, state: State) -> Starlette:
     """Mount the MCP transport beside health routes and own the session, HTTP client and key loading."""
-    mcp_app = server.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True)
+    mcp_app = server.streamable_http_app(streamable_http_path=MCP_PATH, stateless_http=True, json_response=True)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: Starlette) -> AsyncIterator[None]:
@@ -224,6 +225,9 @@ def build_app(server: MCPServer, state: State) -> Starlette:
                 await persistence.assert_clock_profile(conn, settings.profile())
                 # Revision 0007: mark_sent and record_outcome take the raw handle (T13); model_permit marks it.
                 await persistence.assert_relation(conn, "app.model_permit")
+                # Revision 0009: without the handle's job binding this server would resolve execute handles whose job
+                # is another run's or finished, as 0007 did, so it refuses to start, as mcp-read does (T15).
+                await persistence.assert_function_text(conn, *persistence.HANDLE_BINDING)
             except BaseException:  # a failed start must leak no connection
                 await conn.close()
                 raise
@@ -262,7 +266,13 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         return JSONResponse({"status": "ready"})
 
     return Starlette(
-        routes=[Route("/health/live", live), Route("/health/ready", ready), Mount("/", app=mcp_app)], lifespan=lifespan
+        routes=[
+            Route("/health/live", live),
+            Route("/health/ready", ready),
+            # The version rule runs before the SDK app and its bearer auth (AM-30, Plan J ruling 4).
+            Mount("/", app=ProtocolVersionGuard(mcp_app)),
+        ],
+        lifespan=lifespan,
     )
 
 

@@ -1,4 +1,4 @@
-T13 leases and fences — 2026-10-16T02:03:49Z
+T13 leases and fences — 2026-10-16T06:28:17Z
 acquisition: first fence 1; a second job of the run deferred behind the lease, unclaimed
 two first claims of one run: B's insert waited on A's alone, then deferred; one lease, fence 1
 a claim meeting an in-flight renewal: Busy(locked) in 0.01 s, job deferred one second

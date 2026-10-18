@@ -13,18 +13,19 @@ import psycopg
 import pytest
 from ops_core.jobs import JobType, Tool
 from ops_core.persistence import HandleRejected, allowed_tool, translate
+from ops_core.states import RunState
 
 
 @pytest.mark.parametrize(
-    ("job_type", "tool"),
+    ("job_type", "state", "tool"),
     [
-        (JobType.INVESTIGATE, Tool.CREATE_INCIDENT),  # a read job may not call a write tool
-        (JobType.EXECUTE, Tool.GET_INCIDENT_RECEIPT),  # execute is not recover
+        (JobType.INVESTIGATE, RunState.RETRIEVING, Tool.CREATE_INCIDENT),  # a read job may not call a write tool
+        (JobType.EXECUTE, RunState.APPROVED, Tool.GET_INCIDENT_RECEIPT),  # execute is not recover
     ],
 )
-def test_rejections(job_type: JobType, tool: Tool) -> None:
+def test_rejections(job_type: JobType, state: RunState, tool: Tool) -> None:
     with pytest.raises(HandleRejected):
-        allowed_tool(job_type, tool)
+        allowed_tool(job_type, state, tool)
 
 
 def test_handle_refusal_never_echoes_the_server_text() -> None:

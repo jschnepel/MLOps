@@ -2,7 +2,7 @@
 
 **An evidence-backed incident assistant with controlled tool use, independent approval, and recoverable execution.**
 
-> **Status: walking skeleton runs locally (T08) under per-service database roles with RLS (T09) and a hardened destination (T10), with browser login with server-side sessions, revocation and the membership sync (T11); the dev realm now carries the Plan F clients (re-imported on `up`); durable admission with a scoped Idempotency-Key and the AM-16 router (T12), fenced run leases with a heartbeat (T13) and a gap-free event journal with a leased notification outbox (T14) run locally** ([runbook](docs/runbooks/walking-skeleton.md)). Read [STATUS.md](STATUS.md) before interpreting any capability below as built. The capabilities described are **targets**.
+> **Status: walking skeleton runs locally (T08) under per-service database roles with RLS (T09) and a hardened destination (T10), with browser login with server-side sessions, revocation and the membership sync (T11); the dev realm now carries the Plan F clients (re-imported on `up`); durable admission with a scoped Idempotency-Key and the AM-16 router (T12), fenced run leases with a heartbeat (T13), a gap-free event journal with a leased notification outbox (T14) and an authenticated mcp-read with invocation handles bound to their run's open job (T15) run locally** ([runbook](docs/runbooks/walking-skeleton.md)). Read [STATUS.md](STATUS.md) before interpreting any capability below as built. The capabilities described are **targets**.
 
 Start with **[START_HERE.md](START_HERE.md)**. The implementation contract is [BUILD_SPEC.md](BUILD_SPEC.md) as amended by **[SPEC_AMENDMENTS.md](SPEC_AMENDMENTS.md)**.
 

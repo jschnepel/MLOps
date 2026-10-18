@@ -679,7 +679,7 @@
         "R085",
         "R131"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "Independent-process client lists and calls tools.",
         "Missing/wrong aud, browser token, replayed/expired/other-run/other-azp handle all rejected.",
@@ -691,7 +691,8 @@
         "status=error-only-before-grant applies to authorized callers; auth failures never reveal action_id.",
         "Allowlist checks attempt state (create_incident only with no attempt or INTENT, not cancelled, before deadline).",
         "mcp-read reads asset data via asset_scope + asset-sim, and procedures via search_procedures_scoped; it never has table access.",
-        "resolve_invocation derives job_type from the jobs row and server from job_type; the worker-written server column is a hint only."
+        "resolve_invocation derives job_type from the jobs row and server from job_type; the worker-written server column is a hint only.",
+        "Plan J (branch plan-j): done in 00c76e4..f0c8ca8 (the debt list, then the four tasks; the close-out is the next commit; plan docs/superpowers/plans/2026-10-15-first-slice-j-mcp-read-verifier-handles.md). Shipped: hardening and evidence over the existing mcp-read, no new tool or definer: ops_core.mcp_protocol.ProtocolVersionGuard in front of both MCP servers' SDK apps (a POST to /mcp without exactly MCP-Protocol-Version 2026-07-28 is HTTP 400 with JSON-RPC -32022 before authentication; the SDK's legacy stateless path is closed; a header/_meta mismatch stays the SDK's -32020); mcp-read's verifier, built by one constructor (read_verifier) for production and the unit tests, requires the typ claim Bearer, and its SDK adapter refuses a token whose aud lacks the server's URL before stamping the resource (the SDK's validate_token_resource stays on as a second layer); revision 0009_handle_binding re-creates _resolve_handle with the handle's job bound to its own run and unfinished (0007's body with one statement replaced; exact downgrade); persistence.allowed_tool checks the job type's run states as well as its tools; mcp-read refuses to start without 0009 (persistence.assert_function_text on pg_proc), and mcp-write too since the final-review fix wave; the worker binds each handle to its token source's client id. Evidence: tests/e2e/test_mcp_read_t15_live.py, test_mcp_read_process_live.py, test_migration_0009_live.py and reports/mcp-read/ (live), tests/plan_j/ for the unit half. R105's replay of create_incident after the outcome and the R006 populated upgrade's migrated finished job are now refused; through the tool a replay is answered only while the run is APPROVED or EXECUTING (the re-queue's re-send), and test_mcp_write_live.py's direct calls prove the execution layer's idempotency, not the tool's. Deferred: mcp-write's verifier, its literal azp in the write-path definers, the attempt-state allowlist and the write halves of R025/R131 -> T47; asset_scope, the asset tools and asset-sim -> T16; search_procedures_scoped and the governed store -> T17/T16; the worker's 401 handling and resume_input -> T20; TLS, container hosts and per-service tests -> T30. Errata 72-81 are proposed in SESSION_STATE.md. Final whole-branch review: ready with fixes (0 Critical, 1 Important: mcp-write's startup did not check 0009; 7 Minor), fixed in one wave after 8424ed7. DONE subject to the owner's decisions on errata 72 and 76: R131's three-function set and the attempt-state allowlist (this task's title and review notes 2-3) are met only through them."
       ]
     },
     {
@@ -716,7 +717,8 @@
       "external_approval_required": false,
       "review_notes": [
         "Handle server binding is checked inside resolve_invocation by comparing the handle's server field with session_user (mcp_read vs mcp_exec).",
-        "record_outcome verifies the receipt hash against the grant hash, but both reach it through mcp-write: v1 states plainly in the threat model that mcp-write is trusted for outcome truth, with T10's detective check as the control. Optional hardening for v1.1: incident-sim HMAC-signs receipts with a key held in an app_definer-only table. R131 wording: named function sets (both roles share resolve_invocation)."
+        "record_outcome verifies the receipt hash against the grant hash, but both reach it through mcp-write: v1 states plainly in the threat model that mcp-write is trusted for outcome truth, with T10's detective check as the control. Optional hardening for v1.1: incident-sim HMAC-signs receipts with a key held in an app_definer-only table. R131 wording: named function sets (both roles share resolve_invocation).",
+        "Plan J final review (DoD note and debt): a live create_incident through mcp-write over HTTP with a fresh handle for the re-queued execute job of an EXECUTING run returns the same action_id and no second incident (no HTTP test drives that re-send today); the worker client is named once in settings, replacing the \"ops-worker\" literals in worker main.py's token source, read_verifier's allowed_azp and the write-path definers."
       ]
     },
     {

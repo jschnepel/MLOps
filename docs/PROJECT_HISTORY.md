@@ -441,6 +441,64 @@ reserved in `append_event` → T26/T45; no live test of the real tick's T14 step
 re-dispatches an APPROVED run whose grant was refused where AM-10 wants BLOCKED_REVIEW, is left to the owner through
 erratum 63, which now states the trade-off and the conservative alternative.
 
-## 27. What the process taught
+## 27. The mcp-read plan closed a legacy door and bound the handle to its job
+
+**Problem.** Plan J takes T15: the authenticated mcp-read, its token verifier and invocation handles. The fact sheet
+found most of it already real since the walking skeleton (the custom verifier, the header-only handle, its hash and its
+fence), and three holes nobody had tested: the installed SDK sends a request without a protocol-version header down a
+legacy path that checks no version at all; `_resolve_handle` read the handle's job by id alone, so a handle whose job
+belonged to another run, or had finished, still resolved; and the allowlist ignored the run's state. The controller's
+brief of 25 rulings chose hardening and evidence over new tools: no asset tools and no new definer before their owners.
+
+**Change.** A small ASGI guard in `core` refuses any POST without the pinned version before authentication, in front of
+both MCP servers. mcp-read's verifier requires an access token's `typ`, and its SDK adapter refuses a token without the
+server's audience before stamping the resource. Revision 0009 replaces one statement of 0007's `_resolve_handle`, so the
+job must be its own run's and open; the Python allowlist checks the run state too; mcp-read refuses to start without the
+binding; the worker stamps each handle with its own client id. Live tests prove each refusal over HTTP, the ACL, the
+four version cases and that no log record carries a handle, and an independent mcp-read process is listed and called by
+the official client. Two older tests changed their meaning: the walking skeleton's replay after the outcome and the
+populated upgrade's migrated execute job are now refused, because their handles name a finished job.
+
+**Review.** The plan's own review caught what a dry run could not: a populated-upgrade test (the R006 upgrade) seeded
+a finished execute job that the new binding refuses, so every live gate from the second task on would have been red;
+the verifier's new `typ` rule was only tested against a hand-built object, not the wiring `production_app` uses; and the
+log test could have passed with uvicorn's loggers silenced. **Change.** The first review round found 1 Blocking, 3
+Important and 11 Minor items; the second accepted with 7 Minor. The R006 test now asserts the refusal and then
+reopens the job, `read_verifier` is the one constructor both production and the tests use, and the log test requires
+uvicorn's, the SDK's and httpx2's records before it trusts a clean result.
+
+**Execution.** Five tasks (the debt list and the guard, the binding and the allowlist, the handle cases over HTTP, the
+independent process, the close-out). The four building tasks were each reviewed once with Minor findings only and no
+fix round, and their live halves passed on their first run. Execution found nothing the plan had not ruled on.
+
+**Final review (whole branch: 0 Critical, 1 Important, 7 Minor; one fix wave).**
+
+**Problem.** The Important finding was a protection one server claimed and did not check. The handle's job binding lives
+in `_resolve_handle`, which both MCP servers use, and the README and erratum 75 said it protected both. Only mcp-read
+checked for revision 0009 at start; mcp-write checked for 0007 alone. On a database left at 0008, which is where Plan I
+had told the owner to migrate the dev database, mcp-read would refuse to start while mcp-write started and resolved
+execute handles with 0007's unbound read. The Python run-state rule still refused a replay after the outcome, so the
+exposure was small, but the documented property was only half true. The minors were mostly about evidence that could be
+empty. The update that made a handle's `server` column lie never checked that it changed a row, so the refusal after it
+might have been the plain wrong-server one. The execute and recover refusals had no positive control. The log checks
+looked for the handle but not for the worker's token. A `POST /mcp/` without the version header relied on a redirect
+nobody had pinned. And the records sent the owner to open pull requests that already existed. The authentication,
+binding, guard and secrets checks held: the reviewer found no way for a foreign token, another server's handle, another
+run's job or a stale handle to reach a tool, and no way around the guard.
+
+**Change.** The startup marker moved into `core` (`persistence.HANDLE_BINDING`), because services never import each
+other. mcp-read re-exports it, and mcp-write's startup now checks it too, with a unit test both ways and a live round
+trip in which `mcp_exec` is refused at 0008 and passes at the head. The lying-column update asserts one row. Each
+write-handle refusal now sits beside mcp-write's role resolving the same handle, and the lie is shown to have landed
+and, once put back, to resolve again. The log checks cover the worker's token, the R026 test reads the child's log for
+the three foreign tokens, and each check binds its verdict to a boolean or to indexes, so a failure never prints a
+value. The DEBUG test asserts that no redaction filter sits on the capturing handler. One `MCP_PATH` constant serves the
+guard and both SDK apps, and a test pins `/mcp/` to the router's 307. The records were corrected: the open PRs, the
+README's replay wording, R026's and R027's evidence, and T15's DONE, which depends on the owner's decisions on errata 72
+and 76. Two items went to T47 as debt: an over-the-wire test of the EXECUTING re-queue's re-send through mcp-write, and
+the three remaining `"ops-worker"` literals. The lesson: when two servers share a protection, the check that it is
+installed has to be shared too, or one of them is protected only on paper.
+
+## 28. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.

@@ -95,6 +95,7 @@ async def worker_deps(role_conn: RoleConn) -> WorkerDeps:
             generator=generator,
             urls=settings.urls(),
             worker_name="t",
+            workload_azp="ops-worker",  # the azp ResolvingMcp presents, as the real worker token's would be
         )
         return deps, mcp
 

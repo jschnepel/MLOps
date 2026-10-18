@@ -51,9 +51,10 @@ class JobType(StrEnum):
 class JobRule:
     """What a job type may do: its tools, the run states it runs in, its server, creators and dedup key shape.
 
-    TODO(T15): AM-15 derives the allowlist from the job type *plus the run state and the attempt state* (for example
-    `create_incident` only while the attempt is absent or INTENT). This rule holds the job-type dimension; T15's
-    `resolve_invocation` adds the run-state and attempt-state filters at call time.
+    AM-15 derives the allowlist from the job type plus the run state and the attempt state. `allowed_tools` and
+    `run_states` are the first two, and `persistence.allowed_tool` checks both at every handle resolution (T15).
+    TODO(T47): the attempt-state dimension (`create_incident` only while the attempt is absent or INTENT, not
+    cancelled, before the deadline) is mcp-write's, where `execution.next_step` branches on it today.
     """
 
     type: JobType

@@ -207,8 +207,12 @@ async def test_r105_walking_skeleton(
         assert action_id not in persona_at_destination.text and action_id not in worker_at_destination.text
         key = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {mcp_write}"}).json()
         assert key["state"] == "COMMITTED" and key["payload_sha256"] == sha
-    # Review focus 1 and 3 over the real transport: a replayed create_incident with a fresh execute handle returns
-    # the recorded outcome (same action id, no second incident), and the wrong tokens are refused at mcp-write.
+    # Review focus 1 and 3 over the real transport, as T15 bound handles (Plan J ruling 6): a fresh execute handle
+    # minted for the finished execute job of the SUCCEEDED run is refused at mcp-write (the job is done and the run is
+    # past the execute job's states), so a replay after the outcome never reaches the grant and the destination keeps
+    # its one incident; the wrong tokens are refused at the transport. Through the tool a replay is answered only while
+    # the run is APPROVED or EXECUTING (the re-queue re-sends under the same action id); the execution layer's stored-
+    # outcome replay is proved by direct calls in tests/e2e/test_mcp_write_live.py.
     cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s AND type = 'execute'", (UUID(run_id),))
     execute_job = (await cur.fetchone())["id"]
     cur = await app_conn.execute("SELECT tenant_id FROM app.run_directory WHERE run_id = %s", (UUID(run_id),))
@@ -228,14 +232,16 @@ async def test_r105_walking_skeleton(
             fence=lease.fence,
         )
     replay = await mcp_call(urls.mcp_write, worker, handle, "create_incident", {"proposal_id": pid})
-    assert replay is not None and replay["status"] == "ok" and replay["data"]["action_id"] == action_id
+    assert replay is not None and replay["status"] == "error" and replay["error"]["code"] == "INVALID_HANDLE"
     for wrong in (alex, mcp_read):
         refused_wrong = await mcp_call(urls.mcp_write, wrong, handle, "create_incident", {"proposal_id": pid})
         assert refused_wrong is None
     with httpx2.Client(base_url=urls.incident_sim, timeout=10.0) as d:
         again = d.get(f"/internal/actions/{action_id}", headers={"Authorization": f"Bearer {mcp_write}"}).json()
         assert again["receipt"] == key["receipt"]  # the same receipt, so no second incident
-    lines.append("replay=same_action_id refusals=api:worker,destination:persona+worker,mcp-write:persona+mcp-read")
+    lines.append(
+        "replay=refused_finished_job refusals=api:worker,destination:persona+worker,mcp-write:persona+mcp-read"
+    )
     lines.append(f"destination_refusals=persona:{refusals[0]},worker:{refusals[1]}")
     # The detective check, inline: this run's destination key must carry a grant's exact (action_id, hash). The exit
     # code of `skeleton.py keys` is not used because another live test plants an orphan on purpose.

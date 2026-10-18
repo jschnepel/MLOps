@@ -154,6 +154,7 @@ async def _main() -> None:
         generator=generator,
         urls=settings.urls(),
         worker_name=f"{socket.gethostname()}:{os.getpid()}",
+        workload_azp=tokens.client_id,
         leases=leases,
         heartbeat=heartbeat,
     )

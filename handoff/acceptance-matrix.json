@@ -454,11 +454,16 @@
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
       "suggested_test": "tests/acceptance/test_r025_a_real_independent_mcp_client_crosses_the_networ.py",
       "expected_evidence": "An independent process lists and calls tools on both mcp-read and mcp-write over the network.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_mcp_read_process_live.py",
+        "reports/mcp-read/t15-independent-client.txt",
+        "tests/plan_j/test_mcp_read_http.py"
+      ],
       "owning_tasks": [
         "T15"
-      ]
+      ],
+      "note": "Read half only (Plan J, T15): python -m ops_mcp_read runs as a child process on a loopback port and the official SDK Client (mode 2026-07-28) in the test process lists exactly search_procedures and calls it with a valid handle over the network. mcp-write's half -> T47."
     },
     {
       "id": "R026",
@@ -466,14 +471,21 @@
       "category": "security",
       "requirement": "MCP rejects wrong audience or browser token passthrough",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r026_mcp_rejects_wrong_audience_or_browser_token_pass.py",
       "expected_evidence": "Use valid token for another service; resource server rejects it without downstream forwarding.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_mcp_read_process_live.py",
+        "reports/mcp-read/t15-independent-client.txt",
+        "tests/plan_j/test_verifier_t15.py",
+        "tests/plan_j/test_mcp_read_http.py",
+        "tests/e2e/test_r105_walking_skeleton.py"
+      ],
       "owning_tasks": [
         "T15"
-      ]
+      ],
+      "note": "Plan J (T15): against mcp-read as an independent process, a persona token (aud ops-api, the stand-in for a browser token: no ops-web access token is minted anywhere, the API stores none), an ops-mcp-write token (aud incident-sim) and an ops-mcp-read token (aud asset-sim) each get 401 invalid_token on a tools/call of search_procedures that carries a valid handle, which the worker's token then answers with data: the refusal comes before the tool and the handle lookup, and mcp-read forwards nothing downstream. Missing aud, azp ops-web, a non-access typ and another workload's azp are synthetic-key unit cases at mcp-read's configuration (erratum 81); every foreign token above is 401 through read_verifier's audience check (PyJWT's aud), with McpVerifier's own aud check behind it (unit-tested with a verifier that checks no audience) and the SDK's validate_token_resource (pinned on by a unit test) a third, inert layer. At mcp-write, whose verifier hardening is T47's, a wrong aud is refused by PyJWT: the walking skeleton (tests/e2e/test_r105_walking_skeleton.py) presents a persona token and an ops-mcp-read token to mcp-write live and both are refused."
     },
     {
       "id": "R027",
@@ -481,14 +493,23 @@
       "category": "security",
       "requirement": "Invocation handle binds workload run lease and tools",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r027_invocation_handle_binds_workload_run_lease_and_t.py",
       "expected_evidence": "Replay with other workload/run/expired fence/tool; server rejects; handle absent from model/logs.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_mcp_read_t15_live.py",
+        "reports/mcp-read/t15-mcp-read.txt",
+        "tests/e2e/test_migration_0009_live.py",
+        "tests/plan_j/test_migration_0009.py",
+        "tests/plan_j/test_allowlist.py",
+        "tests/plan_j/test_worker_azp.py",
+        "tests/e2e/test_definers_write_path_live.py"
+      ],
       "owning_tasks": [
         "T15"
-      ]
+      ],
+      "note": "Plan J (T15): over HTTP, one read handle is refused (one INVALID_HANDLE envelope, no action id) when its job is pointed at another run's job, past its 60 s expiry on the test clock, under a lapsed lease, after the fence moved, and after its release (revocation), answering again between causes; at the definer it is refused once its job is finished, and another azp is refused (test_definers_write_path_live.py); the tool binding is the job type's tools and run states. No log record of an answered call, a refused call or a refused raw POST, captured with uvicorn and the server at DEBUG and no redaction filter, holds the handle; the child process's own log, written through its redaction filter, holds none either; the model's request has no field for a handle (a unit test pins DraftRequest's four fields)."
     },
     {
       "id": "R028",
@@ -544,12 +565,16 @@
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
       "suggested_test": "tests/acceptance/test_r031_selected_sdk_versions_pass_actual_imports_and_co.py",
       "expected_evidence": "Install locked SDKs and run network tests; examples are not accepted based on syntax alone.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_mcp_read_process_live.py",
+        "reports/mcp-read/t15-independent-client.txt"
+      ],
       "owning_tasks": [
         "T04",
         "T15"
-      ]
+      ],
+      "note": "Network half for mcp-read (Plan J, T15): the locked mcp 2.3.0 and mcp-types 2.3.0 are asserted in a live test whose official client crosses the network to an independent mcp-read; T04's import half is the workspace import test. mcp-write's own network test -> T47."
     },
     {
       "id": "R032",
@@ -1371,17 +1396,23 @@
       "id": "R085",
       "category": "security",
       "requirement": "Tool allowlist is server-derived and bound to the workload client",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Worker-chosen tools ignored; handle used with a different azp rejected.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_mcp_read_t15_live.py",
+        "tests/plan_j/test_allowlist.py",
+        "tests/plan_j/test_worker_azp.py",
+        "tests/e2e/test_definers_write_path_live.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M05",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T15"
       ],
-      "suggested_test": "tests/acceptance/test_r085_tool_allowlist_is_server_derived_and_bound_to_th.py"
+      "suggested_test": "tests/acceptance/test_r085_tool_allowlist_is_server_derived_and_bound_to_th.py",
+      "note": "Plan J (T15): the allowlist is derived from the job type's tools and run states in persistence.allowed_tool (every pair tabled in a unit test); over HTTP an investigate handle is refused once its run awaits input, an execute handle is refused at mcp-read also when its stored server column claims read, and a tool mcp-read does not register is the SDK's unknown-tool error. The handle's azp is the worker's token-source client id and _resolve_handle refuses another (OC008 at the definer; the verifier refuses any azp but ops-worker)."
     },
     {
       "id": "R086",
@@ -2207,8 +2238,11 @@
       "requirement": "The read and write MCP servers hold disjoint tool functions and reject each other's handles",
       "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
       "expected_evidence": "mcp_read can EXECUTE only resolve_invocation, asset_scope, search_procedures_scoped; mcp_exec only resolve_invocation, grant_execution, mark_sent, record_outcome, request_abort, lookup_action (pg_proc ACL test); an execute/recover handle at mcp-read and a read handle at mcp-write are rejected; incident-sim rejects mcp-read's token.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_mcp_read_t15_live.py",
+        "reports/mcp-read/t15-mcp-read.txt"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r131_the_read_and_write_mcp_servers_hold_disjoint_fun.py",
       "milestone": "M05",
@@ -2216,7 +2250,8 @@
         "T15",
         "T47"
       ],
-      "blocking_for_v1": true
+      "blocking_for_v1": true,
+      "note": "Read half only (Plan J, T15): mcp_read can EXECUTE current_time (erratum 15) and resolve_invocation and nothing else in app (asset_scope and search_procedures_scoped join with T16/T17, erratum 72); an attempted grant_execution is 42501; a recover and an execute handle presented to mcp-read are refused over HTTP. The write half (mcp_exec's set, a read handle at mcp-write, incident-sim refusing mcp-read's token) -> T47."
     }
   ]
 }

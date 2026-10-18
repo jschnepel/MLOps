@@ -3,9 +3,13 @@ through the definer functions grant_execution, mark_sent, record_outcome and loo
 
 Replay rule (Plan D review focus 1): execution_grant is UNIQUE (run_id), so a second `create_incident` for the same run
 finds the existing grant; if its attempt is RESOLVED the stored outcome is returned without touching the destination,
-otherwise the same action id and bytes are re-sent and the destination's idempotent key answers. There is never a
-second action id for one run. A transport failure after SENT is reported as UNKNOWN and recorded by nobody here: the
-worker holds `mark_unknown` (SA:467; Plan E ruling 6).
+otherwise the same action id and bytes are re-sent and the destination's idempotent key answers. There is never a second
+action id for one run. Through the tool, the stored branch is unreachable once the outcome is recorded: the run has left
+APPROVED and EXECUTING, so `server.create_incident`'s `resolve_invocation` refuses the handle first (T15, Plan J ruling
+6), which production never needed (the worker skips the call past EXECUTING). A direct caller
+(tests/e2e/test_mcp_write_live.py), or an overlapping call that resolved its handle before the outcome was recorded,
+still reaches it. A transport failure after SENT is reported as UNKNOWN and recorded by nobody here: the worker holds
+`mark_unknown` (SA:467; Plan E ruling 6).
 """
 
 from __future__ import annotations
