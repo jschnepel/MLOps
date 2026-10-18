@@ -177,7 +177,9 @@ def ensure_extensions(pg: settings.Postgres) -> None:
     """CREATE EXTENSION IF NOT EXISTS for each bootstrap extension, as the superuser, in the database `pg` names."""
     with psycopg.connect(pg.conninfo(), autocommit=True) as conn:
         for name in EXTENSIONS:
-            conn.execute(sql.SQL("CREATE EXTENSION IF NOT EXISTS {}").format(sql.Identifier(name)))
+            # SCHEMA public: the revision and the function signature name `public.vector`, wherever a site's default
+            # creation schema points.
+            conn.execute(sql.SQL("CREATE EXTENSION IF NOT EXISTS {} SCHEMA public").format(sql.Identifier(name)))
 
 
 def _config(tree: str, connection: object) -> Config:

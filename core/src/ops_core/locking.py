@@ -52,7 +52,11 @@ LOCK_ORDER: Final = (
 OWN_UNIT: Final = frozenset(
     {"model_permit", "sessions", "login_state", "logout_jti", "test_clock", "tenants", "run_directory"}
 )
-# T17 (revision 0011): the corpus is append-only; ingestion inserts and the search reads, and neither locks a row.
+# T17 (revision 0011): the corpus is append-only; ingestion inserts and the search reads, and neither locks a row
+# explicitly. An insert does take FOR KEY SHARE on the existing parent row its foreign key names (a new
+# `document_states` or `chunks` row on its `documents` row, a version's `supersedes` on the earlier `documents` row);
+# that cannot deadlock, because nothing UPDATEs or DELETEs `documents` outside the live suite's test purge
+# (conftest `purge_corpus`).
 NEVER_LOCKED: Final = frozenset(
     {"conversations", "transitions", "corpus_ingestions", "documents", "document_states", "chunks"}
 )
@@ -104,7 +108,9 @@ OWN_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "api logout jti record": ("logout_jti",),
     "sweeper purge": ("sessions", "login_state", "logout_jti", "idempotency_request"),
     "test clock move (test_harness)": ("test_clock",),
-    # T17: the corpus_ingestions row's foreign-key check takes FOR KEY SHARE on its tenant; the rest are fresh rows.
+    # T17: the corpus_ingestions row's foreign-key check takes FOR KEY SHARE on its tenant. The other corpus inserts
+    # take the same share lock on their existing `documents` or `corpus_ingestions` parent rows through their foreign
+    # keys (see NEVER_LOCKED); no unit updates or deletes those parents, so these shares never wait.
     "worker corpus ingestion (ingest.ingest)": ("tenants",),
 }
 

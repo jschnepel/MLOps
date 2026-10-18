@@ -339,9 +339,12 @@ async def test_only_mcp_read_calls_it_and_the_worker_sees_its_tenant_only(
     for role in (Role.API, Role.WORKER, Role.SWEEPER, Role.MCP_EXEC, Role.OPERATOR):
         assert await refused(await role_conn(role), call, ("not-a-handle",)) == "42501", role
     tenant, run, _ = await handle_for(app_conn, role_conn, None)
+    other, other_run, _ = await handle_for(app_conn, role_conn, None)
     try:
         now = await clock(app_conn)
         await stage(app_conn, tenant, [{"id": "SEEN-DOC", "version": "1", "states": [("approved", now - DAY, None)]}])
+        # A second tenant's chunk: a policy that ignored the tenant setting would count 2 below.
+        await stage(app_conn, other, [{"id": "HIDDEN-DOC", "version": "1", "states": [("approved", now - DAY, None)]}])
         worker = await role_conn(Role.WORKER)
         cur = await worker.execute("SELECT count(*) AS n FROM app.chunks")
         assert (await cur.fetchone() or {})["n"] == 0  # no tenant set: RLS admits nothing (defense in depth, SA:522)
@@ -352,7 +355,7 @@ async def test_only_mcp_read_calls_it_and_the_worker_sees_its_tenant_only(
         for statement in ("UPDATE app.chunks SET body = 'x'", "DELETE FROM app.document_states"):
             assert await refused(worker, statement, ()) == "42501", statement  # append-only: no UPDATE, no DELETE
     finally:
-        await cleanup(app_conn, [run], [tenant])
+        await cleanup(app_conn, [run, other_run], [tenant, other])
 
 
 async def snapshot(conn: persistence.Conn) -> dict[str, dict[str, Any]]:

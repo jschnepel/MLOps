@@ -1002,6 +1002,8 @@ Allowed shortcuts in T17, each with its owning task:
   length), and the evaluation of another chunk window than one per section → T18 (Plan L rulings
   2, 4 and 18); mcp-read's `vector_exact` → `mode=vector` translation (until then `UNSUPPORTED_MODE` before the
   database) → T16;
+- the query is normalised by `regexp_replace('[^a-z0-9]+', ' ')` while chunk text is parsed raw, so a token such as
+  `4.5` or `M8x1.25` cannot match as one lexeme (recall loss on numeric values) → T18;
 - `asset_scope`, the asset tools, asset-sim serving `data/corpus/assets.json`, and the run's own asset type passed to
   the search (the tool takes `asset_type` from its caller only) → T16 (ruling 11);
 - the requester's current membership re-checked at read time (R028) → T16 (ruling 10);

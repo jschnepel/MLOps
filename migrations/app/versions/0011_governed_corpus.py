@@ -149,7 +149,7 @@ SCHEMA_CHANGES = (
 # helper, as `_dispatch_seconds()`, so a later revision changes it in one place.
 MIN_RANK = f"""
 CREATE OR REPLACE FUNCTION app._min_rank() RETURNS real
-{HELPER_HEADER} AS $fn$
+{HELPER_HEADER} IMMUTABLE AS $fn$
 BEGIN
     RETURN 0.25;
 END

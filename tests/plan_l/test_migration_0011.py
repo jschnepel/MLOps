@@ -115,6 +115,7 @@ def test_the_lifecycle_and_ranking_rules_are_the_rulings() -> None:
     assert 'ORDER BY k.rank DESC, k.evidence_id COLLATE "C")' in body  # the same order in the answer
     helper = revision().MIN_RANK
     assert "RETURN 0.25;" in helper and "SECURITY DEFINER" not in helper and body.count("0.25") == 0
+    assert "IMMUTABLE" in helper  # a constant, so the planner may fold it
 
 
 def test_the_downgrade_drops_exactly_what_the_upgrade_created(monkeypatch: pytest.MonkeyPatch) -> None:
