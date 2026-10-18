@@ -993,6 +993,29 @@ Allowed shortcuts in T47, each with its owning task:
 - the dev database stays at revision 0005 until the owner migrates it (0006 to 0010 pending); until then the API, the
   sweeper, the worker, mcp-read and mcp-write refuse to start on it, mcp-write now also without 0010 → owner input.
 
+## Plan L debt list (T17; committed before coding) [R6-B7]
+
+Allowed shortcuts in T17, each with its owning task:
+- vector retrieval: the `embeddings` table, the nomic-embed-text `search_document:`/`search_query:` embeddings, the
+  `mode = 'vector'` branch of `search_procedures_scoped` (refused `VECTOR_MODE_UNAVAILABLE` until then), tuning the
+  minimum rank (0.25, chosen on the development queries; `ts_rank_cd` is unnormalised, so it depends on query
+  length), and the evaluation of another chunk window than one per section → T18 (Plan L rulings
+  2, 4 and 18); mcp-read's `vector_exact` → `mode=vector` translation (until then `UNSUPPORTED_MODE` before the
+  database) → T16;
+- `asset_scope`, the asset tools, asset-sim serving `data/corpus/assets.json`, and the run's own asset type passed to
+  the search (the tool takes `asset_type` from its caller only) → T16 (ruling 11);
+- the requester's current membership re-checked at read time (R028) → T16 (ruling 10);
+- the final grant's recheck that every cited source version is still approved and effective (BS:425, R045) → T21;
+  revoked text kept out of checkpoints, summaries and events (R035) → T26 (ruling 22);
+- the model-side proof that the injected documents grant nothing (R036), and detecting the conflicting pair and
+  abstaining → T19/T20 (rulings 13 and 14);
+- the excerpt is still cut silently at 500 characters (Plan D's open item) → T16;
+- shared (cross-tenant) documents: none; a document both tenants need is copied per tenant → no task (erratum 97,
+  ruling 9);
+- the dev database stays at revision 0010 with no corpus until the owner runs `scripts/skeleton.py migrate` and then
+  `scripts/skeleton.py ingest`; until the migration mcp-read refuses to start on it (it checks 0011) → owner input
+  (ruling 24).
+
 ## Environment (observed)
 
 | Item | Observed |
