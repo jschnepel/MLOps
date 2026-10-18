@@ -1111,6 +1111,34 @@ Allowed shortcuts in T17, each with its owning task:
   ruling 9);
 - the dev database: migrated to 0011 and corpus-1 ingested by the owner on 2026-10-18 → closed (ruling 24).
 
+## Plan M debt list (T16; committed before coding) [R6-B7]
+
+Allowed shortcuts in T16, each with its owning task:
+- vector mode: mcp-read's `vector_exact` → `mode=vector` translation and the nomic `search_query:` embedding it
+  computes, with the embeddings themselves → T18 (Plan M ruling 1, erratum 103); until then mcp-read answers
+  `vector_exact` with `UNSUPPORTED_MODE` after the handle resolution and the definer refuses `mode=vector`;
+- the worker's calls to `get_asset_status` and `get_recent_alerts` and their results in the draft and the evidence
+  bundle (BS:419), and SA:377's evidence-sufficiency rule → T20 (rulings 16 and 17);
+- recording the status observation (`observed_at`, `revision`) where the grant can check its 5-minute freshness
+  (R116, BS:476) → T21 (ruling 16);
+- the worker's write calls (`create_incident` at mcp-write) keep T47's result check: no tool discovery and no
+  result-schema check (mcp-write advertises its generated schemas, not the committed files) → T20, which builds
+  AM-12's `execute_approved_proposal (mcp-write)` node (SA:207) and every route of R129;
+- the worker's 256 KiB result bound is applied after the MCP SDK has read and parsed the body (no hook stops it
+  earlier); a transport-level bound → T30, with the container network work (departure 5);
+- a run's asset is not tied to its tenant at admission (an alpha run may name beta's B22; asset-sim's own tenant filter
+  answers NOT_FOUND, and the search then has no run type) → T21 (the asset guard; its review note names alpha-for-B22);
+- a handle that dies between `asset_scope` and the asset-sim call still yields one read of the run's own asset (no
+  write, no authority gained): documented, not prevented → no task (ruling 15);
+- the fallback `corpus_version` is closed by T17 (the definer answers `none`) and the `UNSUPPORTED_MODE` order stays
+  (the handle first) → no task (ruling 14);
+- asset-sim and mcp-read read `data/corpus/` and `schemas/` from the checkout; packaging them, asset-sim's Dockerfile
+  and `tests/` directory, TLS and container host names, and the network test that only mcp-read reaches asset-sim →
+  T30 (ruling 5);
+- the requester's membership is matched without an issuer (the run keeps none) → owner decision (erratum 105);
+- the dev database stays at revision 0011 until the owner runs `scripts/skeleton.py migrate`; until then mcp-read
+  refuses to start on it (it checks 0012) → owner input (ruling 3).
+
 ## Environment (observed)
 
 | Item | Observed |
