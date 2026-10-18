@@ -315,9 +315,9 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   two functions, `search_procedures_scoped` and `app._min_rank()`); `ops_core.corpus` and `ops_core.ingest`; `scripts/skeleton.py ingest`; mcp-read on the
   definer with the optional `asset_type`, its fixture corpus retired; the schema examples on the section hash;
   `docs/retrieval.md` (settings, score interpretation, the corpus-1 freeze).
-- The dev `ops` database needs revision 0011 and an ingestion (owner inputs); mcp-read refuses to start until the
-  migration.
+- The dev `ops` database was migrated to 0011 and corpus-1 was ingested by the owner on 2026-10-18 (done; mcp-read refuses to start on an older revision). The owner merged PRs #1-#11 into `main` the same day.
 - Deferred, each with its owner in `SESSION_STATE.md`: vector search, embeddings and another chunk window -> T18; the
   asset tools, asset-sim, the run's asset type and the membership re-check -> T16; the grant's document recheck ->
   T21; revocation in derived state -> T26; the injected and conflicting sources' model-side proofs -> T19/T20;
   tuning the minimum rank -> T18. Ten errata (93-102) are proposed.
+- Next: Plan M = T16 (read tools, asset_scope, asset-sim) on branch plan-m from main.
