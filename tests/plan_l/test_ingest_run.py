@@ -7,7 +7,7 @@ that still writes, a "store moved" refusal in phase 2 that forgets which tenants
 failure that loses the same list on its way to the command.
 """
 
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import psycopg
@@ -93,6 +93,11 @@ class StubConn:
         return Cursor([])
 
 
+def as_conn(stub: StubConn) -> persistence.Conn:
+    """The stub where `ingest` wants a real connection; it answers only the few statements `ingest` issues."""
+    return cast(persistence.Conn, stub)
+
+
 def stored_row(doc: corpus.Document, **over: Any) -> dict[str, Any]:
     """The row `read_store` would get for `doc` as ingested, with `over` applied."""
     row = {
@@ -120,7 +125,7 @@ def rows(slug: str, **over: Any) -> list[dict[str, Any]]:
 @pytest.mark.asyncio
 async def test_no_insert_precedes_the_last_tenants_planning() -> None:
     conn = StubConn({ALPHA, BETA})
-    reports = await ingest.ingest(conn, GOVERNED, TENANTS)  # type: ignore[arg-type]
+    reports = await ingest.ingest(as_conn(conn), GOVERNED, TENANTS)
     assert [(r.tenant, r.recorded) for r in reports] == [("alpha", True), ("beta", True)]
     kinds = [event[0] for event in conn.events]
     first_insert = kinds.index("insert")
@@ -138,7 +143,7 @@ async def test_a_refusal_in_the_last_tenant_writes_nothing_for_the_first() -> No
     changed = rows("beta", content_sha256="0" * 64)
     conn = StubConn({ALPHA, BETA}, {BETA: [changed]})
     with pytest.raises(ingest.IngestRefused) as refused:
-        await ingest.ingest(conn, GOVERNED, TENANTS)  # type: ignore[arg-type]
+        await ingest.ingest(as_conn(conn), GOVERNED, TENANTS)
     assert all("the content changed" in p and p.startswith("beta ") for p in refused.value.problems)
     assert refused.value.written == ()
     assert not any(kind == "insert" for kind, _ in conn.events)
@@ -148,7 +153,7 @@ async def test_a_refusal_in_the_last_tenant_writes_nothing_for_the_first() -> No
 async def test_an_unknown_tenant_is_refused_before_anything_is_written() -> None:
     conn = StubConn({ALPHA})  # beta has no app.tenants row
     with pytest.raises(ingest.IngestRefused) as refused:
-        await ingest.ingest(conn, GOVERNED, TENANTS)  # type: ignore[arg-type]
+        await ingest.ingest(as_conn(conn), GOVERNED, TENANTS)
     assert refused.value.problems == ("beta: no such tenant in app.tenants",) and refused.value.written == ()
     assert not any(kind == "insert" for kind, _ in conn.events)
 
@@ -157,7 +162,7 @@ async def test_an_unknown_tenant_is_refused_before_anything_is_written() -> None
 async def test_a_corpus_tenant_without_a_uuid_is_refused_first() -> None:
     conn = StubConn({ALPHA, BETA})
     with pytest.raises(ingest.IngestRefused) as refused:
-        await ingest.ingest(conn, GOVERNED, {"alpha": ALPHA})  # type: ignore[arg-type]
+        await ingest.ingest(as_conn(conn), GOVERNED, {"alpha": ALPHA})
     assert refused.value.problems == ("beta: no tenant UUID for this corpus tenant",) and conn.events == []
 
 
@@ -167,7 +172,7 @@ async def test_a_store_that_moves_between_the_phases_names_the_tenants_already_w
     moved = rows("beta", content_sha256="0" * 64)
     conn = StubConn({ALPHA, BETA}, {BETA: [[], moved]})
     with pytest.raises(ingest.IngestRefused) as refused:
-        await ingest.ingest(conn, GOVERNED, TENANTS)  # type: ignore[arg-type]
+        await ingest.ingest(as_conn(conn), GOVERNED, TENANTS)
     assert refused.value.written == ("alpha",)
     assert all(p.startswith("beta ") for p in refused.value.problems)
     assert [e for e in conn.events if e[0] in ("commit", "rollback")][-2:] == [("commit", ""), ("rollback", "")]
@@ -183,9 +188,22 @@ async def test_a_store_failure_carries_the_tenants_already_written() -> None:
                 raise psycopg.errors.InsufficientPrivilege("denied")
             return await super().execute(sql, params)
 
-    with pytest.raises(psycopg.Error) as failed:
-        await ingest.ingest(Failing({ALPHA, BETA}), GOVERNED, TENANTS)  # type: ignore[arg-type]
-    assert getattr(failed.value, "written", None) == ("alpha",)
+    with pytest.raises(ingest.IngestInterrupted) as failed:
+        await ingest.ingest(as_conn(Failing({ALPHA, BETA})), GOVERNED, TENANTS)
+    assert failed.value.written == ("alpha",)
+    assert isinstance(failed.value.__cause__, psycopg.errors.InsufficientPrivilege)  # chained, not copied
+
+
+@pytest.mark.asyncio
+async def test_a_store_failure_before_any_commit_propagates_unchanged() -> None:
+    class Failing(StubConn):
+        async def execute(self, sql: str, params: Any = None) -> Cursor:
+            if sql.startswith("INSERT INTO app.corpus_ingestions") and self.tenant == ALPHA:
+                raise psycopg.errors.InsufficientPrivilege("denied")
+            return await super().execute(sql, params)
+
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):  # nothing was written, so there is nothing to wrap
+        await ingest.ingest(as_conn(Failing({ALPHA, BETA})), GOVERNED, TENANTS)
 
 
 @pytest.mark.asyncio
@@ -198,29 +216,42 @@ async def test_a_missing_relation_is_a_persistence_error_before_anything_else() 
 
     conn = Missing({ALPHA, BETA})
     with pytest.raises(persistence.PersistenceError, match="is missing"):
-        await ingest.ingest(conn, GOVERNED, TENANTS)  # type: ignore[arg-type]
+        await ingest.ingest(as_conn(conn), GOVERNED, TENANTS)
     assert conn.events == []
 
 
-def test_the_command_reports_a_store_failure_with_its_class_only(
+def test_the_command_prints_our_own_hint_but_only_the_class_of_a_driver_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(skeleton, "load_dotenv", lambda path: {})
     monkeypatch.setattr(skeleton, "export_environment", lambda dotenv: None)
     monkeypatch.setattr(skeleton.settings, "app_postgres", lambda role: role)
 
+    # Our own PersistenceError text is safe by contract and tells the owner what to do (final review, M2).
+    hint = "app.chunks is missing; run scripts/skeleton.py migrate for this profile"
+
     async def missing(pg: Any, governed: corpus.Corpus) -> list[ingest.Report]:
-        raise persistence.PersistenceError("app.chunks is missing; run scripts/skeleton.py migrate for this profile")
+        raise persistence.PersistenceError(hint)
 
     monkeypatch.setattr(skeleton, "_ingest", missing)
     assert skeleton.ingest() == 1
-    assert capsys.readouterr().out.splitlines() == ["INGEST: failed (PersistenceError)"]
+    assert capsys.readouterr().out.splitlines() == [f"INGEST: failed (PersistenceError: {hint})"]
 
+    # A driver message can name the host: only the class is printed, with the tenants already written.
     async def broken(pg: Any, governed: corpus.Corpus) -> list[ingest.Report]:
-        error = psycopg.OperationalError("connection to server at 'db.internal' failed")
-        error.written = ("alpha",)  # type: ignore[attr-defined]
-        raise error
+        try:
+            raise psycopg.OperationalError("connection to server at 'db.internal' failed")
+        except psycopg.OperationalError as error:
+            raise ingest.IngestInterrupted(("alpha",)) from error
 
     monkeypatch.setattr(skeleton, "_ingest", broken)
     assert skeleton.ingest() == 1
     assert capsys.readouterr().out.splitlines() == ["INGEST: failed (OperationalError) after writing alpha"]
+
+    # The same driver error before any tenant committed arrives unwrapped and prints the same way, without the list.
+    async def unwrapped(pg: Any, governed: corpus.Corpus) -> list[ingest.Report]:
+        raise psycopg.OperationalError("connection to server at 'db.internal' failed")
+
+    monkeypatch.setattr(skeleton, "_ingest", unwrapped)
+    assert skeleton.ingest() == 1
+    assert capsys.readouterr().out.splitlines() == ["INGEST: failed (OperationalError)"]

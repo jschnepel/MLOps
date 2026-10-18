@@ -52,6 +52,19 @@ class IngestRefused(Exception):
         super().__init__("\n".join(self.problems))
 
 
+class IngestInterrupted(Exception):
+    """A store failure stopped phase 2 after `written` tenants had committed (the failing tenant rolled back).
+
+    The driver or persistence error is the `__cause__`; it is chained, not copied, so the command can print its class
+    (a driver message can name the host) while this exception carries the one fact the operator needs to re-run:
+    which tenants are already written (final review, M1: no attribute is hung on a third-party exception).
+    """
+
+    def __init__(self, written: tuple[str, ...]) -> None:
+        self.written = written
+        super().__init__("ingestion interrupted after writing " + (", ".join(written) or "nothing"))
+
+
 @dataclass(frozen=True)
 class Stored:
     """What the store holds for one document version: its immutable attributes and its latest state."""
@@ -270,7 +283,10 @@ async def ingest(conn: persistence.Conn, corpus: Corpus, tenants: Mapping[str, U
     Raises:
         IngestRefused: a tenant row is missing or a document version conflicts with what is stored; nothing was
             written, unless `written` names tenants committed before a concurrent change was found.
-        PersistenceError: revision 0011 is missing (`persistence.assert_relation`).
+        PersistenceError: revision 0011 is missing (`persistence.assert_relation`). This and any `psycopg.Error`
+            also propagate unchanged when the failure comes before any tenant committed (nothing was written).
+        IngestInterrupted: a store failure (`psycopg.Error` or `PersistenceError`, its `__cause__`) after earlier
+            tenants had committed; `written` names them.
     """
     for relation in RELATIONS:
         await persistence.assert_relation(conn, relation)
@@ -300,9 +316,12 @@ async def ingest(conn: persistence.Conn, corpus: Corpus, tenants: Mapping[str, U
                 if step.record:
                     await _write(conn, corpus, step)
         except (psycopg.Error, persistence.PersistenceError) as error:
-            # The failing tenant rolled back; tell the command which earlier ones stayed (it prints the class only).
-            error.written = tuple(r.tenant for r in reports if r.recorded)  # type: ignore[union-attr]
-            raise
+            # The failing tenant rolled back; tell the command which earlier ones stayed. A failure before any tenant
+            # committed (nothing written) is re-raised unchanged: there is nothing to add to it.
+            written = tuple(r.tenant for r in reports if r.recorded)
+            if not written:
+                raise
+            raise IngestInterrupted(written) from error
         reports.append(
             Report(tenant, corpus.corpus_version, len(step.new), len(step.restated), step.unchanged, step.record)
         )

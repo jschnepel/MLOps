@@ -266,10 +266,17 @@ def ingest() -> int:
             reports = asyncio.run(_ingest(pg, governed), loop_factory=asyncio.SelectorEventLoop)
         else:
             reports = asyncio.run(_ingest(pg, governed))
-    except (persistence.PersistenceError, psycopg.Error) as error:
-        # Only the class is printed: a driver message can name the host, and a store failure has no document text.
-        written = getattr(error, "written", ())  # set by ingest() when earlier tenants had committed
-        print(f"INGEST: failed ({type(error).__name__})" + (f" after writing {', '.join(written)}" if written else ""))
+    except (persistence.PersistenceError, psycopg.Error, corpus_ingest.IngestInterrupted) as error:
+        # A phase-2 failure arrives wrapped, with the tenants already committed; the failure itself is its cause.
+        cause: BaseException | None = error
+        written: tuple[str, ...] = ()
+        if isinstance(error, corpus_ingest.IngestInterrupted):
+            cause, written = error.__cause__, error.written
+        # Our own PersistenceError text is safe by contract and carries the hint ("run ... migrate"), so it is
+        # printed (final review, M2). A driver message can name the host, so only its class is.
+        detail = f": {cause}" if isinstance(cause, persistence.PersistenceError) else ""
+        after = f" after writing {', '.join(written)}" if written else ""
+        print(f"INGEST: failed ({type(cause).__name__}{detail}){after}")
         return 1
     except (corpus.CorpusError, corpus_ingest.IngestRefused) as error:
         written = getattr(error, "written", ())
