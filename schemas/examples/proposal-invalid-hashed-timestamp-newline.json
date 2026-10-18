@@ -1,0 +1,38 @@
+{
+  "canonicalization_version": 1,
+  "payload": {
+    "tenant_id": "00000000-0000-4000-8000-000000000001",
+    "run_id": "00000000-0000-4000-8000-000000000003",
+    "proposal_id": "00000000-0000-4000-8000-000000000004",
+    "revision": 1,
+    "action": "create_incident",
+    "destination": "synthetic-incidents",
+    "asset_id": "A17",
+    "start_at": "2026-10-05T12:00:00Z",
+    "end_at": "2026-10-06T12:00:00Z",
+    "title": "Review repeated synthetic warnings on A17",
+    "summary": "The supplied synthetic records contain two warnings within the requested interval. An independent reviewer should inspect the incident draft. Root cause is not established.",
+    "evidence_refs": [
+      "ALPHA-INCIDENT:v2:review"
+    ],
+    "source_snapshots": [
+      {
+        "evidence_id": "ALPHA-INCIDENT:v2:review",
+        "content_sha256": "8bc7631462663afea7fb457da5159c99f9ef3d3cffe21056d487c45c55931c4a",
+        "version": "2"
+      }
+    ],
+    "assumptions": [],
+    "limitations": [
+      "Synthetic data only.",
+      "Root cause is not established."
+    ],
+    "workflow_version": "investigation-v1",
+    "prompt_version": "incident-draft-v1",
+    "expires_at": "2026-10-06T12:15:00Z\n"
+  },
+  "payload_sha256": "9d5c1fb0f7ef65456f4ccf76396564e6290ecd530e58d2b32024e64079134cf7",
+  "authored_by": [
+    "00000000-0000-4000-8000-00000000000a"
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "fixture_version": "handoff-1",
+  "meta_version": 1,
+  "tenants": {
+    "alpha": "3ea79c95-914c-52cb-9d10-c4e19dda8ff7",
+    "beta": "5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201"
+  },
+  "alerts": [
+    {
+      "id": "A17-alert-001",
+      "alert_id": "cfa4e790-6f70-5e49-b73f-e9e8d613f52e",
+      "revision": 1
+    },
+    {
+      "id": "A17-alert-002",
+      "alert_id": "8fd07823-d6b4-5ffc-a691-3bba680494e1",
+      "revision": 1
+    },
+    {
+      "id": "A17-old-001",
+      "alert_id": "4f165b6c-3bda-5839-a401-6be0086b9dfc",
+      "revision": 1
+    }
+  ],
+  "sections": [
+    {
+      "document_id": "ALPHA-INCIDENT",
+      "version": "1",
+      "section": "review",
+      "sha256": "0f67280b897514761df6fb4d40ab28538ed50ff08cd491f4036b2a4fe271a16f"
+    },
+    {
+      "document_id": "ALPHA-INCIDENT",
+      "version": "2",
+      "section": "review",
+      "sha256": "62a90906c7bb706ae8a968eb0f7102f76b05d2c3be911c182d528a1fd25ef008"
+    },
+    {
+      "document_id": "ALPHA-INCIDENT",
+      "version": "2",
+      "section": "evidence",
+      "sha256": "a8919f234c64b61dc162c1c1f4a123ffee94aafa40f63f6ef37d52230e5199a5"
+    },
+    {
+      "document_id": "ALPHA-TRIAGE",
+      "version": "1",
+      "section": "scope",
+      "sha256": "251826cf5b158f7a2ae2493139eee4ca9273c414f4a0bcd004e63b63d85c659e"
+    },
+    {
+      "document_id": "ALPHA-TRIAGE",
+      "version": "1",
+      "section": "limits",
+      "sha256": "5dd3ba4aed75491f86732fb9737f21815bba638d3d737231a16b1220fd523840"
+    },
+    {
+      "document_id": "ALPHA-EVIDENCE",
+      "version": "1",
+      "section": "quality",
+      "sha256": "11851905eacf82a5c56ea37dfb08d0e8e009ad0e314f94658eaa89a5a7989183"
+    },
+    {
+      "document_id": "ALPHA-DRAFT",
+      "version": "1",
+      "section": "draft",
+      "sha256": "e9a8b05a2303255da79e8edaa30b31dd82d90aba024e9021b26de1fcb4e9d0a5"
+    },
+    {
+      "document_id": "BETA-INCIDENT",
+      "version": "1",
+      "section": "review",
+      "sha256": "ec829b884ca93d3aa998561ae5fae0527d76c66f707b91ba6f49f67e1dda4717"
+    },
+    {
+      "document_id": "BETA-TRIAGE",
+      "version": "1",
+      "section": "scope",
+      "sha256": "d3f98f4a55b5a8e76be1bb04bf2a366c2d58ededf00609e7ea3109290f951fbe"
+    },
+    {
+      "document_id": "BETA-EVIDENCE",
+      "version": "1",
+      "section": "quality",
+      "sha256": "3e53ae9eed261d76b117fc44b3f3546af8150169820d2e01cba90b7340f01071"
+    }
+  ]
+}

@@ -8,7 +8,25 @@
     "asset_id": "A17",
     "start_at": "2026-10-05T12:00:00Z",
     "end_at": "2026-10-06T12:00:00Z",
-    "alerts": []
+    "alerts": [
+      {
+        "alert_id": "cfa4e790-6f70-5e49-b73f-e9e8d613f52e",
+        "asset_id": "A17",
+        "occurred_at": "2026-10-06T08:00:00Z",
+        "code": "SIM-WARN",
+        "message": "Synthetic warning sample 1.",
+        "revision": 1
+      },
+      {
+        "alert_id": "8fd07823-d6b4-5ffc-a691-3bba680494e1",
+        "asset_id": "A17",
+        "occurred_at": "2026-10-06T10:00:00Z",
+        "code": "SIM-WARN",
+        "message": "Synthetic warning sample 2.",
+        "revision": 1
+      }
+    ],
+    "next_cursor": null
   },
   "error": null
 }

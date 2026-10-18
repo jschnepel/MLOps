@@ -28,7 +28,8 @@
     },
     "content_sha256": {
       "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
     },
     "excerpt": {
       "type": "string",
@@ -37,11 +38,13 @@
     },
     "effective_from": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
     },
     "retrieved_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
     }
   },
   "required": [

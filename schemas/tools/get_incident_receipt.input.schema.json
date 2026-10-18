@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operations-copilot:schema:tools/get_incident_receipt-input:1",
+  "title": "Operations Copilot tool input get_incident_receipt v1",
+  "$comment": "Target contract. Declarative validation does not implement authentication, authorization, semantic support, atomicity, or runtime integrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "proposal_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "proposal_id"
+  ]
+}

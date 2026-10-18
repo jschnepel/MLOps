@@ -8,8 +8,21 @@
   "properties": {
     "code": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 80
+      "enum": [
+        "UNAUTHENTICATED",
+        "FORBIDDEN",
+        "NOT_FOUND",
+        "VERSION_CONFLICT",
+        "IDEMPOTENCY_CONFLICT",
+        "INVALID_INPUT",
+        "RATE_LIMITED",
+        "UNAVAILABLE",
+        "ASSET_ACTION_UNRESOLVED",
+        "ASSET_INCIDENT_EXISTS",
+        "GRANT_EXISTS",
+        "SLOT_OCCUPIED",
+        "AUTHORITY_VIOLATION"
+      ]
     },
     "message": {
       "type": "string",

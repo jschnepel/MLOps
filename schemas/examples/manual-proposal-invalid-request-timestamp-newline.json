@@ -1,0 +1,14 @@
+{
+  "asset_id": "A17",
+  "start_at": "2026-10-05T12:00:00Z\n",
+  "end_at": "2026-10-06T12:00:00Z",
+  "title": "Review repeated synthetic warnings on A17",
+  "summary": "Two synthetic warnings in the interval.",
+  "evidence_refs": [
+    "ALPHA-INCIDENT:v2:review"
+  ],
+  "assumptions": [],
+  "limitations": [
+    "Synthetic data only."
+  ]
+}

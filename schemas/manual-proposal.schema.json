@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operations-copilot:schema:manual-proposal:1",
+  "title": "Operations Copilot target manual-proposal v1",
+  "$comment": "Target contract. Declarative validation does not implement authentication, authorization, semantic support, atomicity, or runtime integrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[A-Z][A-Z0-9_-]{0,31}(?![\\s\\S])"
+    },
+    "start_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|\\+00:00)(?![\\s\\S])"
+    },
+    "end_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|\\+00:00)(?![\\s\\S])"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2500
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      },
+      "minItems": 0,
+      "maxItems": 8
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      },
+      "minItems": 0,
+      "maxItems": 8
+    }
+  },
+  "required": [
+    "asset_id",
+    "start_at",
+    "end_at",
+    "title",
+    "summary",
+    "evidence_refs",
+    "assumptions",
+    "limitations"
+  ]
+}

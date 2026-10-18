@@ -1,0 +1,6 @@
+{
+  "model": "qwen3:8b",
+  "digest": "sha256:abababababababababababababababababababababababababababababababab",
+  "ollama_version": "0.12.3",
+  "probed_at": "2026-10-08T00:00:00Z"
+}

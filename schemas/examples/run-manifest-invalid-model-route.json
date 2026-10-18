@@ -1,0 +1,8 @@
+{
+  "run_id": "00000000-0000-4000-8000-000000000003",
+  "model_route": "gpt",
+  "model_digest": null,
+  "prompt_version": "incident-draft-v1",
+  "corpus_version": "fixture-1",
+  "retrieval_mode": "lexical"
+}

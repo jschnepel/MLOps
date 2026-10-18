@@ -1,0 +1,14 @@
+{
+  "status": "FAILED_NO_COMMIT",
+  "action_id": "00000000-0000-4000-8000-000000000007",
+  "payload_sha256": "9d5c1fb0f7ef65456f4ccf76396564e6290ecd530e58d2b32024e64079134cf7",
+  "receipt": null,
+  "tombstone": {
+    "action_id": "00000000-0000-4000-8000-000000000007",
+    "state": "ABORTED",
+    "payload_sha256": "9d5c1fb0f7ef65456f4ccf76396564e6290ecd530e58d2b32024e64079134cf7",
+    "reason": "cancelled before send",
+    "decided_at": "2026-10-06T12:04:00Z"
+  },
+  "reason": "conflict"
+}

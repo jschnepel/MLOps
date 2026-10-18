@@ -1,0 +1,20 @@
+{
+  "type": "recover",
+  "allowed_tools": [
+    "create_incident",
+    "get_incident_receipt",
+    "abort_incident"
+  ],
+  "run_states": [
+    "EXECUTING",
+    "OUTCOME_UNKNOWN",
+    "ESCALATED",
+    "ABANDONED_UNVERIFIED"
+  ],
+  "created_by": [
+    "mark_unknown",
+    "worker",
+    "reclaim_leases"
+  ],
+  "dedup_key": "00000000-0000-4000-8000-000000000007:timeout"
+}

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Validate this handoff package, not the target production application.
 
-Default checks need only Python's standard library. --contracts requires the
-jsonschema package. Snapshot/reference hash checks are intended before edits.
+Default checks need only Python's standard library (they import the stdlib-only scripts.gen_fixture_meta from this
+repository). --contracts requires the jsonschema package, plus rfc3339-validator so that its FormatChecker checks
+`date-time`; `uv run` provides both from the dev group. Snapshot/reference hash checks are intended before edits.
 
 --reference-tree (implied by --reference-code) enforces the whole reference/ tree against
 provenance/reference-tree.json: every listed file must be byte-identical to its zip member in
 the delivered 1.0 package (--zip), no listed file may be missing, no other file may exist under
-reference/ except the repository-owned reference/README.md (caches and build output skipped),
-and every reference-code-hashes.remap.json target must lie under reference/.
+reference/ except the repository-owned reference/README.md and reference/TRACEABILITY.md (caches
+and build output skipped), and every reference-code-hashes.remap.json target must lie under reference/.
 """
 
 from __future__ import annotations
@@ -24,6 +25,12 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[1]
+# `python -I` (how CI and the tests run this checker) drops both the script directory and the working directory from
+# sys.path, so put the repository root on it explicitly; without this `scripts.*` cannot be imported (the
+# scripts/probe.py pattern). The imported module is stdlib-only, so the default checks stay stdlib-only.
+sys.path.insert(0, str(ROOT))
+from scripts.gen_fixture_meta import generate as generate_fixture_meta
+
 # Directories the repository-wide walks ignore: environments and build output are not part of the package, and
 # reference/ is inherited code verified separately by hash, not parsed or syntax-checked as ours.
 SKIP_DIRS = {".venv", "node_modules", "reference", ".git", "__pycache__", ".pytest_cache", "build"}
@@ -100,8 +107,9 @@ def check_reference_code() -> int:
 # Generated directories that appear under reference/ when its tests run or it is installed; they are not
 # delivered files, so their presence must not fail the "no extra files" rule.
 TREE_SKIP_DIRS = {"__pycache__", "build", ".pytest_cache"}
-# The only file under reference/ this repository wrote, so it has no counterpart in the delivered zip.
-TREE_REPO_OWNED = {"README.md"}
+# The files under reference/ this repository wrote, so they have no counterpart in the delivered zip: README.md and,
+# from T46, TRACEABILITY.md (R123). Each must exist; check_reference_tree reports a missing one.
+TREE_REPO_OWNED = {"README.md", "TRACEABILITY.md"}
 
 
 def reference_tree_files() -> set[str]:
@@ -195,7 +203,10 @@ def main() -> int:
     parser.add_argument(
         "--reference-tree",
         action="store_true",
-        help="Every file under reference/ byte-identical to the --zip package; no extra/missing files; remap under reference/",
+        help=(
+            "Every file under reference/ byte-identical to the --zip package; no extra/missing files; "
+            "remap under reference/"
+        ),
     )
     parser.add_argument(
         "--zip",
@@ -261,6 +272,12 @@ def main() -> int:
         p = within("data/handoff-fixtures/" + doc["path"])
         actual = hashlib.sha256(p.read_bytes()).hexdigest()
         check(actual == doc["content_sha256"], f"Fixture hash mismatch: {p.name}")
+    # meta.json (T45) is derived from the markdown and the seed namespace; a stale copy would let an example cite a
+    # section hash that no longer matches the fixture bytes.
+    check(
+        load("data/handoff-fixtures/meta.json") == generate_fixture_meta(ROOT / "data/handoff-fixtures"),
+        "Fixture meta.json is stale: run uv run python -m scripts.gen_fixture_meta",
+    )
     scenarios = []
     for line in (ROOT / "evals/handoff-development/scenarios.jsonl").read_text(encoding="utf-8").splitlines():
         if line.strip():
@@ -289,17 +306,24 @@ def main() -> int:
         proposal["payload"], sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     ).encode()
     check(hashlib.sha256(raw).hexdigest() == proposal["payload_sha256"], "Example proposal hash mismatch")
-    for name in ["decision-valid", "outcome-success-valid", "outcome-unknown-valid"]:
+    # AM-11 renamed the decision's field to expected_payload_sha256; the outcomes keep payload_sha256.
+    check(
+        load("schemas/examples/decision-valid.json")["expected_payload_sha256"] == proposal["payload_sha256"],
+        "Example hash not linked: decision-valid",
+    )
+    for name in ["outcome-success-valid", "outcome-unknown-valid"]:
         check(
             load(f"schemas/examples/{name}.json")["payload_sha256"] == proposal["payload_sha256"],
             f"Example hash not linked: {name}",
         )
 
     print(
-        f"PASS: package structure; {len(json_paths)} JSON files; {len(tasks)} acyclic tasks; {len(requirements)} covered requirements"
+        f"PASS: package structure; {len(json_paths)} JSON files; {len(tasks)} acyclic tasks; "
+        f"{len(requirements)} covered requirements"
     )
     print(
-        f"PASS: {len(catalog['documents'])} source hashes; {len(scenarios)} development scenario cards; {py_count} Python syntax checks; 6 SVG XML files"
+        f"PASS: {len(catalog['documents'])} source hashes; {len(scenarios)} development scenario cards; "
+        f"{py_count} Python syntax checks; 6 SVG XML files; fixture meta.json current"
     )
     print("PASS: synthetic proposal/decision/outcome example hashes agree")
 
@@ -313,23 +337,74 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-        schema_paths = sorted((ROOT / "schemas").glob("*.schema.json"))
+        # Without rfc3339-validator the FormatChecker silently skips `date-time`, so a malformed timestamp would
+        # validate; fail closed here instead of relying on one probe's unexpected success to notice.
+        if "date-time" not in FormatChecker.checkers:
+            print(
+                "BLOCKED: --contracts requires rfc3339-validator (date-time format checks). This gate did not pass.",
+                file=sys.stderr,
+            )
+            return 2
+        from jsonschema.exceptions import best_match
+
+        # Meta-validate every schema: the top-level contracts, the per-tool input schemas and the evals schemas
+        # (quality-gates arrives with T23 and may be absent; holdout-case is T03's).
+        schema_paths = sorted((ROOT / "schemas").rglob("*.schema.json")) + sorted(
+            (ROOT / "evals").glob("*.schema.json")
+        )
         for path in schema_paths:
             Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
+
+        # Governed text must be LF-only and BOM-free so hashes and examples match across platforms (AM-80 checker
+        # changes; tests/plan_b/test_text_hygiene.py applies the same rule to every tracked file).
+        governed = [
+            p
+            for d in ("schemas", "data/handoff-fixtures", "handoff/prompts", "evals")
+            for p in (ROOT / d).rglob("*")
+            if p.is_file() and p.suffix in {".json", ".md", ".jsonl", ".txt", ".sha256"}
+        ]
+        for path in governed:
+            raw = path.read_bytes()
+            check(b"\r" not in raw, f"carriage return in governed file: {path.relative_to(ROOT)}")
+            check(not raw.startswith(b"\xef\xbb\xbf"), f"byte-order mark in governed file: {path.relative_to(ROOT)}")
+
+        index = load("schemas/examples/index.json")
+        check(index.get("version") == "1.3.3", f"index.json version must be 1.3.3, got {index.get('version')!r}")
         positive = negative = 0
-        for item in examples:
+        for item in index["examples"]:
+            # FormatChecker validates `date-time` only because rfc3339-validator is installed (dev group, T45).
             validator = Draft202012Validator(load(item["schema"]), format_checker=FormatChecker())
             errors = list(validator.iter_errors(load(item["path"])))
-            check(
-                (len(errors) == 0) is item["valid"],
-                f"Unexpected validation for {item['path']}: {[e.message for e in errors]}",
-            )
             if item["valid"]:
+                check(not errors, f"Valid example {item['path']} failed: {[e.message for e in errors]}")
                 positive += 1
-            else:
-                negative += 1
+                continue
+            # A negative example must fail, and fail for the reason the index states (R104): a typo elsewhere must not
+            # masquerade as proof that the row's rule is enforced.
+            check(
+                "reason" in item and "reason_match" in item,
+                f"Negative example {item['path']} lacks reason/reason_match",
+            )
+            check(bool(errors), f"Negative example {item['path']} validated; it must fail: {item['reason']}")
+            top = best_match(errors)
+            where = "$" + "".join(f".{p}" if isinstance(p, str) else f"[{p}]" for p in top.absolute_path)
+            text = f"{where}: {top.message}"
+            check(
+                re.search(item["reason_match"], text) is not None,
+                f"Negative example {item['path']} failed, but not for its stated reason. "
+                f"Expected /{item['reason_match']}/, got: {text}",
+            )
+            negative += 1
+
+        # AM-80 row "draft/alerts consistency": the draft example's prose must agree with the alerts it summarises.
+        alerts = load("schemas/examples/tool-get_recent_alerts-valid.json")["data"]["alerts"]
+        check(
+            len(alerts) == 2 and "two" in load("schemas/examples/draft-valid.json")["summary"].lower(),
+            "draft-valid.json and tool-get_recent_alerts-valid.json disagree on the alert count",
+        )
         print(
-            f"PASS: {len(schema_paths)} JSON Schema documents; {positive} accepted examples; {negative} rejected negative examples"
+            f"PASS: {len(schema_paths)} JSON Schema documents; {positive} accepted examples; "
+            f"{negative} negative examples failed for their stated reason; governed files LF-only"
         )
 
     # Combine with `|=` so every requested check runs and prints its failures; stopping at the first would
@@ -343,7 +418,8 @@ def main() -> int:
         rc |= check_manifest(Path(args.zip))
     # Printed on every run so a green result is not mistaken for evidence the application itself works.
     print(
-        "LIMIT: These are handoff/contract checks, not real model, authorization, MCP network, browser, Docker, Kubernetes or production acceptance tests."
+        "LIMIT: These are handoff/contract checks, not real model, authorization, MCP network, browser, Docker, "
+        "Kubernetes or production acceptance tests."
     )
     return rc
 

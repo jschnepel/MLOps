@@ -9,7 +9,9 @@
     "kind": {
       "enum": [
         "investigate",
-        "question"
+        "ask",
+        "status",
+        "clarification"
       ]
     },
     "text": {
@@ -23,7 +25,8 @@
       "properties": {
         "asset_id": {
           "type": "string",
-          "pattern": "^[A-Z][A-Z0-9_-]{0,31}$"
+          "maxLength": 32,
+          "pattern": "^[A-Z][A-Z0-9_-]{0,31}(?![\\s\\S])"
         },
         "hours": {
           "type": "integer",
@@ -32,6 +35,10 @@
         }
       },
       "required": []
+    },
+    "supersedes_run_id": {
+      "type": "string",
+      "format": "uuid"
     }
   },
   "required": [

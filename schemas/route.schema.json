@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operations-copilot:schema:route:1",
+  "title": "Operations Copilot target route v1",
+  "$comment": "Target contract. Declarative validation does not implement authentication, authorization, semantic support, atomicity, or runtime integrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "admission": {
+      "enum": [
+        "investigate",
+        "clarification_reply",
+        "status_question",
+        "readonly_answer",
+        "clarify",
+        "reject"
+      ]
+    },
+    "graph": {
+      "enum": [
+        "clarify",
+        "retrieve",
+        "draft",
+        "answer_only",
+        "abstain",
+        "freeze",
+        "await_decision",
+        "execute",
+        "recover",
+        "publish"
+      ]
+    },
+    "model": {
+      "enum": [
+        "fake",
+        "qwen3:8b"
+      ]
+    }
+  },
+  "required": [],
+  "minProperties": 1
+}

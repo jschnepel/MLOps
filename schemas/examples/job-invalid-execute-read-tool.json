@@ -1,0 +1,14 @@
+{
+  "type": "execute",
+  "allowed_tools": [
+    "get_recent_alerts"
+  ],
+  "run_states": [
+    "APPROVED",
+    "EXECUTING"
+  ],
+  "created_by": [
+    "record_decision"
+  ],
+  "dedup_key": "00000000-0000-4000-8000-000000000004"
+}

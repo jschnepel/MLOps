@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operations-copilot:schema:feedback:1",
+  "title": "Operations Copilot target feedback v1",
+  "$comment": "Target contract. Declarative validation does not implement authentication, authorization, semantic support, atomicity, or runtime integrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "subject_kind": {
+      "enum": [
+        "run",
+        "proposal",
+        "event"
+      ]
+    },
+    "subject_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "category": {
+      "enum": [
+        "wrong_evidence",
+        "missing_evidence",
+        "wrong_conclusion",
+        "unclear",
+        "other"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 2000
+    }
+  },
+  "required": [
+    "subject_kind",
+    "subject_id",
+    "category"
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operations-copilot:schema:run-manifest:1",
+  "title": "Operations Copilot target run-manifest v1",
+  "$comment": "Target contract. Declarative validation does not implement authentication, authorization, semantic support, atomicity, or runtime integrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "model_route": {
+      "enum": [
+        "fake",
+        "qwen3:8b"
+      ]
+    },
+    "model_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "prompt_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "corpus_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "retrieval_mode": {
+      "enum": [
+        "lexical",
+        "vector_exact"
+      ]
+    }
+  },
+  "required": [
+    "run_id",
+    "model_route",
+    "model_digest",
+    "prompt_version",
+    "corpus_version",
+    "retrieval_mode"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "model_route": {
+            "not": {
+              "const": "fake"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "model_digest": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}

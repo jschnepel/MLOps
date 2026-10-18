@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operations-copilot:schema:cancel-response:1",
+  "title": "Operations Copilot target cancel-response v1",
+  "$comment": "Target contract. Declarative validation does not implement authentication, authorization, semantic support, atomicity, or runtime integrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "status": {
+      "enum": [
+        "QUEUED",
+        "AWAITING_INPUT",
+        "RETRIEVING",
+        "DRAFTING",
+        "AWAITING_APPROVAL",
+        "APPROVED",
+        "EXECUTING",
+        "OUTCOME_UNKNOWN",
+        "SUCCEEDED",
+        "ANSWERED",
+        "REJECTED",
+        "CANCELLED",
+        "INSUFFICIENT_EVIDENCE",
+        "FAILED",
+        "BLOCKED_REVIEW",
+        "ESCALATED",
+        "ABANDONED_UNVERIFIED"
+      ]
+    },
+    "state_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "cancel_requested": {
+      "const": true
+    },
+    "grant_exists": {
+      "type": "boolean"
+    },
+    "attempt_state": {
+      "anyOf": [
+        {
+          "enum": [
+            "INTENT",
+            "SENT",
+            "ABORT_REQUESTED",
+            "RESOLVED"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "note": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "run_id",
+    "status",
+    "state_version",
+    "cancel_requested",
+    "grant_exists",
+    "attempt_state",
+    "note"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "grant_exists": {
+            "const": false
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "attempt_state": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "CANCELLED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "grant_exists": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "grant_exists": {
+            "const": false
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "not": {
+              "enum": [
+                "EXECUTING",
+                "OUTCOME_UNKNOWN",
+                "SUCCEEDED",
+                "ESCALATED",
+                "ABANDONED_UNVERIFIED"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "QUEUED",
+              "AWAITING_INPUT",
+              "RETRIEVING",
+              "DRAFTING",
+              "AWAITING_APPROVAL",
+              "APPROVED",
+              "ANSWERED",
+              "REJECTED",
+              "INSUFFICIENT_EVIDENCE",
+              "BLOCKED_REVIEW"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "grant_exists": {
+            "const": false
+          }
+        }
+      }
+    }
+  ]
+}
