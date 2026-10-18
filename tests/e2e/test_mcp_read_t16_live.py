@@ -8,7 +8,8 @@ test clock must move it into the A17 seal-leak window); a page whose `truncated`
 reading beta's B22, whether it names B22 on an A17 run (refused before asset-sim) or its run itself names B22
 (asset-sim's own tenant filter: NOT_FOUND); another interval served; a search that leaves the run's asset type or
 returns a revoked procedure; a requester who lost the membership still served by any of the three tools; and an
-asset-sim failure (unavailable, malformed, slow) that is not the documented envelope.
+asset-sim failure (unavailable, malformed, slow) that is not the documented envelope; and the worker's own client
+(R029: discovery, then the committed schemas) refusing the real server.
 Writes reports/mcp-read/t16-read-tools.txt (codes and counts only).
 """
 
@@ -28,6 +29,7 @@ from ops_core.jobs import Tool
 from ops_core.mcp_protocol import PROTOCOL_VERSION
 from ops_core.settings import Role
 from ops_core.tokens import WorkloadTokenSource
+from ops_worker.mcp import HttpMcpCaller
 
 from tests.e2e.conftest import lease_for, purge_run
 from tests.e2e.test_fenced_definers_live import investigate_job, read_handle
@@ -43,7 +45,7 @@ SEAL_WINDOW = (datetime(2026, 10, 5, tzinfo=UTC), datetime(2026, 10, 7, tzinfo=U
 INTERVAL = {"start_at": "2026-10-05T00:00:00Z", "end_at": "2026-10-07T00:00:00Z"}
 MOVE = "UPDATE app.test_clock SET clock_offset = %s::timestamptz - clock_timestamp()"  # test_harness only (AM-20.6)
 EVIDENCE = Path("reports/mcp-read/t16-read-tools.txt")
-EXPECTED_LINES = 5  # one per test below
+EXPECTED_LINES = 6  # one per test below
 
 
 @pytest.fixture(scope="module")
@@ -253,5 +255,37 @@ async def test_asset_sim_failures_reach_the_caller_as_their_envelopes(
             "timeout_before_accept": ("UNAVAILABLE", True),
         }
         lines.append(f"asset-sim faults through mcp-read: {seen}")
+    finally:
+        await purge_run(app_conn, run)
+
+
+async def test_r029_the_workers_client_accepts_the_real_server_and_every_real_read(
+    app_conn: persistence.Conn, role_conn: RoleConn, secret: Callable[[str], str], lines: list[str]
+) -> None:
+    """The positive half of R029 (the negative half, an altered listing or result, is tests/plan_m/test_worker_r029.py):
+    the worker's client lists in the same session, compares the advertised schemas with the committed files and
+    validates each result, and all three reads of a real run pass."""
+    _, _, run = await new_run(app_conn, ALPHA, api=await role_conn(Role.API), interval=SEAL_WINDOW)
+    caller = HttpMcpCaller(
+        WorkloadTokenSource(
+            token_url=settings.keycloak().token_url,
+            client_id="ops-worker",
+            client_secret=secret("kc_client_secret_ops_worker"),
+        )
+    )
+    reads = (
+        (Tool.GET_ASSET_STATUS, {"asset_id": "A17"}),
+        (Tool.GET_RECENT_ALERTS, {"asset_id": "A17", **INTERVAL, "limit": 5}),
+        (Tool.SEARCH_PROCEDURES, {"query": "seal inspection", "limit": 3, "mode": "lexical"}),
+    )
+    try:
+        async with serving() as url:
+            handle = await handle_for(app_conn, role_conn, run, "t16-r029")
+            statuses = [
+                (await caller.call(url, handle=handle, tool=name.value, arguments=arguments))["status"]
+                for name, arguments in reads
+            ]
+        assert statuses == ["ok", "ok", "ok"]
+        lines.append("R029: the worker's client listed, compared the schemas and validated all three reads: ok")
     finally:
         await purge_run(app_conn, run)
