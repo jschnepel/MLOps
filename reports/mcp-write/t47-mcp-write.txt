@@ -1,5 +1,5 @@
-T47 mcp-write — 2026-10-16T12:01:02Z
-R131 write half: mcp_exec EXECUTE = the seven write-path functions; 18 others refused (mark_unknown 42501)
+T47 mcp-write — 2026-10-18T06:23:57Z
+R131 write half: mcp_exec EXECUTE = the seven write-path functions; 20 others refused (mark_unknown 42501)
 R131 write half: investigate and resume_input handles refused at all three tools (each live at mcp_read), lying server column refused (and at mcp_exec); no grant; the execute handle answered SUCCEEDED
 R131/DoD 3 token half: ops-mcp-read token 403 at incidents, lookup and abort; ops-mcp-write 404
 R030: execute, investigate and APPROVED-run (no grant) recover handles refused at the recovery tools; recover lookup: delay_receipt 404 -> UNKNOWN unrecorded, then SUCCEEDED (minimal outcome); GETs only; counts unchanged

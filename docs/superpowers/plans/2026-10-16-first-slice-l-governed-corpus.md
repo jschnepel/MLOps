@@ -393,7 +393,7 @@ header and grants), R131's read half (ruling 1), the Plan L debt list (SA:698).
   `persistence.GOVERNED_CORPUS`, `Procedure`, `Procedures`, `search_procedures(conn, *, handle, azp, query,
   asset_type, limit) -> Procedures`; `tests.e2e.conftest.purge_corpus(conn, tenant_id)`.
 
-- [ ] **Step 1a: Record both baselines**
+- [x] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN` with pytest `1161 passed, 182 skipped`; with the
 dev stack up and `uv run python scripts/skeleton.py status` showing every process down, run
@@ -402,12 +402,12 @@ dev stack up and `uv run python scripts/skeleton.py status` showing every proces
 reports/outbox reports/mcp-read reports/mcp-write`. Record both lines in the report (Global Constraints, "Counts"). A
 gate that is not GREEN stops the plan here, before anything is committed.
 
-- [ ] **Step 1b: Record the base**
+- [x] **Step 1b: Record the base**
 
 Run `git rev-parse --short HEAD` and write the hash it prints as `BASE=<hash>` in the report and in the SDD ledger
 (`.superpowers/sdd/2026-10-16-first-slice-l-governed-corpus/progress.md`). Task 6's commit span is `<base>..<last>`.
 
-- [ ] **Step 1c: Commit the debt list (before any code)**
+- [x] **Step 1c: Commit the debt list (before any code)**
 
 Edit 1 (`SESSION_STATE.md`, at the end of "Plan K debt list (T47; committed before coding) [R6-B7]"), replace:
 
@@ -449,7 +449,7 @@ git add SESSION_STATE.md
 git commit -m "docs: declare Plan L's shortcuts before coding (T17 debt list)"
 ```
 
-- [ ] **Step 2: Put `tests/plan_l` on the test path**
+- [x] **Step 2: Put `tests/plan_l` on the test path**
 
 Edit 1 (`pyproject.toml`, `testpaths`), replace:
 
@@ -469,7 +469,7 @@ Create `tests/plan_l/__init__.py`:
 """Plan L (T17): the governed corpus, its ingestion and the lexical baseline, without a database."""
 ```
 
-- [ ] **Step 3: Write the failing revision tests**
+- [x] **Step 3: Write the failing revision tests**
 
 Create `tests/plan_l/test_migration_0011.py`:
 
@@ -639,7 +639,7 @@ def test_mcp_read_refuses_a_database_without_0011(monkeypatch: pytest.MonkeyPatc
 Run: `uv run python -m pytest tests/plan_l/test_migration_0011.py -q`
 Expected: `9 failed`: six with `FileNotFoundError` (the revision file does not exist yet), two with `AttributeError` (`ops_core.persistence` has no `GOVERNED_CORPUS`; `scripts.skeleton` has no `ensure_extensions`), and `test_mcp_read_refuses_a_database_without_0011` with `Failed: DID NOT RAISE PersistenceError` (mcp-read still starts without 0011).
 
-- [ ] **Step 4: The bootstrap, the revision, the matrix and the startup check**
+- [x] **Step 4: The bootstrap, the revision, the matrix and the startup check**
 
 Edit 1 (`scripts/skeleton.py`, the module header), replace:
 
@@ -1287,7 +1287,7 @@ with:
 Run: `uv run python -m pytest tests/plan_l tests/plan_e tests/plan_h/test_locking.py tests/plan_k -q`
 Expected: `218 passed`.
 
-- [ ] **Step 5: The live definer tests and R131's ACL equality**
+- [x] **Step 5: The live definer tests and R131's ACL equality**
 
 These run only under `OPS_LIVE=1`; the dry run of this plan could not run them (see "Counts").
 
@@ -1815,7 +1815,7 @@ Run (live; dev stack up, every skeleton process down):
 `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migration_0011_live.py tests/e2e/test_mcp_read_t15_live.py -k "0011 or can_execute_no_write_path" -q`
 Expected: `7 passed` (not measured in the dry run: the six tests of the new module and the R131 read-half test).
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
 Format, lint and count characters on every file this task created or changed (`scripts/skeleton.py`, the revision,
 `privileges.py`, `locking.py`, `persistence.py`, mcp-read's `server.py`, `tests/plan_l/*.py`,
@@ -1901,7 +1901,7 @@ uses laser, alignment, shim, dial indicator, tolerance, millimetre, viscosity, a
 handover or guard; no beta document uses seal, gland, drip, cooldown, frost, belt, bypass, decibel, idler, vendor or
 portal.
 
-- [ ] **Step 1: The documents, the catalog and the assets**
+- [x] **Step 1: The documents, the catalog and the assets**
 
 Create each file below with exactly the text shown (a trailing newline after the last line, LF line ends, no BOM).
 Their bytes are locked in Step 3: a copy that differs by one character fails the lock checks.
@@ -2685,7 +2685,7 @@ Create `data/corpus/assets.json`:
 }
 ```
 
-- [ ] **Step 2: Write the failing corpus tests**
+- [x] **Step 2: Write the failing corpus tests**
 
 Create `tests/plan_l/test_corpus_files.py`:
 
@@ -2928,7 +2928,7 @@ def test_the_loader_refuses_a_stray_or_unlabelled_document(tmp_path: Path) -> No
 Run: `uv run python -m pytest tests/plan_l/test_corpus_files.py -q`
 Expected: `1 error` (collection: `ImportError: cannot import name 'corpus' from 'ops_core'`).
 
-- [ ] **Step 3: `ops_core.corpus`, the generator, the lock and `meta.json`**
+- [x] **Step 3: `ops_core.corpus`, the generator, the lock and `meta.json`**
 
 Create `core/src/ops_core/corpus.py`:
 
@@ -3522,7 +3522,7 @@ f054d440d29972f2024115b4d0b1373daaa55326dacded1ea0dc3b46ed57547f  catalog.json
 Run: `uv run python -m pytest tests/plan_l/test_corpus_files.py -q`
 Expected: `25 passed`.
 
-- [ ] **Step 4: The checker knows the corpus**
+- [x] **Step 4: The checker knows the corpus**
 
 Edit 1 (`scripts/verify_handoff.py`, the module docstring), replace:
 
@@ -3608,7 +3608,7 @@ with:
 `corpus_files.load` raises `CorpusError`, a `ValueError`, so a broken corpus is the checker's usual one-line `FAIL:`
 and exit 1.
 
-- [ ] **Step 5: Gates and commit**
+- [x] **Step 5: Gates and commit**
 
 Format, lint and count characters on `core/src/ops_core/corpus.py`, `scripts/gen_corpus_meta.py`,
 `scripts/verify_handoff.py` and `tests/plan_l/test_corpus_files.py`.
@@ -3658,7 +3658,7 @@ rulings 5-8.
   `read_store(conn)`, `ingest(conn, corpus, tenants) -> list[Report]`; `scripts.skeleton.CORPUS`, `SEED_IDS`,
   `corpus_tenants()`, `ingest() -> int`; the fixture `tests.e2e.conftest.ingested`.
 
-- [ ] **Step 1: Write the failing plan and command tests**
+- [x] **Step 1: Write the failing plan and command tests**
 
 Create `tests/plan_l/test_ingest_plan.py`:
 
@@ -3830,7 +3830,7 @@ def test_the_command_reports_refusals_and_writes_nothing(
 Run: `uv run python -m pytest tests/plan_l/test_ingest_plan.py -q`
 Expected: `1 error` (collection: `ImportError: cannot import name 'ingest' from 'ops_core'`).
 
-- [ ] **Step 2: The planner, the writer and the command**
+- [x] **Step 2: The planner, the writer and the command**
 
 Create `core/src/ops_core/ingest.py`:
 
@@ -4258,7 +4258,7 @@ with:
 Run: `uv run python -m pytest tests/plan_l -q`
 Expected: `45 passed`.
 
-- [ ] **Step 3: The `ingested` fixture and the live R032 tests**
+- [x] **Step 3: The `ingested` fixture and the live R032 tests**
 
 Edit 1 (`tests/e2e/conftest.py`, the imports), replace:
 
@@ -4520,7 +4520,7 @@ async def test_the_seeded_tenants_hold_the_committed_corpus_once(
 Run (live): `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_ingest_live.py -q`
 Expected: `2 passed` (not measured in the dry run).
 
-- [ ] **Step 4: Gates and commit**
+- [x] **Step 4: Gates and commit**
 
 Format, lint and count characters on `core/src/ops_core/ingest.py`, `scripts/skeleton.py`, `tests/e2e/conftest.py`,
 `tests/e2e/test_ingest_live.py` and `tests/plan_l/test_ingest_plan.py`.
@@ -4586,7 +4586,7 @@ asset_type_filters`; `test_search_is_lexical_deterministic_and_bounded` → `::t
 tests that asserted `ALPHA-INCIDENT:v2:review` first now assert the corpus section that answers their query is among
 the results, and first (round 1, M10: first by a wide margin in the critic's emulation).
 
-- [ ] **Step 1: Write the failing tool tests**
+- [x] **Step 1: Write the failing tool tests**
 
 Create `tests/plan_l/test_mcp_read_corpus.py`:
 
@@ -4731,7 +4731,7 @@ async def test_a_definer_refusal_is_an_envelope(monkeypatch: pytest.MonkeyPatch)
 Run: `uv run python -m pytest tests/plan_l/test_mcp_read_corpus.py -q`
 Expected: `6 failed`, each with `TypeError: State.__init__() missing 1 required positional argument: 'corpora'` (the server still holds the fixture corpus).
 
-- [ ] **Step 2: The tool on the definer; the fixture corpus goes**
+- [x] **Step 2: The tool on the definer; the fixture corpus goes**
 
 Edit 1 (`mcp-read/src/ops_mcp_read/server.py`, the module docstring), replace:
 
@@ -5247,7 +5247,7 @@ with:
 Run: `uv run python -m pytest tests/plan_l tests/plan_d tests/plan_j tests/plan_k -q`
 Expected: `248 passed`.
 
-- [ ] **Step 3: The schema examples cite the section hash and the catalog's version name**
+- [x] **Step 3: The schema examples cite the section hash and the catalog's version name**
 
 Edit 1 (`scripts/build_schemas.py`, `evidence`), replace:
 
@@ -5326,7 +5326,7 @@ hash), no schema.
 Run: `uv run python -m pytest tests/plan_c -q`
 Expected: `285 passed, 19 skipped`.
 
-- [ ] **Step 4: The live tests read the governed corpus**
+- [x] **Step 4: The live tests read the governed corpus**
 
 Replace the whole of `tests/e2e/test_mcp_read_live.py` with (ruling 20's HTTP live test of the tool):
 
@@ -5536,7 +5536,7 @@ tests/e2e/test_mcp_read_t15_live.py tests/e2e/test_mcp_read_process_live.py test
 -q`
 Expected: `9 passed` (not measured in the dry run: 1 + 5 + 2 + 1).
 
-- [ ] **Step 5: Gates and commit**
+- [x] **Step 5: Gates and commit**
 
 Format, lint and count characters on mcp-read's `server.py`, `core/src/ops_core/settings.py`,
 `scripts/build_schemas.py` and every test module this task created or changed.
@@ -5595,7 +5595,7 @@ from the corpus, or the other tenant's. Their words were chosen as a user would 
 cross-tenant probes reuse words the other tenant's documents hold and the asking tenant's do not, except where a
 shared word ("pump", "compressor") is part of a natural question.
 
-- [ ] **Step 1: The development queries**
+- [x] **Step 1: The development queries**
 
 Create `evals/retrieval/dev-queries.jsonl` (47 lines; alpha A01-A26, beta B01-B21):
 
@@ -5649,7 +5649,7 @@ Create `evals/retrieval/dev-queries.jsonl` (47 lines; alpha A01-A26, beta B01-B2
 {"id": "B21", "tenant": "beta", "category": "injected", "query": "What does the note appended to the contractor memo say?", "asset_type": null, "expected": ["BETA-CONTRACTOR-MEMO:v1:memo-note"], "expect_none": false}
 ```
 
-- [ ] **Step 2: Write the failing measurement tests**
+- [x] **Step 2: Write the failing measurement tests**
 
 Create `tests/plan_l/test_retrieval_baseline.py`:
 
@@ -5759,7 +5759,7 @@ def test_the_summary_uses_the_right_denominators() -> None:
 Run: `uv run python -m pytest tests/plan_l/test_retrieval_baseline.py -q`
 Expected: `1 error` (collection: `ImportError: cannot import name 'retrieval_baseline' from 'scripts'`).
 
-- [ ] **Step 3: The metrics and the report**
+- [x] **Step 3: The metrics and the report**
 
 Create `scripts/retrieval_baseline.py`:
 
@@ -6067,7 +6067,7 @@ def markdown(doc: Mapping[str, Any]) -> str:
 Run: `uv run python -m pytest tests/plan_l/test_retrieval_baseline.py -q`
 Expected: `5 passed`.
 
-- [ ] **Step 4: The live measurement**
+- [x] **Step 4: The live measurement**
 
 Create `tests/e2e/test_retrieval_baseline_live.py`:
 
@@ -6168,7 +6168,7 @@ no-source lines in the report of this task (the no-source figure is Task 6's `<e
 measurements, not targets, and development figures (the 0.25 minimum rank was chosen on these queries); only a
 forbidden section fails the test.
 
-- [ ] **Step 5: `docs/retrieval.md`**
+- [x] **Step 5: `docs/retrieval.md`**
 
 Create `docs/retrieval.md`:
 
@@ -6287,7 +6287,7 @@ of the queries (which sections answer, and that the superseded, expired, revoked
 check that is independent of both. T18 compares exact vector search against the same JSON.
 ```
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
 Format, lint and count characters on `scripts/retrieval_baseline.py`, `tests/plan_l/test_retrieval_baseline.py` and
 `tests/e2e/test_retrieval_baseline_live.py`.
@@ -6339,7 +6339,7 @@ of the close-out. `<empty>` is the no-source result of Task 5's report, written 
 `summary.none_answered_empty` in `reports/retrieval/t17-lexical-baseline.json`); Step 1's script prints it. Step 4
 replaces every one of them.
 
-- [ ] **Step 1: Handoff records**
+- [x] **Step 1: Handoff records**
 
 Run this once from the repository root, with `BASE` set to the hash Task 1 Step 1b recorded (it rewrites the two JSON
 files in their own format: two-space indent, non-ASCII kept, one trailing newline). It is a script file, not an
@@ -6505,7 +6505,7 @@ Expected: it prints the span and the no-source figure as `k/n` (for example `1a2
 `<empty>` below). `git diff --stat handoff` shows three files changed;
 `git diff handoff/acceptance-matrix.json` shows four rows: R032, R033, R099 and R131.
 
-- [ ] **Step 2: Project state**
+- [x] **Step 2: Project state**
 
 Edit 1 (`SESSION_STATE.md`, under "Session state"), replace:
 
@@ -6692,7 +6692,7 @@ replacing their parenthesised text. The "Exact next step" above is computed from
 T16 comes first in the file; T41 also waits for T03's owner step, and T19 (T07 and T17 done) for T02, T03 and T44's
 owner steps.
 
-- [ ] **Step 3: Status, architecture, history, runbooks and READMEs**
+- [x] **Step 3: Status, architecture, history, runbooks and READMEs**
 
 Edit 1 (`STATUS.md`, at the end of "Update — Plan K executed (2026-10-16, branch `plan-k`)"), replace:
 
@@ -7007,7 +7007,7 @@ git grep -n "fixture-backed\|until T17\|arrive with T16 and T17\|reads the fixtu
 
 Expected: both print nothing.
 
-- [ ] **Step 4: Final gates and the placeholders**
+- [x] **Step 4: Final gates and the placeholders**
 
 ```bash
 PYTHONUTF8=1 uv run python scripts/check.py
@@ -7026,7 +7026,7 @@ reports/bootstrap reports/auth`; the live run rewrote `reports/skeleton`, `repor
 commits them (`reports/mcp-read/t15-mcp-read.txt` carries the new R131 line). Tick this plan's checkboxes (`- [ ]` →
 `- [x]`) for every step executed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add handoff SESSION_STATE.md STATUS.md README.md mcp-read/README.md evals/README.md data/handoff-fixtures/README.md

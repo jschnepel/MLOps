@@ -1,5 +1,5 @@
-T14 event journal — 2026-10-16T11:28:16Z
+T14 event journal — 2026-10-18T06:21:47Z
 R089 stepped: worker transition_run took 2, api append_event waited and took 3
 R089 stepped: mcp_exec mark_sent took 5, sweeper append_event waited and took 6
 R089 rollback: api took 2 and rolled back; the waiting worker took 2; no hole
-R089 stress: 8 connections of api, worker, sweeper and mcp_exec on 3 runs for 10 s; committed 4721, rolled back 4544; 4730 events, every run exactly 1..next_event_seq; the cursor followed every run to its counter in 1010 non-empty pages, the counter saw 1177 distinct maxima; no hole and no skip; 55P03 0, 40P01 0
+R089 stress: 8 connections of api, worker, sweeper and mcp_exec on 3 runs for 10 s; committed 4585, rolled back 4396; 4594 events, every run exactly 1..next_event_seq; the cursor followed every run to its counter in 997 non-empty pages, the counter saw 1162 distinct maxima; no hole and no skip; 55P03 0, 40P01 0

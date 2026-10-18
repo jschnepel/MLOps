@@ -1,0 +1,1319 @@
+{
+  "report": "t17-lexical-baseline",
+  "measured_at": "2026-10-18T06:24:49Z",
+  "as_of": "2026-10-16T12:00:00Z",
+  "corpus_version": "corpus-1",
+  "lock_sha256": "81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862",
+  "queries": "evals/retrieval/dev-queries.jsonl",
+  "queries_sha256": "d6d539bdd9a540f6e7a66dd641c05e5c1ee97c1561c59f5b67896fedb1596938",
+  "settings": {
+    "method": "PostgreSQL full-text search inside app.search_procedures_scoped (revision 0011)",
+    "text_search_config": "english",
+    "document_vector": "setweight(to_tsvector(section), 'A') || setweight(to_tsvector(body), 'D'), stored, GIN index",
+    "query": "the OR of the query's own english lexemes, after every character outside a-z and 0-9 becomes a space",
+    "rank": "ts_rank_cd(document_vector, query), default normalization (none: a longer query scores higher)",
+    "tie_break": "evidence_id ascending in byte order (COLLATE \"C\")",
+    "minimum_rank": "greater than 0.25 (app._min_rank()), chosen on these same 47 development queries, so the baseline is a development figure, not a held-out one; tuning it is T18's",
+    "k": 5,
+    "chunk": "one chunk per ## section; size measured as [a-z0-9]+ words",
+    "filters": "tenant from the handle; latest state approved; effective at app.current_time(); not retired (a later version that left draft has reached its effective_from); asset family equal to asset_type or NULL"
+  },
+  "chunk_words": {
+    "n": 69,
+    "min": 45,
+    "median": 77,
+    "max": 119
+  },
+  "summary": {
+    "k": 5,
+    "cases": 47,
+    "answerable": 27,
+    "expect_none": 20,
+    "recall_at_k": 1.0,
+    "precision_at_k": 0.2296,
+    "precision_ceiling_at_k": 0.2296,
+    "mrr_at_k": 0.8963,
+    "hit_at_k": {
+      "successes": 27,
+      "n": 27,
+      "rate": 1.0,
+      "wilson95": [
+        0.8754,
+        1.0
+      ]
+    },
+    "all_expected_at_k": {
+      "successes": 27,
+      "n": 27,
+      "rate": 1.0,
+      "wilson95": [
+        0.8754,
+        1.0
+      ]
+    },
+    "none_answered_empty": {
+      "successes": 15,
+      "n": 20,
+      "rate": 0.75,
+      "wilson95": [
+        0.5313,
+        0.8881
+      ]
+    },
+    "cases_without_forbidden": {
+      "successes": 47,
+      "n": 47,
+      "rate": 1.0,
+      "wilson95": [
+        0.9244,
+        1.0
+      ]
+    },
+    "forbidden_rows": {
+      "forbidden": 0,
+      "returned": 122
+    },
+    "by_category": {
+      "answerable": {
+        "n": 14,
+        "hit_at_k": {
+          "successes": 14,
+          "n": 14,
+          "rate": 1.0,
+          "wilson95": [
+            0.7847,
+            1.0
+          ]
+        },
+        "none_answered_empty": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "wilson95": null
+        },
+        "forbidden_rows": 0
+      },
+      "superseded": {
+        "n": 4,
+        "hit_at_k": {
+          "successes": 4,
+          "n": 4,
+          "rate": 1.0,
+          "wilson95": [
+            0.5101,
+            1.0
+          ]
+        },
+        "none_answered_empty": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "wilson95": null
+        },
+        "forbidden_rows": 0
+      },
+      "expired": {
+        "n": 4,
+        "hit_at_k": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "wilson95": null
+        },
+        "none_answered_empty": {
+          "successes": 3,
+          "n": 4,
+          "rate": 0.75,
+          "wilson95": [
+            0.3006,
+            0.9544
+          ]
+        },
+        "forbidden_rows": 0
+      },
+      "revoked": {
+        "n": 4,
+        "hit_at_k": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "wilson95": null
+        },
+        "none_answered_empty": {
+          "successes": 4,
+          "n": 4,
+          "rate": 1.0,
+          "wilson95": [
+            0.5101,
+            1.0
+          ]
+        },
+        "forbidden_rows": 0
+      },
+      "draft_only": {
+        "n": 4,
+        "hit_at_k": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "wilson95": null
+        },
+        "none_answered_empty": {
+          "successes": 2,
+          "n": 4,
+          "rate": 0.5,
+          "wilson95": [
+            0.15,
+            0.85
+          ]
+        },
+        "forbidden_rows": 0
+      },
+      "missing_source": {
+        "n": 4,
+        "hit_at_k": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "wilson95": null
+        },
+        "none_answered_empty": {
+          "successes": 4,
+          "n": 4,
+          "rate": 1.0,
+          "wilson95": [
+            0.5101,
+            1.0
+          ]
+        },
+        "forbidden_rows": 0
+      },
+      "cross_tenant": {
+        "n": 4,
+        "hit_at_k": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "wilson95": null
+        },
+        "none_answered_empty": {
+          "successes": 2,
+          "n": 4,
+          "rate": 0.5,
+          "wilson95": [
+            0.15,
+            0.85
+          ]
+        },
+        "forbidden_rows": 0
+      },
+      "asset_filtered": {
+        "n": 5,
+        "hit_at_k": {
+          "successes": 5,
+          "n": 5,
+          "rate": 1.0,
+          "wilson95": [
+            0.5655,
+            1.0
+          ]
+        },
+        "none_answered_empty": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "wilson95": null
+        },
+        "forbidden_rows": 0
+      },
+      "injected": {
+        "n": 2,
+        "hit_at_k": {
+          "successes": 2,
+          "n": 2,
+          "rate": 1.0,
+          "wilson95": [
+            0.3424,
+            1.0
+          ]
+        },
+        "none_answered_empty": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "wilson95": null
+        },
+        "forbidden_rows": 0
+      },
+      "conflicting": {
+        "n": 2,
+        "hit_at_k": {
+          "successes": 2,
+          "n": 2,
+          "rate": 1.0,
+          "wilson95": [
+            0.3424,
+            1.0
+          ]
+        },
+        "none_answered_empty": {
+          "successes": 0,
+          "n": 0,
+          "rate": null,
+          "wilson95": null
+        },
+        "forbidden_rows": 0
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "A01",
+      "tenant": "alpha",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-PUMP-SEAL:v2:inspection"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:inspection",
+          "rank": 1.7
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:purpose",
+          "rank": 0.5
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:isolation",
+          "rank": 0.4
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:records",
+          "rank": 0.3
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A02",
+      "tenant": "alpha",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-PUMP-SEAL:v2:leak-response"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:leak-response",
+          "rank": 0.9
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:inspection",
+          "rank": 0.4
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:purpose",
+          "rank": 0.3
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:records",
+          "rank": 0.3
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A03",
+      "tenant": "alpha",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-PUMP-SEAL:v2:isolation"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:isolation",
+          "rank": 1.7
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:inspection",
+          "rank": 1.6
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:purpose",
+          "rank": 0.4
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:records",
+          "rank": 0.3
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A04",
+      "tenant": "alpha",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-ALERT-REVIEW:v1:interval",
+        "ALPHA-ALERT-REVIEW:v1:repeated-alerts"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:repeated-alerts",
+          "rank": 1.6
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:interval",
+          "rank": 0.7
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:purpose",
+          "rank": 0.6
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:trip-review",
+          "rank": 0.4
+        },
+        {
+          "evidence_id": "ALPHA-VENDOR-PORTAL:v1:vendor-contact",
+          "rank": 0.4
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A05",
+      "tenant": "alpha",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-ALERT-REVIEW:v1:repeated-alerts"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:repeated-alerts",
+          "rank": 3.2
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:purpose",
+          "rank": 0.9
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:interval",
+          "rank": 0.7
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:trip-review",
+          "rank": 0.7
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:evidence",
+          "rank": 0.5
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A06",
+      "tenant": "alpha",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-ALERT-REVIEW:v1:evidence"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:repeated-alerts",
+          "rank": 1.6
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:evidence",
+          "rank": 0.8
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:handoff",
+          "rank": 0.5
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:interval",
+          "rank": 0.5
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:records",
+          "rank": 0.5
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A07",
+      "tenant": "alpha",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-ALERT-REVIEW:v1:handoff"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:inspection",
+          "rank": 1.1
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:handoff",
+          "rank": 0.9
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:trip-review",
+          "rank": 0.3
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:leak-response",
+          "rank": 0.3
+        },
+        {
+          "evidence_id": "ALPHA-VENDOR-PORTAL:v1:portal-note",
+          "rank": 0.3
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A08",
+      "tenant": "alpha",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-COMPRESSOR-TRIP:v1:trip-review"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:trip-review",
+          "rank": 1.9
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:purpose",
+          "rank": 1.2
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:purpose",
+          "rank": 0.9
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:records",
+          "rank": 0.9
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:restart-wait",
+          "rank": 0.8
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A09",
+      "tenant": "alpha",
+      "category": "superseded",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-PUMP-SEAL:v2:inspection"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:inspection",
+          "rank": 2.0
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:interval",
+          "rank": 1.4
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:leak-response",
+          "rank": 0.4
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:purpose",
+          "rank": 0.4
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A10",
+      "tenant": "alpha",
+      "category": "superseded",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-PUMP-SEAL:v2:leak-response"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:trip-review",
+          "rank": 1.2
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:leak-response",
+          "rank": 0.9
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:purpose",
+          "rank": 0.6
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:records",
+          "rank": 0.5
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:restart-wait",
+          "rank": 0.5
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A11",
+      "tenant": "alpha",
+      "category": "expired",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "A12",
+      "tenant": "alpha",
+      "category": "expired",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "A13",
+      "tenant": "alpha",
+      "category": "revoked",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "A14",
+      "tenant": "alpha",
+      "category": "revoked",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "A15",
+      "tenant": "alpha",
+      "category": "draft_only",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:records",
+          "rank": 1.2
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:records",
+          "rank": 1.1
+        },
+        {
+          "evidence_id": "ALPHA-VENDOR-PORTAL:v1:records",
+          "rank": 1.1
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:records",
+          "rank": 1.0
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:cooldown",
+          "rank": 0.4
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A16",
+      "tenant": "alpha",
+      "category": "draft_only",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "A17",
+      "tenant": "alpha",
+      "category": "missing_source",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "A18",
+      "tenant": "alpha",
+      "category": "missing_source",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "A19",
+      "tenant": "alpha",
+      "category": "cross_tenant",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "A20",
+      "tenant": "alpha",
+      "category": "cross_tenant",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "A21",
+      "tenant": "alpha",
+      "category": "asset_filtered",
+      "asset_type": "pump",
+      "expected": [
+        "ALPHA-PUMP-SEAL:v2:inspection",
+        "ALPHA-ALERT-REVIEW:v1:interval"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:interval",
+          "rank": 1.7
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:repeated-alerts",
+          "rank": 1.6
+        },
+        {
+          "evidence_id": "ALPHA-PUMP-SEAL:v2:inspection",
+          "rank": 1.3
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:purpose",
+          "rank": 1.0
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:handoff",
+          "rank": 0.4
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A22",
+      "tenant": "alpha",
+      "category": "asset_filtered",
+      "asset_type": "conveyor",
+      "expected": [
+        "ALPHA-ALERT-REVIEW:v1:repeated-alerts"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:repeated-alerts",
+          "rank": 2.5
+        },
+        {
+          "evidence_id": "ALPHA-ALERT-REVIEW:v1:interval",
+          "rank": 0.3
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A23",
+      "tenant": "alpha",
+      "category": "asset_filtered",
+      "asset_type": "compressor",
+      "expected": [
+        "ALPHA-VENDOR-PORTAL:v1:vendor-contact"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-VENDOR-PORTAL:v1:records",
+          "rank": 0.9
+        },
+        {
+          "evidence_id": "ALPHA-VENDOR-PORTAL:v1:vendor-contact",
+          "rank": 0.9
+        },
+        {
+          "evidence_id": "ALPHA-VENDOR-PORTAL:v1:purpose",
+          "rank": 0.8
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:purpose",
+          "rank": 0.6
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:purpose",
+          "rank": 0.6
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A24",
+      "tenant": "alpha",
+      "category": "injected",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-VENDOR-PORTAL:v1:portal-note"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-VENDOR-PORTAL:v1:portal-note",
+          "rank": 2.4
+        },
+        {
+          "evidence_id": "ALPHA-VENDOR-PORTAL:v1:vendor-contact",
+          "rank": 1.5
+        },
+        {
+          "evidence_id": "ALPHA-VENDOR-PORTAL:v1:purpose",
+          "rank": 0.8
+        },
+        {
+          "evidence_id": "ALPHA-VENDOR-PORTAL:v1:records",
+          "rank": 0.5
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A25",
+      "tenant": "alpha",
+      "category": "conflicting",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-COMPRESSOR-TRIP:v1:restart-wait",
+        "ALPHA-COMPRESSOR-COOLDOWN:v1:restart-wait"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:restart-wait",
+          "rank": 3.3
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:restart-wait",
+          "rank": 3.0
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:trip-review",
+          "rank": 2.9
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:purpose",
+          "rank": 1.3
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:records",
+          "rank": 1.2
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "A26",
+      "tenant": "alpha",
+      "category": "conflicting",
+      "asset_type": null,
+      "expected": [
+        "ALPHA-COMPRESSOR-COOLDOWN:v1:restart-wait",
+        "ALPHA-COMPRESSOR-TRIP:v1:restart-wait"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:restart-wait",
+          "rank": 1.9
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:restart-wait",
+          "rank": 1.8
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:cooldown",
+          "rank": 1.7
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:trip-review",
+          "rank": 1.3
+        },
+        {
+          "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:purpose",
+          "rank": 1.2
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B01",
+      "tenant": "beta",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "BETA-PUMP-ALIGN:v2:tolerance"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:tolerance",
+          "rank": 1.5
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:alignment",
+          "rank": 1.4
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:records",
+          "rank": 0.8
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:purpose",
+          "rank": 0.7
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:preparation",
+          "rank": 0.4
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B02",
+      "tenant": "beta",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "BETA-PUMP-ALIGN:v2:preparation"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:records",
+          "rank": 2.4
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:alignment",
+          "rank": 1.6
+        },
+        {
+          "evidence_id": "BETA-COMPRESSOR-OIL:v1:records",
+          "rank": 1.3
+        },
+        {
+          "evidence_id": "BETA-CONTRACTOR-MEMO:v1:records",
+          "rank": 1.1
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:preparation",
+          "rank": 1.0
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B03",
+      "tenant": "beta",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "BETA-PUMP-ALIGN:v2:alignment"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:alignment",
+          "rank": 1.8
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:records",
+          "rank": 0.7
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:purpose",
+          "rank": 0.6
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:preparation",
+          "rank": 0.4
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:tolerance",
+          "rank": 0.3
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B04",
+      "tenant": "beta",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "BETA-COMPRESSOR-OIL:v1:sampling"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "BETA-COMPRESSOR-OIL:v1:sampling",
+          "rank": 2.2
+        },
+        {
+          "evidence_id": "BETA-COMPRESSOR-OIL:v1:oil-analysis",
+          "rank": 1.5
+        },
+        {
+          "evidence_id": "BETA-COMPRESSOR-OIL:v1:purpose",
+          "rank": 1.0
+        },
+        {
+          "evidence_id": "BETA-COMPRESSOR-OIL:v1:records",
+          "rank": 0.5
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B05",
+      "tenant": "beta",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "BETA-COMPRESSOR-OIL:v1:oil-analysis"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "BETA-COMPRESSOR-OIL:v1:oil-analysis",
+          "rank": 2.5
+        },
+        {
+          "evidence_id": "BETA-COMPRESSOR-OIL:v1:purpose",
+          "rank": 0.7
+        },
+        {
+          "evidence_id": "BETA-COMPRESSOR-OIL:v1:records",
+          "rank": 0.6
+        },
+        {
+          "evidence_id": "BETA-COMPRESSOR-OIL:v1:sampling",
+          "rank": 0.6
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B06",
+      "tenant": "beta",
+      "category": "answerable",
+      "asset_type": null,
+      "expected": [
+        "BETA-CONTRACTOR-MEMO:v1:guard-inspection"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "BETA-CONTRACTOR-MEMO:v1:guard-inspection",
+          "rank": 3.6
+        },
+        {
+          "evidence_id": "BETA-CONTRACTOR-MEMO:v1:purpose",
+          "rank": 0.6
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B07",
+      "tenant": "beta",
+      "category": "superseded",
+      "asset_type": null,
+      "expected": [
+        "BETA-PUMP-ALIGN:v2:tolerance"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:tolerance",
+          "rank": 0.8
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:records",
+          "rank": 0.6
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:purpose",
+          "rank": 0.4
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B08",
+      "tenant": "beta",
+      "category": "superseded",
+      "asset_type": null,
+      "expected": [
+        "BETA-PUMP-ALIGN:v2:alignment"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:alignment",
+          "rank": 1.6
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:preparation",
+          "rank": 0.6
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:purpose",
+          "rank": 0.6
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:records",
+          "rank": 0.6
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:tolerance",
+          "rank": 0.3
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B09",
+      "tenant": "beta",
+      "category": "expired",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "B10",
+      "tenant": "beta",
+      "category": "expired",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:records",
+          "rank": 0.3
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B11",
+      "tenant": "beta",
+      "category": "revoked",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "B12",
+      "tenant": "beta",
+      "category": "revoked",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "B13",
+      "tenant": "beta",
+      "category": "draft_only",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [
+        {
+          "evidence_id": "BETA-CONTRACTOR-MEMO:v1:memo-note",
+          "rank": 1.0
+        },
+        {
+          "evidence_id": "BETA-CONTRACTOR-MEMO:v1:purpose",
+          "rank": 0.3
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B14",
+      "tenant": "beta",
+      "category": "draft_only",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "B15",
+      "tenant": "beta",
+      "category": "missing_source",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "B16",
+      "tenant": "beta",
+      "category": "missing_source",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [],
+      "forbidden": []
+    },
+    {
+      "id": "B17",
+      "tenant": "beta",
+      "category": "cross_tenant",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [
+        {
+          "evidence_id": "BETA-CONTRACTOR-MEMO:v1:guard-inspection",
+          "rank": 1.1
+        },
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:records",
+          "rank": 0.4
+        },
+        {
+          "evidence_id": "BETA-CONTRACTOR-MEMO:v1:purpose",
+          "rank": 0.3
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B18",
+      "tenant": "beta",
+      "category": "cross_tenant",
+      "asset_type": null,
+      "expected": [],
+      "expect_none": true,
+      "returned": [
+        {
+          "evidence_id": "BETA-COMPRESSOR-OIL:v1:purpose",
+          "rank": 0.3
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B19",
+      "tenant": "beta",
+      "category": "asset_filtered",
+      "asset_type": "pump",
+      "expected": [
+        "BETA-PUMP-ALIGN:v2:tolerance"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "BETA-PUMP-ALIGN:v2:tolerance",
+          "rank": 1.1
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B20",
+      "tenant": "beta",
+      "category": "asset_filtered",
+      "asset_type": "conveyor",
+      "expected": [
+        "BETA-CONTRACTOR-MEMO:v1:guard-inspection"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "BETA-CONTRACTOR-MEMO:v1:guard-inspection",
+          "rank": 1.0
+        }
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "B21",
+      "tenant": "beta",
+      "category": "injected",
+      "asset_type": null,
+      "expected": [
+        "BETA-CONTRACTOR-MEMO:v1:memo-note"
+      ],
+      "expect_none": false,
+      "returned": [
+        {
+          "evidence_id": "BETA-CONTRACTOR-MEMO:v1:memo-note",
+          "rank": 2.5
+        },
+        {
+          "evidence_id": "BETA-CONTRACTOR-MEMO:v1:purpose",
+          "rank": 0.9
+        },
+        {
+          "evidence_id": "BETA-CONTRACTOR-MEMO:v1:records",
+          "rank": 0.5
+        }
+      ],
+      "forbidden": []
+    }
+  ]
+}
