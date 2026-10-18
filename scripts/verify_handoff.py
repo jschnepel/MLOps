@@ -284,11 +284,13 @@ def main() -> int:
     # T17 (Plan L rulings 12 and 17): the governed corpus validates as a whole, its lock matches the files and is the
     # released lock of its version, and its derived meta.json is current.
     corpus_files = corpus_module()
-    released = corpus_files.load(ROOT / "data/corpus")
-    check(
-        load("data/corpus/meta.json") == generate_corpus_meta(ROOT / "data/corpus"),
-        "Corpus meta.json is stale: run uv run python -m scripts.gen_corpus_meta",
-    )
+    try:
+        governed_corpus = corpus_files.load(ROOT / "data/corpus")
+        meta_current = load("data/corpus/meta.json") == generate_corpus_meta(ROOT / "data/corpus")
+    except corpus_files.CorpusError as exc:
+        # One FAIL line carrying every problem, like the checker's other failures (never a traceback).
+        raise ValueError("governed corpus refused: " + "; ".join(exc.problems)) from exc
+    check(meta_current, "Corpus meta.json is stale: run uv run python -m scripts.gen_corpus_meta")
     scenarios = []
     for line in (ROOT / "evals/handoff-development/scenarios.jsonl").read_text(encoding="utf-8").splitlines():
         if line.strip():
@@ -337,7 +339,8 @@ def main() -> int:
         f"{py_count} Python syntax checks; 6 SVG XML files; fixture meta.json current"
     )
     print(
-        f"PASS: governed corpus {released.corpus_version} ({len(released.documents)} documents) locked and released; "
+        f"PASS: governed corpus {governed_corpus.corpus_version} ({len(governed_corpus.documents)} documents) "
+        "locked and released; "
         "corpus meta.json current"
     )
     print("PASS: synthetic proposal/decision/outcome example hashes agree")

@@ -231,3 +231,145 @@ def test_the_loader_refuses_a_stray_or_unlabelled_document(tmp_path: Path) -> No
     assert "documents without a catalog entry: alpha-stray.md" in str(refused.value)
     assert "must open with a title, a blank line and the synthetic-fixture line" in str(refused.value)
     assert "section 'expiry' needs a short lower-case name and words" in str(refused.value)
+
+
+def write_catalog(root: Path, catalog: Any) -> None:
+    """Replace catalog.json with any JSON value. The lock is left alone: the generator cannot lock a catalog of the
+    wrong shape, and the loader must name the shape problem whether or not the lock also disagrees."""
+    (root / corpus.CATALOG).write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+
+@pytest.mark.parametrize(
+    ("changes", "reasons"),
+    [
+        # Fix round 1: the version is validated before anything compares it, so none of these is a raw
+        # ValueError or TypeError from int().
+        ({"version": "1a", "supersedes": "1"}, ["version must be a positive whole number"]),
+        ({"version": None, "supersedes": "1"}, ["version must be a positive whole number"]),
+        ({"version": None}, ["version must be a positive whole number"]),
+        ({"version": 2, "supersedes": "1"}, ["version must be a positive whole number"]),
+        ({"supersedes": 1}, ["supersedes must name an earlier version"]),
+        ({"supersedes": "x"}, ["supersedes must name an earlier version"]),
+        ({"tenant": ["alpha"]}, ["tenant must be one that assets.json names"]),
+        ({"asset_family": ["pump"]}, ["asset_family must be null or one of"]),
+        ({"sections": [["purpose"]]}, ["sections must list each heading once"]),
+        ({"sections": ["purpose", "purpose"]}, ["sections must list each heading once"]),
+    ],
+)
+def test_a_malformed_value_is_a_corpus_error_never_a_raw_exception(
+    tmp_path: Path, changes: dict[str, Any], reasons: list[str]
+) -> None:
+    root = copy_corpus(tmp_path)
+    edit_catalog(root, "ALPHA-PUMP-SEAL v2", **changes)
+    with pytest.raises(corpus.CorpusError) as refused:
+        corpus.load(root, released=None)
+    assert all(reason in str(refused.value) for reason in reasons)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ["missing", "malformed", "not-utf8", "list", "documents-not-a-list", "entry-not-an-object"],
+)
+def test_an_unreadable_or_misshapen_catalog_is_a_corpus_error(tmp_path: Path, damage: str) -> None:
+    root = copy_corpus(tmp_path)
+    path = root / corpus.CATALOG
+    catalog = json.loads(path.read_text(encoding="utf-8"))
+    if damage == "missing":
+        path.unlink()
+    elif damage == "malformed":
+        path.write_text('{"corpus_version": ', encoding="utf-8", newline="\n")
+    elif damage == "not-utf8":
+        path.write_bytes(b"\xff\xfe{}")
+    elif damage == "list":
+        write_catalog(root, [])
+    elif damage == "documents-not-a-list":
+        write_catalog(root, {**catalog, "documents": {"a": 1}})
+    else:
+        write_catalog(root, {**catalog, "documents": [[], "text", *catalog["documents"]]})
+    with pytest.raises(corpus.CorpusError) as refused:
+        corpus.load(root, released=None)
+    assert "catalog.json" in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "assets",
+    [
+        None,  # the file is removed
+        "{not json",
+        [],
+        {"asset_types": ["pump"], "assets": {}, "alerts": []},
+        {"asset_types": ["pump"], "assets": [[], 3], "alerts": []},
+        {"asset_types": ["pump"], "assets": [], "alerts": [None, "x"]},
+        {"asset_types": ["pump"], "assets": [{"asset_id": ["A1"], "tenant": "t", "asset_type": "pump", "name": "n"}]},
+        {"asset_types": ["pump"], "assets": [{"asset_id": "A1", "tenant": 5, "asset_type": "pump", "name": "n"}]},
+        {"asset_types": ["pump"], "assets": [], "alerts": [{"id": ["x"], "asset_id": "A1", "revision": 1}]},
+    ],
+)
+def test_an_unreadable_or_misshapen_assets_file_is_a_corpus_error(tmp_path: Path, assets: Any) -> None:
+    root = copy_corpus(tmp_path)
+    path = root / corpus.ASSETS
+    if assets is None:
+        path.unlink()
+    elif isinstance(assets, str):
+        path.write_text(assets, encoding="utf-8", newline="\n")
+    else:
+        path.write_text(json.dumps(assets), encoding="utf-8", newline="\n")
+    with pytest.raises(corpus.CorpusError) as refused:
+        corpus.load(root, released=None)
+    assert "assets.json" in str(refused.value)
+
+
+def damage_document(root: Path, name: str, damage: str) -> None:
+    """Make one document break exactly one of the file rules, then re-lock so only that rule can refuse."""
+    path = root / name
+    raw = path.read_bytes()
+    if damage == "oversize":
+        raw += b"x" * corpus.MAX_BYTES
+    elif damage == "carriage-return":
+        raw = raw.replace(b"\n", b"\r\n")
+    elif damage == "bom":
+        raw = b"\xef\xbb\xbf" + raw
+    elif damage == "not-utf8":
+        raw += b"\xff\xfe\n"
+    elif damage == "duplicate-heading":
+        raw = raw.replace(b"## interval", b"## purpose")
+    path.write_bytes(raw)
+    gen_corpus_meta.write_lock(root)
+
+
+@pytest.mark.parametrize(
+    ("damage", "reason"),
+    [
+        ("oversize", "is larger than 65536 bytes"),
+        ("carriage-return", "must be LF-only UTF-8 without a byte-order mark"),
+        ("bom", "must be LF-only UTF-8 without a byte-order mark"),
+        ("not-utf8", "is not UTF-8"),
+        ("duplicate-heading", "headings differ from the catalog's sections"),
+    ],
+)
+def test_the_loader_refuses_a_document_that_breaks_a_file_rule(tmp_path: Path, damage: str, reason: str) -> None:
+    root = copy_corpus(tmp_path)
+    damage_document(root, "alpha-alert-review.md", damage)
+    with pytest.raises(corpus.CorpusError, match=reason):
+        corpus.load(root, released=None)
+
+
+@pytest.mark.parametrize("path", ["Alpha-alert-review.md", "docs/alpha-alert-review.md", "alpha_alert_review.md"])
+def test_the_loader_refuses_an_uppercase_or_nested_path(tmp_path: Path, path: str) -> None:
+    root = copy_corpus(tmp_path)
+    edit_catalog(root, "ALPHA-ALERT-REVIEW", path=path)
+    with pytest.raises(corpus.CorpusError, match="plain lower-case .md name"):
+        corpus.load(root, released=None)
+
+
+@pytest.mark.parametrize("name", ["notes.txt", "alpha-alert-review.md.bak", "scratch.json", "Extra.MD"])
+def test_the_loader_refuses_any_unlisted_file_in_the_directory(tmp_path: Path, name: str) -> None:
+    root = copy_corpus(tmp_path)
+    (root / name).write_text("stray\n", encoding="utf-8", newline="\n")
+    with pytest.raises(corpus.CorpusError, match="not part of the corpus|without a catalog entry"):
+        corpus.load(root, released=None)
+
+
+def test_the_known_files_are_not_stray() -> None:
+    assert corpus.KNOWN_FILES == {"catalog.json", "assets.json", "meta.json", "corpus.sha256"}
+    assert {p.name for p in CORPUS.iterdir() if not p.name.endswith(".md")} == corpus.KNOWN_FILES

@@ -224,3 +224,13 @@ def test_reference_tree_accepts_traceability(tmp_path: Path):
     assert (root / "reference/TRACEABILITY.md").is_file()
     out = _run_tree(root)
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_a_refused_corpus_is_a_fail_line_not_a_traceback(tmp_path: Path):
+    """T17 fix round 1: a corpus the loader refuses ends the checker with one FAIL line that carries the problems."""
+    root = _tracked_copy(tmp_path)
+    path = root / "data/corpus/alpha-alert-review.md"
+    path.write_bytes(path.read_bytes() + b"One more line.\n")  # changed without a new lock
+    r = _run_tree(root)
+    assert r.returncode == 1 and r.stderr.startswith("FAIL: governed corpus refused:"), r.stderr
+    assert "changed without a new lock" in r.stderr and "Traceback" not in r.stderr

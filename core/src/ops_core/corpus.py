@@ -45,6 +45,8 @@ EVIDENCE_CHARS: Final = 160  # schemas/tool-result.schema.json: evidence_id maxL
 CATALOG: Final = "catalog.json"
 ASSETS: Final = "assets.json"
 LOCK: Final = "corpus.sha256"
+META: Final = "meta.json"  # derived by scripts/gen_corpus_meta.py; deliberately not in the lock
+KNOWN_FILES: Final = frozenset({CATALOG, ASSETS, META, LOCK})
 DOCUMENT_KEYS: Final = frozenset(
     {
         "document_id",
@@ -194,15 +196,29 @@ def _read_document(root: Path, path: str, where: str, problems: list[str]) -> tu
     return text, hashlib.sha256(raw).hexdigest()
 
 
+def _read_json(root: Path, name: str, problems: list[str]) -> Any:
+    """The JSON value of `root/name`, or None after recording that the file cannot be read as JSON. Only the error's
+    type is quoted: a message could carry a piece of the file."""
+    try:
+        return json.loads((root / name).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # a missing file, bad UTF-8 and malformed JSON are all one refusal
+        problems.append(f"{name}: cannot be read as JSON ({type(exc).__name__})")
+        return None
+
+
 def load_assets(root: Path) -> dict[str, Any]:
     """`assets.json`, checked: asset types, assets (unique ids, known types, a tenant each) and alerts (unique ids,
     known assets, a revision of at least 1).
 
     Raises:
-        CorpusError: listing every problem.
+        CorpusError: listing every problem, including an unreadable file or an entry that is not an object.
     """
     problems: list[str] = []
-    data = json.loads((root / ASSETS).read_text(encoding="utf-8"))
+    data = _read_json(root, ASSETS, problems)
+    if problems:
+        raise CorpusError(problems)
+    if not isinstance(data, dict):
+        raise CorpusError(["assets.json: must be a JSON object"])
     types = data.get("asset_types")
     if (
         not isinstance(types, list)
@@ -212,23 +228,48 @@ def load_assets(root: Path) -> dict[str, Any]:
         problems.append("assets.json: asset_types must be a non-empty list of lower-case names")
         types = []
     assets = data.get("assets", [])
-    ids = [a.get("asset_id") for a in assets]
+    if not isinstance(assets, list):
+        problems.append("assets.json: assets must be a list")
+        assets = []
+    ids: list[str] = []
+    for asset in assets:
+        if not isinstance(asset, dict):
+            problems.append("assets.json: every asset must be an object")
+            continue
+        asset_id = asset.get("asset_id")
+        if isinstance(asset_id, str):
+            ids.append(asset_id)
+        if set(asset) != {"asset_id", "tenant", "asset_type", "name"}:
+            problems.append(f"assets.json: {asset_id} must have asset_id, tenant, asset_type and name")
+        elif (
+            not isinstance(asset_id, str)
+            or not re.fullmatch(r"[A-Z][A-Z0-9_-]{0,31}", asset_id)
+            or asset["asset_type"] not in types
+        ):
+            problems.append(f"assets.json: {asset_id} has a malformed id or an unknown asset type")
+        elif not isinstance(asset["tenant"], str) or not SECTION_NAME.fullmatch(asset["tenant"]):
+            problems.append(f"assets.json: {asset_id} needs a short lower-case tenant name")
     if len(set(ids)) != len(ids):
         problems.append("assets.json: asset ids must be unique")
-    for asset in assets:
-        if set(asset) != {"asset_id", "tenant", "asset_type", "name"}:
-            problems.append(f"assets.json: {asset.get('asset_id')} must have asset_id, tenant, asset_type and name")
-        elif not re.fullmatch(r"[A-Z][A-Z0-9_-]{0,31}", asset["asset_id"]) or asset["asset_type"] not in types:
-            problems.append(f"assets.json: {asset['asset_id']} has a malformed id or an unknown asset type")
     alerts = data.get("alerts", [])
-    alert_ids = [a.get("id") for a in alerts]
-    if len(set(alert_ids)) != len(alert_ids):
-        problems.append("assets.json: alert ids must be unique")
+    if not isinstance(alerts, list):
+        problems.append("assets.json: alerts must be a list")
+        alerts = []
+    alert_ids: list[str] = []
     for alert in alerts:
+        if not isinstance(alert, dict):
+            problems.append("assets.json: every alert must be an object")
+            continue
+        if isinstance(alert.get("id"), str):
+            alert_ids.append(alert["id"])
+        else:
+            problems.append("assets.json: every alert needs a string id")
         known = alert.get("asset_id") in ids
         revision = alert.get("revision")
         if not known or not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
             problems.append(f"assets.json: alert {alert.get('id')} needs a known asset and a revision of at least 1")
+    if len(set(alert_ids)) != len(alert_ids):
+        problems.append("assets.json: alert ids must be unique")
     if problems:
         raise CorpusError(problems)
     return dict(data)
@@ -282,7 +323,13 @@ def load(root: Path, *, released: Mapping[str, str] | None = RELEASES) -> Corpus
         assets = {"asset_types": [], "assets": []}
     asset_types = frozenset(assets["asset_types"])
     tenants = frozenset(a["tenant"] for a in assets["assets"])
-    catalog = json.loads((root / CATALOG).read_text(encoding="utf-8"))
+    catalog = _read_json(root, CATALOG, problems)
+    if catalog is not None and not isinstance(catalog, dict):
+        problems.append("catalog.json: must be a JSON object")
+        catalog = None
+    if catalog is None or not (root / ASSETS).is_file():
+        # Nothing further can be checked, and the lock cannot be recomputed without both files.
+        raise CorpusError(problems)
     if (
         set(catalog) != {"corpus_version", "classification", "documents"}
         or catalog.get("classification") != "synthetic"
@@ -293,7 +340,14 @@ def load(root: Path, *, released: Mapping[str, str] | None = RELEASES) -> Corpus
         problems.append("catalog.json: corpus_version must be a short lower-case name such as corpus-1")
         corpus_version = "invalid"
     documents: list[Document] = []
-    for entry in catalog.get("documents", []):
+    entries = catalog.get("documents", [])
+    if not isinstance(entries, list):
+        problems.append("catalog.json: documents must be a list")
+        entries = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            problems.append("catalog.json: every document entry must be an object")
+            continue
         where = f"catalog.json: {entry.get('document_id')} v{entry.get('version')}"
         if set(entry) != DOCUMENT_KEYS:
             problems.append(f"{where}: keys must be exactly {sorted(DOCUMENT_KEYS)}")
@@ -301,9 +355,12 @@ def load(root: Path, *, released: Mapping[str, str] | None = RELEASES) -> Corpus
         before = len(problems)
         if not isinstance(entry["document_id"], str) or not DOCUMENT_ID.fullmatch(entry["document_id"]):
             problems.append(f"{where}: document_id must be upper-case letters, digits and hyphens")
-        if entry["tenant"] not in tenants:
+        if not isinstance(entry["tenant"], str) or entry["tenant"] not in tenants:
             problems.append(f"{where}: tenant must be one that assets.json names")
-        if not isinstance(entry["version"], str) or not VERSION.fullmatch(entry["version"]):
+        # The version is validated before anything compares it: int() on a malformed or null one must not escape as
+        # a ValueError or TypeError (fix round 1), so `supersedes` is compared only against a valid version.
+        version_ok = isinstance(entry["version"], str) and VERSION.fullmatch(entry["version"]) is not None
+        if not version_ok:
             problems.append(f"{where}: version must be a positive whole number written as a string")
         if entry["status"] not in STATUSES:
             problems.append(f"{where}: status must be one of {', '.join(STATUSES)}")
@@ -314,19 +371,26 @@ def load(root: Path, *, released: Mapping[str, str] | None = RELEASES) -> Corpus
         if start is not None and end is not None and end <= start:
             problems.append(f"{where}: effective_to must be later than effective_from")
         family = entry["asset_family"]
-        if family is not None and family not in asset_types:
+        if family is not None and (not isinstance(family, str) or family not in asset_types):
             problems.append(f"{where}: asset_family must be null or one of assets.json's asset_types")
         if entry["label"] not in LABELS:
             problems.append(f"{where}: label must be one of {', '.join(LABELS)}")
         if (entry["label"] == "conflicting") != (entry["conflicts_with"] is not None):
             problems.append(f"{where}: conflicts_with is set exactly when the label is conflicting")
+        elif entry["conflicts_with"] is not None and not isinstance(entry["conflicts_with"], str):
+            problems.append(f"{where}: conflicts_with must be null or a document id")
         supersedes = entry["supersedes"]
-        if supersedes is not None and not (
-            isinstance(supersedes, str) and VERSION.fullmatch(supersedes) and int(supersedes) < int(entry["version"])
-        ):
-            problems.append(f"{where}: supersedes must name an earlier version")
+        if supersedes is not None:
+            names_a_version = isinstance(supersedes, str) and VERSION.fullmatch(supersedes) is not None
+            if not names_a_version or (version_ok and int(supersedes) >= int(entry["version"])):
+                problems.append(f"{where}: supersedes must name an earlier version")
         names = entry["sections"]
-        if not isinstance(names, list) or not names or len(set(names)) != len(names):
+        if (
+            not isinstance(names, list)
+            or not names
+            or not all(isinstance(n, str) for n in names)
+            or len(set(names)) != len(names)
+        ):
             problems.append(f"{where}: sections must list each heading once")
             names = []
         read = _read_document(root, str(entry["path"]), where, problems)
@@ -390,9 +454,16 @@ def load(root: Path, *, released: Mapping[str, str] | None = RELEASES) -> Corpus
             partners = [d for d in documents if d.tenant == doc.tenant and d.document_id == doc.conflicts_with]
             if not partners or any(p.conflicts_with != doc.document_id for p in partners):
                 problems.append(f"catalog.json: {doc.document_id} and its conflicts_with must name each other")
-    stray = sorted(p.name for p in root.glob("*.md") if p.name not in set(paths))
+    # Every file in the directory is either a catalog entry's document or one of the known files (fix round 1): a
+    # stray document or any other leftover would otherwise sit beside a locked corpus unnoticed.
+    listed = {e["path"] for e in entries if isinstance(e, dict) and isinstance(e.get("path"), str)}
+    present = sorted(p.name for p in root.iterdir())
+    stray = [n for n in present if n.endswith(".md") and n not in listed]
     if stray:
         problems.append(f"catalog.json: documents without a catalog entry: {', '.join(stray)}")
+    unknown = [n for n in present if not n.endswith(".md") and n not in KNOWN_FILES]
+    if unknown:
+        problems.append(f"catalog.json: files that are not part of the corpus: {', '.join(unknown)}")
     problems.extend(check_lock(root, corpus_version, paths, released))
     if problems:
         raise CorpusError(problems)
