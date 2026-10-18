@@ -1,0 +1,22 @@
+T06 first CI runs (workflow .github/workflows/ci.yml, pinned actions, read-only token, no secrets) — 2026-10-09
+PRs opened 2026-10-09T16:50Z: #1 plan-b -> main, #2 plan-c -> plan-b, #3 plan-d -> plan-c, #4 plan-e -> plan-d, #5 plan-f -> plan-e
+
+First runs (pull_request), all RED on one ruff finding, every test green on ubuntu-24.04:
+  EXE001 Shebang is present but file is not executable --> scripts/verify_handoff.py:1:1 (ruff skips EXE001 on Windows)
+  plan-b af17395 failure  93 passed / 10 skipped  https://github.com/jschnepel/MLOps/actions/runs/37962039002
+  plan-c eb7f0ef failure 382 passed / 29 skipped  https://github.com/jschnepel/MLOps/actions/runs/37962042957
+  plan-d 2ae75d9 failure 459 passed / 44 skipped  https://github.com/jschnepel/MLOps/actions/runs/37962051579
+  plan-e 7b4ee7e failure 531 passed / 81 skipped  https://github.com/jschnepel/MLOps/actions/runs/37962054725
+  plan-f a464dae failure 680 passed / 94 skipped  https://github.com/jschnepel/MLOps/actions/runs/37962060587
+
+Fix: git file mode 100644 -> 100755 on scripts/verify_handoff.py, committed on plan-b (b2ee141) and cherry-picked onto
+plan-c (646f3b9), plan-d (589aa37), plan-e (c91612f), plan-f (fdadbd2); no documented commit range rewritten.
+
+Second runs (pull_request synchronize), all GREEN:
+  plan-b b2ee141 success https://github.com/jschnepel/MLOps/actions/runs/37962510516
+  plan-c 646f3b9 success https://github.com/jschnepel/MLOps/actions/runs/37962509758
+  plan-d 589aa37 success https://github.com/jschnepel/MLOps/actions/runs/37962511295
+  plan-e c91612f success https://github.com/jschnepel/MLOps/actions/runs/37962510397
+  plan-f fdadbd2 success https://github.com/jschnepel/MLOps/actions/runs/37962510302
+
+Not yet exercised: the push-to-main trigger (it fires when PR #1 merges).

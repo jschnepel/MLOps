@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx2
+import psycopg
 import pytest
 from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
@@ -37,14 +38,24 @@ EXPECTED_EVENTS = [
     ("action.dispatched", "application"),
     ("action.confirmed", "destination"),
 ]
+pytestmark = pytest.mark.sweeper_stamps  # the skeleton's own sweeper keeps the memberships fresh here
 
 
 @pytest.fixture(scope="module")
 def skeleton(migrated: None) -> Iterator[Skeleton]:
-    """Module scope on purpose: the skeleton worker must be down before test_worker_live claims jobs itself."""
+    """Module scope on purpose: the skeleton worker must be down before test_worker_live claims jobs itself. The
+    memberships are aged past the 120 s window first, so the grant inside the run passes only because the skeleton's
+    own sweeper re-stamped them (this module opts out of the autouse stamp)."""
+    with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+        conn.execute("UPDATE app.memberships SET synced_at = app.current_time() - interval '10 minutes'")
     sk = Skeleton()
     sk.start()
     try:
+        with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+            fresh = conn.execute(
+                "SELECT bool_and(synced_at > app.current_time() - interval '120 seconds') FROM app.memberships"
+            ).fetchone()[0]
+        assert fresh, "the sweeper did not stamp memberships.synced_at before reporting ready"
         yield sk
     finally:
         sk.stop()

@@ -25,7 +25,16 @@ if TYPE_CHECKING:
 
 # mypy runs on the member source trees only; reference/ is hash-pinned inherited code and must not be type-checked
 # (or changed) here.
-MEMBER_SRC = ["core/src", "api/src", "worker/src", "mcp-read/src", "mcp-write/src", "asset-sim/src", "incident-sim/src"]
+MEMBER_SRC = [
+    "core/src",
+    "api/src",
+    "worker/src",
+    "mcp-read/src",
+    "mcp-write/src",
+    "asset-sim/src",
+    "incident-sim/src",
+    "sweeper/src",
+]
 
 
 def run(cmd: list[str], env: dict[str, str] | None = None) -> int:

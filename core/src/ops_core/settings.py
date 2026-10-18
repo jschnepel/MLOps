@@ -11,10 +11,12 @@ Every service connects to Postgres as its own AM-20.1 role, and `PROFILE` select
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from psycopg.conninfo import make_conninfo
 
@@ -149,22 +151,131 @@ def incident_postgres() -> Postgres:
 
 @dataclass(frozen=True)
 class Keycloak:
+    """Where Keycloak is: `base_url` is the public host the browser and the token `iss` use; `server_url` is what this
+    process dials. On the dev machine `localhost` resolves to `::1` first and the port is published on IPv4 only, so
+    every new connection through `localhost` costs about 2 s (spike §3), which alone would exhaust the admin check's
+    2 s budget; `127.0.0.1` answers in milliseconds and `KC_HOSTNAME` keeps `iss` the same."""
+
     base_url: str
     issuer: str
+    server_url: str
 
     @property
     def jwks_url(self) -> str:
-        return f"{self.base_url}/realms/{REALM}/protocol/openid-connect/certs"
+        """The realm's signing keys (server side)."""
+        return f"{self.server_url}/realms/{REALM}/protocol/openid-connect/certs"
 
     @property
     def token_url(self) -> str:
-        return f"{self.base_url}/realms/{REALM}/protocol/openid-connect/token"
+        """The token endpoint (server side)."""
+        return f"{self.server_url}/realms/{REALM}/protocol/openid-connect/token"
+
+    @property
+    def discovery_url(self) -> str:
+        """The OIDC metadata document (server side)."""
+        return f"{self.server_url}/realms/{REALM}/.well-known/openid-configuration"
+
+    @property
+    def end_session_url(self) -> str:
+        """The RP-initiated logout endpoint (server side)."""
+        return f"{self.server_url}/realms/{REALM}/protocol/openid-connect/logout"
+
+    @property
+    def admin_users_url(self) -> str:
+        """The admin API's users collection (server side; `view-users` reads it)."""
+        return f"{self.server_url}/admin/realms/{REALM}/users"
+
+    def server_side(self, url: str) -> str:
+        """A discovered endpoint rewritten for this process: the public base swapped for `server_url`."""
+        return self.server_url + url[len(self.base_url) :] if url.startswith(self.base_url + "/") else url
+
+
+def _loopback(base: str) -> str:
+    """`base` with a host of exactly `localhost` swapped for `127.0.0.1`, scheme and port kept (not `localhost.x.y`)."""
+    parts = urlsplit(base)
+    if parts.hostname != "localhost":
+        return base
+    return parts._replace(netloc=parts.netloc.replace("localhost", "127.0.0.1", 1)).geturl()
 
 
 def keycloak() -> Keycloak:
-    """Base URL for the host (`KC_HOSTNAME` makes `iss` the same for containers, SA:556)."""
+    """Base URL for the host (`KC_HOSTNAME` makes `iss` the same for containers, SA:556) and the dial address."""
     base = env("OPS_KC_BASE_URL", "http://localhost:18080").rstrip("/")
-    return Keycloak(base_url=base, issuer=env("OPS_KC_ISSUER", f"{base}/realms/{REALM}"))
+    server = env("OPS_KC_SERVER_URL", _loopback(base)).rstrip("/")
+    return Keycloak(base_url=base, issuer=env("OPS_KC_ISSUER", f"{base}/realms/{REALM}"), server_url=server)
+
+
+@dataclass(frozen=True)
+class SessionSettings:
+    """Browser-session settings (BUILD_SPEC §9): the one origin the API trusts and the lifetimes."""
+
+    public_base_url: str
+    idle_seconds: int
+    absolute_seconds: int
+    login_seconds: int
+
+    @property
+    def origin(self) -> str:
+        """The one `Origin` a browser mutation may carry."""
+        return self.public_base_url
+
+    @property
+    def redirect_uri(self) -> str:
+        """The registered callback (exact match at Keycloak)."""
+        return f"{self.public_base_url}/auth/callback"
+
+    @property
+    def cookie_secure(self) -> bool:
+        """Secure cookies iff the public base is https (BUILD_SPEC §9)."""
+        return self.public_base_url.startswith("https://")
+
+
+def _origin(raw: str) -> str:
+    """Normalise `OPS_PUBLIC_BASE_URL` to an origin: lowercase, default port dropped, nothing but scheme+host."""
+    refusal = SettingsError("OPS_PUBLIC_BASE_URL must be an origin: scheme and host only")
+    if "?" in raw or "#" in raw:  # urlsplit hides an empty query or fragment, but the Origin comparison would not
+        raise refusal
+    parts = urlsplit(raw.rstrip("/"))
+    try:
+        port = parts.port  # an out-of-range or non-numeric port raises here
+    except ValueError as exc:
+        raise refusal from exc
+    host = parts.hostname
+    if parts.scheme.lower() not in ("http", "https") or not host or parts.path or "@" in parts.netloc:
+        raise refusal
+    scheme = parts.scheme.lower()
+    if scheme == "http" and host not in ("localhost", "127.0.0.1"):
+        raise SettingsError("OPS_PUBLIC_BASE_URL may use http for localhost only; other hosts need https")
+    shown = f"[{host}]" if ":" in host else host
+    if port is not None and port != (443 if scheme == "https" else 80):
+        shown += f":{port}"
+    return f"{scheme}://{shown}"
+
+
+def sessions() -> SessionSettings:
+    """`OPS_PUBLIC_BASE_URL` must be a bare origin; `http` is for localhost only (BUILD_SPEC §9's exception)."""
+    origin = _origin(env("OPS_PUBLIC_BASE_URL", "http://localhost:8000"))
+    result = SessionSettings(
+        public_base_url=origin,
+        idle_seconds=env_int("OPS_SESSION_IDLE_SECONDS", 1800),
+        absolute_seconds=env_int("OPS_SESSION_ABSOLUTE_SECONDS", 28800),
+        login_seconds=env_int("OPS_SESSION_LOGIN_SECONDS", 600),
+    )
+    if result.idle_seconds <= 0 or result.login_seconds <= 0 or result.absolute_seconds < result.idle_seconds:
+        raise SettingsError("session lifetimes must be positive and the absolute lifetime at least the idle one")
+    return result
+
+
+def admin_check_timeout() -> float:
+    """The whole-call budget of the Keycloak admin-API enabled check (SA:544: 2 s)."""
+    raw = os.environ.get("OPS_ADMIN_CHECK_TIMEOUT_SECONDS") or "2.0"
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise SettingsError("OPS_ADMIN_CHECK_TIMEOUT_SECONDS must be a number of seconds") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise SettingsError("OPS_ADMIN_CHECK_TIMEOUT_SECONDS must be a positive finite number")
+    return value
 
 
 @dataclass(frozen=True)

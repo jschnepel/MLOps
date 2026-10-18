@@ -1,4 +1,4 @@
-"""Walking-skeleton operations (T08, T09, T10): `migrate` both databases, `up`/`down`/`status` the five processes,
+"""Walking-skeleton operations (T08, T09, T10): `migrate` both databases, `up`/`down`/`status` the six processes,
 `keys` the destination-vs-grant detective check.
 
 Reads `.env` (written by scripts/bootstrap_dev.py) for ports and the secrets directory, exports the `OPS_*` variables
@@ -273,6 +273,7 @@ PROCESSES: tuple[Process, ...] = (
     Process("mcp-write", "ops_mcp_write", 8082),
     Process("api", "ops_api", 8000),
     Process("worker", "ops_worker", 8070),
+    Process("sweeper", "ops_sweeper", 8071),
 )
 LOGS = ROOT / "runtime" / "skeleton"  # git-ignored (runtime/)
 
@@ -288,6 +289,7 @@ def process_environment() -> dict[str, str]:
     env.setdefault("MODEL_MODE", "fake")
     env.setdefault("OPS_API_PORT", "8000")
     env.setdefault("OPS_WORKER_HEALTH_PORT", "8070")
+    env.setdefault("OPS_SWEEPER_HEALTH_PORT", "8071")
     env.setdefault("OPS_MCP_READ_PORT", "8081")
     env.setdefault("OPS_MCP_WRITE_PORT", "8082")
     env.setdefault("OPS_INCIDENT_SIM_PORT", "8090")
@@ -304,7 +306,7 @@ def healthy(url: str) -> bool:
 
 
 class Skeleton:
-    """The five host processes as children of this one; logs under runtime/skeleton/ (never committed)."""
+    """The six host processes as children of this one; logs under runtime/skeleton/ (never committed)."""
 
     def __init__(self) -> None:
         self.children: dict[str, subprocess.Popen[bytes]] = {}
@@ -355,7 +357,7 @@ class Skeleton:
 
 
 def up() -> int:
-    """Start the five processes and record their pids for `down`; they outlive this script. Refuses a second set."""
+    """Start the six processes and record their pids for `down`; they outlive this script. Refuses a second set."""
     export_environment(load_dotenv(ROOT / ".env"))
     try:
         clock_guard(settings.superuser_postgres(), settings.profile())

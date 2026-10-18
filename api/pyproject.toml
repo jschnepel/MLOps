@@ -3,7 +3,14 @@ name = "ops-api"
 version = "0.0.1"
 description = "FastAPI: sessions, admission router, decisions, SSE, health"
 requires-python = ">=3.13"
-dependencies = ["ops-core", "fastapi>=0.142,<1", "uvicorn>=0.54,<1"]
+dependencies = [
+  "ops-core",
+  "fastapi>=0.142,<1",
+  "uvicorn>=0.54,<1",
+  "authlib>=1.8,<2",
+  "cryptography>=45,<51",
+  "python-multipart>=0.0.20,<1",
+]
 
 [tool.uv.sources]
 ops-core = { workspace = true }

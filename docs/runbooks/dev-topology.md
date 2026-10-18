@@ -32,11 +32,12 @@ Profile `dev` of `compose.yaml` (project `ops-copilot`, network `ops-dev-net`). 
 
 | Client | Kind | Token audience(s) | Used by |
 |---|---|---|---|
-| `ops-web` | confidential, authorization code + PKCE S256, exact redirect `http://localhost:8000/auth/callback` | — | the API's browser login (T10 registers no wildcard) |
+| `ops-web` | confidential, authorization code + PKCE S256, exact redirect `http://localhost:8000/auth/callback` | — | the API's browser login (T10 registers no wildcard); back-channel logout URL `http://host.docker.internal:8000/auth/backchannel-logout` (reached from the container; T30 moves it) |
 | `ops-worker` | service account | `${MCP_READ_RESOURCE_URL}`, `${MCP_WRITE_RESOURCE_URL}` | worker → mcp-read / mcp-write |
 | `ops-mcp-read` | service account | `asset-sim` | mcp-read → asset-sim |
 | `ops-mcp-write` | service account | `incident-sim` | mcp-write → incident-sim |
 | `ops-dev-direct` | public, direct grant, **dev-only** | — | persona login in tests |
+| `ops-test-admin` | service account, `manage-users` + `view-users`, **dev/test-only** | — | the live suite's persona switch |
 
 Secrets and persona passwords are `${OPS_KC_*}` placeholders in the file, resolved at import from the environment the entrypoint exports. Persona user IDs are fixed to `data/seed-ids.json`, so a token's `sub` equals the seeded ID (asserted by `tests/plan_b/live/test_keycloak_tokens.py`). Realm roles are informational and Keycloak users carry no tenant attribute: memberships are seeded in PostgreSQL by a `migrator` migration (T08/T09), and Keycloak is not the application role database.
 
@@ -67,11 +68,11 @@ All five personas (`alex`, `sam`, `lee` in tenant alpha; `riley`, `jordan` in te
 
 ## Database roles (T09)
 
-Each process connects as its own AM-20.1 login role and never as the owner: api as `api`, the worker as `worker`, mcp-read as `mcp_read`, mcp-write as `mcp_exec`, incident-sim as `incident` (its own database). `sweeper` and `operator` are reserved for their later owners, and `test_harness` exists only in the test profile. Each role's password is one file `postgres_<role>_password` under `OPS_SECRETS_DIR` (`scripts/bootstrap_dev.py secrets` generates them; none is ever printed), and `scripts/skeleton.py migrate` creates or re-keys the roles from those files before Alembic runs. The Compose superuser `ops` is for migrations, role bootstrap and test fixtures only. The dev database never carries `app.test_clock`: the `testclock` Alembic branch is applied only under `PROFILE=test`, and `skeleton.py up` refuses to start when the table exists outside that profile.
+Each process connects as its own AM-20.1 login role and never as the owner: api as `api`, the worker as `worker`, mcp-read as `mcp_read`, mcp-write as `mcp_exec`, incident-sim as `incident` (its own database). `sweeper` is the sweeper process's role (T11); `operator` stays reserved for T22; and `test_harness` exists only in the test profile. Each role's password is one file `postgres_<role>_password` under `OPS_SECRETS_DIR` (`scripts/bootstrap_dev.py secrets` generates them; none is ever printed), and `scripts/skeleton.py migrate` creates or re-keys the roles from those files before Alembic runs. The Compose superuser `ops` is for migrations, role bootstrap and test fixtures only. The dev database never carries `app.test_clock`: the `testclock` Alembic branch is applied only under `PROFILE=test`, and `skeleton.py up` refuses to start when the table exists outside that profile.
 
-## Host processes (T08)
+## Host processes (T08, T11)
 
-The five application processes run on the host until T30 containerises them (`docs/runbooks/walking-skeleton.md`). Every listener binds `127.0.0.1`.
+The six application processes run on the host until T30 containerises them (`docs/runbooks/walking-skeleton.md`). Every listener binds `127.0.0.1`.
 
 | Process | Module | Port | Notes |
 |---|---|---|---|
@@ -80,3 +81,12 @@ The five application processes run on the host until T30 containerises them (`do
 | mcp-write | `ops_mcp_write` | 8082 | `/mcp`, write tool `create_incident` |
 | api | `ops_api` | 8000 | persona bearer tokens, audience `ops-api` |
 | worker | `ops_worker` | 8070 | health only; polls `app.jobs` |
+| sweeper | `ops_sweeper` | 8071 | health only; the membership sync as a maintenance job, expiry purges (T11) |
+
+## Browser login (T11)
+
+`GET /auth/login` on `http://localhost:8000` stores the authorization request (state, nonce, PKCE verifier) in `app.login_state`, keyed by the hash of the `ops_login` cookie, and redirects to the Keycloak form for `ops-web`. After the password step Keycloak returns to `GET /auth/callback`, which checks state, nonce, issuer and audience, resolves the membership, opens a server-side session and sets two cookies: `ops_session` (opaque, HttpOnly; only its hash is stored) and `ops_csrf` (readable by the page, which echoes it in a header on every browser mutation, logout included, together with a matching `Origin`; the server keeps only its hash). A subject with no membership, or with two, is refused. `POST /auth/logout` revokes the session, spends the stored refresh token at Keycloak and answers 204; the Keycloak form then appears again on the next login. Keycloak also calls `POST /auth/backchannel-logout`, which verifies the logout token (signature, algorithm allowlist, `exp`, `sid`/`sub`) against a durable `jti` store and revokes every session with that `sid`; a replayed or forged token is refused.
+
+The back-channel URL in the realm export is `http://host.docker.internal:8000/auth/backchannel-logout`: Keycloak runs in a container and the API runs on the host, so the container reaches the host through Docker's host alias, not `localhost`. T30 replaces it when the API is containerised. The realm's SSO lifetimes are 8 h so the provider session outlives the application session; every authorization request carries `max_age=1800` and an idle- or absolute-expired application session also ends its Keycloak session, so after idle expiry the next login asks for the password again (ruling 3 as amended). `host.docker.internal` resolves without `extra_hosts` on Docker Desktop only; a Linux engine needs `extra_hosts: ["host.docker.internal:host-gateway"]` on the Keycloak service (T30 owns the containerised URL).
+
+**Warning.** `ops-test-admin` (a service account with `manage-users`) exists in the dev realm only, for the live suite's persona switch (disable and re-enable a user). Never import it into the demo realm (T30).

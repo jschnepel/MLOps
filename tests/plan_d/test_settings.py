@@ -68,8 +68,9 @@ def test_postgres_settings_build_a_conninfo_and_hide_the_password(secrets: Path)
 def test_keycloak_and_service_urls_default_to_the_dev_stack(secrets: Path, monkeypatch: pytest.MonkeyPatch):
     kc = settings.keycloak()
     assert kc.issuer == "http://localhost:18080/realms/ops-dev"
-    assert kc.jwks_url == "http://localhost:18080/realms/ops-dev/protocol/openid-connect/certs"
-    assert kc.token_url == "http://localhost:18080/realms/ops-dev/protocol/openid-connect/token"
+    # Server-side URLs dial 127.0.0.1: `localhost` costs about 2 s per connection on the dev machine (spike §3).
+    assert kc.jwks_url == "http://127.0.0.1:18080/realms/ops-dev/protocol/openid-connect/certs"
+    assert kc.token_url == "http://127.0.0.1:18080/realms/ops-dev/protocol/openid-connect/token"
     monkeypatch.setenv("OPS_KC_BASE_URL", "http://localhost:28080/")
     assert settings.keycloak().issuer == "http://localhost:28080/realms/ops-dev"  # trailing slash tolerated
     for name in ("MCP_READ_RESOURCE_URL", "MCP_WRITE_RESOURCE_URL", "OPS_MCP_READ_URL", "OPS_MCP_WRITE_URL"):

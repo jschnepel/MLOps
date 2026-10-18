@@ -11,6 +11,7 @@ dependencies = [
   "ops-mcp-write",
   "ops-asset-sim",
   "ops-incident-sim",
+  "ops-sweeper",
 ]
 
 [tool.uv]
@@ -24,9 +25,10 @@ ops-mcp-read = { workspace = true }
 ops-mcp-write = { workspace = true }
 ops-asset-sim = { workspace = true }
 ops-incident-sim = { workspace = true }
+ops-sweeper = { workspace = true }
 
 [tool.uv.workspace]
-members = ["core", "api", "worker", "mcp-read", "mcp-write", "asset-sim", "incident-sim"]
+members = ["core", "api", "worker", "mcp-read", "mcp-write", "asset-sim", "incident-sim", "sweeper"]
 exclude = ["reference"]
 
 [dependency-groups]
@@ -43,11 +45,17 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/plan_a", "tests/plan_b", "tests/plan_c", "tests/plan_d", "tests/plan_e", "tests/e2e"]
+testpaths = [
+  "tests/plan_a", "tests/plan_b", "tests/plan_c", "tests/plan_d", "tests/plan_e", "tests/plan_f",
+  "tests/e2e",
+]
 asyncio_default_fixture_loop_scope = "function"
 # Setting this replaces pytest's defaults (which include ".*"), so ".*" is restated: otherwise pytest walks .hypothesis/.
 norecursedirs = ["reference", ".venv", "node_modules", "build", ".*"]
 addopts = "-ra"
+markers = [
+  "sweeper_stamps: the module's skeleton sweeper stamps memberships.synced_at; the autouse fixture must not",
+]
 
 [tool.ruff]
 line-length = 120
@@ -57,3 +65,8 @@ extend-exclude = ["reference", "docs"]
 python_version = "3.13"
 strict = true
 exclude = ["^reference/"]
+
+# authlib 1.8 ships no py.typed (measured in the Plan F review); its stubs package targets httpx, not httpx2.
+[[tool.mypy.overrides]]
+module = ["authlib.*"]
+ignore_missing_imports = true
