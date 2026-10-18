@@ -89,6 +89,25 @@ class FakeStore:
     async def lookup(self, action_id: UUID) -> keys.KeyRow | None:
         return self.rows.get(action_id)
 
+    async def abort(self, *, action_id: UUID, payload_sha256: str, reason: str) -> keys.KeyRow:
+        return self._tombstone(action_id, payload_sha256, "ABORTED", reason)
+
+    async def reject(self, *, action_id: UUID, payload_sha256: str, reason: str) -> keys.KeyRow:
+        return self._tombstone(action_id, payload_sha256, "REJECTED", reason)
+
+    def _tombstone(self, action_id: UUID, payload_sha256: str, state: str, reason: str) -> keys.KeyRow:
+        """First writer wins: an existing key of any state stands (SA:263, SA:267)."""
+        if action_id not in self.rows:
+            self.rows[action_id] = row(
+                action_id=action_id,
+                payload_sha256=payload_sha256,
+                state=state,
+                incident_id=None,
+                receipt_id=None,
+                reason=reason,
+            )
+        return self.rows[action_id]
+
 
 @pytest.fixture
 def client() -> Iterator[tuple[TestClient, FakeStore]]:
@@ -134,14 +153,16 @@ def test_different_hash_under_an_existing_key_is_a_conflict_not_a_second_inciden
 def test_presented_hash_must_match_the_received_bytes(client):
     c, store = client
     r = post(c, body_for(PAYLOAD, sha="0" * 64))
-    assert r.status_code == 422 and r.json()["code"] == "INVALID_INPUT"
+    assert r.status_code == 200 and r.json()["state"] == "REJECTED"
+    assert r.json()["tombstone"]["reason"] == "hash_mismatch"
     # The hash is over the bytes as received (SA:268): a re-serialisation that changes one byte is a mismatch.
     spaced = {
         "action_id": str(ACTION),
         "payload_sha256": SHA,
         "payload_canonical": '{"asset_id": "A17", "revision": 1, "title": "Synthetic incident"}',
     }
-    assert post(c, spaced).status_code == 422
+    other = post(c, {**spaced, "action_id": str(uuid4())})
+    assert other.status_code == 200 and other.json()["tombstone"]["reason"] == "hash_mismatch"
     assert store.commits == []  # refused before the key table is touched
 
 
@@ -151,8 +172,6 @@ def test_malformed_bodies_are_422(client):
         b"{",
         b'{"action_id": "x"}',
         b'{"action_id": "%s", "payload_sha256": "%s"}' % (str(ACTION).encode(), SHA.encode()),
-        b'{"action_id": "%s", "payload_sha256": "%s", "payload_canonical": "[1]"}'
-        % (str(ACTION).encode(), SHA.encode()),
     ):
         r = c.post(
             "/internal/incidents",
@@ -160,6 +179,17 @@ def test_malformed_bodies_are_422(client):
             headers={"Authorization": "Bearer good", "Content-Type": "application/json"},
         )
         assert r.status_code == 422, body
+    # A well-formed envelope around a non-object payload is a permanent rejection, not a malformed body (T10).
+    arr = b'{"action_id": "%s", "payload_sha256": "%s", "payload_canonical": "[1]"}' % (
+        str(ACTION).encode(),
+        SHA.encode(),
+    )
+    r = c.post("/internal/incidents", content=arr, headers={"Authorization": "Bearer good"})
+    assert (
+        r.status_code == 200
+        and r.json()["state"] == "REJECTED"
+        and r.json()["tombstone"]["reason"] == "invalid_payload"
+    )
     dup = b'{"action_id": "%s", "action_id": "%s", "payload_sha256": "%s", "payload_canonical": "{}"}' % (
         str(ACTION).encode(),
         str(ACTION).encode(),

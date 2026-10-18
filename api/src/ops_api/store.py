@@ -1,9 +1,9 @@
-"""The API's door to the database (T08 shape of create_run, record_decision and the read queries).
+"""The API's door to the database as role `api` (T09 shape): identity through `resolve_identity`, admission through
+`create_run`, decisions through `record_decision`; reads under the tenant's unit, which RLS scopes.
 
-Every method is tenant-scoped by a WHERE clause (debt → T09 RLS) and the two writers are single transactions:
-admission commits message, run, job and `run.accepted` together (BUILD_SPEC §7: success only after commit), and a
-decision commits the decision row, the transition, the `execute` wake-up and `approval.recorded` together (BUILD_SPEC
-§12). TODO(T09): `create_run`/`record_decision` definer functions; TODO(T12): Idempotency-Key, admission router.
+Admission still commits message, run, job and `run.accepted` together (BUILD_SPEC §7) and a decision commits the
+decision row, the transition, the `execute` wake-up and `approval.recorded` together (§12): the functions do the
+writing inside the API's transaction. TODO(T12): Idempotency-Key, admission router.
 """
 
 from __future__ import annotations
@@ -13,12 +13,9 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-import psycopg
 from ops_core import persistence
 from ops_core.contracts import DecisionRequest, MessageRequest
-from ops_core.jobs import JobType
-from ops_core.outcomes import EventSource, EventType
-from ops_core.states import Intent, Performer, Reason, RunState
+from ops_core.states import Intent, RunState
 from psycopg.types.json import Jsonb
 
 
@@ -36,6 +33,11 @@ class Conflict(Exception):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+class Internal(Exception):
+    """A definer function refused input the API already validated, or returned nothing: a server defect, never the
+    client's (maps to 503)."""
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,17 @@ def single_tenant(rows: list[tuple[UUID, str]]) -> Membership | None:
     return Membership(next(iter(tenants)), frozenset(role for _, role in rows))
 
 
+def map_refusal(exc: persistence.Refused) -> Exception:
+    """A function's DETAIL code → the HTTP class BUILD_SPEC §16 names; the code itself never reaches the client."""
+    if exc.code in ("NOT_REVIEWER", "SELF_REVIEW", "MEMBERSHIP_INACTIVE"):
+        return Forbidden()
+    if exc.code == "SLOT_OCCUPIED":
+        return Conflict("SLOT_OCCUPIED")
+    if exc.code == "INVALID_ARGUMENT":
+        return Internal()  # the API's own validation makes this unreachable; a 409 would be a false message
+    return Conflict("VERSION_CONFLICT")
+
+
 class Store(Protocol):
     """The seven operations the application needs; the unit tests fake it, `DbStore` implements it."""
 
@@ -133,25 +146,21 @@ class Store(Protocol):
 
 
 class DbStore:
-    """The PostgreSQL implementation of `Store` over one autocommit connection."""
+    """The PostgreSQL implementation of `Store` over one autocommit connection as role `api`."""
 
     def __init__(self, conn: persistence.Conn) -> None:
         self.session = persistence.Session(conn)  # ruling 24: one unit of work at a time, each a real transaction
 
     async def membership(self, issuer: str, subject: UUID) -> Membership | None:
         """Resolve a verified subject to its active tenant membership, or None."""
-        async with self.session.unit() as conn:
-            cur = await conn.execute(
-                "SELECT tenant_id, role FROM app.memberships WHERE issuer = %s AND subject = %s AND active",
-                (issuer, subject),
-            )
-            rows = await cur.fetchall()
-        return single_tenant([(r["tenant_id"], r["role"]) for r in rows])
+        async with self.session.unit() as conn:  # the function walks the tenants itself (Plan E ruling 4)
+            rows = await persistence.resolve_identity(conn, issuer=issuer, subject=subject)
+        return single_tenant(rows)
 
     async def create_conversation(self, tenant_id: UUID, created_by: UUID) -> UUID:
         """Create an empty conversation in the tenant."""
         cid = uuid4()
-        async with self.session.unit() as conn:
+        async with self.session.unit(tenant_id) as conn:
             await conn.execute(
                 "INSERT INTO app.conversations (conversation_id, tenant_id, created_by) VALUES (%s, %s, %s)",
                 (cid, tenant_id, created_by),
@@ -171,23 +180,15 @@ class DbStore:
         """Commit message, run, job and `run.accepted` together."""
         if request.context is None or request.context.asset_id is None:  # app.py checked the route
             raise ValueError("admit requires an investigate request with asset_id")
-        message_id, run_id = uuid4(), uuid4()
+        message_id = uuid4()
         try:
-            async with self.session.unit() as conn:
+            async with self.session.unit(tenant_id) as conn:
                 cur = await conn.execute(
                     "SELECT 1 FROM app.conversations WHERE conversation_id = %s AND tenant_id = %s",
                     (conversation_id, tenant_id),
                 )
                 if await cur.fetchone() is None:
                     raise NotFound
-                if request.supersedes_run_id is not None:
-                    # TODO(T21): the semantic supersede rules (active run, revision); here only tenant scoping.
-                    cur = await conn.execute(
-                        "SELECT 1 FROM app.runs WHERE run_id = %s AND tenant_id = %s AND conversation_id = %s",
-                        (request.supersedes_run_id, tenant_id, conversation_id),
-                    )
-                    if await cur.fetchone() is None:
-                        raise NotFound
                 await conn.execute(
                     "INSERT INTO app.messages (message_id, tenant_id, conversation_id, kind, text, context, author)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s)",
@@ -201,9 +202,9 @@ class DbStore:
                         requester,
                     ),
                 )
-                version = await persistence.create_run(
+                # The function validates the supersedes target against tenant and conversation (SA:450).
+                run_id, version = await persistence.create_run(
                     conn,
-                    run_id=run_id,
                     tenant_id=tenant_id,
                     conversation_id=conversation_id,
                     message_id=message_id,
@@ -214,105 +215,64 @@ class DbStore:
                     end_at=end_at,
                     supersedes_run_id=request.supersedes_run_id,
                 )
-                await persistence.append_event(
-                    conn,
-                    tenant_id=tenant_id,
-                    conversation_id=conversation_id,
-                    run_id=run_id,
-                    type=EventType.RUN_ACCEPTED,
-                    source=EventSource.APPLICATION,
-                    payload={},
-                )
-        except psycopg.errors.UniqueViolation as exc:
-            # The partial unique index is the slot rule (BUILD_SPEC §7); any other uniqueness error is a bug.
-            if exc.diag.constraint_name == "runs_one_active_per_conversation":
-                raise Conflict("SLOT_OCCUPIED") from exc
-            raise
+        except persistence.NotFound as exc:
+            raise NotFound from exc
+        except persistence.Refused as exc:
+            raise map_refusal(exc) from exc
         return Accepted(conversation_id, message_id, run_id, RunState.QUEUED.value, version)
 
     async def run(self, tenant_id: UUID, run_id: UUID) -> dict[str, Any] | None:
-        """Read one run row in the tenant."""
-        row = await self.session.read(
-            "SELECT * FROM app.runs WHERE run_id = %s AND tenant_id = %s", (run_id, tenant_id)
-        )
+        """Read one run row in the tenant (RLS scopes the unit; the WHERE is belt and braces)."""
+        async with self.session.unit(tenant_id) as conn:
+            cur = await conn.execute("SELECT * FROM app.runs WHERE run_id = %s AND tenant_id = %s", (run_id, tenant_id))
+            row = await cur.fetchone()
         return None if row is None else dict(row)
 
     async def proposal(self, tenant_id: UUID, proposal_id: UUID) -> dict[str, Any] | None:
         """Read one proposal with its run's requester and state."""
-        row = await self.session.read(
-            "SELECT p.*, r.requester, r.state AS run_state FROM app.proposals p JOIN app.runs r ON r.run_id = p.run_id"
-            " WHERE p.proposal_id = %s AND p.tenant_id = %s",
-            (proposal_id, tenant_id),
-        )
+        async with self.session.unit(tenant_id) as conn:
+            cur = await conn.execute(
+                "SELECT p.*, r.requester, r.state AS run_state FROM app.proposals p"
+                " JOIN app.runs r ON r.run_id = p.run_id"
+                " WHERE p.proposal_id = %s AND p.tenant_id = %s",
+                (proposal_id, tenant_id),
+            )
+            row = await cur.fetchone()
         return None if row is None else dict(row)
 
     async def decide(self, *, tenant_id: UUID, proposal_id: UUID, reviewer: UUID, request: DecisionRequest) -> Decided:
-        """Record the first decision on the exact revision and hash, or raise Conflict."""
+        """Record the first decision on the exact revision and hash, or raise Conflict / Forbidden / NotFound."""
         try:
-            async with self.session.unit() as conn:
+            async with self.session.unit(tenant_id) as conn:
                 cur = await conn.execute(
-                    "SELECT p.run_id, p.revision, p.payload_sha256 FROM app.proposals p"
-                    " WHERE p.proposal_id = %s AND p.tenant_id = %s",
+                    "SELECT revision FROM app.proposals WHERE proposal_id = %s AND tenant_id = %s",
                     (proposal_id, tenant_id),
                 )
                 proposal = await cur.fetchone()
                 if proposal is None:
                     raise NotFound
-                run = await persistence.run_row(conn, proposal["run_id"], lock=True)
-                if run["active_proposal_id"] != proposal_id or run["state"] != RunState.AWAITING_APPROVAL.value:
-                    raise Conflict("VERSION_CONFLICT")
-                if (proposal["revision"], proposal["payload_sha256"]) != (
-                    request.expected_revision,
-                    request.expected_payload_sha256,
-                ):
-                    raise Conflict("VERSION_CONFLICT")  # exact content binding (BUILD_SPEC §12)
-                await conn.execute(
-                    "INSERT INTO app.decisions (decision_id, proposal_id, reviewer, decision, reason,"
-                    " expected_payload_sha256) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (uuid4(), proposal_id, reviewer, request.decision, request.reason, request.expected_payload_sha256),
+                if proposal["revision"] != request.expected_revision:
+                    raise Conflict("VERSION_CONFLICT")  # the hash is the function's check; the revision is ours
+                decided = await persistence.record_decision(
+                    conn,
+                    tenant_id=tenant_id,
+                    proposal_id=proposal_id,
+                    reviewer=reviewer,
+                    expected_payload_sha256=request.expected_payload_sha256,
+                    decision=request.decision,
+                    reason=request.reason,
                 )
-                run_id: UUID = run["run_id"]
-                conversation_id: UUID = run["conversation_id"]
-                if request.decision == "approve":
-                    version = await persistence.transition(
-                        conn, run_id=run_id, dst=RunState.APPROVED, performer=Performer.RECORD_DECISION
-                    )
-                    await persistence.insert_job(conn, job_type=JobType.EXECUTE, run_id=run_id, proposal_id=proposal_id)
-                    await persistence.append_event(
-                        conn,
-                        tenant_id=tenant_id,
-                        conversation_id=conversation_id,
-                        run_id=run_id,
-                        type=EventType.APPROVAL_RECORDED,
-                        source=EventSource.APPLICATION,
-                        payload={"proposal_id": str(proposal_id)},
-                    )
-                    status = RunState.APPROVED.value
-                else:
-                    version = await persistence.transition(
-                        conn,
-                        run_id=run_id,
-                        dst=RunState.REJECTED,
-                        performer=Performer.RECORD_DECISION,
-                        reason=Reason.REJECTED,
-                    )
-                    await persistence.append_event(
-                        conn,
-                        tenant_id=tenant_id,
-                        conversation_id=conversation_id,
-                        run_id=run_id,
-                        type=EventType.RUN_REJECTED,
-                        source=EventSource.APPLICATION,
-                        payload={"proposal_id": str(proposal_id)},
-                    )
-                    status = RunState.REJECTED.value
-        except psycopg.errors.UniqueViolation as exc:
-            raise Conflict("VERSION_CONFLICT") from exc  # decisions.proposal_id UNIQUE: the first decision won
-        return Decided(proposal_id, run_id, request.decision, status, version)
+        except persistence.NotFound as exc:
+            raise NotFound from exc
+        except persistence.VersionConflict as exc:
+            raise Conflict("VERSION_CONFLICT") from exc
+        except persistence.Refused as exc:
+            raise map_refusal(exc) from exc
+        return Decided(proposal_id, decided.run_id, request.decision, decided.state.value, decided.state_version)
 
     async def events(self, tenant_id: UUID, run_id: UUID, *, after: int, limit: int) -> list[dict[str, Any]]:
         """List a run's events after a sequence number."""
-        async with self.session.unit() as conn:
+        async with self.session.unit(tenant_id) as conn:
             cur = await conn.execute(
                 "SELECT sequence, type, source, occurred_at, payload FROM app.events"
                 " WHERE run_id = %s AND tenant_id = %s AND sequence > %s ORDER BY sequence LIMIT %s",

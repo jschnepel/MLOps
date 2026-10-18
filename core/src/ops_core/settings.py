@@ -1,17 +1,19 @@
 """Process configuration shared by every skeleton service: plain environment variables plus secret files.
 
 Secrets never travel in environment variables (BUILD_SPEC §22; Plan B's compose test refuses a PASSWORD or SECRET key
-that is not a `_FILE` path), so a service reads each secret once from `OPS_SECRETS_DIR/<name>` at start and keeps it in
-memory. Everything else — hosts, ports, URLs, the model mode — is an `OPS_*` variable with a dev default that matches
+that is not a `_FILE` path), so a service reads each secret once from `OPS_SECRETS_DIR/<name>` at start and keeps it
+in memory. Everything else — hosts, ports, URLs, the model mode — is an `OPS_*` variable with a dev default that matches
 the `.env` written by scripts/bootstrap_dev.py, so a process started by hand against the dev stack needs only
 `OPS_SECRETS_DIR`. The MCP resource URLs are audience identifiers (what the realm's mappers put in `aud`), distinct
 from the loopback listen URLs the host processes answer on; T30 makes them coincide when the servers are containerised.
+Every service connects to Postgres as its own AM-20.1 role, and `PROFILE` selects the dev, test or demo profile.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 from psycopg.conninfo import make_conninfo
@@ -79,14 +81,58 @@ class Postgres:
         )
 
 
+class Profile(StrEnum):
+    """The three v1 profiles (SA:40); R098's "default" profile means dev and demo (SA:49)."""
+
+    DEV = "dev"
+    TEST = "test"
+    DEMO = "demo"
+
+
+def profile() -> Profile:
+    """The process profile from `PROFILE`; dev when unset; anything else is a refusal to start."""
+    raw = env("PROFILE", Profile.DEV.value)
+    try:
+        return Profile(raw)
+    except ValueError as exc:
+        raise SettingsError("PROFILE must be one of dev, test, demo") from exc
+
+
+class Role(StrEnum):
+    """The login roles of AM-20.1; each process connects as exactly one of them (never as the owner)."""
+
+    API = "api"
+    WORKER = "worker"
+    SWEEPER = "sweeper"
+    MCP_READ = "mcp_read"
+    MCP_EXEC = "mcp_exec"
+    OPERATOR = "operator"
+    TEST_HARNESS = "test_harness"
+
+
+def secret_name(role: Role) -> str:
+    """The secret file that holds a role's password; scripts/bootstrap_dev.py generates one per role."""
+    return f"postgres_{role.value}_password"
+
+
 def _pg_host_port() -> tuple[str, int]:
     return env("OPS_PG_HOST", "127.0.0.1"), env_int("OPS_PG_PORT", 15432)
 
 
-def app_postgres() -> Postgres:
-    """The application database, as the single owner role the skeleton is allowed (debt → T09)."""
+def _app_db() -> str:
+    return env("OPS_PG_DB", "ops")
+
+
+def superuser_postgres() -> Postgres:
+    """The Compose superuser: migrations, role bootstrap and test fixtures only, never a service (SA:395, SA:521)."""
     host, port = _pg_host_port()
-    return Postgres(host, port, env("OPS_PG_USER", "ops"), env("OPS_PG_DB", "ops"), read_secret("postgres_password"))
+    return Postgres(host, port, env("OPS_PG_SUPERUSER", "ops"), _app_db(), read_secret("postgres_password"))
+
+
+def app_postgres(role: Role) -> Postgres:
+    """The application database as one runtime role; the role is required so no caller inherits the owner."""
+    host, port = _pg_host_port()
+    return Postgres(host, port, role.value, _app_db(), read_secret(secret_name(role)))
 
 
 def incident_postgres() -> Postgres:

@@ -23,9 +23,9 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.tools.base import Tool
 from ops_core import persistence, settings
-from ops_core.jobs import Server
 from ops_core.jobs import Tool as ToolName
 from ops_core.outcomes import ActionOutcome, ToolOutcome
+from ops_core.settings import Role
 from ops_core.tokens import Principal, TokenRejected, TokenVerifier, WorkloadTokenSource
 from pydantic import AnyHttpUrl, ConfigDict, Field
 from starlette.applications import Starlette
@@ -173,16 +173,24 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
             return envelope("create_incident", error=tool_error("INVALID_HANDLE", "missing invocation handle"))
         try:
             async with state.deps.session.unit() as conn:
-                invocation = await persistence.resolve_handle(
-                    conn, handle=handle, server=Server.WRITE, azp=token.client_id, tool=ToolName.CREATE_INCIDENT
-                )
-            outcome = await execution.create_incident(state.deps, invocation=invocation, proposal_id=proposal_id)
+                await persistence.resolve_invocation(
+                    conn, handle=handle, azp=token.client_id, tool=ToolName.CREATE_INCIDENT
+                )  # binds server, azp, expiry and the tool allowlist before any work (SA:459)
+            outcome = await execution.create_incident(state.deps, handle=handle, proposal_id=proposal_id)
         except persistence.HandleRejected as exc:
             return envelope("create_incident", error=tool_error("INVALID_HANDLE", str(exc)))
-        except execution.GrantRefused as exc:
-            return envelope("create_incident", error=tool_error("GRANT_REFUSED", str(exc)))
+        except persistence.Refused as exc:
+            return envelope("create_incident", error=tool_error("GRANT_REFUSED", f"grant refused: {exc.code}"))
         except persistence.NotFound:
             return envelope("create_incident", error=tool_error("NOT_FOUND", "run not found"))
+        except persistence.VersionConflict:
+            # Only grant_execution and mark_sent can raise this here, both before this call sends anything, so the
+            # worker closes the job without a retry cycle. After SENT execution.py answers UNKNOWN instead (AM-13).
+            return envelope("create_incident", error=tool_error("STALE_RUN", "run is no longer executing"))
+        except persistence.HashMismatch:
+            return envelope("create_incident", error=tool_error("HASH_MISMATCH", "stored bytes do not match"))
+        # AuthorityViolation stays unmapped on purpose: it is a deployment error (the role lacks a grant), so the raw
+        # tool error and the worker's re-queue are the right outcome.
         return outcome_envelope(outcome)
 
     return MCPServer(
@@ -204,8 +212,15 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         """Build the write dependencies and load keys, run the mounted app's lifespan, then close both resources."""
         if state.deps is None:
             kc = settings.keycloak()
+            conn = await persistence.connect(settings.app_postgres(Role.MCP_EXEC))
+            try:
+                await persistence.assert_clock_profile(conn, settings.profile())
+            except BaseException:  # a failed start must leak no connection
+                await conn.close()
+                raise
+            session = persistence.Session(conn)
             state.deps = execution.Deps(
-                session=persistence.Session(await persistence.connect(settings.app_postgres())),
+                session=session,
                 http=httpx2.AsyncClient(),
                 destination_url=settings.urls().incident_sim,
                 destination_token=WorkloadTokenSource(
@@ -214,9 +229,9 @@ def build_app(server: MCPServer, state: State) -> Starlette:
                     client_secret=settings.read_secret("kc_client_secret_ops_mcp_write"),
                 ),
             )
-        if not state.verifier.ready:
-            await state.verifier.load_keys()
         try:
+            if not state.verifier.ready:  # inside the try: a failed JWKS load must close both resources too
+                await state.verifier.load_keys()
             async with mcp_app.router.lifespan_context(mcp_app):
                 yield
         finally:
@@ -232,7 +247,7 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         if state.deps is None or not state.verifier.ready:
             return JSONResponse({"status": "not ready"}, status_code=503)
         try:
-            await state.deps.session.read("SELECT 1", ())
+            await state.deps.session.ping()
         except (psycopg.Error, OSError):  # readiness reports a database failure as not ready
             return JSONResponse({"status": "not ready"}, status_code=503)
         return JSONResponse({"status": "ready"})

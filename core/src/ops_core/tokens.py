@@ -20,7 +20,7 @@ from typing import Any
 import httpx2
 import jwt
 from jwt import PyJWKSet
-from jwt.exceptions import InvalidTokenError, PyJWKClientError, PyJWKSetError
+from jwt.exceptions import InvalidAudienceError, InvalidTokenError, PyJWKClientError, PyJWKSetError
 
 Fetch = Callable[[str], Awaitable[dict[str, Any]]]
 REFRESH_COOLDOWN = 60.0  # seconds between JWKS refreshes triggered by an unknown kid
@@ -32,6 +32,11 @@ class TokenRejected(Exception):
 
 class UnknownSigningKey(TokenRejected):
     """The token names a `kid` this server has no key for; the only rejection a JWKS refresh can cure."""
+
+
+class WrongAudience(TokenRejected):
+    """Signature, issuer and expiry passed; the token is simply another server's (aud or azp). Servers that answer
+    401 for every TokenRejected keep doing so; incident-sim turns this one into 403 (T10 DoD 2)."""
 
 
 @dataclass(frozen=True)
@@ -132,6 +137,8 @@ class TokenVerifier:
                 issuer=self._issuer,
                 options={"require": ["exp", "iss", "aud", "sub"]},
             )
+        except InvalidAudienceError as exc:
+            raise WrongAudience("token is for another audience") from exc
         except InvalidTokenError as exc:
             # PyJWT's message names the failed check (expired, audience, issuer, signature) and never the token.
             raise TokenRejected(f"token rejected: {exc.__class__.__name__}") from exc
@@ -139,7 +146,7 @@ class TokenVerifier:
             raise TokenRejected("token has no subject")
         azp = claims.get("azp")
         if not isinstance(azp, str) or azp not in self._allowed_azp:
-            raise TokenRejected("token was issued to a client this server does not accept")
+            raise WrongAudience("token was issued to a client this server does not accept")
         aud = claims["aud"]
         audiences = (aud,) if isinstance(aud, str) else tuple(aud)
         return Principal(

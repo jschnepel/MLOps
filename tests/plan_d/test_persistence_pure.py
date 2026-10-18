@@ -1,74 +1,35 @@
-"""Invocation-handle checks (BUILD_SPEC §9 handle binding, R131 in miniature): the part of resolve_invocation that
-needs no database — expiry, revocation, server binding derived from the job type (not the stored column), the caller's
-azp, and the per-job-type tool allowlist.
+"""The tool allowlist that stayed in Python (BUILD_SPEC §9, Plan E ruling 21) and one SQLSTATE mapping.
 
-Catches: an expired or revoked handle still usable, a read handle accepted by mcp-write (server derived from the
-worker-written column instead of the job type), another workload's token replaying a stolen handle, and a read job
-calling a write tool.
+The server, azp, expiry and revocation checks live in `app._resolve_handle` (Task 4's live test); this module holds
+only what needs no database.
+
+Catches: a read job allowed to call a write tool, an execute job allowed to call the recover-only receipt tool, and a
+handle refusal that echoes the server's text.
 """
 
-from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from types import SimpleNamespace
 
+import psycopg
 import pytest
-from ops_core.jobs import JobType, Server, Tool
-from ops_core.persistence import HandleRejected, check_invocation
-
-NOW = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
-RUN, JOB, TENANT, CONV = UUID(int=1), UUID(int=2), UUID(int=3), UUID(int=4)
-
-
-def row(**over: object) -> dict[str, object]:
-    base: dict[str, object] = {
-        "handle": "h",
-        "run_id": RUN,
-        "job_id": JOB,
-        "server": "read",
-        "azp": "ops-worker",
-        "expires_at": NOW + timedelta(seconds=30),
-        "revoked_at": None,
-        "job_type": "investigate",
-        "tenant_id": TENANT,
-        "conversation_id": CONV,
-    }
-    base.update(over)
-    return base
-
-
-def test_valid_read_handle_resolves_to_its_run_and_job():
-    inv = check_invocation(row(), server=Server.READ, azp="ops-worker", tool=Tool.SEARCH_PROCEDURES, now=NOW)
-    assert (inv.run_id, inv.job_id, inv.job_type, inv.tenant_id) == (RUN, JOB, JobType.INVESTIGATE, TENANT)
+from ops_core.jobs import JobType, Tool
+from ops_core.persistence import HandleRejected, allowed_tool, translate
 
 
 @pytest.mark.parametrize(
-    ("over", "server", "azp", "tool"),
+    ("job_type", "tool"),
     [
-        ({"expires_at": NOW}, Server.READ, "ops-worker", Tool.SEARCH_PROCEDURES),  # expiry is exclusive
-        ({"revoked_at": NOW - timedelta(seconds=1)}, Server.READ, "ops-worker", Tool.SEARCH_PROCEDURES),
-        ({}, Server.WRITE, "ops-worker", Tool.CREATE_INCIDENT),  # investigate handle presented to mcp-write
-        ({"job_type": "execute", "server": "read"}, Server.READ, "ops-worker", Tool.SEARCH_PROCEDURES),  # column lies
-        ({}, Server.READ, "ops-mcp-write", Tool.SEARCH_PROCEDURES),  # another workload replays the handle
-        ({}, Server.READ, "ops-worker", Tool.CREATE_INCIDENT),  # a read job may not call a write tool
-        (
-            {"job_type": "execute", "server": "write"},
-            Server.WRITE,
-            "ops-worker",
-            Tool.GET_INCIDENT_RECEIPT,
-        ),  # execute ≠ recover
+        (JobType.INVESTIGATE, Tool.CREATE_INCIDENT),  # a read job may not call a write tool
+        (JobType.EXECUTE, Tool.GET_INCIDENT_RECEIPT),  # execute is not recover
     ],
 )
-def test_rejections(over: dict[str, object], server: Server, azp: str, tool: Tool):
+def test_rejections(job_type: JobType, tool: Tool) -> None:
     with pytest.raises(HandleRejected):
-        check_invocation(row(**over), server=server, azp=azp, tool=tool, now=NOW)
+        allowed_tool(job_type, tool)
 
 
-def test_rejection_messages_never_echo_the_handle():
-    with pytest.raises(HandleRejected) as caught:
-        check_invocation(
-            row(handle="secret-handle-value", expires_at=NOW),
-            server=Server.READ,
-            azp="ops-worker",
-            tool=Tool.SEARCH_PROCEDURES,
-            now=NOW,
-        )
-    assert "secret-handle-value" not in str(caught.value)
+def test_handle_refusal_never_echoes_the_server_text() -> None:
+    diag = SimpleNamespace(message_detail="secret-handle-value", message_primary="secret-handle-value")
+    exc = type("FakeError", (psycopg.DatabaseError,), {"diag": property(lambda self: diag)})("x")
+    exc.sqlstate = "OC008"
+    mapped = translate(exc)
+    assert isinstance(mapped, HandleRejected) and "secret-handle-value" not in str(mapped)
