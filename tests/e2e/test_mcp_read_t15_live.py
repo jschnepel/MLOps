@@ -326,7 +326,8 @@ async def test_the_protocol_version_is_checked_on_every_request(
     assert (legacy.status_code, legacy.json()["error"]["code"]) == (400, -32022)  # the guard
     assert "2025-11-25" not in legacy.text  # never echoed
     assert (mismatch.status_code, mismatch.json()["error"]["code"]) == (400, -32020)  # the SDK's HEADER_MISMATCH
-    assert listed.status_code == 200 and [t["name"] for t in listed.json()["result"]["tools"]] == ["search_procedures"]
+    names = [t["name"] for t in listed.json()["result"]["tools"]]
+    assert listed.status_code == 200 and names == ["get_asset_status", "get_recent_alerts", "search_procedures"]  # T16
     lines.append("protocol: absent 400/-32022, 2025-11-25 400/-32022, header/_meta mismatch 400/-32020, matching 200")
 
 

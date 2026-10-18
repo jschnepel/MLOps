@@ -70,10 +70,27 @@ class IdleConn:
         return None
 
 
+class IdleAssets:
+    """Stands in for mcp-read's asset-sim client (T16), so the lifespan builds none; nothing here reaches it."""
+
+    async def asset_type(self, scope: object) -> str | None:
+        raise AssertionError("asset-sim was asked")
+
+    async def status(self, scope: object) -> dict[str, Any]:
+        raise AssertionError("asset-sim was asked")
+
+    async def alerts(self, scope: object, *, limit: int, cursor: str | None) -> dict[str, Any]:
+        raise AssertionError("asset-sim was asked")
+
+    async def aclose(self) -> None:
+        return None
+
+
 def read_app() -> Any:
     state = server.State(session=None, verifier=KeyedVerifier())
     idle: Any = IdleConn()
     state.session = persistence.Session(idle)  # already set, so the lifespan opens no connection
+    state.assets = IdleAssets()  # likewise for the asset-sim client (T16)
     return server.build_app(server.build_server(state, issuer=ISSUER, resource_url=RESOURCE), state)
 
 
@@ -111,7 +128,11 @@ def test_the_ladder_and_the_resource_check_behind_the_guard() -> None:
     with TestClient(read_app(), base_url=BASE) as client:
         listed = client.post("/mcp", json=TOOLS_LIST, headers=headers())
         assert listed.status_code == 200
-        assert [t["name"] for t in listed.json()["result"]["tools"]] == ["search_procedures"]
+        assert [t["name"] for t in listed.json()["result"]["tools"]] == [
+            "get_asset_status",
+            "get_recent_alerts",
+            "search_procedures",
+        ]  # T16
         legacy = client.post("/mcp", json=TOOLS_LIST, headers=headers(version="2025-11-25"))
         assert legacy.status_code == 400 and legacy.json()["error"]["code"] == -32022  # the guard's
         mismatch = {**TOOLS_LIST, "params": {"_meta": {**TOOLS_LIST["params"]["_meta"]}}}
@@ -144,7 +165,11 @@ async def official_client(app: Any) -> AsyncIterator[Client]:
 @pytest.mark.asyncio
 async def test_the_official_client_lists_and_calls_through_the_guard() -> None:
     async with official_client(read_app()) as client:
-        assert [t.name for t in (await client.list_tools()).tools] == ["search_procedures"]
+        assert [t.name for t in (await client.list_tools()).tools] == [
+            "get_asset_status",
+            "get_recent_alerts",
+            "search_procedures",
+        ]
         res = await client.call_tool("search_procedures", {"query": "x", "limit": 1, "mode": "lexical"})
     # No X-Ops-Invocation header: the tool body refuses before any lookup, as an envelope, not a transport error.
     assert not res.is_error and res.structured_content["error"]["code"] == "INVALID_HANDLE"

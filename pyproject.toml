@@ -71,3 +71,9 @@ exclude = ["^reference/"]
 [[tool.mypy.overrides]]
 module = ["authlib.*"]
 ignore_missing_imports = true
+
+# jsonschema 4.26 ships no py.typed (measured 2026-10-18); ops_core.tool_contracts keeps its one use behind typed
+# functions (T16). types-jsonschema is not locked, and adding it is a lock change for one import.
+[[tool.mypy.overrides]]
+module = ["jsonschema", "jsonschema.*"]
+ignore_missing_imports = true

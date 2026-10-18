@@ -113,8 +113,8 @@ async def test_r025_an_independent_client_lists_and_calls_over_the_network(
             ):
                 tools = (await client.list_tools()).tools
                 result = await client.call_tool("search_procedures", QUERY)
-        assert [tool.name for tool in tools] == ["search_procedures"]
-        assert tools[0].input_schema["additionalProperties"] is False
+        assert [tool.name for tool in tools] == ["get_asset_status", "get_recent_alerts", "search_procedures"]  # T16
+        assert all(tool.input_schema["additionalProperties"] is False for tool in tools)
         doc = result.structured_content
         assert not result.is_error and isinstance(doc, dict) and doc["status"] == "ok"
         assert doc["data"]["results"][0]["evidence_id"] == ANSWER  # first by a wide margin (round 1, M10)
@@ -124,7 +124,7 @@ async def test_r025_an_independent_client_lists_and_calls_over_the_network(
         assert (version("mcp"), version("mcp-types")) == ("2.3.0", "2.3.0")  # AM-30's lock, R031
         lines.append(
             f"R025 (read half; mcp-write with T47) / R031 (network half): child process; official client mode"
-            f" {PROTOCOL_VERSION} listed [search_procedures], called ok"
+            f" {PROTOCOL_VERSION} listed the three read tools, called search_procedures ok"
         )
     finally:
         await purge_run(app_conn, run)

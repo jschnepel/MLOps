@@ -22,7 +22,7 @@ from ops_core import persistence
 from ops_core.jobs import Tool
 from ops_mcp_read import server
 
-from tests.plan_j.test_mcp_read_http import BASE, ISSUER, RESOURCE, KeyedVerifier
+from tests.plan_j.test_mcp_read_http import BASE, ISSUER, RESOURCE, IdleAssets, KeyedVerifier
 
 pytestmark = pytest.mark.asyncio
 
@@ -79,6 +79,7 @@ async def call(monkeypatch: pytest.MonkeyPatch, db: Database, arguments: dict[st
     state = server.State(session=None, verifier=KeyedVerifier())
     fake: Any = db.conn
     state.session = persistence.Session(fake)  # already set, so the lifespan opens no connection
+    state.assets = IdleAssets()  # the search asks asset-sim nothing yet
     app = server.build_app(server.build_server(state, issuer=ISSUER, resource_url=RESOURCE), state)
     headers = {"Authorization": "Bearer good", "X-Ops-Invocation": HANDLE}
     async with app.router.lifespan_context(app):
