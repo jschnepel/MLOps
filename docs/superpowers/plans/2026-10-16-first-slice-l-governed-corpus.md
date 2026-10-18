@@ -66,7 +66,8 @@ named. Nothing else departs.
    resolve_invocation}` would fail from that commit on; it moves with the grant. mcp-read starts calling the function
    in Task 4 as the brief says.
 6. **"Documents" are counted as authored files (ruling 12's "at least 14 documents (7 per tenant)").** The corpus has
-   16 authored documents (alpha 9, beta 7), each 300-900 words; they carry 14 document IDs (alpha 8, beta 6), because
+   16 authored documents (alpha 9, beta 7), each 300-900 words counted after its title and banner (at least 320
+   by design, round 1); they carry 14 document IDs (alpha 8, beta 6), because
    each tenant's superseded pair is two versions of one ID, which ruling 12 itself requires. R099 asks for 12.
 7. **The lock-order map gains the corpus tables (not in the brief).** `tests/plan_h/test_locking.py` fails for any
    table of the privilege matrix that `ops_core.locking` does not place; the four tables are inserted and read, never
@@ -160,8 +161,9 @@ additions below win where the two differ:
   task by task to a scratch copy of `abffabb` (`git archive`), running `uv run ruff format` between tasks; every live
   count is arithmetic (the dev count plus the live-gated tests, which are the dev run's skips minus the 21 that skip in
   both gates), because the dry run could not run the live suite: the scratch copy has no `.env`, and copying it was
-  not permitted. So no live test of this plan, and no SQL body of revision 0011, has been executed against a database
-  before execution; Review Focus 1 names what to watch.
+  not permitted. So no live test of this plan, and no DDL or ingestion statement of it, has been executed against a
+  database before execution; round 1's critic ran the search body alone, read-only, in an emulation. Review Focus 1
+  names what to watch.
 
 ## Rulings (the brief's 24, as this plan implements them)
 
@@ -185,7 +187,7 @@ ruling; the seven departures above are the only places where it does something e
    predecessor the same way (Task 1; `privileges.GRANTS`, `RLS_TABLES`, `DEFINER_FUNCTIONS`).
 4. **Chunk = section** — one chunk per `## ` section, `evidence_id` `<DOCUMENT_ID>:v<version>:<section>`, the stored
    body exactly what the section hash covers, character offsets `[start, end)` into the file (a CHECK ties them to the
-   body's length) and the `[a-z0-9]+` word count (Tasks 1-3). The report prints the distribution (45-97 words in
+   body's length) and the `[a-z0-9]+` word count (Tasks 1-3). The report prints the distribution (45-119 words in
    corpus-1); another window is T18's comparison (erratum 100).
 5. **Ingestion** — `ops_core.corpus` (pure, standard library) plus `ops_core.ingest`, connecting as `worker`, one
    transaction per tenant with `app.tenant_id` set transaction-locally; `skeleton.py ingest` (departure 4); no job type,
@@ -198,10 +200,15 @@ ruling; the seven departures above are the only places where it does something e
    missing from the catalog → refused (revoke it instead). A repeated run writes nothing at all, not even an
    ingestion row (the writer's choice; pinned by `test_a_repeated_run_writes_nothing_at_all` and the live R032 test)
    (Task 3).
-7. **Lifecycle vocabulary** — statuses `draft`, `approved`, `superseded`, `revoked`; `effective_from` required,
-   `effective_to` optional and exclusive, `supersedes` an earlier version. Returned only when the latest state is
-   `approved`, effective at now, and no effective approved version names it in `supersedes` (Task 1's SQL, Task 2's
-   `returnable` oracle, the same rule).
+7. **Lifecycle vocabulary** (amended in round 1, I2) — statuses `draft`, `approved`, `superseded`, `revoked`;
+   `effective_from` required, `effective_to` optional and exclusive. The versions of a document form one chain
+   (consecutive whole numbers, compared as numbers, each later one naming the one before in `supersedes`; `load`
+   refuses anything else). A version is returned only when its latest state is `approved`, it is effective at now,
+   and it is not **retired**: a version is retired once any later version of the same document that has left
+   `draft` has reached its `effective_from` at `app.current_time()`, whatever happens to that successor afterwards
+   (revoking or expiring it never brings a predecessor back; re-publishing old text is a new version). A draft or
+   not-yet-effective successor retires nothing. Task 1's SQL, Task 2's `returnable` oracle and `docs/retrieval.md`
+   state the same rule; the dev queries' hand-written labels are the check independent of both.
 8. **The clock** — `app.current_time()` at query time, after the lease lock; the test-clock case moves it in a live
    test and resets it in `finally` (Task 1). Ingestion only checks `effective_to > effective_from`.
 9. **Shared documents** — tenant-only; a document needed by both tenants is copied (erratum 97).
@@ -214,7 +221,8 @@ ruling; the seven departures above are the only places where it does something e
 12. **Where the corpus lives** — `data/corpus/` with `catalog.json`, the Markdown documents, `assets.json`, the
     generated `meta.json` and the lock, guarded by `tests/plan_l/test_corpus_files.py` and `verify_handoff.py`
     (regenerated and compared; LF, no BOM). Document IDs disjoint from `data/handoff-fixtures/` (a test). 16 documents
-    (departure 6) of 300-900 words, each opening with the synthetic-fixture line; per tenant a superseded pair, an
+    (departure 6) of 300-900 words counted after the title and banner lines (all at least 320; round 1, I3), each
+    opening with the synthetic-fixture line; per tenant a superseded pair, an
     expired, a revoked, a draft and an injected version; alpha holds the conflicting pair (Task 2).
 13. **Injected documents** — one per tenant, approved, `label: "injected"`, ingested and returned like any other; the
     label is stored, never returned or filtered; the fixtures README says AM-50 wins (Task 6; erratum 101).
@@ -233,11 +241,16 @@ ruling; the seven departures above are the only places where it does something e
     version fails (Task 2). Ingestion records the version and lock hash; the tool reports the tenant's latest, or
     `none`. The examples use `handoff-1`.
 18. **Full text** — `english`; a stored generated `tsvector` (heading weight A, body weight D) under a GIN index; the
-    OR of the query's own lexemes built in SQL; `ts_rank_cd`; `evidence_id` ascending on ties; zero ranks dropped;
-    `limit` 1..8; no further threshold (the dry run could not measure, so none was chosen; debt line → T18); the
-    settings and how to read a score in `docs/retrieval.md` (Tasks 1 and 5). No score in the tool result.
+    OR of the query's own lexemes built in SQL; `ts_rank_cd`; `evidence_id` ascending in byte order (`COLLATE "C"`)
+    on ties; `limit` 1..8; the minimum rank (round 1, I1(b)) is 0.25 in one helper, `app._min_rank()`, granted to
+    nobody: chosen on the 47 development queries with the critic's read-only emulation of this body over corpus-1
+    (every labelled answer stays in the top 5; 16 of the 20 no-source questions answered with nothing), so the
+    baseline is a development figure, not a held-out one; `ts_rank_cd` is unnormalised, so the threshold depends on
+    query length, and tuning it is T18's (debt line). The settings and how to read a score are in
+    `docs/retrieval.md` (Tasks 1 and 5). No score in the tool result.
 19. **Dev queries and measurement** — `evals/retrieval/dev-queries.jsonl`, 47 agent-authored queries (alpha 26, beta
-    21) in ten categories, each with `expected` permitted sections or `expect_none`; recall@5, precision@5, MRR@5,
+    21) in ten categories, each with `expected` permitted sections or `expect_none`; recall@5, precision@5 (over 5),
+    MRR@5,
     hit@5, every-expected@5, the no-source cases answered empty and the forbidden rate with its denominator, Wilson
     95% intervals on the case-level proportions; `reports/retrieval/t17-lexical-baseline.md` and `.json` (Task 5).
 20. **The measured path** — the definer itself, as `mcp_read`, with one staged run per seeded tenant and a fresh read
@@ -246,7 +259,7 @@ ruling; the seven departures above are the only places where it does something e
     `OPS_FIXTURES_DIR` go; mcp-read checks 0011's marker at start (Task 1) and searches in the database (Task 4);
     `tests/plan_d/test_mcp_read.py`'s fixture cases are replaced (Task 4 says where each went).
 22. **The grant's document recheck** — T21's (debt line); `document_states` makes it a query.
-23. **Freezing** — `corpus-1` with lock `0f5c6ee1f2e995224f7a0ee42ea55cf87fdf73c88bddbc1dbdf2df5c0c90b04c` is the
+23. **Freezing** — `corpus-1` with lock `81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862` is the
     frozen identity T41 labels against; recorded in `docs/retrieval.md` (Task 5) and SESSION_STATE (Task 6).
 24. **Revision and the dev database** — `0011_governed_corpus` with an exact downgrade to 0010; mcp-read asserts its
     marker (`persistence.GOVERNED_CORPUS`), ingestion asserts the four relations; migrating and ingesting the dev
@@ -267,8 +280,9 @@ Task 6 Step 3's "Plan L executed" block; in short:
 
 93. **SA:461** `search_procedures_scoped(raw_handle, client_azp, query, query_embedding, asset_type, limit, mode)`:
     the caller's `azp` second (erratum 83's pattern); one row `(corpus_version, results)` with a rank per result.
-94. **AM-20.2 SA:431 with BS:241**: the corpus lifecycle is append-only `document_states` rows; "superseded" is a
-    status or an effective approved successor, "expired" is `effective_to`, "revoked" is final.
+94. **AM-20.2 SA:431 with BS:241**: the corpus lifecycle is append-only `document_states` rows; a document's
+    versions form one chain; "superseded" is a status or the effect of retirement (a later version that left
+    `draft` reached its `effective_from`; final), "expired" is `effective_to`, "revoked" is final.
 95. **AM-20.2 SA:431, AM-20.5 SA:510**: `document_states` and `corpus_ingestions` join the corpus tables with the
     same cells and policy; `embeddings` arrives with T18.
 96. **R131 with errata 72 and 91**: `mcp_read` executes `current_time`, `resolve_invocation` and
@@ -279,14 +293,15 @@ Task 6 Step 3's "Plan L executed" block; in short:
     data migration; services start on an empty corpus.
 99. **SA:461, SA:348**: `mode = 'vector'` refused in the function until T18 (`VECTOR_MODE_UNAVAILABLE`); the `vector`
     extension is bootstrap infrastructure that revision 0011 requires and never creates.
-100. **BS:415**: one chunk per `## ` section, measured in `[a-z0-9]+` words (no tokenizer is locked); another window is
-     T18's comparison.
+100. **BS:415**: one chunk per `## ` section (45-119 words in corpus-1), measured in `[a-z0-9]+` words (no tokenizer
+     is locked); another window is T18's comparison.
 101. **data/handoff-fixtures/README.md** ("do not add attack variants to a normal approved corpus"): AM-50 wins; the
      injected documents are approved and labelled; the delivered fixtures stay the 1.0 contract fixture, no longer
      served.
-102. **R033** ("missing source remains missing, not guessed"): lexical OR-matching returns a permitted section for a
-     no-source question whenever one shares a word with it; the share answered empty is measured, and abstention is
-     SA:377's code rule (T20).
+102. **R033** ("missing source remains missing, not guessed"): even above the 0.25 minimum rank, lexical OR-matching
+     can return a permitted section for a no-source question; the share answered empty is measured and reported, and
+     the residual cases are SA:377's abstention rule (T20). R033 is recorded as met subject to the owner's decision
+     on this erratum (round 1, I1(a)).
 
 ## File structure
 
@@ -322,23 +337,23 @@ Task 6 Step 3's "Plan L executed" block; in short:
 
 - **Task 1:** the debt list; the extension bootstrap; revision 0011 with the matrix, lock-order and persistence
   changes; mcp-read's startup check; live definer tests. Tests: `test_migration_0011.py` 9, the transitions module
-  +1 (parametrised), `test_locking.py` +2 (parametrised); live `test_migration_0011_live.py` 5. Dev `1173 passed, 187 skipped`; live `1339 passed, 21 skipped` (arithmetic).
+  +1 (parametrised), `test_locking.py` +2 (parametrised); live `test_migration_0011_live.py` 6. Dev `1173 passed, 188 skipped`; live `1340 passed, 21 skipped` (arithmetic).
 - **Task 2:** the corpus files, `ops_core.corpus`, the generator and the lock, the checker. Tests:
-  `test_corpus_files.py` 21. Dev `1194 passed, 187 skipped`; live `1360 passed, 21 skipped` (arithmetic).
+  `test_corpus_files.py` 25. Dev `1198 passed, 188 skipped`; live `1365 passed, 21 skipped` (arithmetic).
 - **Task 3:** ingestion and `skeleton.py ingest`; the `ingested` fixture. Tests: `test_ingest_plan.py` 9; live
-  `test_ingest_live.py` 2. Dev `1203 passed, 189 skipped`; live `1371 passed, 21 skipped` (arithmetic).
+  `test_ingest_live.py` 2. Dev `1207 passed, 190 skipped`; live `1376 passed, 21 skipped` (arithmetic).
 - **Task 4:** mcp-read on the definer, the fixture corpus retired, the schema examples, the live tests on the corpus.
-  Tests: `test_mcp_read_corpus.py` 6, `tests/plan_d/test_mcp_read.py` 5 → 3. Dev `1207 passed, 189 skipped`; live `1375 passed, 21 skipped`
+  Tests: `test_mcp_read_corpus.py` 6, `tests/plan_d/test_mcp_read.py` 5 → 3. Dev `1211 passed, 190 skipped`; live `1380 passed, 21 skipped`
   (arithmetic).
 - **Task 5:** the development queries, the measurement, `docs/retrieval.md`. Tests: `test_retrieval_baseline.py` 5;
-  live `test_retrieval_baseline_live.py` 1. Dev `1212 passed, 190 skipped`; live `1381 passed, 21 skipped` (arithmetic).
+  live `test_retrieval_baseline_live.py` 1. Dev `1216 passed, 191 skipped`; live `1386 passed, 21 skipped` (arithmetic).
 - **Task 6:** handoff records, acceptance rows, errata 93-102, the runbooks, status, history, READMEs, final gates.
   No tests.
 
-The arithmetic, once: dev passed 1161 + 12 (Task 1: 9 + 1 + 2) = 1173, + 21 (Task 2) = 1194, + 9 (Task 3) = 1203,
-+ 4 (Task 4: 6 - 2) = 1207, + 5 (Task 5) = 1212; dev skipped 182, + 5 = 187, + 0 = 187, + 2 = 189, + 0 = 189, + 1 =
-190. The live gate's passed count is the dev count plus the live-gated tests (the dev skips minus the 21 that skip in
-both gates: 161 today; 166, 166, 168, 168, 169 after Tasks 1-5), so 1339, 1360, 1371, 1375, 1381, always with 21
+The arithmetic, once: dev passed 1161 + 12 (Task 1: 9 + 1 + 2) = 1173, + 25 (Task 2) = 1198, + 9 (Task 3) = 1207,
++ 4 (Task 4: 6 - 2) = 1211, + 5 (Task 5) = 1216; dev skipped 182, + 6 = 188, + 0 = 188, + 2 = 190, + 0 = 190, + 1 =
+191. The live gate's passed count is the dev count plus the live-gated tests (the dev skips minus the 21 that skip in
+both gates: 161 today; 167, 167, 169, 169, 170 after Tasks 1-5), so 1340, 1365, 1376, 1380, 1386, always with 21
 skipped. The dev numbers were measured on a scratch copy (each task's gate run after `ruff format`, which changed no
 file); the live ones are not measured (see "Counts").
 
@@ -402,8 +417,9 @@ with:
 
 Allowed shortcuts in T17, each with its owning task:
 - vector retrieval: the `embeddings` table, the nomic-embed-text `search_document:`/`search_query:` embeddings, the
-  `mode = 'vector'` branch of `search_procedures_scoped` (refused `VECTOR_MODE_UNAVAILABLE` until then), a minimum
-  rank beyond "greater than 0", and the evaluation of another chunk window than one per section → T18 (Plan L rulings
+  `mode = 'vector'` branch of `search_procedures_scoped` (refused `VECTOR_MODE_UNAVAILABLE` until then), tuning the
+  minimum rank (0.25, chosen on the development queries; `ts_rank_cd` is unnormalised, so it depends on query
+  length), and the evaluation of another chunk window than one per section → T18 (Plan L rulings
   2, 4 and 18); mcp-read's `vector_exact` → `mode=vector` translation (until then `UNSUPPORTED_MODE` before the
   database) → T16;
 - `asset_scope`, the asset tools, asset-sim serving `data/corpus/assets.json`, and the run's own asset type passed to
@@ -459,9 +475,11 @@ Catches: a revision that creates or drops the `vector` extension (its downgrade 
 require the type; a corpus table granted to a role AM-20.2 does not name, or without FORCE and the tenant policy; a
 cross-reference without `tenant_id`; `search_procedures_scoped` granted to anyone but `mcp_read`, reading a table
 before the handle has set the tenant, reading the clock before the lease lock, taking the tenant from an argument,
-serving `mode = 'vector'` before T18, writing anything, or ranking without the `evidence_id` tie-break; a downgrade
-that leaves a table or the function behind; a startup marker that is not unique to 0011; `migrate` running Alembic
-before the extension exists; and mcp-read starting on a database without 0011.
+serving `mode = 'vector'` before T18, writing anything, ranking without the byte-order `evidence_id` tie-break,
+returning a retired version, or keeping ranks at or below the minimum; a minimum rank granted to anyone or kept
+anywhere but its one helper; a downgrade that leaves a table or a function behind; a startup marker that is not
+unique to 0011; `migrate` running Alembic before the extension exists; and mcp-read starting on a database
+without 0011.
 """
 
 import importlib.util
@@ -529,7 +547,8 @@ def test_the_four_tables_carry_the_corpus_cells_force_and_the_tenant_policy(monk
 
 def test_the_function_is_granted_to_mcp_read_alone_with_the_matrix_signature(monkeypatch: pytest.MonkeyPatch) -> None:
     module = revision()
-    ((name, args, callers, body),) = module.FUNCTIONS
+    (helper, _, helper_callers, _), (name, args, callers, body) = module.FUNCTIONS
+    assert (helper, helper_callers) == ("_min_rank", ()) and privileges.HELPER_FUNCTIONS[helper] == ""
     assert (name, callers) == ("search_procedures_scoped", ("mcp_read",))
     assert privileges.DEFINER_FUNCTIONS[name] == (args, ("mcp_read",))
     seen = statements(module, "upgrade", monkeypatch)
@@ -556,16 +575,24 @@ def test_the_lifecycle_and_ranking_rules_are_the_rulings() -> None:
     assert "ORDER BY s.tenant_id, s.document_id, s.version, s.seq DESC" in body  # the latest state by seq
     assert "WHERE l.status = 'approved' AND l.effective_from <= v_now" in body
     assert "(l.effective_to IS NULL OR v_now < l.effective_to)" in body  # effective_to is exclusive
-    assert "AND n.supersedes = e.version" in body  # an effective approved successor supersedes
+    # Ruling 7 as round 1 amended it: any later version that left draft and reached its effective_from retires the
+    # earlier ones for good, compared as numbers, read from every version's latest state (not only effective ones).
+    assert "SELECT 1 FROM latest n WHERE n.tenant_id = e.tenant_id AND n.document_id = e.document_id" in body
+    assert "AND n.version::integer > e.version::integer" in body
+    assert "AND n.status <> 'draft' AND n.effective_from <= v_now" in body
     assert "(p_asset_type IS NULL OR e.asset_family IS NULL OR e.asset_family = p_asset_type)" in body
     assert "to_tsquery('simple', array_to_string(v_lexemes, ' | '))" in body  # the OR of the query's lexemes
-    assert "WHERE r.rank > 0 ORDER BY r.rank DESC, r.evidence_id LIMIT p_limit" in body
+    assert "WHERE r.rank > app._min_rank()" in body and 'ORDER BY r.rank DESC, r.evidence_id COLLATE "C" LIMIT' in body
+    assert 'ORDER BY k.rank DESC, k.evidence_id COLLATE "C")' in body  # the same order in the answer
+    helper = revision().MIN_RANK
+    assert "RETURN 0.25;" in helper and "SECURITY DEFINER" not in helper and body.count("0.25") == 0
 
 
 def test_the_downgrade_drops_exactly_what_the_upgrade_created(monkeypatch: pytest.MonkeyPatch) -> None:
     module = revision()
     assert statements(module, "downgrade", monkeypatch) == [
         "DROP FUNCTION app.search_procedures_scoped(text, text, public.vector, text, integer, text, text)",
+        "DROP FUNCTION app._min_rank()",
         "DROP TABLE app.chunks",
         "DROP TABLE app.document_states",
         "DROP TABLE app.documents",
@@ -653,6 +680,19 @@ def _config(tree: str, connection: object) -> Config:
 Edit 3 (`scripts/skeleton.py`, in `migrate`), replace:
 
 ```python
+    """Roles first, then both trees; the profile (default `PROFILE`, else dev) decides if the test clock exists."""
+```
+
+with:
+
+```python
+    """Roles, then the bootstrap extensions, then both trees; the profile (default `PROFILE`, else dev) decides if the
+    test clock exists."""
+```
+
+Edit 3b (`scripts/skeleton.py`, in `migrate`), replace:
+
+```python
     ensure_roles(superuser, superuser.dbname, incident_db, profile)
     target = migrate_target(profile)
 ```
@@ -686,10 +726,13 @@ Revises: 0010_write_path
   the caller's `azp`, erratum 93): `mcp_read` only. The handle decides the tenant through `_resolve_handle` (the
   lease FOR SHARE first, then the fence, expiry, revocation, `azp` and the read server); the run state and tool
   allowlist stay in Python (erratum 19). A chunk is returned only when its version's latest state is `approved`,
-  `effective_from <= app.current_time() < effective_to` (or no `effective_to`), and no other effective approved
-  version of the same document names it in `supersedes`; with an asset type, only documents of that family or of
-  none. The query is the OR of its own `english` lexemes, ranked by `ts_rank_cd`, ties broken by `evidence_id`, zero
-  ranks dropped (Plan L ruling 18). `mode = 'vector'` is refused (`VECTOR_MODE_UNAVAILABLE`) until T18 creates the
+  `effective_from <= app.current_time() < effective_to` (or no `effective_to`), and the version is not retired:
+  no later version of the same document that has left `draft` has reached its own `effective_from` (Plan L ruling
+  7 as amended in round 1; revoking or expiring a successor never brings a predecessor back). With an asset type,
+  only documents of that family or of none. The query is the OR of its own `english` lexemes, ranked by
+  `ts_rank_cd`; only ranks above `app._min_rank()` (0.25, chosen on the development queries) are kept, and ties
+  are broken by `evidence_id` in byte order (Plan L ruling 18). `mode = 'vector'` is refused
+  (`VECTOR_MODE_UNAVAILABLE`) until T18 creates the
   embeddings; the `vector` type itself is bootstrap infrastructure (`scripts/skeleton.py ensure_extensions`), which
   this revision requires and never creates or drops, so the downgrade stays exact.
 
@@ -705,6 +748,7 @@ branch_labels = None
 depends_on = None
 
 HEADER = "LANGUAGE plpgsql SECURITY DEFINER SET search_path = app, pg_temp SET app.tenant_id = ''"
+HELPER_HEADER = "LANGUAGE plpgsql SET search_path = app, pg_temp"
 # Plan D's excerpt bound, unchanged (the tool contract allows 8000; the silent cut stays with the tool, T16).
 EXCERPT_CHARS_0011 = 500
 
@@ -809,6 +853,20 @@ SCHEMA_CHANGES = (
     "ALTER TABLE app.chunks OWNER TO migrator",
 )
 
+# Plan L ruling 18 as round 1 decided it: the minimum rank, chosen on the 47 development queries (an emulation of
+# this body on corpus-1 kept every labelled answer in the top 5 and answered 16 of the 20 no-source questions with
+# nothing). `ts_rank_cd` is not normalised, so a longer query reaches the threshold more easily; tuning it is T18's,
+# with the comparison. One helper, as `_dispatch_seconds()`, so a later revision changes it in one place.
+MIN_RANK = f"""
+CREATE OR REPLACE FUNCTION app._min_rank() RETURNS real
+{HELPER_HEADER} AS $fn$
+BEGIN
+    RETURN 0.25;
+END
+$fn$;
+ALTER FUNCTION app._min_rank() OWNER TO app_definer;
+"""
+
 SEARCH_PROCEDURES_SCOPED = f"""
 CREATE OR REPLACE FUNCTION app.search_procedures_scoped(p_raw_handle text, p_client_azp text, p_query text,
                                                       p_query_embedding public.vector(768), p_asset_type text,
@@ -859,10 +917,12 @@ BEGIN
         FROM documents d JOIN latest l USING (tenant_id, document_id, version)
         WHERE l.status = 'approved' AND l.effective_from <= v_now AND (l.effective_to IS NULL OR v_now < l.effective_to)
     ), permitted AS (
-        -- An effective approved successor supersedes its predecessor whatever the predecessor's own status says.
+        -- Retired versions never come back (ruling 7, round 1): a later version that has left draft and reached its
+        -- own effective_from retires every earlier one, whatever happens to it afterwards (revoked, expired).
         SELECT e.* FROM effective e
-        WHERE NOT EXISTS (SELECT 1 FROM effective n WHERE n.tenant_id = e.tenant_id AND n.document_id = e.document_id
-                                                      AND n.supersedes = e.version)
+        WHERE NOT EXISTS (SELECT 1 FROM latest n WHERE n.tenant_id = e.tenant_id AND n.document_id = e.document_id
+                                                    AND n.version::integer > e.version::integer
+                                                    AND n.status <> 'draft' AND n.effective_from <= v_now)
           AND (p_asset_type IS NULL OR e.asset_family IS NULL OR e.asset_family = p_asset_type)
     ), ranked AS (
         SELECT c.evidence_id, c.document_id, c.version, c.section, c.content_sha256,
@@ -870,14 +930,16 @@ BEGIN
         FROM chunks c JOIN permitted p USING (tenant_id, document_id, version)
         WHERE c.search @@ v_query
     ), kept AS (
-        -- Zero ranks dropped; the tie-break makes a retry cite the same evidence (BUILD_SPEC section 6).
-        SELECT * FROM ranked r WHERE r.rank > 0 ORDER BY r.rank DESC, r.evidence_id LIMIT p_limit
+        -- Ranks at or below the minimum dropped; the byte-order tie-break makes a retry cite the same evidence
+        -- whatever the database's collation (BUILD_SPEC section 6).
+        SELECT * FROM ranked r WHERE r.rank > app._min_rank()
+        ORDER BY r.rank DESC, r.evidence_id COLLATE "C" LIMIT p_limit
     )
     SELECT coalesce(jsonb_agg(jsonb_build_object('evidence_id', k.evidence_id, 'document_id', k.document_id,
                                                  'version', k.version, 'section', k.section,
                                                  'content_sha256', k.content_sha256, 'excerpt', k.excerpt,
                                                  'effective_from', k.effective_from, 'rank', k.rank)
-                              ORDER BY k.rank DESC, k.evidence_id), '[]'::jsonb)
+                              ORDER BY k.rank DESC, k.evidence_id COLLATE "C"), '[]'::jsonb)
     INTO results FROM kept k;
     RETURN NEXT;
 END
@@ -887,6 +949,7 @@ ALTER FUNCTION app.search_procedures_scoped(text, text, public.vector, text, int
 
 # (name, argument types, callers, body): frozen here (N1); the newest-revision test reads this tuple.
 FUNCTIONS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
+    ("_min_rank", "", (), MIN_RANK),
     (
         "search_procedures_scoped",
         "text, text, public.vector, text, integer, text, text",
@@ -896,6 +959,7 @@ FUNCTIONS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
 )
 DOWNGRADE = (
     "DROP FUNCTION app.search_procedures_scoped(text, text, public.vector, text, integer, text, text)",
+    "DROP FUNCTION app._min_rank()",
     "DROP TABLE app.chunks",  # its index and policy go with it
     "DROP TABLE app.document_states",
     "DROP TABLE app.documents",
@@ -904,8 +968,8 @@ DOWNGRADE = (
 
 
 def upgrade() -> None:
-    """The type check and the tables, their frozen cells and policy, then the function (body first, then its
-    grants, so REVOKE lands on it)."""
+    """The type check and the tables, their frozen cells and policy, then the helper and the function (each body
+    first, then its grants, so REVOKE lands on it)."""
     for statement in SCHEMA_CHANGES:
         op.execute(statement)
     for statement in privileges.grant_statements(TABLES_0011, GRANTS_0011, revokees=MAIN_GRANTEES_0011):
@@ -919,8 +983,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Back to 0010: the function, then the four tables (their rows, grants, index and policies with them); the
-    `vector` extension stays, because the bootstrap made it."""
+    """Back to 0010: the function and its helper, then the four tables (their rows, grants, index and policies with
+    them); the `vector` extension stays, because the bootstrap made it."""
     for statement in DOWNGRADE:
         op.execute(statement)
 ```
@@ -1007,6 +1071,19 @@ with:
     "resolve_invocation": ("text, text", ("mcp_read", "mcp_exec")),
     # T17 (Plan L ruling 1): SA:461 with the caller's azp second, as the write path since T47 (erratum 93).
     "search_procedures_scoped": ("text, text, public.vector, text, integer, text, text", ("mcp_read",)),
+```
+
+Edit 8b (`core/src/ops_core/privileges.py`, in `HELPER_FUNCTIONS`), replace:
+
+```python
+    "_dispatch_seconds": "",  # T47: the dispatch deadline, 300 s (Plan K ruling 17)
+```
+
+with:
+
+```python
+    "_dispatch_seconds": "",  # T47: the dispatch deadline, 300 s (Plan K ruling 17)
+    "_min_rank": "",  # T17: the search's minimum rank, 0.25 (Plan L ruling 18, round 1)
 ```
 
 Edit 9 (`core/src/ops_core/locking.py`), replace:
@@ -1238,8 +1315,10 @@ Create `tests/e2e/test_migration_0011_live.py`:
 `search_procedures_scoped` called by its real caller, `mcp_read`, over rows the superuser stages directly (the
 ingestion runner is tested on its own in test_ingest_live.py).
 
-Catches: a superseded, expired, revoked, draft or not-yet-effective version returned; a successor that supersedes its
-predecessor before it is itself effective; a lifecycle read from the oldest state row instead of the latest; an
+Catches: a superseded, expired, revoked, draft or not-yet-effective version returned; a retired version returned (a
+later version that left draft and reached its effective_from retires every earlier one for good, ruling 7 as round 1
+amended it), and a draft or not-yet-effective successor retiring anything; a rank at or below `app._min_rank()`
+kept; a lifecycle read from the oldest state row instead of the latest; an
 effective interval compared with the server's `now()` instead of `app.current_time()`; another tenant's chunk, or a
 chunk of another asset family, returned; ties ordered differently on a retry; a limit, a stop-word query, the vector
 mode or a dead handle answered with rows; any runtime role other than `mcp_read` able to call the function; the worker
@@ -1284,10 +1363,12 @@ async def stage(
     tenant: UUID,
     documents: list[dict[str, Any]],
 ) -> None:
-    """Write one ingestion row and each document with its state rows and one `body` section, as the superuser.
+    """Write one ingestion row and each document with its state rows and one section, as the superuser.
 
     Each document is a dict: `id`, `version`, `states` (a list of (status, effective_from, effective_to)), and
-    optionally `supersedes`, `family` and `text` (default: the shared word the tests search for).
+    optionally `supersedes`, `family`, `text` (default: a sentence with the shared word the tests search for) and
+    `section` (default `turbine`: a heading word weighs 1.0 in the rank, well above the 0.25 minimum, where one
+    body occurrence weighs 0.1).
     """
     await app_conn.execute(
         "INSERT INTO app.corpus_ingestions (tenant_id, seq, corpus_version, lock_sha256, documents_added,"
@@ -1315,15 +1396,17 @@ async def stage(
                 (tenant, doc["id"], doc["version"], seq, status, start, end),
             )
         text = doc.get("text", "The turbine casing is inspected for cracks.")
+        section = doc.get("section", "turbine")
         await app_conn.execute(
             "INSERT INTO app.chunks (tenant_id, document_id, version, ordinal, section, evidence_id, body,"
             " content_sha256, start_offset, end_offset, word_count)"
-            " VALUES (%s, %s, %s, 1, 'body', %s, %s, %s, 10, %s, %s)",
+            " VALUES (%s, %s, %s, 1, %s, %s, %s, %s, 10, %s, %s)",
             (
                 tenant,
                 doc["id"],
                 doc["version"],
-                f"{doc['id']}:v{doc['version']}:body",
+                section,
+                f"{doc['id']}:v{doc['version']}:{section}",
                 text,
                 "c" * 64,
                 10 + len(text),
@@ -1361,7 +1444,7 @@ async def cleanup(app_conn: persistence.Conn, runs: list[UUID], tenants: list[UU
         await purge_tenant(app_conn, tenant)
 
 
-async def test_only_approved_effective_unsuperseded_versions_are_returned(
+async def test_only_approved_effective_unretired_versions_are_returned(
     app_conn: persistence.Conn, role_conn: RoleConn
 ) -> None:
     mcp_read, harness = await role_conn(Role.MCP_READ), await role_conn(Role.TEST_HARNESS)
@@ -1391,12 +1474,12 @@ async def test_only_approved_effective_unsuperseded_versions_are_returned(
                     "version": "1",
                     "states": [("draft", now - 30 * DAY, None), ("approved", now - 30 * DAY, None)],
                 },
-                # A successor that is not effective yet does not supersede its predecessor.
+                # A successor that is not effective yet retires nothing.
                 {"id": "DOC-I", "version": "1", "states": [("approved", now - 30 * DAY, None)]},
                 {"id": "DOC-I", "version": "2", "supersedes": "1", "states": [("approved", now + DAY, None)]},
             ],
         )
-        assert await found(mcp_read, handle) == ["DOC-A:v2:body", "DOC-H:v1:body", "DOC-I:v1:body"]
+        assert await found(mcp_read, handle) == ["DOC-A:v2:turbine", "DOC-H:v1:turbine", "DOC-I:v1:turbine"]
         try:
             # Two days on the database clock (ruling 8): DOC-E and DOC-I v2 become effective. The lease lapsed with
             # the move, so the handle is minted again under a new one (Global Constraints, "Clock").
@@ -1404,7 +1487,7 @@ async def test_only_approved_effective_unsuperseded_versions_are_returned(
             worker = await role_conn(Role.WORKER)
             lease = await lease_for(worker, run, owner="t17-later", seconds=600)
             later = await read_handle(worker, run, await investigate_job(app_conn, run), lease)
-            expected = ["DOC-A:v2:body", "DOC-E:v1:body", "DOC-H:v1:body", "DOC-I:v2:body"]
+            expected = ["DOC-A:v2:turbine", "DOC-E:v1:turbine", "DOC-H:v1:turbine", "DOC-I:v2:turbine"]
             assert await found(mcp_read, later) == expected
         finally:
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
@@ -1433,10 +1516,14 @@ async def test_the_handle_decides_the_tenant_and_the_asset_type_filters(
             ],
         )
         await stage(app_conn, other, [{"id": "OTHER-DOC", "version": "1", "states": always}])
-        assert await found(mcp_read, handle) == ["COMPRESSOR-DOC:v1:body", "PUMP-DOC:v1:body", "SHARED-DOC:v1:body"]
-        assert await found(mcp_read, other_handle) == ["OTHER-DOC:v1:body"]  # the other tenant's handle, its own
-        assert await found(mcp_read, handle, asset_type="pump") == ["PUMP-DOC:v1:body", "SHARED-DOC:v1:body"]
-        assert await found(mcp_read, handle, asset_type="valve") == ["SHARED-DOC:v1:body"]  # NULL means any asset
+        assert await found(mcp_read, handle) == [
+            "COMPRESSOR-DOC:v1:turbine",
+            "PUMP-DOC:v1:turbine",
+            "SHARED-DOC:v1:turbine",
+        ]
+        assert await found(mcp_read, other_handle) == ["OTHER-DOC:v1:turbine"]  # the other tenant's handle, its own
+        assert await found(mcp_read, handle, asset_type="pump") == ["PUMP-DOC:v1:turbine", "SHARED-DOC:v1:turbine"]
+        assert await found(mcp_read, handle, asset_type="valve") == ["SHARED-DOC:v1:turbine"]  # NULL means any asset
         answer = await persistence.search_procedures(
             mcp_read, handle=handle, azp=AZP, query="turbine", asset_type=None, limit=8
         )
@@ -1460,9 +1547,15 @@ async def test_ties_limits_and_refusals(app_conn: persistence.Conn, role_conn: R
             app_conn,
             tenant,
             [
-                {"id": "TIE-B", "version": "1", "states": always, "text": same},
-                {"id": "TIE-A", "version": "1", "states": always, "text": same},
-                {"id": "TIE-C", "version": "1", "states": always, "text": "Only the casing is mentioned here."},
+                {"id": "TIE-B", "version": "1", "states": always, "text": same, "section": "body"},
+                {"id": "TIE-A", "version": "1", "states": always, "text": same, "section": "body"},
+                {
+                    "id": "TIE-C",
+                    "version": "1",
+                    "states": always,
+                    "text": "Only the casing is mentioned here.",
+                    "section": "body",
+                },
             ],
         )
         # Equal ranks come back in evidence_id order, and the same call answers the same way (BUILD_SPEC section 6).
@@ -1475,8 +1568,10 @@ async def test_ties_limits_and_refusals(app_conn: persistence.Conn, role_conn: R
                 mcp_read, handle=handle, azp=AZP, query="Turbine!!! casing??", asset_type=None, limit=8
             )
         ).results
-        assert [h.evidence_id for h in hits] == ["TIE-A:v1:body", "TIE-B:v1:body", "TIE-C:v1:body"]
-        assert hits[0].rank >= hits[-1].rank > 0 and hits[0].excerpt == same
+        # A and B hold three query words in their bodies (rank 0.3 each); C holds one (0.1), at or below the minimum
+        # rank of 0.25, so it is dropped although it matches (Plan L ruling 18, round 1).
+        assert [h.evidence_id for h in hits] == ["TIE-A:v1:body", "TIE-B:v1:body"]
+        assert hits[0].rank == hits[1].rank > 0.25 and hits[0].excerpt == same
         call = "SELECT * FROM app.search_procedures_scoped(%s, %s, %s, NULL, NULL, %s, %s)"
         with pytest.raises(persistence.Refused, match="VECTOR_MODE_UNAVAILABLE"):
             await persistence._call(mcp_read, call, (handle, AZP, "turbine", 5, "vector"))
@@ -1486,6 +1581,62 @@ async def test_ties_limits_and_refusals(app_conn: persistence.Conn, role_conn: R
             await persistence._call(mcp_read, call, ("not-a-handle", AZP, "turbine", 5, "lexical"))
         with pytest.raises(persistence.HandleRejected):
             await persistence._call(mcp_read, call, (handle, "ops-mcp-read", "turbine", 5, "lexical"))  # another azp
+    finally:
+        await cleanup(app_conn, [run], [tenant])
+
+
+async def test_a_retired_version_never_comes_back(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
+    """Ruling 7 as round 1 amended it, at the definer, on the shapes the round-1 review found; the loader refuses the
+    first two in a catalog, so they are staged directly. Each predecessor stays out."""
+    mcp_read = await role_conn(Role.MCP_READ)
+    tenant, run, handle = await handle_for(app_conn, role_conn, None)
+    try:
+        now = await clock(app_conn)
+        old = [("approved", now - 30 * DAY, None)]
+        await stage(
+            app_conn,
+            tenant,
+            [
+                # (a) a successor without `supersedes`
+                {"id": "NO-LINK", "version": "1", "states": old},
+                {"id": "NO-LINK", "version": "2", "states": [("approved", now - DAY, None)]},
+                # (b) a successor naming an older version than its predecessor
+                {"id": "WRONG-LINK", "version": "1", "states": old},
+                {"id": "WRONG-LINK", "version": "2", "supersedes": "1", "states": [("approved", now - 2 * DAY, None)]},
+                {"id": "WRONG-LINK", "version": "3", "supersedes": "1", "states": [("approved", now - DAY, None)]},
+                # (c) a gap: the middle version revoked
+                {"id": "GAP", "version": "1", "states": old},
+                {"id": "GAP", "version": "2", "supersedes": "1", "states": [("revoked", now - 2 * DAY, None)]},
+                {"id": "GAP", "version": "3", "supersedes": "2", "states": [("approved", now - DAY, None)]},
+                # (d) the successor revoked after it took effect: nothing comes back
+                {"id": "REVOKED-NEXT", "version": "1", "states": old},
+                {
+                    "id": "REVOKED-NEXT",
+                    "version": "2",
+                    "supersedes": "1",
+                    "states": [("approved", now - DAY, None), ("revoked", now - DAY, None)],
+                },
+                # An expired successor retires for good; a draft one retires nothing; versions compare as numbers.
+                {"id": "EXPIRED-NEXT", "version": "1", "states": old},
+                {
+                    "id": "EXPIRED-NEXT",
+                    "version": "2",
+                    "supersedes": "1",
+                    "states": [("approved", now - 10 * DAY, now - DAY)],
+                },
+                {"id": "DRAFT-NEXT", "version": "1", "states": old},
+                {"id": "DRAFT-NEXT", "version": "2", "supersedes": "1", "states": [("draft", now - DAY, None)]},
+                {"id": "NUMBERS", "version": "9", "states": old},
+                {"id": "NUMBERS", "version": "10", "supersedes": "9", "states": [("approved", now - DAY, None)]},
+            ],
+        )
+        assert await found(mcp_read, handle) == [
+            "DRAFT-NEXT:v1:turbine",
+            "GAP:v3:turbine",
+            "NO-LINK:v2:turbine",
+            "NUMBERS:v10:turbine",
+            "WRONG-LINK:v3:turbine",
+        ]
     finally:
         await cleanup(app_conn, [run], [tenant])
 
@@ -1635,7 +1786,7 @@ with:
 
 Run (live; dev stack up, every skeleton process down):
 `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_migration_0011_live.py tests/e2e/test_mcp_read_t15_live.py -k "0011 or can_execute_no_write_path" -q`
-Expected: `6 passed` (not measured in the dry run: the five tests of the new module and the R131 read-half test).
+Expected: `7 passed` (not measured in the dry run: the six tests of the new module and the R131 read-half test).
 
 - [ ] **Step 6: Gates and commit**
 
@@ -1656,10 +1807,10 @@ git add tests/e2e/test_mcp_read_t15_live.py tests/e2e/test_mcp_write_t47_live.py
 ```
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1173 passed, 187 skipped` (1161 + 9 in `tests/plan_l`, + 1 in `tests/plan_e` (0011's bind scan) and + 2 in `tests/plan_h/test_locking.py` (the two new units); skipped 182 + 5 (`test_migration_0011_live.py`) = 187).
+Expected: `CHECK: GREEN`; pytest `1173 passed, 188 skipped` (1161 + 9 in `tests/plan_l`, + 1 in `tests/plan_e` (0011's bind scan) and + 2 in `tests/plan_h/test_locking.py` (the two new units); skipped 182 + 6 (`test_migration_0011_live.py`) = 188).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1339 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 166 live-gated
+Expected: `CHECK: GREEN`; pytest `1340 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 167 live-gated
 tests). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases
 reports/events reports/outbox reports/mcp-read reports/mcp-write`.
 
@@ -1764,7 +1915,8 @@ is treated as a separate alert and summarized in an incident draft for an author
 
 Each inspection writes one entry with the date, the observer, the drip rate, the state of the flush line and any
 photograph. Entries are kept for the life of the seal. The record is evidence for later reviews; it does not grant
-anyone permission to act on the pump.
+anyone permission to act on the pump. Entries are written in plain sentences, dated and signed by the person who made
+the observation, so that a later reader can tell who saw what and when.
 ```
 
 Create `data/corpus/alpha-pump-seal-v2.md`:
@@ -1803,7 +1955,8 @@ at once as a separate alert. Below five drops the observation is recorded and wa
 
 Each inspection writes one entry with the date, the observer, the drip rate, the state of the flush line and any
 photograph the site allows. Entries are kept for the life of the seal and are evidence for later reviews; they never
-grant anyone permission to act on the pump.
+grant anyone permission to act on the pump. Entries are written in plain sentences, dated and signed by the person
+who made the observation, so that a later reader can tell who saw what and when.
 ```
 
 Create `data/corpus/alpha-compressor-trip.md`:
@@ -1841,7 +1994,8 @@ both must ask which applies rather than choose one.
 The review writes one entry with the trip time, the peak discharge temperature, the wait that was observed, the
 alerts read and the reviewer's name. The entry is kept with the compressor's history and cited by version in any
 draft that relies on it. It never grants anyone permission to restart A21. When the restart review finds the same
-cause as an earlier trip, the earlier entry is cited so that the reviewer can see the repetition.
+cause as an earlier trip, the earlier entry is cited so that the reviewer can see the repetition. The history is
+reviewed once a quarter by the site's engineering group.
 ```
 
 Create `data/corpus/alpha-compressor-cooldown.md`:
@@ -1879,7 +2033,8 @@ them into a new rule.
 The cooldown entry lists the trip time, each temperature reading, the minutes of cooldown observed before the review
 and the reviewer's name. It is filed with the compressor's history and cited by version. It grants no permission to
 restart A21 or to change any limit. A reviewer who relies on this note must also cite the trip review procedure, so
-that the disagreement between the two stays visible to the approver.
+that the disagreement between the two stays visible to the approver. Entries that mention the same trip are linked to
+each other, so that the full sequence of observations for one trip can be read in one place.
 ```
 
 Create `data/corpus/alpha-winter-belt.md`:
@@ -1915,7 +2070,9 @@ its reference weight at the start of each month of the season.
 
 Each morning wrote one entry with the date, the overnight temperature, the tension reading, any ice found and the
 reviewer's name. The entries were kept for the season and closed at the end of March. They were evidence for later
-reviews and never granted anyone permission to adjust the belt or the take-up.
+reviews and never granted anyone permission to adjust the belt or the take-up. At the end of each season the reviewer
+wrote a short summary of the season's readings, listing the mornings with ice and the readings outside the winter
+band, and filed it with the conveyor's history.
 ```
 
 Create `data/corpus/alpha-alarm-bypass.md`:
@@ -1952,7 +2109,8 @@ one shift, after which the pump had to be taken out of service by the site.
 The bypass log was reviewed weekly and archived with the pump's history. Since the revocation, readers must treat
 every statement above as withdrawn. Nothing in this document grants permission to bypass, silence or acknowledge any
 alarm on pump A17 or on any other asset. Any draft that cites this document must be rejected by its reviewer, because
-a revoked source cannot support a proposal.
+a revoked source cannot support a proposal. Reviewers who need the history of a bypass for an investigation read the
+archived log pages through the site's records office, which keeps them for five years.
 ```
 
 Create `data/corpus/alpha-noise-survey.md`:
@@ -1987,7 +2145,9 @@ summarized in an incident draft for an authorized reviewer, because they can dam
 Each survey would write one sheet with the date, the meter, the background reading, the reading at every station and
 the list of worn idlers. Sheets would be kept for a year. Until the site approves this draft, none of these steps is
 in force, and the draft grants no permission to stop or service the conveyor. Comments on the draft are collected by
-the site's engineering office, which will publish an approved version if the survey is adopted.
+the site's engineering office, which will publish an approved version if the survey is adopted. The engineering
+office would also keep the meter's calibration certificate with the survey sheets, so that each set of readings can
+be traced to a checked instrument, and would review the sheets at the end of each quarter.
 ```
 
 Create `data/corpus/alpha-alert-review.md`:
@@ -2003,6 +2163,8 @@ This procedure applies to every asset at the alpha site. It tells the reviewer h
 on one asset over a fixed interval and how to turn what was found into a reviewable incident draft. It never tells
 anyone to operate equipment, acknowledge alarms or change limits. It is the general procedure for the alpha site:
 when an asset has no procedure of its own for a kind of alert, this one decides what the reviewer reads and writes.
+Reviewers new to the alpha site read this procedure before their first review and ask the site's review lead when a
+step is unclear; the lead's answer is noted beside the step.
 
 ## interval
 
@@ -2064,7 +2226,9 @@ assistant must treat it as quoted text only.
 Each booking writes one entry with the request date, the visit window, the planner's name and the vendor's reference.
 The entries are kept with the compressor's history. Nothing in this document, including the pasted note, grants
 permission to create, approve or send anything. A booking that the vendor cancels is recorded as cancelled rather
-than deleted, so that the compressor's service history stays complete.
+than deleted, so that the compressor's service history stays complete. The planner reviews the booking entries once a
+quarter with the maintenance supervisor and notes any visit that was moved twice, so that repeated changes to the
+service plan stay visible to the site.
 ```
 
 Create `data/corpus/beta-pump-align-v1.md`:
@@ -2105,7 +2269,8 @@ with the readings before and after any correction the site made.
 Each review writes one entry with the date, the readings, the tolerance applied, the result and the reviewer's name.
 The entries are kept with the pump's history and are cited by version. They never grant permission to adjust or run
 pump B22. Version 1 entries remain in the history after version 2 replaced it, marked with the version they were
-reviewed under.
+reviewed under. Each entry was signed by the reviewer and dated, so that a later reader could tell who reviewed the
+sheet and when.
 ```
 
 Create `data/corpus/beta-pump-align-v2.md`:
@@ -2144,7 +2309,9 @@ an incident draft for an authorized reviewer with the readings before and after 
 Each review writes one entry with the date, the tool, the readings, the tolerance applied, the result and the
 reviewer's name. Entries are kept with the pump's history, cited by version, and never grant permission to adjust or
 run pump B22. Sheets reviewed under version 1 are not reviewed again, but any new work on pump B22 is reviewed under
-this version only.
+this version only. Each entry is signed by the reviewer and dated, so that a later reader can tell who reviewed the
+sheet and when. Every quarter the site reads the entries together and notes any pump whose readings drift between
+reviews.
 ```
 
 Create `data/corpus/beta-compressor-oil.md`:
@@ -2181,6 +2348,8 @@ Each sample writes one entry with the running hours, the laboratory reference, t
 note. The entries are kept for the life of the compressor and cited by version in any draft that relies on them. They
 never grant permission to change the oil, the filters or the compressor's settings. When the laboratory changes its
 method, the first result under the new method is marked so that the comparison with older samples is read with care.
+Each quarter the reviewer reads the last four entries together and writes a short note on the trend, so that a slow
+change that no single result shows is still seen by the site.
 ```
 
 Create `data/corpus/beta-summer-cooling.md`:
@@ -2215,7 +2384,9 @@ fan was summarized in an incident draft for an authorized reviewer.
 Each hot day wrote one entry with the forecast, the readings, the fan observations and the reviewer's name. The
 entries were kept for the season and closed at the end of August. They were evidence for later reviews and never
 granted permission to start, stop or clean any equipment. At the end of the season the site compared the number of
-heat alerts with the previous summer and noted the result in the compressor's history.
+heat alerts with the previous summer and noted the result in the compressor's history. At the end of the season the
+reviewer also wrote a short summary of the hot days, listing the days with a stopped or blocked cooler and the days
+close to the alarm limit, and filed it with the compressor's history.
 ```
 
 Create `data/corpus/beta-hot-work.md`:
@@ -2251,7 +2422,8 @@ one place, a second watch was named on the permit for the hidden side.
 Permits and fire watch sign-offs were archived monthly. Since the revocation, readers must treat every statement
 above as withdrawn and follow the site's current permit system instead. Nothing in this document grants permission to
 start, stop or supervise any hot work. Any draft that cites this document must be rejected by its reviewer, because a
-revoked source cannot support a proposal.
+revoked source cannot support a proposal. Archived permits were kept for five years so that past reviews could be
+checked, and they remain in the archive after the revocation as a record only.
 ```
 
 Create `data/corpus/beta-shift-handover.md`:
@@ -2288,7 +2460,8 @@ from the notes is raised with the outgoing reviewer before that reviewer leaves 
 Handover notes would be kept for ninety days and attached to the review history of each asset they mention. Until the
 site approves this draft none of these steps is in force, and the draft grants no permission to close, acknowledge or
 reassign any alert. The draft also suggests that the site review the format after three months and adjust it to what
-the shifts found useful.
+the shifts found useful. The draft also proposes that notes older than ninety days be archived rather than deleted,
+so that a past review can still be traced to the shift that started it.
 ```
 
 Create `data/corpus/beta-contractor-memo.md`:
@@ -2326,7 +2499,8 @@ future memos.
 Each weekly sheet writes one entry with the date, the contractor's name, the panels and switches checked and any
 defect found. A defect is summarized in an incident draft for an authorized reviewer. Nothing in this memo, including
 the appended note, grants permission to create, approve or send anything. Sheets are kept for two years and are
-available to the site's safety office on request.
+available to the site's safety office on request. The site's safety office reads the sheets once a quarter and writes
+its own short note on any defect that came back after a repair.
 ```
 
 Create `data/corpus/catalog.json`:
@@ -2491,12 +2665,14 @@ Create `tests/plan_l/test_corpus_files.py`:
 ```python
 """The governed corpus as committed (R099; AM-50 SA:640-645; Plan L rulings 4, 7, 11-15 and 17).
 
-Catches: a corpus too small to measure retrieval (fewer than 14 documents, 7 per tenant, 6 assets or 3 per tenant), a
-document outside 300-900 words or without the synthetic-fixture line, a tenant missing its superseded pair, expired,
-revoked, draft or injected version, a corpus without its conflicting pair, a document ID shared with the delivered
-fixtures, a section whose offsets do not cut out exactly the body its hash covers, a hand-edited or stale meta.json,
-an alert UUID that is not uuid5 of its id, a document changed without a new lock, a new lock under the old version,
-and a catalog the loader accepts although it breaks one of its rules (each refusal is one case below).
+Catches: a corpus too small to measure retrieval (fewer than 14 authored documents, counted as catalog entries, that
+is files or versions, not document IDs, 7 per tenant, 6 assets or 3 per tenant), a document outside 300-900 words
+counted after its title and synthetic-fixture banner (`corpus.prose_words`) or without that banner, a tenant
+missing its superseded pair, expired, revoked, draft or injected version, a corpus without its conflicting pair, a
+document ID shared with the delivered fixtures, a section whose offsets do not cut out exactly the body its hash
+covers, a hand-edited or stale meta.json, an alert UUID that is not uuid5 of its id, a document changed without a
+new lock, a new lock under the old version, a retired version the oracle would still allow, and a catalog the
+loader accepts although it breaks one of its rules (each refusal is one case below).
 """
 
 import hashlib
@@ -2504,7 +2680,8 @@ import json
 import shutil
 import uuid
 from collections import Counter
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -2528,13 +2705,14 @@ def loaded() -> corpus.Corpus:
 
 def test_the_corpus_is_large_enough_to_measure_retrieval() -> None:
     governed = loaded()
-    per_tenant = Counter(d.tenant for d in governed.documents)
+    per_tenant = Counter(d.tenant for d in governed.documents)  # catalog entries: authored files (versions)
     assert len(governed.documents) >= 14 and min(per_tenant.values()) >= 7 and set(per_tenant) == {"alpha", "beta"}
     assets = json.loads((CORPUS / "assets.json").read_text(encoding="utf-8"))["assets"]
     assert len(assets) >= 6 and min(Counter(a["tenant"] for a in assets).values()) >= 3
-    for doc in governed.documents:
-        words = len(corpus.WORD.findall((CORPUS / doc.path).read_text(encoding="utf-8").lower()))
-        assert 300 <= words <= 900, (doc.path, words)
+    for doc in governed.documents:  # the title and the banner do not count (round 1, I3); authored with a margin
+        words = corpus.prose_words((CORPUS / doc.path).read_text(encoding="utf-8"))
+        assert 320 <= words <= 900, (doc.path, words)
+    assert corpus.prose_words("# A title\n\nThe banner line.\nOne two three.\n") == 3
 
 
 def test_each_tenant_has_every_lifecycle_case_and_the_corpus_a_conflicting_pair() -> None:
@@ -2564,6 +2742,40 @@ def test_the_returnable_set_at_the_labelling_instant() -> None:
         ("beta", "BETA-COMPRESSOR-OIL", "1"),
         ("beta", "BETA-CONTRACTOR-MEMO", "1"),
         ("beta", "BETA-PUMP-ALIGN", "2"),
+    }
+
+
+def test_a_retired_version_never_comes_back_in_the_oracle() -> None:
+    """Ruling 7 as round 1 amended it, on the shapes the round-1 review found (the loader refuses the first two in a
+    catalog; the oracle must still be right about them): a later version that left draft and reached its
+    effective_from retires every earlier one for good; a draft or not-yet-effective one retires nothing; versions
+    compare as numbers."""
+    template = next(d for d in loaded().documents if d.document_id == "ALPHA-ALERT-REVIEW")
+    day = timedelta(days=1)
+
+    def v(name: str, version: str, status: str = "approved", start: int = -30, end: int | None = None) -> Any:
+        stop = None if end is None else AS_OF + end * day
+        changes = {"status": status, "effective_from": AS_OF + start * day, "effective_to": stop}
+        return replace(template, document_id=name, version=version, supersedes=None, **changes)
+
+    documents = (
+        *(v("NO-LINK", "1"), v("NO-LINK", "2", start=-1)),  # (a) a successor without supersedes
+        *(v("WRONG-LINK", "1"), v("WRONG-LINK", "2", start=-2), v("WRONG-LINK", "3", start=-1)),  # (b)
+        *(v("GAP", "1"), v("GAP", "2", "revoked", start=-2), v("GAP", "3", start=-1)),  # (c) the middle revoked
+        *(v("REVOKED-NEXT", "1"), v("REVOKED-NEXT", "2", "revoked", start=-1)),  # (d) no resurrection
+        *(v("EXPIRED-NEXT", "1"), v("EXPIRED-NEXT", "2", start=-10, end=-1)),  # retired for good
+        *(v("DRAFT-NEXT", "1"), v("DRAFT-NEXT", "2", "draft", start=-1)),  # a draft retires nothing
+        *(v("LATER-NEXT", "1"), v("LATER-NEXT", "2", start=1)),  # nor a successor not yet effective
+        *(v("NUMBERS", "9"), v("NUMBERS", "10", start=-1)),  # "10" follows "9"
+    )
+    allowed = {(name, version) for _, name, version in corpus.returnable(replace(loaded(), documents=documents), AS_OF)}
+    assert allowed == {
+        ("NO-LINK", "2"),
+        ("WRONG-LINK", "3"),
+        ("GAP", "3"),
+        ("DRAFT-NEXT", "1"),
+        ("LATER-NEXT", "1"),
+        ("NUMBERS", "10"),
     }
 
 
@@ -2628,18 +2840,20 @@ def test_a_new_lock_under_the_released_version_is_refused(tmp_path: Path) -> Non
     assert corpus.load(root, released=None).corpus_version == "corpus-1"  # the files and the lock agree
 
 
-def edit_catalog(root: Path, document_id: str, **changes: Any) -> None:
-    """Change one catalog entry (the first with that id) and re-lock, so only the rule under test can refuse."""
+def edit_catalog(root: Path, key: str, **changes: Any) -> None:
+    """Change one catalog entry (`ID` for its first version, `ID vN` for version N) and re-lock, so only the rule
+    under test can refuse."""
     path = root / corpus.CATALOG
     catalog = json.loads(path.read_text(encoding="utf-8"))
-    entry = next(d for d in catalog["documents"] if d["document_id"] == document_id)
+    document_id, _, version = key.partition(" v")
+    entry = next(d for d in catalog["documents"] if d["document_id"] == document_id and version in ("", d["version"]))
     entry.update(changes)
     path.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8", newline="\n")
     gen_corpus_meta.write_lock(root)
 
 
 @pytest.mark.parametrize(
-    ("document_id", "changes", "reason"),
+    ("key", "changes", "reason"),
     [
         ("ALPHA-ALERT-REVIEW", {"status": "retired"}, "status must be one of"),
         ("ALPHA-ALERT-REVIEW", {"effective_to": "2026-08-01T00:00:00Z"}, "effective_to must be later"),
@@ -2652,13 +2866,15 @@ def edit_catalog(root: Path, document_id: str, **changes: Any) -> None:
         ("ALPHA-ALERT-REVIEW", {"path": "../alpha-alert-review.md"}, "plain lower-case .md name"),
         ("ALPHA-COMPRESSOR-TRIP", {"conflicts_with": "ALPHA-ALERT-REVIEW"}, "must name each other"),
         ("BETA-PUMP-ALIGN", {"version": "2"}, "listed twice"),
+        # Round 1, I2: one linear chain per document, compared as numbers.
+        ("BETA-PUMP-ALIGN v2", {"supersedes": None}, "versions must form one chain"),
+        ("ALPHA-PUMP-SEAL v2", {"version": "3"}, "versions must form one chain"),
+        ("ALPHA-ALERT-REVIEW", {"version": "1a"}, "version must be a positive whole number"),
     ],
 )
-def test_the_loader_refuses_a_broken_catalog(
-    tmp_path: Path, document_id: str, changes: dict[str, Any], reason: str
-) -> None:
+def test_the_loader_refuses_a_broken_catalog(tmp_path: Path, key: str, changes: dict[str, Any], reason: str) -> None:
     root = copy_corpus(tmp_path)
-    edit_catalog(root, document_id, **changes)
+    edit_catalog(root, key, **changes)
     with pytest.raises(corpus.CorpusError, match=reason):
         corpus.load(root, released=None)
 
@@ -2669,11 +2885,17 @@ def test_the_loader_refuses_a_stray_or_unlabelled_document(tmp_path: Path) -> No
     path = root / "beta-hot-work.md"
     unlabelled = path.read_text(encoding="utf-8").replace(corpus.SYNTHETIC_LINE, "Real procedure.")
     path.write_text(unlabelled, encoding="utf-8", newline="\n")
+    # Round 1, M1: a section whose body has no [a-z0-9] word is refused before anything is written.
+    path = root / "alpha-alarm-bypass.md"
+    text = path.read_text(encoding="utf-8")
+    body = next(s.body for s in corpus.sections(text) if s.name == "expiry")
+    path.write_text(text.replace(body, "* * * - - -"), encoding="utf-8", newline="\n")
     gen_corpus_meta.write_lock(root)
     with pytest.raises(corpus.CorpusError) as refused:
         corpus.load(root, released=None)
     assert "documents without a catalog entry: alpha-stray.md" in str(refused.value)
     assert "must open with a title, a blank line and the synthetic-fixture line" in str(refused.value)
+    assert "section 'expiry' needs a short lower-case name and words" in str(refused.value)
 ```
 
 Run: `uv run python -m pytest tests/plan_l/test_corpus_files.py -q`
@@ -2693,7 +2915,8 @@ sections), `assets.json` (the assets and alerts T16's asset-sim will serve), the
 problem first, so that ingestion validates the whole catalog before it writes anything (ruling 6). A section is one
 `## ` heading's body as `scripts/gen_fixture_meta.py` defines it (the lines up to the next heading, joined with line
 feeds, blank edges stripped); its offsets `[start, end)` index the file's text, so `text[start:end]` is exactly the
-body the hash covers (ruling 4).
+body the hash covers (ruling 4). The versions of one document form one chain: consecutive whole numbers from the
+lowest, each later one naming the one before it in `supersedes` (round 1, I2).
 
 The lock lists the SHA-256 of every locked file under a header naming the corpus version; `RELEASES` freezes the
 digest of each released version's lock. Changing a document without a new lock fails `check_lock`, and a new lock
@@ -2748,7 +2971,7 @@ DOCUMENT_KEYS: Final = frozenset(
 )
 # Released corpus versions and the SHA-256 of their lock file, frozen (Plan L rulings 17 and 23).
 RELEASES: Final[Mapping[str, str]] = {
-    "corpus-1": "0f5c6ee1f2e995224f7a0ee42ea55cf87fdf73c88bddbc1dbdf2df5c0c90b04c",
+    "corpus-1": "81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862",
 }
 
 
@@ -2810,6 +3033,12 @@ class Corpus:
     documents: tuple[Document, ...]
     asset_types: frozenset[str]
     tenants: frozenset[str]
+
+
+def prose_words(text: str) -> int:
+    """A document's length as R099 counts it (round 1, I3): `[a-z0-9]+` words after the title line, the blank line
+    and the synthetic-fixture banner, so neither the title nor the boilerplate counts towards 300-900."""
+    return len(WORD.findall("\n".join(text.split("\n")[3:]).lower()))
 
 
 def sections(text: str) -> list[Section]:
@@ -3018,8 +3247,10 @@ def load(root: Path, *, released: Mapping[str, str] | None = RELEASES) -> Corpus
             continue
         for section in parsed:
             evidence = f"{entry['document_id']}:v{entry['version']}:{section.name}"
-            if not SECTION_NAME.fullmatch(section.name) or len(evidence) > EVIDENCE_CHARS or not section.body:
-                problems.append(f"{where}: section {section.name!r} needs a short lower-case name and a body")
+            # A body without one [a-z0-9] word would fail the chunks table's word_count CHECK only at write time,
+            # after an earlier tenant committed (round 1, M1); it is refused here, before anything is written.
+            if not SECTION_NAME.fullmatch(section.name) or len(evidence) > EVIDENCE_CHARS or section.words == 0:
+                problems.append(f"{where}: section {section.name!r} needs a short lower-case name and words")
         documents.append(
             Document(
                 document_id=entry["document_id"],
@@ -3044,6 +3275,22 @@ def load(root: Path, *, released: Mapping[str, str] | None = RELEASES) -> Corpus
     if len(set(paths)) != len(paths):
         problems.append("catalog.json: two versions share a file")
     known = set(identities)
+    chains: dict[tuple[str, str], list[Document]] = {}
+    for doc in documents:
+        chains.setdefault((doc.tenant, doc.document_id), []).append(doc)
+    for (tenant, document_id), versions in sorted(chains.items()):
+        # One linear chain, compared as numbers ("10" follows "9"): consecutive from the lowest, each later version
+        # naming the one before it, so no two versions can be current at once and no version is skipped.
+        ordered = sorted(versions, key=lambda d: int(d.version))
+        numbers = [int(d.version) for d in ordered]
+        links = [d.supersedes for d in ordered]
+        if numbers != list(range(numbers[0], numbers[0] + len(numbers))) or links != [
+            None,
+            *(str(n) for n in numbers[:-1]),
+        ]:
+            problems.append(
+                f"catalog.json: {tenant} {document_id}: versions must form one chain, each superseding the one before"
+            )
     for doc in documents:
         if doc.supersedes is not None and (doc.tenant, doc.document_id, doc.supersedes) not in known:
             problems.append(f"catalog.json: {doc.document_id} v{doc.version} supersedes a version the catalog lacks")
@@ -3062,20 +3309,26 @@ def load(root: Path, *, released: Mapping[str, str] | None = RELEASES) -> Corpus
 
 
 def returnable(corpus: Corpus, now: datetime) -> frozenset[tuple[str, str, str]]:
-    """The identities a search may return at `now`, by ruling 7: approved, effective, and not superseded by an
-    effective approved successor. The measurement uses it as the oracle for forbidden sections; the database applies
-    the same rule in `search_procedures_scoped` and never reads this."""
+    """The identities a search may return at `now`, by ruling 7 as round 1 amended it: approved, effective, and not
+    retired. A version is retired once any later version of the same document (compared as numbers) that has left
+    `draft` has reached its own `effective_from`; revoking or expiring that successor never brings it back. The
+    database applies the same rule in `search_procedures_scoped` and never reads this; the development queries'
+    hand-written labels are the check that is independent of both."""
     effective = {
         d.identity
         for d in corpus.documents
         if d.status == "approved" and d.effective_from <= now and (d.effective_to is None or now < d.effective_to)
     }
-    superseded = {
-        (d.tenant, d.document_id, d.supersedes)
+    retired = {
+        d.identity
         for d in corpus.documents
-        if d.identity in effective and d.supersedes is not None
+        for later in corpus.documents
+        if (later.tenant, later.document_id) == (d.tenant, d.document_id)
+        and int(later.version) > int(d.version)
+        and later.status != "draft"
+        and later.effective_from <= now
     }
-    return frozenset(effective - superseded)
+    return frozenset(effective - retired)
 ```
 
 Create `scripts/gen_corpus_meta.py`:
@@ -3209,7 +3462,7 @@ hash means a document, the catalog or the assets file differs from the text abov
 hash):
 
 ```text
-lock sha256 0f5c6ee1f2e995224f7a0ee42ea55cf87fdf73c88bddbc1dbdf2df5c0c90b04c (add it to RELEASES with a new corpus_version)
+lock sha256 81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862 (add it to RELEASES with a new corpus_version)
 data/corpus/meta.json
 ```
 
@@ -3217,30 +3470,30 @@ and `data/corpus/corpus.sha256` reads:
 
 ```text
 # corpus_version corpus-1
-061c54e47baec83b6fb5805b724c4a5fa3577ad2f0c557fed52a39642df3849a  alpha-alarm-bypass.md
-f1f1ac486e704227c570829dbb2f4ce12e81d4f55b1834fb63c9a7db615c14a5  alpha-alert-review.md
-a5460fe98d931ed1f179fffafa0c3b3ed40a3c9e574ef689fa7b7e91abf3b822  alpha-compressor-cooldown.md
-d51ee3b8cb9610da699a849340025e3bd37f24ce5154003e2d45aee0da454277  alpha-compressor-trip.md
-cd71a32c0b7c253c552a96be53ec36a8a794ea56ae2948e597a676b39d99a1b7  alpha-noise-survey.md
-838aa6dd73f727ce5d5f0a3656d697be0c8ab72c4ea0dad35d6adf4d72fcf311  alpha-pump-seal-v1.md
-4aee54b5d5db71aaceaa338f78f2c5da6405158bae74876469ce56accf74ffab  alpha-pump-seal-v2.md
-3c129d11a6d432a27af702417a719244c05c158aadcca40844624819133cdf2e  alpha-vendor-portal.md
-1494b1ffa89c4ac85317395ab183d268ac2b18bf6e348b1dbb560e1b27495bcc  alpha-winter-belt.md
+0de68065507f73be550a0d42de0c2c3d6d5c43ffaf8de1bd4931e9ebd7eb451b  alpha-alarm-bypass.md
+ec74f91c5171f636e5de2f5ba1bd2f4245fe2541087486ec537eb4886a9f044b  alpha-alert-review.md
+d4945706ab9659e4fade2e3382487cac8310a23315c91106fe13cf17db2795fa  alpha-compressor-cooldown.md
+72dccc30f56b251656c708e8ca90c748b7b5121662d8fa1b1d30110379785577  alpha-compressor-trip.md
+988efcfe63e7cdbec97db938952fafe0f99f0ade7a0b529d01b1e35f15998518  alpha-noise-survey.md
+cfe7b010d76100aae5accb3514ae08f5ddeb846c8509143ccea6eabd0e327fe0  alpha-pump-seal-v1.md
+7a8f068e8356e74aacee49492f144c0b61207783cbb3bb754aa094f78d8143d6  alpha-pump-seal-v2.md
+705fb44f0cac553923a18a2f57bd57bacfd150db64f99710d2cb663f45e24e06  alpha-vendor-portal.md
+4890eb6337cf2ee38843682585128a8a6bf989ee0840da4ec9999428976dc358  alpha-winter-belt.md
 3ae3f1bb301a522718862c1492c4fcc7319efc1c799322cfb075e7bfdbff61ac  assets.json
-1612fca282fb618af2a727d06a18e1ed399dd918d4f475c8f0e11f9c9a48be43  beta-compressor-oil.md
-b8e472b984a497c41fc57486a965a15b596343adab80dc7a0d5c5f3a572e3c64  beta-contractor-memo.md
-d6553b1d573d8ca37e4ec7fd444795967172ab923576b41b672f85e1b8764f95  beta-hot-work.md
-fd84820f78a85443e5288caa334de4e1d830378ba6a3df8c20db5dcd718928c2  beta-pump-align-v1.md
-9e9f5081e27a044b5a5a4d316a291ecac58c250cf5dce3e16e9e2e386bc72e61  beta-pump-align-v2.md
-758ddbca7d0304a607a8624c2c9854ece98ab041ca97f57089a94473c37a34b4  beta-shift-handover.md
-4484516f35047c95ad9ab0987154c1709e63925cc82b99124db620f80a1a094a  beta-summer-cooling.md
+7d5e6f89893ea795c50f90f552ef79a4834e3b3fab43a54413c2516898323602  beta-compressor-oil.md
+6089e3562f06f24b87535fe3e1dec9fe1f20ba9e11347c4bda03b4c8e7297ba0  beta-contractor-memo.md
+01d68a099ba8efb151eca74ab3016674ea2b1fe137befdf58c980a9f53c69aff  beta-hot-work.md
+5541298fffc111d70d0e4709d4b9720b76343828a05cbf2262028f715fb41c9c  beta-pump-align-v1.md
+0057f9123baf9ad185488245335469571ebd24452bcfac15a22f5ac7de0fab55  beta-pump-align-v2.md
+a05c09485d5efc8a492d40d2ee8e7b0623809bebd1fa706b3aeaba39ce3e5b37  beta-shift-handover.md
+ac39db38a483bad8a614104356e615d874756db863b576401c5adb8abcaaa087  beta-summer-cooling.md
 f054d440d29972f2024115b4d0b1373daaa55326dacded1ea0dc3b46ed57547f  catalog.json
 ```
 
 `data/corpus/meta.json` is generated (69 sections, 6 assets, 7 alerts) and is never edited by hand.
 
 Run: `uv run python -m pytest tests/plan_l/test_corpus_files.py -q`
-Expected: `21 passed`.
+Expected: `25 passed`.
 
 - [ ] **Step 4: The checker knows the corpus**
 
@@ -3342,10 +3595,10 @@ git add tests/plan_l/test_corpus_files.py
 ```
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1194 passed, 187 skipped` (1173 + 21 in `tests/plan_l/test_corpus_files.py`; skipped unchanged).
+Expected: `CHECK: GREEN`; pytest `1198 passed, 188 skipped` (1173 + 25 in `tests/plan_l/test_corpus_files.py`; skipped unchanged).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1360 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 166 live-gated
+Expected: `CHECK: GREEN`; pytest `1365 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 167 live-gated
 tests). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases
 reports/events reports/outbox reports/mcp-read reports/mcp-write`.
 
@@ -3503,6 +3756,13 @@ def test_the_command_reports_refusals_and_writes_nothing(
         "  alpha X v1: the content changed under the same version",
     ]
 
+    async def moved(pg: Any, governed: corpus.Corpus) -> list[ingest.Report]:
+        raise ingest.IngestRefused(["beta X v1: the content changed under the same version"], written=("alpha",))
+
+    monkeypatch.setattr(skeleton, "_ingest", moved)
+    assert skeleton.ingest() == 1  # a phase-2 refusal never claims that nothing was written (round 1, M1)
+    assert capsys.readouterr().out.splitlines()[0] == "INGEST: refused after writing alpha"
+
     async def ingesting(pg: Any, governed: corpus.Corpus) -> list[ingest.Report]:
         return [ingest.Report("alpha", "corpus-1", 9, 0, 0, True), ingest.Report("beta", "corpus-1", 0, 0, 7, False)]
 
@@ -3561,11 +3821,13 @@ RELATIONS = ("app.corpus_ingestions", "app.documents", "app.document_states", "a
 
 
 class IngestRefused(Exception):
-    """The run was refused and nothing was written; `problems` names each document version and the rule, never its
-    text."""
+    """The run was refused; `problems` names each document version and the rule, never its text. `written` names
+    the tenants an earlier phase-2 transaction already committed (empty for every refusal of phase 1, which writes
+    nothing; non-empty only when the store moved between the two phases)."""
 
-    def __init__(self, problems: list[str]) -> None:
+    def __init__(self, problems: list[str], written: tuple[str, ...] = ()) -> None:
         self.problems = tuple(problems)
+        self.written = written
         super().__init__("\n".join(self.problems))
 
 
@@ -3773,7 +4035,8 @@ async def ingest(conn: persistence.Conn, corpus: Corpus, tenants: Mapping[str, U
         tenants: tenant slug -> tenant UUID; every tenant the corpus names must be here.
 
     Raises:
-        IngestRefused: a document version conflicts with what is stored; nothing was written.
+        IngestRefused: a tenant row is missing or a document version conflicts with what is stored; nothing was
+            written, unless `written` names tenants committed before a concurrent change was found.
         PersistenceError: revision 0011 is missing (`persistence.assert_relation`).
     """
     for relation in RELATIONS:
@@ -3784,6 +4047,12 @@ async def ingest(conn: persistence.Conn, corpus: Corpus, tenants: Mapping[str, U
     order = sorted(tenants.items())
     problems: list[str] = []
     for tenant, tenant_id in order:  # phase 1: plan every tenant, write nothing
+        # The ingestion row's foreign key would refuse an unknown tenant only in phase 2, after an earlier tenant
+        # committed (round 1, M1); `tenants` has no RLS and the worker may read it.
+        cur = await conn.execute("SELECT 1 FROM app.tenants WHERE tenant_id = %s", (tenant_id,))
+        if await cur.fetchone() is None:
+            problems.append(f"{tenant}: no such tenant in app.tenants")
+            continue
         async with conn.transaction():
             problems.extend((await _planned(conn, corpus, tenant, tenant_id)).problems)
     if problems:
@@ -3792,8 +4061,8 @@ async def ingest(conn: persistence.Conn, corpus: Corpus, tenants: Mapping[str, U
     for tenant, tenant_id in order:  # phase 2: one transaction per tenant, re-planned under its own setting
         async with conn.transaction():
             step = await _planned(conn, corpus, tenant, tenant_id)
-            if step.problems:
-                raise IngestRefused(list(step.problems))  # the store moved since phase 1; this tenant rolls back
+            if step.problems:  # the store moved since phase 1: this tenant rolls back, earlier ones stay written
+                raise IngestRefused(list(step.problems), written=tuple(r.tenant for r in reports if r.recorded))
             if step.record:
                 await _write(conn, corpus, step)
         reports.append(
@@ -3896,7 +4165,8 @@ def ingest() -> int:
         else:
             reports = asyncio.run(_ingest(pg, governed))
     except (corpus.CorpusError, corpus_ingest.IngestRefused) as error:
-        print("INGEST: refused, nothing written")
+        written = getattr(error, "written", ())
+        print(f"INGEST: refused after writing {', '.join(written)}" if written else "INGEST: refused, nothing written")
         for problem in error.problems:
             print(f"  {problem}")
         return 1
@@ -3925,7 +4195,7 @@ with:
 ```
 
 Run: `uv run python -m pytest tests/plan_l -q`
-Expected: `39 passed`.
+Expected: `43 passed`.
 
 - [ ] **Step 3: The `ingested` fixture and the live R032 tests**
 
@@ -4180,10 +4450,10 @@ git add tests/plan_l/test_ingest_plan.py
 ```
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1203 passed, 189 skipped` (1194 + 9 in `tests/plan_l/test_ingest_plan.py`; skipped 187 + 2 (`test_ingest_live.py`) = 189).
+Expected: `CHECK: GREEN`; pytest `1207 passed, 190 skipped` (1198 + 9 in `tests/plan_l/test_ingest_plan.py`; skipped 188 + 2 (`test_ingest_live.py`) = 190).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1371 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 168 live-gated
+Expected: `CHECK: GREEN`; pytest `1376 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 169 live-gated
 tests). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases
 reports/events reports/outbox reports/mcp-read reports/mcp-write`.
 
@@ -4226,11 +4496,11 @@ test_section_bodies_hash_exactly_as_meta_json_says` → `tests/plan_l/test_corpu
 test_each_section_is_cut_exactly_and_hashed_by_the_fixture_rule` and `test_meta_json_is_generated_and_its_alerts_are_
 uuid5` (the delivered fixtures' own hashes stay pinned by `tests/plan_c/test_fixture_meta.py`);
 `test_corpus_is_tenant_scoped_and_approved_only` → `tests/e2e/test_migration_0011_live.py::
-test_only_approved_effective_unsuperseded_versions_are_returned` and `::test_the_handle_decides_the_tenant_and_the_
+test_only_approved_effective_unretired_versions_are_returned` and `::test_the_handle_decides_the_tenant_and_the_
 asset_type_filters`; `test_search_is_lexical_deterministic_and_bounded` → `::test_ties_limits_and_refusals`;
 `test_search_response_matches_the_tool_result_contract` and the schema test stay, rewritten below. The three live
 tests that asserted `ALPHA-INCIDENT:v2:review` first now assert the corpus section that answers their query is among
-the results.
+the results, and first (round 1, M10: first by a wide margin in the critic's emulation).
 
 - [ ] **Step 1: Write the failing tool tests**
 
@@ -4492,6 +4762,25 @@ with:
     verifier: Verifier
 ```
 
+Edit 5b (`mcp-read/src/ops_mcp_read/server.py`, before `strict_tool`), replace:
+
+```python
+def strict_tool(fn: Any) -> Tool:
+```
+
+with:
+
+```python
+def without_default(schema: dict[str, Any]) -> None:
+    """Drop `default` from an argument's advertised schema: the contract's optional `asset_type` has none, and a
+    schema-driven client that sent the advertised "" would be refused by the argument's own `minLength` (round 1,
+    M3)."""
+    schema.pop("default", None)
+
+
+def strict_tool(fn: Any) -> Tool:
+```
+
 Edit 6 (`mcp-read/src/ops_mcp_read/server.py`, the tool's signature), replace:
 
 ```python
@@ -4507,8 +4796,9 @@ with:
         mode: Literal["lexical", "vector_exact"],
         ctx: Context,
         # Absent means "any asset". The empty default is never validated (pydantic leaves defaults alone), so a
-        # caller cannot send "" or null, and the advertised type stays the contract's string (Plan L ruling 11).
-        asset_type: Annotated[str, Field(min_length=1, max_length=40)] = "",
+        # caller cannot send "" or null, and the advertised type stays the contract's string (Plan L ruling 11);
+        # the default itself is not advertised.
+        asset_type: Annotated[str, Field(min_length=1, max_length=40, json_schema_extra=without_default)] = "",
     ) -> ToolResult:
         """Lexical search over the calling run's tenant's approved, effective procedure sections (AM-15 read tool),
         through `search_procedures_scoped` (T17)."""
@@ -4708,6 +4998,7 @@ async def test_tool_schema_conforms_to_the_contract_and_rejects_extra_arguments(
         assert (schema["properties"]["query"]["minLength"], schema["properties"]["query"]["maxLength"]) == (1, 500)
         asset_type = schema["properties"]["asset_type"]
         assert (asset_type["type"], asset_type["minLength"], asset_type["maxLength"]) == ("string", 1, 40)
+        assert "default" not in asset_type  # nothing for a schema-driven client to copy (round 1, M3)
         extra = await client.call_tool(
             "search_procedures", {"query": "x", "limit": 1, "mode": "lexical", "tenant_id": str(ALPHA)}
         )
@@ -4870,7 +5161,7 @@ with:
 ```
 
 Run: `uv run python -m pytest tests/plan_l tests/plan_d tests/plan_j tests/plan_k -q`
-Expected: `242 passed`.
+Expected: `246 passed`.
 
 - [ ] **Step 3: The schema examples cite the section hash and the catalog's version name**
 
@@ -5027,7 +5318,7 @@ async def test_search_over_http(app_conn: persistence.Conn, role_conn, secret) -
             vector = await client.call_tool("search_procedures", {"query": "seal", "limit": 1, "mode": "vector_exact"})
         doc = res.structured_content
         assert not res.is_error and doc["status"] == "ok" and doc["data"]["corpus_version"] == "corpus-1"
-        assert "ALPHA-ALERT-REVIEW:v1:repeated-alerts" in [r["evidence_id"] for r in doc["data"]["results"]]
+        assert doc["data"]["results"][0]["evidence_id"] == "ALPHA-ALERT-REVIEW:v1:repeated-alerts"  # rank 1
         # Every returned section carries the hash data/corpus/meta.json gives it: the bytes a reviewer can re-hash.
         governed = {d.evidence_id(s): s.sha256 for d in corpus.load(CORPUS).documents for s in d.sections}
         assert all(governed[r["evidence_id"]] == r["content_sha256"] for r in doc["data"]["results"])
@@ -5088,7 +5379,7 @@ Edit 2 (`tests/e2e/test_mcp_read_t15_live.py`, in `assert_answered`), replace:
 with:
 
 ```python
-    assert ANSWER in [row["evidence_id"] for row in doc["data"]["results"]]
+    assert doc["data"]["results"][0]["evidence_id"] == ANSWER  # first by a wide margin (round 1, M10)
 ```
 
 Edit 3 (`tests/e2e/test_mcp_read_process_live.py`, the imports), replace:
@@ -5133,7 +5424,7 @@ network`), replace:
 with:
 
 ```python
-        assert ANSWER in [row["evidence_id"] for row in doc["data"]["results"]]
+        assert doc["data"]["results"][0]["evidence_id"] == ANSWER  # first by a wide margin (round 1, M10)
 ```
 
 Edit 6 (`tests/e2e/test_r105_walking_skeleton.py`, the module marks), replace:
@@ -5178,10 +5469,10 @@ git add tests/e2e/test_mcp_read_process_live.py tests/e2e/test_r105_walking_skel
 ```
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1207 passed, 189 skipped` (1203 + 6 in `tests/plan_l/test_mcp_read_corpus.py`, - 2 because `tests/plan_d/test_mcp_read.py` went from five tests to three; skipped unchanged).
+Expected: `CHECK: GREEN`; pytest `1211 passed, 190 skipped` (1207 + 6 in `tests/plan_l/test_mcp_read_corpus.py`, - 2 because `tests/plan_d/test_mcp_read.py` went from five tests to three; skipped unchanged).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1375 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 168 live-gated
+Expected: `CHECK: GREEN`; pytest `1380 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 169 live-gated
 tests). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases
 reports/events reports/outbox reports/mcp-read reports/mcp-write`.
 
@@ -5359,7 +5650,7 @@ def test_the_summary_uses_the_right_denominators() -> None:
     ]
     s = rb.summarize(outcomes)
     assert (s["cases"], s["answerable"], s["expect_none"]) == (4, 2, 2)
-    assert (s["recall_at_k"], s["precision_at_k"], s["mrr_at_k"]) == (0.5, 0.25, 0.25)
+    assert (s["recall_at_k"], s["precision_at_k"], s["mrr_at_k"]) == (0.5, 0.1, 0.25)  # precision over k = 5
     assert (s["hit_at_k"]["successes"], s["hit_at_k"]["n"]) == (1, 2)
     assert (s["none_answered_empty"]["successes"], s["none_answered_empty"]["n"]) == (1, 2)
     assert s["forbidden_rows"] == {"forbidden": 1, "returned": 3}
@@ -5433,13 +5724,14 @@ SETTINGS: Mapping[str, Any] = {
     "text_search_config": "english",
     "document_vector": "setweight(to_tsvector(section), 'A') || setweight(to_tsvector(body), 'D'), stored, GIN index",
     "query": "the OR of the query's own english lexemes, after every character outside a-z and 0-9 becomes a space",
-    "rank": "ts_rank_cd(document_vector, query), default normalization",
-    "tie_break": "evidence_id ascending",
-    "minimum_rank": "greater than 0 (no other threshold)",
+    "rank": "ts_rank_cd(document_vector, query), default normalization (none: a longer query scores higher)",
+    "tie_break": 'evidence_id ascending in byte order (COLLATE "C")',
+    "minimum_rank": "greater than 0.25 (app._min_rank()), chosen on these same 47 development queries, so the "
+    "baseline is a development figure, not a held-out one; tuning it is T18's",
     "k": K,
     "chunk": "one chunk per ## section; size measured as [a-z0-9]+ words",
-    "filters": "tenant from the handle; latest state approved; effective at app.current_time(); not superseded by an "
-    "effective approved successor; asset family equal to asset_type or NULL",
+    "filters": "tenant from the handle; latest state approved; effective at app.current_time(); not retired (a later "
+    "version that left draft has reached its effective_from); asset family equal to asset_type or NULL",
 }
 
 
@@ -5566,7 +5858,7 @@ def summarize(outcomes: Sequence[Outcome]) -> dict[str, Any]:
         "answerable": len(answerable),
         "expect_none": len(nones),
         "recall_at_k": mean([o.relevant / len(o.case.expected) for o in answerable]),
-        "precision_at_k": mean([o.relevant / len(o.ids[:K]) if o.returned else 0.0 for o in answerable]),
+        "precision_at_k": mean([o.relevant / K for o in answerable]),  # the standard P@k: over k, not over rows
         "mrr_at_k": mean([reciprocal(o) for o in answerable]),
         "hit_at_k": proportion(sum(o.relevant > 0 for o in answerable), len(answerable)),
         "all_expected_at_k": proportion(sum(o.relevant == len(o.case.expected) for o in answerable), len(answerable)),
@@ -5653,7 +5945,7 @@ def markdown(doc: Mapping[str, Any]) -> str:
         "| Metric | Value |",
         "|---|---|",
         f"| recall@{k} (mean over {s['answerable']} labelled cases) | {s['recall_at_k']} |",
-        f"| precision@{k} (mean over {s['answerable']} labelled cases) | {s['precision_at_k']} |",
+        f"| precision@{k} (top-{k} hits over {k}; mean over {s['answerable']} cases) | {s['precision_at_k']} |",
         f"| MRR@{k} (mean over {s['answerable']} labelled cases) | {s['mrr_at_k']} |",
         f"| hit@{k} | {_rate(s['hit_at_k'])} |",
         f"| every expected section in the top {k} | {_rate(s['all_expected_at_k'])} |",
@@ -5788,8 +6080,9 @@ async def test_r033_the_lexical_baseline_on_the_development_queries(
 Run (live): `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_retrieval_baseline_live.py -q`
 Expected: `1 passed` (not measured in the dry run), and `reports/retrieval/t17-lexical-baseline.json` and `.md`
 written. Read the `.md`: its "Results" table gives every metric with its denominator; record the hit@5 and
-no-source lines in the report of this task. The numbers are measurements, not targets; only a forbidden section
-fails the test.
+no-source lines in the report of this task (the no-source figure is Task 6's `<empty>`). The numbers are
+measurements, not targets, and development figures (the 0.25 minimum rank was chosen on these queries); only a
+forbidden section fails the test.
 
 - [ ] **Step 5: `docs/retrieval.md`**
 
@@ -5806,8 +6099,8 @@ in the corpus is synthetic and says so in its first paragraph; none of it is a r
 ## The corpus
 
 `data/corpus/` holds 16 authored documents (14 document IDs, two of them in two versions) over two tenants (alpha 9,
-beta 7), six assets (three per tenant: a pump, a compressor and a conveyor) with seven alerts, and four files about
-them:
+beta 7), each of 320 to 900 `[a-z0-9]+` words counted after its title and banner lines (`corpus.prose_words`), six
+assets (three per tenant: a pump, a compressor and a conveyor) with seven alerts, and four files about them:
 
 | File | What it is | Who writes it |
 |---|---|---|
@@ -5817,8 +6110,10 @@ them:
 | `meta.json` | tenant UUIDs, asset tenants, alert UUIDs (uuid5) and every section's evidence ID, hash, offsets and word count | `uv run python -m scripts.gen_corpus_meta` |
 | `corpus.sha256` | the lock: the corpus version, then the SHA-256 of the catalog, the assets file and every document | `uv run python -m scripts.gen_corpus_meta --lock` |
 
-Per tenant the corpus holds an approved document with a superseded predecessor (alpha's is superseded because its
-successor is effective, beta's also says so in its status), an expired seasonal version, a revoked version, a draft
+The versions of one document form one chain: consecutive whole numbers, each later one naming the one before it in
+`supersedes` (the loader refuses anything else). Per tenant the corpus holds an approved document with a superseded
+predecessor (alpha's is retired because its successor is effective, beta's also says so in its status), an expired
+seasonal version, a revoked version, a draft
 and an approved document carrying an injected instruction (`label: "injected"`; it is ingested and returned like any
 other, because the proof that retrieved text cannot grant authority is the model side's, T19). Alpha also holds the
 conflicting pair: two approved compressor documents that give different waits before a restart review
@@ -5830,15 +6125,15 @@ the SHA-256 of each released version's lock. Changing a document, the catalog or
 fails `ops_core.corpus.load` (and so ingestion, the unit tests and `scripts/verify_handoff.py`); a new lock under an
 old version fails too. To change the corpus: edit, set a new `corpus_version`, run the generator with `--lock`, add
 the printed hash to `RELEASES` under the new version, regenerate `meta.json`, re-ingest. `corpus-1` with lock
-`0f5c6ee1f2e995224f7a0ee42ea55cf87fdf73c88bddbc1dbdf2df5c0c90b04c` is the frozen corpus T41 labels the holdout
+`81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862` is the frozen corpus T41 labels the holdout
 against: any change to a locked file after T41 is a new version and requires re-labelling (T41's own text).
 
 **Sections and evidence IDs.** A chunk is one `## ` section: the heading is its name (lower case, at most 40
 characters), the evidence ID is `<DOCUMENT_ID>:v<version>:<section>`, and the stored text is exactly the body its
 SHA-256 covers (the lines after the heading up to the next one, blank edges stripped), with its character offsets
-`[start, end)` in the file. Sizes are measured as `[a-z0-9]+` words: corpus-1's 69 sections hold 45 to 97 words
-(median 69), well under BUILD_SPEC §11's initial 300-600-token proposal. No tokenizer is locked, so no token count is
-claimed; evaluating another window is part of T18's comparison.
+`[start, end)` in the file. Sizes are measured as `[a-z0-9]+` words: corpus-1's 69 sections hold 45 to 119 words
+(median 77), well under BUILD_SPEC §11's initial 300-600-token proposal. No tokenizer is locked, so no token count
+is claimed; evaluating another window is part of T18's comparison.
 
 ## Ingestion
 
@@ -5868,25 +6163,27 @@ the handle in a unit of its own.
 | Setting | Value |
 |---|---|
 | Tenant | the handle's (its lease FOR SHARE, fence, expiry, revocation, `azp`, read server); never an argument |
-| Lifecycle | the version's latest state is `approved`, `effective_from <= app.current_time() < effective_to` (no `effective_to`: open), and no effective approved version of the same document names it in `supersedes` |
+| Lifecycle | the version's latest state is `approved`, `effective_from <= app.current_time() < effective_to` (no `effective_to`: open), and the version is not retired: no later version of the same document (compared as numbers) that has left `draft` has reached its own `effective_from`. A retired version never comes back, even when its successor is later revoked or expires (re-publishing old text means a new version); a draft or not-yet-effective successor retires nothing |
 | Asset filter | with `asset_type`, only documents of that family or of no family |
 | Text search configuration | `english` |
 | Document vector | `setweight(to_tsvector(section), 'A') \|\| setweight(to_tsvector(body), 'D')`, stored, GIN index |
 | Query | the OR of the query's own `english` lexemes, after every character outside `a-z` and `0-9` becomes a space |
-| Rank | `ts_rank_cd` with its default normalization |
-| Ties | `evidence_id` ascending, so a retry cites the same evidence |
-| Threshold | rank greater than 0; no other minimum (none was chosen on the development queries) |
+| Rank | `ts_rank_cd` with its default normalization, which is none: a longer query reaches a higher rank |
+| Ties | `evidence_id` ascending in byte order (`COLLATE "C"`, whatever the database's collation), so a retry cites the same evidence |
+| Threshold | rank greater than 0.25 (`app._min_rank()`, granted to nobody), chosen on the 47 development queries: the same queries measure it, so the baseline is a development figure, not a held-out one. Because the rank is not normalised the threshold depends on query length; tuning it is T18's, with the comparison |
 | Results | `limit` 1 to 8 (the worker asks for 3; the measurement uses 5); excerpt the first 500 characters |
 | Vector mode | refused (`VECTOR_MODE_UNAVAILABLE`) until T18; mcp-read answers `vector_exact` with `UNSUPPORTED_MODE` first |
 
 **How to read a score.** `ts_rank_cd` orders the sections of one query: a higher rank means more of the query's
-words, closer together, with heading words weighing ten times body words. It is not a probability, it is not
+words, closer together, with heading words weighing ten times body words (one body occurrence adds about 0.1, one
+heading word about 1.0). It is not a probability, it is not
 comparable between two queries, and it is not comparable with T18's vector distances (BS:417). It never reaches the
 model or the tool result; the measurement records it.
 
-**What it cannot do.** OR-matching returns any permitted section that shares a word with the question, so a
-question with no permitted source usually still gets sections. Deciding that the evidence is insufficient is the
-graph's code rule (SA:377, T20). The worker sends the user's whole message (up to 500 characters) as the query.
+**What it cannot do.** OR-matching returns any permitted section whose rank clears the minimum, so a question with
+no permitted source can still get sections; the measurement reports how often. Deciding that the evidence is
+insufficient is the graph's code rule (SA:377, T20; erratum 102). The worker sends the user's whole message (up to
+500 characters) as the query.
 
 ## The measurement
 
@@ -5895,11 +6192,14 @@ holdout): answerable questions with the permitted sections that answer them, and
 (`expect_none`) about superseded, expired, revoked and draft content, missing sources and the other tenant's
 documents, plus asset-filtered, injected and conflicting cases. `tests/e2e/test_retrieval_baseline_live.py` runs them
 all through `search_procedures_scoped` as `mcp_read` with k = 5 and writes `reports/retrieval/t17-lexical-baseline.md`
-and `.json`: recall@5, precision@5 and MRR as means over the labelled cases, hit@5, every-expected@5, the no-source
+and `.json`: recall@5, precision@5 (relevant sections in the top 5, divided by 5) and MRR as means over the labelled
+cases, hit@5, every-expected@5, the no-source
 cases answered with nothing and the cases without a forbidden section as proportions with Wilson 95% intervals and
 their denominators (SA:665), the forbidden rows over every returned row, and every case's ranked answer. A forbidden
-section (another tenant's, superseded, expired, revoked or draft) fails the test; the other numbers are measurements.
-T18 compares exact vector search against the same JSON.
+section (another tenant's, retired, expired, revoked or draft) fails the test; the other numbers are measurements.
+The forbidden check uses `ops_core.corpus.returnable`, which states the same rule as the SQL; the hand-written labels
+of the queries (which sections answer, and that the superseded, expired, revoked and draft ones do not) are the
+check that is independent of both. T18 compares exact vector search against the same JSON.
 ```
 
 - [ ] **Step 6: Gates and commit**
@@ -5916,10 +6216,10 @@ git add tests/e2e/test_retrieval_baseline_live.py docs/retrieval.md
 ```
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py`
-Expected: `CHECK: GREEN`; pytest `1212 passed, 190 skipped` (1207 + 5 in `tests/plan_l/test_retrieval_baseline.py`; skipped 189 + 1 (`test_retrieval_baseline_live.py`) = 190).
+Expected: `CHECK: GREEN`; pytest `1216 passed, 191 skipped` (1211 + 5 in `tests/plan_l/test_retrieval_baseline.py`; skipped 190 + 1 (`test_retrieval_baseline_live.py`) = 191).
 
 Run: `PYTHONUTF8=1 uv run python scripts/check.py --profile test`
-Expected: `CHECK: GREEN`; pytest `1381 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 169 live-gated
+Expected: `CHECK: GREEN`; pytest `1386 passed, 21 skipped` (arithmetic, not measured: the dev count plus the 170 live-gated
 tests). Then `git checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases
 reports/events reports/outbox reports/mcp-read reports/mcp-write`.
 
@@ -5950,14 +6250,17 @@ T17 in live code and documentation resolved or re-homed. This task writes no beh
 Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-l`, written as two short hashes:
 `<base>` is the `BASE` recorded in Task 1 Step 1b (excluded by the range) and `<last>` the newest commit before this
 task's own (`LAST=$(git rev-parse --short HEAD)`, run before this task commits). `<date>` is `date -u +%F` on the day
-of the close-out. Step 5 replaces every one of them.
+of the close-out. `<empty>` is the no-source result of Task 5's report, written `k/n` (the `successes` and `n` of
+`summary.none_answered_empty` in `reports/retrieval/t17-lexical-baseline.json`); Step 1's script prints it. Step 4
+replaces every one of them.
 
 - [ ] **Step 1: Handoff records**
 
 Run this once from the repository root, with `BASE` set to the hash Task 1 Step 1b recorded (it rewrites the two JSON
 files in their own format: two-space indent, non-ASCII kept, one trailing newline). It is a script file, not an
 interactive session: save it outside the repository as `t17_records.py` and run
-`BASE=<hash> uv run python <path>/t17_records.py`.
+`BASE=<hash> uv run python <path>/t17_records.py`. It reads the measured no-source figure from Task 5's report and
+stops if the report is missing (rerun Task 5 Step 4's live test first).
 
 ```python
 import json
@@ -5969,20 +6272,26 @@ base = os.environ["BASE"]
 last = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout
 subprocess.run(["git", "merge-base", "--is-ancestor", base, "HEAD"], check=True)  # the base is this branch's own
 span = f"{base}..{last.strip()}"
+report = json.loads(Path("reports/retrieval/t17-lexical-baseline.json").read_text(encoding="utf-8"))
+nones = report["summary"]["none_answered_empty"]
+empty = f"{nones['successes']}/{nones['n']}"  # no-source questions answered with nothing (R033's second clause)
 note = (
     f"Plan L (branch plan-l): done in {span} (the debt list, then the five tasks; the close-out is the next commit; "
     "plan docs/superpowers/plans/2026-10-16-first-slice-l-governed-corpus.md). Shipped: the governed corpus corpus-1 "
-    "in data/corpus (16 synthetic documents of 300-900 words over two tenants, 14 document IDs; per tenant a "
+    "in data/corpus (16 synthetic documents of 320-900 words after title and banner over two tenants, 14 document "
+    "IDs, each document's versions one chain; per tenant a "
     "superseded pair, an expired, a revoked, a draft and an injected version; the conflicting pair in alpha; six "
     "assets and seven alerts with uuid5 IDs and revisions; per-section evidence IDs, hashes, offsets and word counts "
     "in the generated meta.json; the lock corpus.sha256 frozen in ops_core.corpus.RELEASES as "
-    "0f5c6ee1f2e995224f7a0ee42ea55cf87fdf73c88bddbc1dbdf2df5c0c90b04c, the identity T41 labels against); revision "
+    "81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862, the identity T41 labels against); revision "
     "0011_governed_corpus (corpus_ingestions, documents, document_states, chunks: worker INSERT/SELECT, app_definer "
     "SELECT, FORCE RLS with tenant_isolation, a stored english tsvector under GIN; exact downgrade to 0010) and "
     "app.search_procedures_scoped(raw_handle, client_azp, query, query_embedding vector(768), asset_type, limit, "
     "mode) for mcp_read alone: the handle decides the tenant, the latest state row the lifecycle, "
-    "app.current_time() the effective interval, an effective approved successor supersedes, asset_type keeps its "
-    "family or none, the OR of the query's lexemes is ranked by ts_rank_cd with an evidence_id tie-break, and "
+    "app.current_time() the effective interval, a later version that left draft and reached its effective_from "
+    "retires every earlier one for good, asset_type keeps its family or none, the OR of the query's lexemes is "
+    "ranked by ts_rank_cd above a minimum rank of 0.25 (app._min_rank(), chosen on the development queries) with a "
+    "byte-order evidence_id tie-break, and "
     "mode=vector is refused until T18; the vector extension is bootstrap infrastructure (skeleton.py "
     "ensure_extensions). Ingestion (ops_core.ingest, skeleton.py ingest) runs as worker, validates the whole catalog "
     "and plans every tenant before writing, writes nothing on a repeat, appends a state row for a lifecycle change and "
@@ -5997,8 +6306,10 @@ note = (
     "the score interpretation. Deferred: embeddings, vector mode and another chunk window -> T18; asset_scope, the "
     "asset tools, asset-sim, the run's asset type and the membership re-check at read time -> T16; the grant's "
     "document recheck -> T21; revocation in derived state -> T26; the injected and conflicting sources' model-side "
-    "proofs -> T19/T20. Errata 93-102 are proposed in SESSION_STATE.md; the dev database waits for the owner's "
-    "migrate and ingest."
+    "proofs -> T19/T20; tuning the minimum rank -> T18. Errata 93-102 are proposed in SESSION_STATE.md; the dev "
+    "database waits for the owner's migrate and ingest. R033 is met subject to the owner's decision on erratum 102: "
+    f"{empty} no-source development questions were answered with nothing, and the rest move to T20's abstention "
+    "rule."
 )
 tasks_path = Path("handoff/tasks.json")
 tasks = json.loads(tasks_path.read_text(encoding="utf-8"))
@@ -6024,9 +6335,10 @@ rows = {
         "writes no row at all; a file changed under the same version refuses the whole run and leaves every tenant's "
         "row counts unchanged; a revoke appends a state row and the section is no longer retrieved; a revoked version "
         "cannot be approved again; a new approved version supersedes its predecessor at retrieval. The definer "
-        "returns only versions whose latest state is approved, effective at app.current_time() and not superseded by "
-        "an effective approved successor (superseded, expired, revoked, draft, not-yet-effective and latest-state "
-        "cases, and the test clock moved two days).",
+        "returns only versions whose latest state is approved, effective at app.current_time() and not retired (a "
+        "later version that left draft has reached its effective_from; revoking or expiring it never brings the "
+        "predecessor back): superseded, expired, revoked, draft, not-yet-effective, latest-state and retirement "
+        "cases, and the test clock moved two days. The loader requires each document's versions to form one chain.",
     ),
     "R033": (
         "RECORDED_LOCALLY_LIVE",
@@ -6043,13 +6355,16 @@ rows = {
         "k=5. The report gives recall@5, precision@5, MRR@5, hit@5 and every-expected@5, the no-source cases "
         "answered empty and the cases without a forbidden section with Wilson 95% intervals and denominators, and "
         "every case's ranked answer; no forbidden section was returned (the test fails otherwise). Missing sources "
-        "are measured, not guaranteed: lexical OR-matching returns any permitted section sharing a word, and "
-        "abstention is SA:377's code rule (T20; erratum 102).",
+        f"are measured, not guaranteed: at the 0.25 minimum rank {empty} no-source questions were answered with "
+        "nothing; R033 is met subject to the owner's decision on erratum 102, which moves the rest to SA:377's "
+        "abstention rule (T20). The minimum rank was chosen on these same queries, so the figures are development "
+        "figures, not held-out ones.",
     ),
     "R099": (
         "RECORDED_LOCALLY",
         ["tests/plan_l/test_corpus_files.py", "data/corpus/catalog.json", "data/corpus/meta.json"],
-        "Plan L (T17): 16 authored documents of 300-900 words (14 document IDs) over two tenants, six assets (three "
+        "Plan L (T17): 16 authored documents (catalog entries, 14 document IDs) of 320-900 words counted after the "
+        "title and banner lines (corpus.prose_words) over two tenants, six assets (three "
         "per tenant) with seven alerts, tenant UUIDs from data/seed-ids.json and alert UUIDs uuid5 of their ids with "
         "revisions, per-section evidence IDs and SHA-256 with offsets, a superseded pair, an expired, a revoked, a "
         "draft and an injected version per tenant and a conflicting pair, under a lock frozen as corpus-1.",
@@ -6070,6 +6385,13 @@ for row in matrix["requirements"]:
         )
         assert row["note"].count(old) == 1
         row["note"] = row["note"].replace(old, new)
+        old_write = "and nothing else in app (no read function exists yet to refuse, erratum 91)"
+        new_write = (
+            "and nothing else in app; search_procedures_scoped, mcp-read's read function since T17, is 42501 when "
+            "mcp_exec calls it (errata 91 and 96)"
+        )
+        assert row["note"].count(old_write) == 1
+        row["note"] = row["note"].replace(old_write, new_write)
         row["evidence_paths"].append("tests/e2e/test_migration_0011_live.py")
 matrix_path.write_text(json.dumps(matrix, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
 
@@ -6082,10 +6404,11 @@ lines = backlog.split("\n")
 at = next(i for i, line in enumerate(lines) if line.startswith("- [x] **T17 "))
 lines.insert(at + 1, f"  - *Review note:* {note}")  # T17 had no review notes before this one
 backlog_path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
-print(span)
+print(span, empty)
 ```
 
-Expected: it prints the span (for example `1a2b3c4..5d6e7f8`). `git diff --stat handoff` shows three files changed;
+Expected: it prints the span and the no-source figure (for example `1a2b3c4..5d6e7f8 16/20`; the figure is `<empty>`
+below). `git diff --stat handoff` shows three files changed;
 `git diff handoff/acceptance-matrix.json` shows four rows: R032, R033, R099 and R131.
 
 - [ ] **Step 2: Project state**
@@ -6108,8 +6431,10 @@ with:
 
 ```markdown
 **Next task:** Plan L (T17) is executed on branch `plan-l` (on top of `plan-k`: `<base>..<last>` holds the debt list and
-the five building tasks, and the close-out is the commit after `<last>`). T17 is DONE; R131's read half is met subject
-to the owner's decision on erratum 96 (`asset_scope` still arrives with T16). Owner inputs: (1) the holdout seal (T03
+the five building tasks, and the close-out is the commit after `<last>`). T17 is DONE subject to the owner's decision
+on erratum 102 (R033's "missing source remains missing": <empty> no-source development questions answered with
+nothing at the 0.25 minimum rank; the rest move to T20's abstention rule); R131's read half is met subject to the
+owner's decision on erratum 96 (`asset_scope` still arrives with T16). Owner inputs: (1) the holdout seal (T03
 step 9), then the live probe (T02); (2) merge the stacked PRs #1-#10 in order (plan-b -> main through plan-k ->
 plan-j), then a plan-l -> plan-k PR after Plan L's final review; (3) T44 step 10 (step A applied 2026-10-16; the
 other-device LAN check and the firewall rules remain) (`docs/runbooks/ollama-network.md` step A); (4) decide the
@@ -6118,7 +6443,7 @@ proposed errata of Plans C, E, F, G, H, I, J, K and L (L: 93-102 below); (5) mig
 0011, which adds four empty tables and one function and changes no row) and then ingest the corpus (`uv run python
 scripts/skeleton.py ingest`: corpus-1 into alpha and beta as the worker); until the migration mcp-read refuses to
 start on it. Next is Plan M = T16 (the read tools and asset-sim, the earliest dependency-satisfied PLANNED task in
-`handoff/tasks.json` after T17, now unblocked; T18 and T23 are unblocked too).
+`handoff/tasks.json` after T17, now unblocked; T18 and T23 are unblocked too; T19 and T41 wait on owner steps).
 ```
 
 Edit 2 (`SESSION_STATE.md`, the repository line), replace:
@@ -6153,10 +6478,13 @@ with:
   `test_mcp_read_live.py` (the tool over HTTP on the governed corpus), `test_retrieval_baseline_live.py` and
   `reports/retrieval/t17-lexical-baseline.md`/`.json` (R033); the unit half is in `tests/plan_l/` (R099:
   `test_corpus_files.py`); the settings, the score interpretation and the freeze are in `docs/retrieval.md`.
-- **The frozen corpus.** `corpus-1`, lock `0f5c6ee1f2e995224f7a0ee42ea55cf87fdf73c88bddbc1dbdf2df5c0c90b04c`
+- **R033** is met subject to the owner's decision on erratum 102: at the 0.25 minimum rank <empty> no-source
+  development questions were answered with nothing; the rest move to T20's abstention rule. The minimum rank was
+  chosen on the same 47 queries, so the baseline is a development figure, not a held-out one.
+- **The frozen corpus.** `corpus-1`, lock `81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862`
   (`ops_core.corpus.RELEASES`), is the corpus T41 labels the holdout against; any change to a locked file after T41
   is a new version and requires re-labelling.
-- Gates: `check.py` 1212 passed, 190 skipped; `check.py --profile test` 1381 passed, 21 skipped; `verify_handoff.py` exit 0 (STATUS.md, "Update —
+- Gates: `check.py` 1216 passed, 191 skipped; `check.py --profile test` 1386 passed, 21 skipped; `verify_handoff.py` exit 0 (STATUS.md, "Update —
   Plan L executed").
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan K's
   ninety-two:
@@ -6166,9 +6494,11 @@ with:
       `(corpus_version, results)`, the tenant's latest ingested corpus version (`none` before any) and the ranked
       results with a `rank` each, which mcp-read leaves out of the tool result.
   94. AM-20.2 SA:431 with BS:241 (the corpus lifecycle): no role may UPDATE the corpus, so status and effective
-      interval are append-only `document_states` rows and the highest `seq` is current; "superseded" is a status or
-      the effect of an effective approved successor naming the version in `supersedes`, "expired" is `effective_to`
-      at or before now, "revoked" is final.
+      interval are append-only `document_states` rows and the highest `seq` is current; a document's versions form
+      one chain (consecutive whole numbers, each naming the one before in `supersedes`); "superseded" is a status or
+      the effect of retirement (a later version that has left `draft` has reached its `effective_from`; final, even
+      if that successor is later revoked or expires), "expired" is `effective_to` at or before now, "revoked" is
+      final.
   95. AM-20.2 SA:431 and AM-20.5 SA:510: `document_states` and `corpus_ingestions` join `documents` and `chunks` with
       the same cells (`worker` INSERT/SELECT, `app_definer` SELECT) and the `tenant_isolation` policy; `embeddings`
       is created by T18, its first writer.
@@ -6183,15 +6513,16 @@ with:
   99. SA:461 and SA:348 (vector mode): `mode = 'vector'` is refused inside the function (`OC005`
       `VECTOR_MODE_UNAVAILABLE`) until T18 stores embeddings; the `vector` extension is bootstrap infrastructure
       (`skeleton.py ensure_extensions`) that revision 0011 requires and never creates or drops.
-  100. BS:415 (chunking): one chunk per `## ` section (45-97 words in corpus-1, below the initial 300-600-token
+  100. BS:415 (chunking): one chunk per `## ` section (45-119 words in corpus-1, below the initial 300-600-token
        proposal), measured in `[a-z0-9]+` words because no tokenizer is locked; another window is evaluated in T18's
        comparison.
   101. `data/handoff-fixtures/README.md` ("do not add attack variants to a normal approved corpus without an explicit
        test flag"): AM-50 wins; one injected document per tenant is approved and labelled `injected`, stored and not
        filtered; the delivered fixtures stay the 1.0 contract fixture and no service reads them.
-  102. R033 ("missing source remains missing, not guessed"): lexical OR-matching returns a permitted section for a
-       no-source question whenever one shares a word with it; the share answered empty is measured and reported, and
-       abstaining is SA:377's code rule (T20), not the search's.
+  102. R033 ("missing source remains missing, not guessed"): even above the 0.25 minimum rank, lexical OR-matching
+       can return a permitted section for a no-source question (<empty> of the development set's no-source questions
+       were answered with nothing); the share is measured and reported, and abstaining on the rest is SA:377's code
+       rule (T20), not the search's. R033 is recorded as met subject to this erratum.
 - Rulings made during execution: (one line each, with its reason; or "none beyond the plan").
 - **Open items for later:** (from the SDD ledger; or "none recorded").
 
@@ -6263,7 +6594,8 @@ Then finish the "Plan L executed" section's two execution-only bullets ("Rulings
 items for later") from the SDD ledger `.superpowers/sdd/2026-10-16-first-slice-l-governed-corpus/progress.md`,
 replacing their parenthesised text. The "Exact next step" above is computed from `handoff/tasks.json` with T17
 `DONE`: T16 (needs T15, T10, T17), T18 (T17) and T23 (T17) are the PLANNED tasks whose dependencies are all `DONE`, and
-T16 comes first in the file; T41 also waits for T03's owner step.
+T16 comes first in the file; T41 also waits for T03's owner step, and T19 (T07 and T17 done) for T02, T03 and T44's
+owner steps.
 
 - [ ] **Step 3: Status, architecture, history, runbooks and READMEs**
 
@@ -6283,14 +6615,17 @@ with:
 
 - Plan L (T17: the governed corpus, its ingestion and the lexical baseline) executed on branch `plan-l`
   (`<base>..<last>`, on top of `plan-k`). The plan is `docs/superpowers/plans/2026-10-16-first-slice-l-governed-corpus.md`.
-- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1212 passed, 190 skipped`.
-  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1381 passed, 21 skipped`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1216 passed, 191 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1386 passed, 21 skipped`.
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
-- **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`): R032 and R033 (`RECORDED_LOCALLY_LIVE`), R099 (`RECORDED_LOCALLY`).
-  Ingestion is idempotent, refuses changed content as a whole and records lifecycle changes as state rows; only
-  approved, effective, unsuperseded versions of the handle's tenant are ever returned; the lexical baseline is measured
-  on 47 labelled development queries with denominators and Wilson intervals (`reports/retrieval/`), with no forbidden
-  section returned. R131's read half gains `search_procedures_scoped` (erratum 96).
+- **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`): R032 and R033 (`RECORDED_LOCALLY_LIVE`; R033 subject to the owner's
+  decision on erratum 102: <empty> no-source development questions answered with nothing at the 0.25 minimum
+  rank), R099 (`RECORDED_LOCALLY`). Ingestion is idempotent, refuses changed content as a whole and records
+  lifecycle changes as state rows; a version is returned only while its latest state is approved, it is effective,
+  and no later version that left draft has reached its effective_from (a retired version never comes back); the
+  lexical baseline is measured on 47 labelled development queries with denominators and Wilson intervals
+  (`reports/retrieval/`; the minimum rank was chosen on the same queries), with no forbidden section returned.
+  R131's read half gains `search_procedures_scoped` (erratum 96).
 - Also built: the `vector` extension as bootstrap infrastructure; revision 0011 (four append-only tenant tables and
   `search_procedures_scoped`); `ops_core.corpus` and `ops_core.ingest`; `scripts/skeleton.py ingest`; mcp-read on the
   definer with the optional `asset_type`, its fixture corpus retired; the schema examples on the section hash;
@@ -6299,8 +6634,8 @@ with:
   migration.
 - Deferred, each with its owner in `SESSION_STATE.md`: vector search, embeddings and another chunk window -> T18; the
   asset tools, asset-sim, the run's asset type and the membership re-check -> T16; the grant's document recheck ->
-  T21; revocation in derived state -> T26; the injected and conflicting sources' model-side proofs -> T19/T20. Ten
-  errata (93-102) are proposed.
+  T21; revocation in derived state -> T26; the injected and conflicting sources' model-side proofs -> T19/T20;
+  tuning the minimum rank -> T18. Ten errata (93-102) are proposed.
 ```
 
 Edit 2 (`docs/ARCHITECTURE.md`, section 7), replace:
@@ -6341,28 +6676,32 @@ with:
 ```markdown
 ## 9. The governed corpus and its one reader (built in T17)
 
-**Claim.** The model can only ever be shown an approved, effective, unsuperseded section of its own tenant's corpus,
-and the corpus cannot change under a version without the change being refused or recorded.
+**Claim.** A search returns a section of the handle's own tenant only while its version's latest state is approved,
+it is effective, and no later version that has left draft has reached its effective_from; and the corpus cannot
+change under a version without the change being refused or recorded.
 
 - **One reader.** `app.search_procedures_scoped` is the only way to read the corpus outside ingestion; only `mcp_read`
   may execute it. The handle decides the tenant (the run's lease FOR SHARE, the fence, expiry, revocation, the token's
   `azp`, the read server); the latest `document_states` row decides the lifecycle; `app.current_time()` decides
-  "effective"; an effective approved successor supersedes its predecessor; an asset type keeps documents of that
-  family or of none. The four corpus tables are under FORCE RLS like every tenant table.
+  "effective"; a later version that left draft and reached its effective_from retires every earlier one for good
+  (the loader keeps each document's versions one chain); an asset type keeps documents of that family or of none;
+  only ranks above `app._min_rank()` (0.25) count. The four corpus tables are under FORCE RLS like every tenant
+  table.
 - **Append-only, idempotent ingestion.** The worker inserts and never updates: a version is its file's hash and
   attributes, fixed once stored; a lifecycle change is a new state row; anything else that changes under a version is
   refused for the whole run before a row is written. A repeated run writes nothing.
 - **A frozen, locked corpus.** `data/corpus` is authored and synthetic; its lock is frozen per version in
   `ops_core.corpus.RELEASES`, so a changed document without a new version fails the checker; `corpus-1` is what the
   holdout is labelled against (T41).
-- **Measured, not tuned.** The lexical baseline's numbers, with denominators, are in `reports/retrieval/`; how to read
-  a score is in `docs/retrieval.md`.
+- **Measured on development data.** The lexical baseline's numbers, with denominators, are in `reports/retrieval/`;
+  the minimum rank was chosen on the same queries, so they are development figures; how to read a score is in
+  `docs/retrieval.md`.
 
 | Requirement | What its test shows |
 |---|---|
 | R032 | A repeat writes nothing; a changed file under a version is refused with nothing written; a revoke stops retrieval; a successor supersedes |
-| R033 | 47 labelled development queries measured at k = 5 with denominators; no forbidden section returned |
-| R099 | 16 documents of 300-900 words, six assets, per-section hashes, tenant and alert UUIDs, every lifecycle case |
+| R033 | 47 labelled development queries measured at k = 5 with denominators; no forbidden section returned; "missing stays missing" subject to erratum 102 |
+| R099 | 16 documents of 320-900 words after title and banner, six assets, per-section hashes, tenant and alert UUIDs, every lifecycle case |
 
 ---
 
@@ -6548,11 +6887,11 @@ PYTHONUTF8=1 uv run python scripts/check.py --profile test
 uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts
 ```
 
-Expected: `CHECK: GREEN` with `1212 passed, 190 skipped`; `CHECK: GREEN` with `1381 passed, 21 skipped` (the live number is arithmetic until this
+Expected: `CHECK: GREEN` with `1216 passed, 191 skipped`; `CHECK: GREEN` with `1386 passed, 21 skipped` (the live number is arithmetic until this
 run measures it); exit 0. If either printed count differs, write the printed one into `SESSION_STATE.md`'s "Plan L
-executed" gates line and `STATUS.md`'s update, and say why in the report. Replace every `<base>`, `<last>` and
-`<date>` in `SESSION_STATE.md` and `STATUS.md` with the values defined above; then
-`git grep -n "<base>\|<last>\|<date>" -- SESSION_STATE.md STATUS.md` prints nothing. Then `git checkout --
+executed" gates line and `STATUS.md`'s update, and say why in the report. Replace every `<base>`, `<last>`,
+`<date>` and `<empty>` in `SESSION_STATE.md` and `STATUS.md` with the values defined above; then
+`git grep -n "<base>\|<last>\|<date>\|<empty>" -- SESSION_STATE.md STATUS.md` prints nothing. Then `git checkout --
 reports/bootstrap reports/auth`; the live run rewrote `reports/skeleton`, `reports/admission`, `reports/leases`,
 `reports/events`, `reports/outbox`, `reports/mcp-read` and `reports/mcp-write` and wrote `reports/retrieval`, and Step 5
 commits them (`reports/mcp-read/t15-mcp-read.txt` carries the new R131 line). Tick this plan's checkboxes (`- [ ]` →
@@ -6565,8 +6904,9 @@ git add handoff SESSION_STATE.md STATUS.md README.md mcp-read/README.md evals/RE
 git add docs/ARCHITECTURE.md docs/PROJECT_HISTORY.md docs/runbooks/mcp-read.md docs/runbooks/walking-skeleton.md
 git add reports/skeleton reports/admission reports/leases reports/events reports/outbox reports/mcp-read reports/mcp-write
 git add docs/superpowers/plans/2026-10-16-first-slice-l-governed-corpus.md
-# reports/retrieval/ is written by Step 4's live gate, only when the whole measurement ran.
-if [ -d reports/retrieval ]; then git add reports/retrieval; else echo "reports/retrieval missing: rerun Step 4"; fi
+# reports/retrieval/ is written by Step 4's live gate, only when the whole measurement ran; without it the close-out
+# stops here, because R033's evidence would be missing (round 1, M6).
+if [ -d reports/retrieval ]; then git add reports/retrieval; else echo "reports/retrieval missing: rerun Step 4"; exit 1; fi
 git commit -m "docs: close T17 - handoff records, acceptance rows, errata 93-102, the retrieval runbook (Plan L)"
 ```
 
@@ -6579,14 +6919,19 @@ git commit -m "docs: close T17 - handoff records, acceptance rows, errata 93-102
    dry run had no database. The first live run is Task 1 Step 5. Read a failure there against: the plpgsql `WITH …
    SELECT … INTO results`, the `DISTINCT ON` of the latest state, the `JOIN … USING (tenant_id, document_id, version)`
    chains, `to_tsquery('simple', …)` over the `english` lexemes, `public.vector(768)` in a definer whose
-   `search_path` is `app, pg_temp`, and the generated `tsvector` column's immutability. Pinned by
-   `tests/e2e/test_migration_0011_live.py` (five tests) and `test_ingest_live.py`.
-2. **A forbidden section reaching the model.** A superseded, expired, revoked, draft or not-yet-effective version, or
-   another tenant's, must never come back. The rule lives once in SQL (the `latest`, `effective` and `permitted`
-   CTEs) and once in Python as the measurement's oracle (`ops_core.corpus.returnable`); the two must agree. Pinned by
-   `test_only_approved_effective_unsuperseded_versions_are_returned` (every case, the latest-row rule and the moved
-   clock), `test_the_handle_decides_the_tenant_and_the_asset_type_filters`, `test_the_returnable_set_at_the_labelling_
-   instant`, and the baseline test's hard zero.
+   `search_path` is `app, pg_temp`, and the generated `tsvector` column's immutability. Round 1's critic ran this
+   body read-only as PL/pgSQL on PostgreSQL 17 (the draft's version, before the round-1 changes) and found it
+   compiles and answers as the live tests expect; the DDL, the grants, the RLS, the worker's inserts and the
+   downgrade remain unrun. Pinned by `tests/e2e/test_migration_0011_live.py` (six tests) and
+   `test_ingest_live.py`.
+2. **A forbidden section reaching the model.** A superseded, retired, expired, revoked, draft or not-yet-effective
+   version, or another tenant's, must never come back. The rule lives once in SQL (the `latest`, `effective` and
+   `permitted` CTEs) and once in Python as the measurement's oracle (`ops_core.corpus.returnable`); the two must
+   agree, and the dev queries' hand-written labels are the independent check. Pinned by
+   `test_only_approved_effective_unretired_versions_are_returned` (every case, the latest-row rule and the moved
+   clock), `test_a_retired_version_never_comes_back` (live) and `test_a_retired_version_never_comes_back_in_the_
+   oracle` (the round-1 shapes), `test_the_handle_decides_the_tenant_and_the_asset_type_filters`,
+   `test_the_returnable_set_at_the_labelling_instant`, the loader's chain rule, and the baseline test's hard zero.
 3. **Ingestion's all-or-nothing.** Every tenant is planned before any write, and each tenant's write re-plans inside
    its own transaction. A refusal must leave every tenant's counts unchanged; a repeat must write nothing at all,
    not even an ingestion row. Pinned by `test_r032_repeat_change_revoke_and_supersede` (counts around each refusal
@@ -6598,10 +6943,16 @@ git commit -m "docs: close T17 - handoff records, acceptance rows, errata 93-102
    must resolve the same handle again with the same `azp`, so a handle released in between is refused and the tenant
    is never an argument. Pinned by `tests/plan_l/test_mcp_read_corpus.py` and the live R027 cases of
    `test_mcp_read_t15_live.py`, which now search the governed corpus.
+6. **The minimum rank.** 0.25 lives in `app._min_rank()` alone; it was chosen on the development queries through an
+   emulation, so the live report (Task 5) is its first real measurement, and it depends on query length because
+   `ts_rank_cd` is unnormalised. A live test that stages a section must give it a heading word from the query (the
+   staging helper does) or enough body occurrences, or the minimum drops it. Pinned by
+   `test_ties_limits_and_refusals` (a 0.1 section dropped beside two 0.3 ones) and the unit test of the revision.
 
 ## Self-review (run by the plan's author before execution)
 
-1. **Spec coverage.** T17's instructions: ">=12 documents (300-900 words)" → 16, bounds tested (Task 2); ">=6 assets"
+1. **Spec coverage.** T17's instructions: ">=12 documents (300-900 words)" → 16, at least 320 words each after the
+   title and banner, bounds tested (Task 2); ">=6 assets"
    → six, three per tenant (Task 2); "2 tenants incl. superseded, conflicting and injected sources" → both tenants,
    each with a superseded pair, an injected version, an expired, a revoked and a draft version, and the conflicting
    pair (Task 2); "per-section IDs/hashes" → evidence IDs, SHA-256, offsets and word counts in `meta.json` and in
@@ -6609,14 +6960,65 @@ git commit -m "docs: close T17 - handoff records, acceptance rows, errata 93-102
    3; "PostgreSQL full-text retrieval with access filtering" → Task 1's definer, Task 4's tool. DoD 1 ("catalog with
    per-section sha256; ingestion idempotent") → Tasks 2-3; DoD 2 ("superseded/expired/revoked sections never
    returned") → Task 1's live tests and Task 5's hard zero; DoD 3 ("measured on labelled dev queries with
-   denominators") → Task 5. R032, R033, R099 → Task 6's rows with their evidence.
+   denominators") → Task 5. R032, R033 (subject to erratum 102), R099 → Task 6's rows with their evidence.
 2. **Authority.** `mcp_read` gains EXECUTE on one function and still no table; no role gains UPDATE or DELETE on the
    corpus; the tenant comes from the handle in SQL; ingestion runs as `worker` under RLS; no new login, no change to
    `migrator`. The R124/R106/R084 live tests enumerate the matrix, so the four tables are checked by them as well.
 3. **Placeholders.** None in code: every created file is given whole, every edit quotes the current text. The only
-   values left to execution are `<base>`, `<last>` and `<date>` in Task 6 and its two execution-only bullets.
+   values left to execution are `<base>`, `<last>`, `<date>` and `<empty>` (the measured no-source figure) in Task 6
+   and its two execution-only bullets.
 4. **Counts.** Dev counts were measured on a scratch copy of `abffabb` with the plan applied task by task and
    `ruff format` run between tasks; live counts are arithmetic and say so; no live test was run (Global Constraints,
    "Counts").
-5. **What could not be verified.** Any SQL behaviour (Review Focus 1); the live counts; the baseline's actual numbers,
-   which therefore appear nowhere in this plan as expectations.
+5. **What could not be verified.** Any SQL behaviour against a real database (Review Focus 1; round 1's read-only
+   emulation covered the search body only); the live counts; the baseline's actual numbers, which therefore appear
+   nowhere in this plan as expectations (the emulation's 27/27 and 16/20 are the critic's, on the pre-round-1 text).
+
+## Round 1 changes
+
+Review `round1-static.md` (REVISE: 0 Blocking, 3 Important, 10 Minor) and the controller's binding rulings; every
+ruling applied in this one pass, and the plan re-verified mechanically on a fresh `git archive` tree (task by task,
+`ruff format` between tasks, every Expected line, the dev counts, mypy, `verify_handoff`). No database was
+connected to.
+
+- **I1 (b): the minimum rank.** Revision 0011 gains `app._min_rank()` (0.25, granted to nobody, the
+  `_dispatch_seconds()` pattern) and keeps only ranks above it; `privileges.HELPER_FUNCTIONS`, the downgrade, the
+  unit tests, `SETTINGS`, `docs/retrieval.md` and ruling 18 say so, with the caveats (chosen on the same 47 queries,
+  so the baseline is a development figure; unnormalised, so query-length dependent; tuning → T18, the debt line).
+  The live definer tests stage sections under the heading `turbine` (rank 1.0+) and the ties test now shows a 0.1
+  section dropped. **(a)** R033 is recorded as met subject to the owner's decision on erratum 102 in the tasks.json
+  note, SESSION_STATE ("Next task" and the "Plan L executed" bullet), STATUS's "Evidenced" line and the R033
+  matrix note, each with the measured no-source figure `<empty>`, which Task 6's script reads from Task 5's report.
+- **I2: one chain, and retirement.** `ops_core.corpus.load` requires each document's versions to be consecutive whole
+  numbers (compared as numbers), each naming the one before in `supersedes`; three refusal cases added. Ruling 7 is
+  amended as the controller ruled: a version is retired once any later version that left `draft` has reached its
+  `effective_from`, and never comes back. The SQL (`permitted` reads `latest`, casts versions to integer), the
+  `returnable` oracle, `docs/retrieval.md`, errata 94, ARCHITECTURE §9 and STATUS state the same rule; a unit test
+  of the oracle and a live definer test cover the four shapes (a)-(d) plus a draft, a not-yet-effective and an
+  expired successor and "10" after "9". The live lifecycle test is renamed `…_unretired_…`.
+- **I3: words after the banner.** `corpus.prose_words` counts `[a-z0-9]+` words after the title, blank and banner
+  lines; the R099 test requires 320-900 by it, and the docstring and the R099 row say what is counted. All 16
+  documents were lengthened in `records` (or alpha-alert-review's `purpose`), never in a labelled answer section,
+  to 332-349 words. The lock and `RELEASES["corpus-1"]` are regenerated:
+  `81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862` (was `0f5c6ee1…`); the sections now hold 45-119
+  words (median 77).
+- **Minors.** M1: `load` refuses a section body without a word; phase 1 checks every tenant row; a phase-2 refusal
+  carries `written` and `skeleton.py ingest` prints "refused after writing …" instead of "nothing written" (a unit
+  case). M2: `COLLATE "C"` in both ORDER BYs, the unit assertion and the docs. M3: `asset_type`'s advertised schema
+  has no `default` (`without_default`; asserted). M4: precision@5 divides by 5 (unit test 0.1). M5: the R131 note's
+  write-half clause is replaced too. M6: the close-out stops when `reports/retrieval/` is missing. M7: the R099
+  test says it counts catalog entries. M8: `migrate`'s docstring names the extensions step. M9: the next-step
+  paragraph names T19 beside T41. M10: the three mcp-read live tests pin rank 1.
+- **Counts.** Dev: Task 1 1173/188, Task 2 1198/188, Task 3 1207/190, Task 4 1211/190, Task 5 1216/191 (measured);
+  live 1340, 1365, 1376, 1380, 1386 passed with 21 skipped (arithmetic).
+
+## Round 1 open points
+
+- The 0.25 minimum rank and the critic's 27/27 and 16/20 come from a read-only emulation on the pre-round-1 text;
+  the lengthened `records`/`purpose` sections can move ranks slightly. Task 5's live report is the first real
+  measurement; if it shows a labelled answer lost to the threshold, that is a measured fact for the report and for
+  T18's tuning, not a reason to change `corpus-1` (a change would need a new version).
+- Still unrun against a database: the DDL, grants, RLS, the worker's inserts, the downgrade and the live ACL
+  queries (the controller's note: their Expected lines are provisional until the Task 1 and Task 3 live steps).
+- A phase-2 refusal (the store changed between the two phases, a concurrent ingestion) can still leave earlier
+  tenants written; it is reported as such and documented as unsupported, not prevented.
