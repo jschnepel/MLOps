@@ -306,8 +306,9 @@ def markdown(doc: Mapping[str, Any]) -> str:
         "",
         f"- Labelled cases with no expected section in the top {k}: {', '.join(missed) or 'none'}.",
         f"- No-source cases that still returned sections (permitted, but no answer): {', '.join(answered) or 'none'}.",
-        "- Lexical OR-matching returns any permitted section that shares a word with the question; deciding that the",
-        "  evidence is insufficient is the graph's code rule (SA:377, T20; erratum 102), not the search's.",
+        "- Lexical OR-matching returns any permitted section that shares a word with the question. SA:377 as written",
+        "  counts any returned effective chunk as sufficient and would not abstain on these cases: T20 must add a",
+        "  relevance criterion beyond it (erratum 102); the share is open until then.",
         "",
     ]
     return "\n".join(lines)

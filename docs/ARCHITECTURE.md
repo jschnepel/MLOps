@@ -333,7 +333,7 @@ change under a version without the change being refused or recorded.
 |---|---|
 | R032 | A repeat writes nothing; a changed file under a version is refused with nothing written; a revoke stops retrieval; a successor supersedes, and pulling it back to draft or postponing it is refused |
 | R033 | 47 labelled development queries measured at k = 5 with denominators; no forbidden section returned; "missing stays missing" subject to erratum 102 |
-| R099 | 16 documents of 320-900 words after title and banner, six assets, per-section hashes, tenant and alert UUIDs, every lifecycle case |
+| R099 | 16 documents of 332-349 prose words after title and banner (test bound 320-900, R099 floor 300), six assets, per-section hashes, tenant and alert UUIDs, every lifecycle case |
 
 ---
 

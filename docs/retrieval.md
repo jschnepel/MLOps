@@ -8,7 +8,7 @@ in the corpus is synthetic and says so in its first paragraph; none of it is a r
 ## The corpus
 
 `data/corpus/` holds 16 authored documents (14 document IDs, two of them in two versions) over two tenants (alpha 9,
-beta 7), each of 320 to 900 `[a-z0-9]+` words counted after its title and banner lines (`corpus.prose_words`), six
+beta 7), each of 332 to 349 `[a-z0-9]+` prose words counted after its title and banner lines (`corpus.prose_words`; the test's bound is 320-900 and R099's floor is 300), six
 assets (three per tenant: a pump, a compressor and a conveyor) with seven alerts, and four files about them:
 
 | File | What it is | Who writes it |
@@ -91,8 +91,9 @@ comparable between two queries, and it is not comparable with T18's vector dista
 model or the tool result; the measurement records it.
 
 **What it cannot do.** OR-matching returns any permitted section whose rank clears the minimum, so a question with
-no permitted source can still get sections; the measurement reports how often. Deciding that the evidence is
-insufficient is the graph's code rule (SA:377, T20; erratum 102). The worker sends the user's whole message (up to
+no permitted source can still get sections; the measurement reports how often. SA:377 as written counts any returned
+effective chunk as sufficient, so it would not abstain on such a question; T20 must add a relevance criterion
+beyond it (for example a score or label-based sufficiency rule; erratum 102). The worker sends the user's whole message (up to
 500 characters) as the query.
 
 ## The measurement

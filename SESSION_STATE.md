@@ -5,14 +5,14 @@
 **Next task:** Plan L (T17) is executed on branch `plan-l` (on top of `plan-k`: `c329145..bbba69c` holds the debt list and
 the five building tasks, and the close-out is the commit after `bbba69c`). T17 is DONE subject to the owner's decision
 on erratum 102 (R033's "missing source remains missing": 15/20 no-source development questions answered with
-nothing at the 0.25 minimum rank; the rest move to T20's abstention rule); R131's read half is met subject to the
+nothing at the 0.25 minimum rank; the other 5/20 stay open: SA:377 as written would not abstain on them, so T20 must add a relevance criterion beyond it); R131's read half is met subject to the
 owner's decision on erratum 96 (`asset_scope` still arrives with T16). Owner inputs: (1) the holdout seal (T03
 step 9), then the live probe (T02); (2) merge the stacked PRs #1-#10 in order (plan-b -> main through plan-k ->
 plan-j), then a plan-l -> plan-k PR after Plan L's final review; (3) T44 step 10 (step A applied 2026-10-16; the
 other-device LAN check and the firewall rules remain) (`docs/runbooks/ollama-network.md` step A); (4) decide the
 proposed errata of Plans C, E, F, G, H, I, J, K and L (L: 93-102 below); (5) migrate the dev database to revision 0011
 (`uv run python scripts/skeleton.py migrate`, dev profile: it creates the `vector` extension if missing, then applies
-0011, which adds four empty tables and one function and changes no row) and then ingest the corpus (`uv run python
+0011, which adds four empty tables and two functions, `search_procedures_scoped` and `app._min_rank()`, and changes no row) and then ingest the corpus (`uv run python
 scripts/skeleton.py ingest`: corpus-1 into alpha and beta as the worker); until the migration mcp-read refuses to
 start on it. Next is Plan M = T16 (the read tools and asset-sim, the earliest dependency-satisfied PLANNED task in
 `handoff/tasks.json` after T17, now unblocked; T18 and T23 are unblocked too; T19 and T41 wait on owner steps).
@@ -760,7 +760,7 @@ start on it. Next is Plan M = T16 (the read tools and asset-sim, the earliest de
   (T30), the worker's recover handler and everything after it (T22), the deadline as a setting (T29), signed receipts
   (v1.1).
 
-## Plan L executed (2026-10-18, branch `plan-l`)
+## Plan L executed (2026-10-18 UTC, branch `plan-l`)
 
 - T17 = `c329145..bbba69c` (the debt list first, then the five building tasks; the close-out is the commit after
   `bbba69c`). The plan (`docs/superpowers/plans/2026-10-16-first-slice-l-governed-corpus.md`) holds the 24 rulings of
@@ -772,7 +772,7 @@ start on it. Next is Plan M = T16 (the read tools and asset-sim, the earliest de
   `reports/retrieval/t17-lexical-baseline.md`/`.json` (R033); the unit half is in `tests/plan_l/` (R099:
   `test_corpus_files.py`); the settings, the score interpretation and the freeze are in `docs/retrieval.md`.
 - **R033** is met subject to the owner's decision on erratum 102: at the 0.25 minimum rank 15/20 no-source
-  development questions were answered with nothing; the rest move to T20's abstention rule. The minimum rank was
+  development questions were answered with nothing; the other 5/20 stay open: SA:377 as written counts any returned effective chunk as sufficient and would not abstain on them, so T20 must add a relevance criterion beyond it (for example a score or label-based sufficiency rule). The minimum rank was
   chosen on the same 47 queries, so the baseline is a development figure, not a held-out one.
 - **The frozen corpus.** `corpus-1`, lock `81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862`
   (`ops_core.corpus.RELEASES`), is the corpus T41 labels the holdout against; any change to a locked file after T41
@@ -815,8 +815,9 @@ start on it. Next is Plan M = T16 (the read tools and asset-sim, the earliest de
        filtered; the delivered fixtures stay the 1.0 contract fixture and no service reads them.
   102. R033 ("missing source remains missing, not guessed"): even above the 0.25 minimum rank, lexical OR-matching
        can return a permitted section for a no-source question (15/20 of the development set's no-source questions
-       were answered with nothing); the share is measured and reported, and abstaining on the rest is SA:377's code
-       rule (T20), not the search's. R033 is recorded as met subject to this erratum.
+       were answered with nothing); the share is measured and reported. The residue (5/20) is open: SA:377 as written
+       counts any returned effective chunk as sufficient, so it would not abstain on those cases; T20 must add a
+       relevance criterion beyond it (for example a score or label-based sufficiency rule). R033 is recorded as met subject to this erratum.
 - Rulings made during execution (the controller's, from the SDD ledger; none changes a spec line):
   (a) the plan printed `search_procedures_scoped`'s argument types in the wrong order (`text, text, public.vector,
   text, integer, text, text`); the function's real order is `(text, text, text, public.vector, text, integer,
@@ -838,7 +839,7 @@ start on it. Next is Plan M = T16 (the read tools and asset-sim, the earliest de
   has no concurrency lock; lengthening or clearing `effective_to` stays allowed; the query is normalised by
   `regexp_replace('[^a-z0-9]+', ' ')` while chunk text is parsed raw, so `4.5` or `M8x1.25` cannot match as one
   lexeme (T18); the no-source questions that still return a section (A15, B10, B13, B17, B18) come from generic
-  words such as `records` and are T18's tuning and T20's abstention, not a defect of `corpus-1`; the plan file
+  words such as `records` and are T18's tuning and T20's relevance criterion (SA:377 alone would not abstain on them), not a defect of `corpus-1`; the plan file
   still prints the wrong regprocedure signature in eight places.
 
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
@@ -1168,10 +1169,10 @@ creates `request_abort` and the helper `_dispatch_seconds()`, and changes no row
 app@head, incident at head`), so the dev `ops` database is at `0010_write_path`. `skeleton.py up` then brought all six
 processes to ready (mcp-write's startup check needs 0010) and `down` stopped them.
 
-**Update (2026-10-18):** Plan L adds revision 0011 and the governed corpus. The dev `ops` database stays at 0010 with no
+**Update (2026-10-18 UTC):** Plan L adds revision 0011 and the governed corpus. The dev `ops` database stays at 0010 with no
 corpus until the owner runs `uv run python scripts/skeleton.py migrate` (dev profile: `vector` is created if missing,
-then 0011 adds `corpus_ingestions`, `documents`, `document_states`, `chunks` and `search_procedures_scoped`, changing no
-row) and then `uv run python scripts/skeleton.py ingest` (corpus-1 into alpha and beta, as the worker; a second run
+then 0011 adds `corpus_ingestions`, `documents`, `document_states`, `chunks`, `search_procedures_scoped` and `app._min_rank()`,
+changing no row) and then `uv run python scripts/skeleton.py ingest` (corpus-1 into alpha and beta, as the worker; a second run
 writes nothing). Until the migration mcp-read refuses to start (it checks 0011's function); until the ingestion every
 investigation ends INSUFFICIENT_EVIDENCE.
 

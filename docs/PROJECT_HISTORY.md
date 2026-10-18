@@ -616,7 +616,7 @@ keep. R033's "a missing source remains missing" was claimed although an OR of le
 with something; two versions of one document could both be returned, because "superseded" waited on a status
 nobody had to set; and R099's 300-900 words counted the title and the banner. **Change.** The search keeps only
 ranks above a minimum of 0.25, held in one helper granted to nobody and chosen on the development queries, and
-R033 is recorded as met subject to erratum 102, which leaves the rest to T20's abstention rule. A document's
+R033 is recorded as met subject to erratum 102, which leaves the rest open for T20's relevance criterion (SA:377 alone would not abstain). A document's
 versions became one chain, and a version is retired once a later one that has left draft reaches its
 effective_from, stated the same way in the SQL, the measurement's oracle and the docs. Words are now counted
 after the banner; every document was lengthened outside its labelled sections, so the lock was regenerated. The
@@ -634,8 +634,8 @@ pump-seal version stays out of every answer. This section now records every roun
 figures out of the frozen revision's comment, made the close-out stop unless the report measured corpus-1 under
 its frozen lock or when a placeholder is left, and gave every edit in the plan a unique label.
 
-**Execution.** The branch ran as six tasks, each built by an implementer, reviewed by a second model and fixed in a
-round of its own; every round below is in the ledger. **Problem.** Task 1 (the debt list, the extension bootstrap,
+**Execution.** The branch ran as five building tasks, each built by an implementer, reviewed by a second model and fixed in a
+round of its own, then the close-out; every round below is in the ledger. **Problem.** Task 1 (the debt list, the extension bootstrap,
 revision 0011): the first live run of the revision failed at once, because the plan printed the function's
 argument types in the wrong order (`text, text, public.vector, ...`; the real order is `text, text, text,
 public.vector, text, integer, text`) and the `ALTER FUNCTION ... OWNER TO` that ends the migration named a function

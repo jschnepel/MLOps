@@ -292,7 +292,7 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   OUTCOME_UNKNOWN for T22. The Minor was four overclaiming sentences; nine deferred task minors were fixed with them.
 
 
-## Update — Plan L executed (2026-10-18, branch `plan-l`)
+## Update — Plan L executed (2026-10-18 UTC, branch `plan-l`)
 
 - Plan L (T17: the governed corpus, its ingestion and the lexical baseline) executed on branch `plan-l`
   (`c329145..bbba69c`, on top of `plan-k`). The plan is `docs/superpowers/plans/2026-10-16-first-slice-l-governed-corpus.md`.
@@ -301,15 +301,16 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
 - **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`): R032 and R033 (`RECORDED_LOCALLY_LIVE`; R033 subject to the owner's
   decision on erratum 102: 15/20 no-source development questions answered with nothing at the 0.25 minimum
-  rank), R099 (`RECORDED_LOCALLY`). Ingestion is idempotent, refuses changed content as a whole and records
+  rank; the other 5/20 are open: SA:377 as written would not abstain on them, so T20 must add a relevance
+  criterion), R099 (`RECORDED_LOCALLY`). Ingestion is idempotent, refuses changed content as a whole and records
   lifecycle changes as state rows; a version is returned only while its latest state is approved, it is effective,
   and no later version that left draft has reached its effective_from (a retired version never comes back:
   ingestion refuses a successor's return to draft or a moved effective_from); the
   lexical baseline is measured on 47 labelled development queries with denominators and Wilson intervals
   (`reports/retrieval/`; the minimum rank was chosen on the same queries), with no forbidden section returned.
-  R131's read half gains `search_procedures_scoped` (erratum 96).
+  R131's read half gains `search_procedures_scoped` (met subject to the owner's decision on erratum 96).
 - Also built: the `vector` extension as bootstrap infrastructure; revision 0011 (four append-only tenant tables and
-  `search_procedures_scoped`); `ops_core.corpus` and `ops_core.ingest`; `scripts/skeleton.py ingest`; mcp-read on the
+  two functions, `search_procedures_scoped` and `app._min_rank()`); `ops_core.corpus` and `ops_core.ingest`; `scripts/skeleton.py ingest`; mcp-read on the
   definer with the optional `asset_type`, its fixture corpus retired; the schema examples on the section hash;
   `docs/retrieval.md` (settings, score interpretation, the corpus-1 freeze).
 - The dev `ops` database needs revision 0011 and an ingestion (owner inputs); mcp-read refuses to start until the
