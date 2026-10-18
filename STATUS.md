@@ -161,3 +161,38 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   number; two asset ids in the text ask even when the form names one of them; the `create_run` refusal mapping
   is explicit; the reply unit bounds its row lock with `lock_timeout = 2s`; the quota count runs only for run
   verdicts. Record: `docs/reviews/plan-g-final-review-2026-10-10.md`.
+
+
+## Update — Plan H executed (2026-10-15, branch `plan-h`)
+
+- Plan H (T13: the run lease, fence locking, the heartbeat thread and the fault factory) executed on branch `plan-h`
+  (`c5eeb89..06e961a`, on top of `plan-g`: the eight tasks, the close-out `e9d624d` and `6fd1ec3`, and the
+  final-review fix `06e961a`; the docs commit recording that fix sits on top). The plan is
+  `docs/superpowers/plans/2026-10-15-first-slice-h-leases-fences-heartbeat.md`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `939 passed, 134
+  skipped`. `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1052
+  passed, 21 skipped` (four `slow_live` tests add about 2.5 minutes). `uv run python -I scripts/verify_handoff.py
+  --reference-code --manifest --contracts` exits 0.
+- **Evidenced** (acceptance matrix `RECORDED_LOCALLY_LIVE` / `IMPLEMENTED_LOCALLY_VERIFIED`): R019, R020, R087, R088
+  and R107; R098 extended (unit-level, every service under `PROFILE=test` in the live suite). A stale worker's
+  write, mint, release and handle all refuse after a takeover; a takeover waits for an open fenced unit; expiry is
+  compared on the database clock after the lock; a resume job waits behind the original job's lease and then writes
+  alone; a 25 s blocked loop and a 35 s drafter keep the lease while a forced renewal failure cancels the call and
+  revokes the handle; a killed owner's job is reclaimed after expiry and taken at the next fence (R019). The refusal
+  of a stale writer is proved by those interleaving, fenced-definer and R019 tests. The 20 s stress run (eight
+  workers on three runs, the sweeper reclaiming beside them) showed zero deadlocks (40P01) and zero lock timeouts
+  (55P03), fences only increasing, at most one believing owner per run, committed re-fences, and more than three
+  takeovers through its drop step; it loses no lease and hands back no job, so it does not itself exercise a stale
+  write (`reports/leases/`).
+- The dev `ops` database needs revisions 0006 and 0007 (an owner input); the API, the sweeper, the worker and
+  mcp-write refuse to start until then.
+- Deferred, each with its owner in `SESSION_STATE.md`: the permit's idle release rule -> T19; compute accounting and
+  per-requester leases -> T29; bounded retries, the AM-13 timeout path and recover jobs -> T22; wake-ups -> T14; the
+  asset guard -> T21; checkpoints -> T20/T38; pools and reconnects -> T30. Fifteen errata (45-59) are proposed.
+- The final whole-branch review (0 Critical, 1 Important, 7 Minor) was fixed in one wave (`06e961a`). The job's final
+  unit now checks the local deadline and requires a live lease, so an execute job whose lease lapsed while
+  `create_incident` was in flight (answered `INVALID_HANDLE` before SENT) is handed back and run again instead of
+  closed with its approved run stranded. The heartbeat judges a failed renewal, and any error its catch-all logs, on
+  a fresh clock reading against the local deadline, and readiness requires the heartbeat thread. SIGTERM draining
+  (T30), the permit wait counted in the compute budget (T29) and lease loss visible only in logs (T28) are debt
+  lines; erratum 59 was judged sound.

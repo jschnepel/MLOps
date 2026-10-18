@@ -5,14 +5,16 @@ One source of truth for two consumers: the migrations render GRANT, REVOKE and P
 tables each revision creates or changes (never for "every table": an applied revision must not change when a row is
 added here), and the R124/R106 tests enumerate the catalogs against it, so an extra or missing grant fails a test
 instead of hiding. Rows exist only for tables that exist; the owners of later tables (outbox → T14, feedback → T21,
-operator_resolutions → T22, documents/chunks/embeddings → T17, model_permit → T13) add their rows. Six departures
-from the printed table, each a proposed erratum (Plan E rulings 6, 10, 17, 23; Plan F rulings 2, 3 and 17 with
-erratum 25; Plan G ruling 4): the worker (not the sweeper) may UPDATE jobs.available_at (re-queue after a transport
-failure), app_definer may UPDATE runs.updated_at, the `transitions` table (the T07 table mirrored in SQL) is readable
-by app_definer only, no definer function takes a row lock on proposals, decisions, memberships or execution_grant (a
-lock needs UPDATE, which the matrix withholds), the sweeper holds SELECT beside its DELETE on sessions, login_state,
-logout_jti and idempotency_request (a DELETE with a WHERE reads the row), and login_state and logout_jti are rows
-the printed table lacks. `test_harness` exists only in the test profile: the main-line revisions grant it nothing;
+operator_resolutions → T22, documents/chunks/embeddings → T17) add their rows. Eight departures from the printed
+table, each a proposed erratum (Plan E rulings 6, 10, 17, 23; Plan F rulings 2, 3 and 17 with erratum 25; Plan G
+ruling 4; Plan H rulings 1 and 12): the worker (not the sweeper) may UPDATE jobs.available_at (re-queue after a
+transport failure), app_definer may UPDATE runs.updated_at, app_definer may UPDATE run_lease.fence (the fenced
+definers lock the lease row and mark_unknown bumps it, erratum 45), the `transitions` table (the T07 table mirrored
+in SQL) is readable by app_definer only, no definer function takes a row lock on proposals, decisions, memberships or
+execution_grant (a lock needs UPDATE, which the matrix withholds), the sweeper holds SELECT beside its DELETE on
+sessions, login_state, logout_jti and idempotency_request (a DELETE with a WHERE reads the row), login_state and
+logout_jti are rows the printed table lacks, and model_permit has no sweeper cell (an expired permit is free by the
+same comparison, erratum 50). `test_harness` exists only in the test profile: the main-line revisions grant it nothing;
 the testclock branch grants it schema USAGE, EXECUTE on current_time() and its test_clock cells.
 """
 
@@ -107,8 +109,10 @@ GRANTS: Final[dict[str, dict[str, Grant]]] = {
     "run_lease": {
         "worker": Grant(sel=True, ins=True, upd=True),
         "sweeper": Grant(sel=True, upd=("lease_until",)),
-        DEFINER_ROLE: _S,
+        DEFINER_ROLE: Grant(sel=True, upd=("fence",)),  # erratum 45: the definers lock it; mark_unknown bumps it
     },
+    # T13 (Plan H ruling 12): one seeded slot per unit of model concurrency; only the worker takes and frees it.
+    "model_permit": {"worker": Grant(sel=True, upd=True)},
     "jobs": {
         "api": _INS,
         "worker": Grant(sel=True, ins=True, upd=(*_JOB_COLUMNS, "available_at")),
@@ -155,6 +159,7 @@ NO_RLS: Final = (
     "login_state",
     "logout_jti",
     "idempotency_request",
+    "model_permit",
 )
 AUDIT_TABLES: Final = ("run_state_history", "action_attempt_state", "events")  # AM-20 principle 2
 
@@ -176,10 +181,11 @@ DEFINER_FUNCTIONS: Final[dict[str, tuple[str, tuple[str, ...]]]] = {
     "record_decision": ("uuid, uuid, uuid, text, text, text, text", ("api",)),
     "resolve_invocation": ("text, text", ("mcp_read", "mcp_exec")),
     "grant_execution": ("text, uuid", ("mcp_exec",)),
-    "mark_sent": ("uuid", ("mcp_exec",)),
-    "record_outcome": ("uuid, text, jsonb", ("mcp_exec",)),
+    "mark_sent": ("text, uuid", ("mcp_exec",)),  # T13: the raw handle first, so the fence is checked (erratum 48)
+    "record_outcome": ("text, uuid, text, jsonb", ("mcp_exec",)),  # likewise
     "lookup_action": ("text", ("mcp_exec",)),
     "mark_unknown": ("uuid, bigint", ("worker",)),
+    "queued_runs_total": ("", ("api",)),  # T13 (Plan H ruling 13): BS:550's global count, one number
 }
 # Internal helpers: owned by app_definer, revoked from PUBLIC, granted to nobody (SA:474).
 HELPER_FUNCTIONS: Final[dict[str, str]] = {

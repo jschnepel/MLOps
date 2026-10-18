@@ -16,7 +16,7 @@ from ops_core.settings import Role
 from ops_core.tokens import WorkloadTokenSource
 from ops_mcp_read.server import production_app
 
-from tests.e2e.conftest import purge_run
+from tests.e2e.conftest import lease_for, purge_run
 from tests.e2e.test_migrations_and_persistence import new_run
 from tests.plan_b.live import kc
 
@@ -41,10 +41,11 @@ async def test_search_over_http(app_conn: persistence.Conn, role_conn, secret) -
         cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s", (run,))
         job = (await cur.fetchone())["id"]
         worker_conn = await role_conn(Role.WORKER)
+        lease = await lease_for(worker_conn, run)  # T13: the handle carries the lease's fence
         async with worker_conn.transaction():  # set_tenant is transaction-local and the INSERT meets RLS
             await persistence.set_tenant(worker_conn, alpha)
             handle = await persistence.mint_handle(
-                worker_conn, run_id=run, job_id=job, server=Server.READ, azp="ops-worker"
+                worker_conn, run_id=run, job_id=job, server=Server.READ, azp="ops-worker", fence=lease.fence
             )
         worker = WorkloadTokenSource(
             token_url=kcs.token_url, client_id="ops-worker", client_secret=secret("kc_client_secret_ops_worker")

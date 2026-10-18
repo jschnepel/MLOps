@@ -31,6 +31,7 @@ from ops_api import store as st
 from ops_api.app import ROUTE_MESSAGES, create_app
 from ops_core import persistence, settings
 from ops_core.settings import AdmissionSettings, Profile, Role
+from ops_core.testing.faults import Faults
 from psycopg.types.json import Jsonb
 
 from tests.e2e.conftest import purge_conversation
@@ -52,7 +53,7 @@ SAMPLE = {
 # A week-long replay window, so R018's replay three days on the test clock is still inside it (the default 24 h
 # window is SA:297's; the bound is ruling 7's maximum).
 WEEK = AdmissionSettings(idempotency_ttl_seconds=604800)
-EXPECTED_LINES = 14  # the evidence lines the six tests append between them
+EXPECTED_LINES = 16  # the evidence lines the tests append between them (T12's fourteen, T13's two)
 SKELETON_PORTS = (8000, 8070, 8071, 8081, 8082, 8090)
 KEYS: list[str] = []  # every Idempotency-Key a test sent, so the `created` fixture can delete its records
 
@@ -94,13 +95,20 @@ async def created(app_conn: persistence.Conn) -> AsyncIterator[list[str]]:
 
 @asynccontextmanager
 async def api(admission: AdmissionSettings = WEEK) -> AsyncIterator[httpx2.AsyncClient]:
-    """The real app over its own `api` connection, lifespan included (the 0006 relation guard runs)."""
+    """The real app over its own `api` connection, lifespan included (the 0007 relation guard runs), with the test
+    profile's faults given to the store by its factory, as production_app does (Plan H ruling 22)."""
+    faults = Faults(Profile.TEST)
 
     async def store() -> st.Store:
-        return st.DbStore(await persistence.connect(settings.app_postgres(Role.API)))
+        return st.DbStore(await persistence.connect(settings.app_postgres(Role.API)), faults=faults)
 
     app = create_app(
-        StubVerifier(), store_factory=store, auth_factory=fake_auth, admission=admission, profile=Profile.TEST
+        StubVerifier(),
+        store_factory=store,
+        auth_factory=fake_auth,
+        admission=admission,
+        profile=Profile.TEST,
+        faults=faults,
     )
     async with app.router.lifespan_context(app):
         transport = httpx2.ASGITransport(app=app)
@@ -498,3 +506,47 @@ async def test_r115_live_errors_use_the_safe_schema(created: list[str], lines: l
         f"R115 live sample: {codes}, {checked} bodies checked, each with exactly {sorted(SAFE_KEYS)} "
         "and its X-Request-Id"
     )
+
+
+async def test_the_global_queue_bound_answers_429_and_records_nothing(
+    app_conn: persistence.Conn, created: list[str], lines: list[str]
+) -> None:
+    """Plan H ruling 13 (BS:550 "100 total"): the bound is set to one more than the QUEUED runs of every tenant, so
+    the first admission takes the last place and the next is refused, unrecorded, with Retry-After."""
+    queued = await count(app_conn, "SELECT count(*) AS n FROM app.runs WHERE state = 'QUEUED'")
+    async with api(AdmissionSettings(idempotency_ttl_seconds=604800, global_queue_limit=queued + 1)) as c:
+        last = await c.post(messages(await conversation(c, created)), headers=h(), json=SAMPLE)
+        last_status = last.status_code
+        assert last_status == 202, last_status
+        full = await c.post(messages(await conversation(c, created)), headers=h(key="global-key-0001"), json=SAMPLE)
+        status, body, retry = full.status_code, full.json(), full.headers.get("Retry-After")
+        assert (status, body["code"], body["message"], retry) == (429, "RATE_LIMITED", "the work queue is full", "5")
+    records = "SELECT count(*) AS n FROM app.idempotency_request WHERE key = %s"
+    assert await count(app_conn, records, "global-key-0001") == 0  # a 429 is nobody's record (Plan G ruling 5)
+    lines.append(f"global queue bound at {queued + 1}: the next admission 429 RATE_LIMITED Retry-After 5, unrecorded")
+
+
+async def test_r015_a_response_lost_after_commit_replays_the_recorded_202(
+    app_conn: persistence.Conn, created: list[str], lines: list[str]
+) -> None:
+    """R015's after-commit side (Plan H ruling 22): the unit commits with its record, the answer is lost as a
+    retryable 503, and the retry under the same key replays the recorded 202 for the one run it started."""
+    async with api() as c:
+        cid = await conversation(c, created)
+        armed = await c.post("/internal/faults/lose_after_commit", headers=h(), json={"count": 1})
+        armed_status = armed.status_code
+        assert armed_status == 200, armed_status
+        lost = await c.post(messages(cid), headers=h(key="r015-key-lost"), json=SAMPLE)
+        lost_status, lost_body = lost.status_code, lost.json()
+        assert lost_status == 503 and lost_body["retryable"] is True, lost_status
+        runs = "SELECT run_id FROM app.runs WHERE conversation_id = %s"
+        cur = await app_conn.execute(runs, (UUID(cid),))
+        committed = [row["run_id"] for row in await cur.fetchall()]
+        assert len(committed) == 1  # the run exists although its acknowledgement was lost
+        replay = await c.post(messages(cid), headers=h(key="r015-key-lost"), json=SAMPLE)
+        replay_status, run_id = replay.status_code, replay.json().get("run_id")
+        assert replay_status == 202 and run_id == str(committed[0])
+    cur = await app_conn.execute(runs, (UUID(cid),))
+    after = len(await cur.fetchall())
+    assert after == 1  # the replay started nothing
+    lines.append(f"R015 response lost after commit: 503 retryable=True, then replay 202 for the same run, runs={after}")

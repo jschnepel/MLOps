@@ -9,13 +9,16 @@ connection (`app_conn`); assertions about what a role may do use `role_conn`.
 import asyncio
 import os
 import sys
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
+from uuid import UUID
 
 import psycopg
 import pytest
 import pytest_asyncio
 from ops_core import persistence, settings
+from ops_core.lease import Lease
 from ops_core.settings import Profile, Role
 from psycopg import sql
 
@@ -141,6 +144,9 @@ PURGE_ORDER = (
     "DELETE FROM app.jobs WHERE run_id = %s",
     "DELETE FROM app.run_state_history WHERE run_id = %s",
     "DELETE FROM app.run_directory WHERE run_id = %s",  # the directory references runs
+    "DELETE FROM app.run_lease WHERE run_id = %s",  # T13: the lease references runs
+    # T13: a permit a test left held for this run is free again (the seeded slot itself stays).
+    "UPDATE app.model_permit SET holder = NULL, run_id = NULL, leased_until = '-infinity' WHERE run_id = %s",
     # T12: the idempotency record of the admission that started the run (its response names the run).
     "DELETE FROM app.idempotency_request WHERE response->>'run_id' = %s::text",
 )
@@ -190,3 +196,56 @@ async def purge_tenant(conn: persistence.Conn, tenant_id: object) -> None:
     async with conn.transaction():
         await conn.execute("DELETE FROM app.memberships WHERE tenant_id = %s", (tenant_id,))
         await conn.execute("DELETE FROM app.tenants WHERE tenant_id = %s", (tenant_id,))
+
+
+async def lease_for(
+    conn: persistence.Conn, run_id: UUID, *, owner: str = "live-test", seconds: int = 120, wait: bool = False
+) -> Lease:
+    """Take the run's lease on a `worker` connection in its own transaction (the claim's acquisition without a job)
+    for a live test that mints a handle or runs a handler directly (T13); a busy lease fails the test."""
+    async with conn.transaction():
+        got = await persistence.acquire_lease(conn, run_id=run_id, owner=owner, lease_seconds=seconds, wait=wait)
+    assert isinstance(got, Lease), got
+    return got
+
+
+async def expire_lease(conn: persistence.Conn, run_id: object) -> None:
+    """End the run's lease on the database clock as the superuser (its owner stalled or died); the fence stays."""
+    await conn.execute(
+        "UPDATE app.run_lease SET lease_until = app.current_time() - interval '1 second' WHERE run_id = %s", (run_id,)
+    )
+
+
+async def backend_pid(conn: persistence.Conn) -> int:
+    """The server process behind a connection, for `pg_blocking_pids`."""
+    cur = await conn.execute("SELECT pg_backend_pid() AS pid")
+    row = await cur.fetchone()
+    assert row is not None
+    return int(row["pid"])
+
+
+async def wait_until_blocked(conn: persistence.Conn, pid: int, *, timeout: float = 5.0) -> list[int]:
+    """The backends blocking `pid`, polled until there is one: a test that expects a lock wait and gets none fails
+    here instead of passing by timing luck."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        cur = await conn.execute("SELECT pg_blocking_pids(%s) AS holders", (pid,))
+        row = await cur.fetchone()
+        if row is not None and row["holders"]:
+            return [int(holder) for holder in row["holders"]]
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"backend {pid} was never blocked")
+
+
+async def stage_lease(conn: persistence.Conn, run_id: object, *, owner: str = "live-test", seconds: int = 600) -> int:
+    """A live lease written by the superuser, for a definer test that needs a handle without running a worker: created
+    at fence 1, or renewed at its current fence; returns that fence (T13)."""
+    cur = await conn.execute(
+        "INSERT INTO app.run_lease (run_id, owner, lease_until, fence)"
+        " VALUES (%s, %s, app.current_time() + make_interval(secs => %s), 1)"
+        " ON CONFLICT (run_id) DO UPDATE SET lease_until = EXCLUDED.lease_until RETURNING fence",
+        (run_id, owner, seconds),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    return int(row["fence"])

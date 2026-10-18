@@ -271,7 +271,7 @@
       "owning_tasks": [
         "T12"
       ],
-      "note": "Plan G (T12): the before-commit crash is proved live with the drop_before_commit fault (no message, run, job or record, then the same key commits); the after-commit side (the ack lost after the commit, the retry replays the recorded 202) is R016's replay; the lose_after_commit fault arrives with T13."
+      "note": "Plan G (T12): the before-commit crash is proved live with the drop_before_commit fault (no message, run, job or record, then the same key commits). Plan H (T13): the after-commit side is proved live with the lose_after_commit fault (the unit and its record commit, the answer is a retryable 503, the retry replays the recorded 202 for the one run)."
     },
     {
       "id": "R016",
@@ -342,14 +342,19 @@
       "category": "durability",
       "requirement": "Leases can expire and be recovered safely",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r019_leases_can_expire_and_be_recovered_safely.py",
       "expected_evidence": "Kill lease owner; another owner acquires after expiry with incremented fence.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_lease_stress_live.py",
+        "reports/leases/t13-stress.txt",
+        "tests/plan_h/test_reclaim.py"
+      ],
       "owning_tasks": [
         "T13"
-      ]
+      ],
+      "note": "Plan H (T13): a claimed owner is killed (connection closed); its claim stands while the lease is live, the sweeper reclaims the job once the test clock passes the 30 s lease, the next owner claims it at fence + 1, and the killed owner's lease writes nothing."
     },
     {
       "id": "R020",
@@ -357,14 +362,21 @@
       "category": "durability",
       "requirement": "Stale worker cannot mutate application state",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r020_stale_worker_cannot_mutate_application_state.py",
       "expected_evidence": "Old worker attempts commit after fence changes; transaction rejects it.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_leases_live.py",
+        "tests/e2e/test_fenced_definers_live.py",
+        "reports/leases/t13-leases.txt",
+        "tests/plan_h/test_worker_units.py",
+        "tests/plan_h/test_write_path_fence.py"
+      ],
       "owning_tasks": [
         "T13"
-      ]
+      ],
+      "note": "Plan H (T13): worker side, a stale fence's fenced unit and mint abort after a takeover, and a takeover waits for an open fenced unit; MCP side, a handle is refused after its fence moved or its lease lapsed, and a stale fence before SENT sends nothing while after SENT it answers UNKNOWN."
     },
     {
       "id": "R021",
@@ -1390,33 +1402,45 @@
       "id": "R087",
       "category": "concurrency",
       "requirement": "Lease and fence are per run across all job types",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Resume-job vs original-job race: only the current run fence writes.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_leases_live.py",
+        "reports/leases/t13-leases.txt",
+        "tests/plan_h/test_worker_units.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M04",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T13"
       ],
-      "suggested_test": "tests/acceptance/test_r087_lease_and_fence_are_per_run_across_all_job_types.py"
+      "suggested_test": "tests/acceptance/test_r087_lease_and_fence_are_per_run_across_all_job_types.py",
+      "note": "Plan H (T13): a resume_input job of a run whose investigate job holds the lease is deferred behind the lease, then takes fence + 1; only it writes and only it closes its job."
     },
     {
       "id": "R088",
       "category": "concurrency",
       "requirement": "Heartbeat survives long or blocking work; lease loss cancels it",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Blocked loop and >30 s fake drafter keep the lease; forced renewal failure cancels the call and revokes handles.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_heartbeat_live.py",
+        "reports/leases/t13-heartbeat.txt",
+        "tests/plan_h/test_heartbeat.py",
+        "tests/plan_h/test_permit.py",
+        "tests/plan_h/test_lease.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M04",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T13"
       ],
-      "suggested_test": "tests/acceptance/test_r088_heartbeat_survives_long_or_blocking_work_lease_l.py"
+      "suggested_test": "tests/acceptance/test_r088_heartbeat_survives_long_or_blocking_work_lease_l.py",
+      "note": "Plan H (T13): at the real defaults a 25 s blocked loop and a 35 s fake drafter keep the lease; a forced renewal failure (expiry and a second worker's takeover) cancels the in-flight MCP call, revokes its handle and hands the job back with no transition. The three tests are slow_live and run in check.py --profile test."
     },
     {
       "id": "R089",
@@ -1578,7 +1602,10 @@
       "evidence_status": "RECORDED_LOCALLY",
       "evidence_paths": [
         "tests/plan_e/test_incident_sim_t10.py",
-        "tests/plan_e/test_faults.py"
+        "tests/plan_e/test_faults.py",
+        "tests/plan_h/test_faults_t13.py",
+        "tests/plan_h/test_incident_sim_faults.py",
+        "tests/plan_h/test_api_faults.py"
       ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M02",
@@ -1588,7 +1615,7 @@
         "T13"
       ],
       "suggested_test": "tests/acceptance/test_r098_fault_injection_hooks_are_unreachable_outside_th.py",
-      "note": "Plan E (T10): unit-level evidence (fault hooks 404 outside the test profile; the factory refuses any other profile); the live suite runs incident-sim under PROFILE=test."
+      "note": "Plan E (T10) and Plan H (T13): every fault route (incident-sim's eight kinds, the API's two) is 404 in the dev and demo profiles, because the route is registered only when faults exist, which only PROFILE=test allows; the factory refuses any profile but test, and the API refuses to build with faults outside it or without them inside it; BS:405's nine faults map to the hooks in core.testing.faults.BS405 (concurrent same-key submission is a harness race). Unit-level evidence; the live suite runs every service under PROFILE=test."
     },
     {
       "id": "R099",
@@ -1742,17 +1769,27 @@
       "id": "R107",
       "category": "concurrency",
       "requirement": "Fenced writes lock the lease row and follow one lock order",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Two-connection interleaving and stress tests: stale writes abort, no deadlocks, clock_timestamp-based expiry.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_leases_live.py",
+        "tests/e2e/test_lease_stress_live.py",
+        "tests/e2e/test_fenced_definers_live.py",
+        "reports/leases/t13-leases.txt",
+        "reports/leases/t13-stress.txt",
+        "tests/plan_h/test_locking.py",
+        "tests/plan_h/test_lease.py",
+        "tests/plan_h/test_migration_0007.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M04",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T13"
       ],
-      "suggested_test": "tests/acceptance/test_r107_fenced_writes_lock_the_lease_row_and_follow_one_.py"
+      "suggested_test": "tests/acceptance/test_r107_fenced_writes_lock_the_lease_row_and_follow_one_.py",
+      "note": "Plan H (T13): two- and three-connection interleavings (stale write aborts; takeover waits on the share lock; expiry compared after the lock; two first claims, the second waiting on the first's insert) and an 8-connection, 20 s stress mix with committed re-fences: no 40P01, no 55P03 under lock_timeout 10 s (a waiting acquisition's long wait counts as 55P03), fences only increase, at every 50 ms sample at most one actor believing it held a run's lease and that one the live owner in the database (the stress run itself loses no lease and hands no job back, so the stale-write refusal is proved by the interleavings, test_fenced_definers_live.py and R019, not by it); a drop step (a holder stops renewing after about 2 s, as a hung worker), added in execution because the planned mix never moved a lease between holders, and the test asserts more than three acquisitions; the published order is core/locking.py with a test over every documented transaction."
     },
     {
       "id": "R108",

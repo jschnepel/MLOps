@@ -21,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 from ops_api.app import create_app
 from ops_core.settings import AdmissionSettings, Profile
+from ops_core.testing.faults import Faults
 
 from tests.plan_f.auth_fakes import fake_auth, login_as
 from tests.plan_g import fakes
@@ -186,7 +187,8 @@ def test_a_full_tenant_queue_is_an_unrecorded_429_with_retry_after() -> None:
 
 def test_a_fault_before_commit_is_a_retryable_503_and_the_same_key_then_succeeds() -> None:
     fake = FakeStore()
-    with client(fake, profile=Profile.TEST) as c:
+    fake.faults = Faults(Profile.TEST)  # the store's factory gives it the app's faults (Plan H ruling 22)
+    with client(fake, profile=Profile.TEST, faults=fake.faults) as c:
         cid = new_conversation(c)
         armed = c.post("/internal/faults/drop_before_commit", headers=h(), json={"count": 1})
         assert armed.status_code == 200 and armed.json() == {"armed": {"drop_before_commit": 1}}

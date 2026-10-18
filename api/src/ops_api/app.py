@@ -135,6 +135,9 @@ class Identity:
             raise ApiError(403, ErrorCode.FORBIDDEN, f"the {role} role is required")
 
 
+API_FAULTS = frozenset({FaultKind.DROP_BEFORE_COMMIT, FaultKind.LOSE_AFTER_COMMIT})  # the API's hooks (BS:405)
+
+
 def create_app(
     verifier: Verifier,
     store_factory: Callable[[], st.Store | Awaitable[st.Store]],
@@ -142,26 +145,38 @@ def create_app(
     *,
     admission: AdmissionSettings | None = None,
     profile: Profile = Profile.DEV,
+    faults: Faults | None = None,
 ) -> FastAPI:
     """Build the application around a verifier, a store factory and an auth-deps factory (the lifespan runs both).
 
     `admission` carries the body limit and the other T12 bounds; tests pass their own, production passes
-    `settings.admission()`, and the default is the spec's starting values (BUILD_SPEC §17). Under the test profile
-    the app also arms faults (R098: the hooks do not exist in dev or demo, so the route is the safe 404 there).
+    `settings.admission()`, and the default is the spec's starting values (BUILD_SPEC §17). `faults` exists under the
+    test profile only (R098: in dev and demo there are no hooks, so the route is the safe 404 there), and the store
+    factory gives the store the same object, so the route arms exactly what the store consumes (Plan H ruling 22).
+
+    Raises:
+        ValueError: faults outside the test profile, or a test-profile app without them.
     """
     bounds = admission or AdmissionSettings()
-    faults = Faults(profile) if profile is Profile.TEST else None
+    if profile is Profile.TEST and faults is None:
+        raise ValueError("a test-profile app needs the Faults its store holds")
+    if profile is not Profile.TEST and faults is not None:
+        raise ValueError("fault hooks exist only in the test profile")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         made = store_factory()
         app.state.store = await made if isinstance(made, Awaitable) else made
-        app.state.store.faults = faults
         try:
+            # Plan H ruling 22: the factory gives the store the app's faults; a store holding others (or none under
+            # the test profile) would leave the fault route arming what nothing consumes.
+            if app.state.store.faults is not faults:
+                raise RuntimeError("the store factory did not give the store this app's faults")
             if isinstance(app.state.store, st.DbStore):
                 await persistence.assert_clock_profile(app.state.store.session.conn, settings.profile())
-                # Revision 0006: admission writes the record table and the message columns it adds.
-                await persistence.assert_relation(app.state.store.session.conn, "app.idempotency_request")
+                # Revision 0007: admission counts the global queue through queued_runs_total (0006's record table and
+                # message columns come before it); the permit table marks the revision.
+                await persistence.assert_relation(app.state.store.session.conn, "app.model_permit")
             if not verifier.ready:
                 await verifier.load_keys()
             deps = auth_factory()
@@ -296,12 +311,12 @@ def create_app(
             return response(await unit)
         except IdempotencyConflict as exc:
             raise ApiError(409, ErrorCode.IDEMPOTENCY_CONFLICT, exc.message) from exc
-        except QueueFull:
+        except QueueFull as exc:
             return limits.safe_response(
                 limits.request_id_of(request.scope),
                 429,
                 ErrorCode.RATE_LIMITED,
-                "tenant queue is full",
+                exc.message,  # which bound: the tenant's quota or the global queue (Plan H ruling 13)
                 retryable=True,
                 headers={"Retry-After": "5"},
             )
@@ -561,7 +576,7 @@ def create_app(
         key: Annotated[str, Depends(idempotency_key)],
     ) -> Response:
         """BS:271 through the AM-16 router: 202 for a run, 200 for a clarification or a status answer, 409 for a busy
-        conversation, 422 for an unroutable kind, 429 for a full tenant queue (ruling 21's order)."""
+        conversation, 422 for an unroutable kind, 429 for a full tenant or global queue (ruling 21's order)."""
         message: MessageRequest = await body(request, MessageRequest)
         store: st.Store = request.app.state.store
         idem = scoped(request, who, ROUTE_MESSAGES, key, {"conversation_id": str(conversation_id)}, message)
@@ -574,6 +589,7 @@ def create_app(
                 requester=who.subject,
                 request=message,
                 quota=bounds.tenant_queue_quota,
+                queue_limit=bounds.global_queue_limit,
             ),
         )
 
@@ -682,11 +698,12 @@ def create_app(
         async def arm_fault(
             kind: FaultKind, request: Request, _: Annotated[Identity, Depends(browser_mutation)]
         ) -> dict[str, dict[str, int]]:
-            """Arm a fault for the next `count` admissions (R015's crash before commit, ruling 24); the route exists
+            """Arm a fault for the next `count` mutations: `drop_before_commit` (R015's crash before commit, Plan G
+            ruling 24) or `lose_after_commit` (the unit commits, the answer is lost; Plan H ruling 22); the route exists
             only under PROFILE=test, like incident-sim's, and is exempt from the key only: a cookie caller still passes
             the CSRF and origin check of every browser mutation (BS:264, erratum 35)."""
-            if kind is not FaultKind.DROP_BEFORE_COMMIT:
-                raise ApiError(422, ErrorCode.INVALID_INPUT, "the API implements drop_before_commit only")
+            if kind not in API_FAULTS:
+                raise ApiError(422, ErrorCode.INVALID_INPUT, "the API implements drop_before_commit, lose_after_commit")
             armed: FaultRequest = await body(request, FaultRequest)
             armable.arm(kind, armed.count)
             return {"armed": armable.armed()}
@@ -705,8 +722,12 @@ def production_app() -> FastAPI:
         jwks_url=kc.jwks_url,
     )
 
+    profile = settings.profile()
+    faults = Faults(profile) if profile is Profile.TEST else None  # R098: the hooks exist in the test profile only
+
     async def make_store() -> st.Store:
-        return st.DbStore(await persistence.connect(settings.app_postgres(Role.API)))
+        # Plan H ruling 22: the store is built with the app's faults rather than handed them by the lifespan.
+        return st.DbStore(await persistence.connect(settings.app_postgres(Role.API)), faults=faults)
 
     async def make_auth() -> AuthDeps:
         # Discovery first (ruling 25): a realm that does not match the configuration refuses to start.
@@ -743,4 +764,4 @@ def production_app() -> FastAPI:
                 await close()
             raise
 
-    return create_app(verifier, make_store, make_auth, admission=settings.admission(), profile=settings.profile())
+    return create_app(verifier, make_store, make_auth, admission=settings.admission(), profile=profile, faults=faults)

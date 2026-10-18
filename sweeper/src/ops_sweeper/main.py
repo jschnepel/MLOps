@@ -5,9 +5,10 @@ Every tick (30 s) syncs, then records the sync as this minute's `sync_membership
 key; inserted, claimed and finished by the same tick, so the `jobs` table is the audit trail of every minute and a
 second sweeper instance never records the same minute twice); the first tick syncs at once, so readiness arrives
 within seconds of start, and two syncs are never more than 30 s plus one sync's duration apart (ruling 12; SA:547's
-60 s holds with margin). The same tick purges expired rows. Readiness is 200 only while the last successful
-sync is younger than 120 s, the window after which `grant_execution` refuses (T11 review note 2), so
-`scripts/skeleton.py up` waits for the first sync. TODO(T13/T14/T21): leases, wake-ups, outbox, proposal expiry.
+60 s holds with margin). The same tick purges expired rows and hands back the jobs whose run lease died with their
+worker (T13, `leases.reclaim`). Readiness is 200 only while the last successful sync is younger than 120 s, the
+window after which `grant_execution` refuses (T11 review note 2), so `scripts/skeleton.py up` waits for the first
+sync. TODO(T14/T21): wake-ups, the outbox, proposal expiry.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from ops_sweeper import sync
+from ops_sweeper import leases, sync
 
 FRESH_SECONDS = 120.0  # the gate's window (0005's grant_execution); readiness follows it
 log = logging.getLogger("ops_sweeper")
@@ -109,12 +110,16 @@ async def run_sync(deps: Deps) -> bool:
 
 
 async def tick(deps: Deps) -> None:
-    """Sync; if it succeeded, record this minute's maintenance job (insert, claim, finish); purge expired rows."""
+    """Sync; if it succeeded, record this minute's maintenance job (insert, claim, finish); purge expired rows; hand
+    back the jobs of dead or lost run leases (T13), whether or not Keycloak answered."""
     if await run_sync(deps):
         await record_sync(deps)
     counts = await sync.purge_expired(deps.conn)
     if any(counts.values()):
         log.info("purged expired rows: %s", counts)
+    reclaimed = await leases.reclaim(deps.conn)
+    if reclaimed:
+        log.info("reclaimed %d job(s) whose run lease was not live", len(reclaimed))
 
 
 async def record_sync(deps: Deps) -> None:

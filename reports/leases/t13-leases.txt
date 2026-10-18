@@ -1,0 +1,12 @@
+T13 leases and fences — 2026-10-15T21:45:38Z
+acquisition: first fence 1; a second job of the run deferred behind the lease, unclaimed
+two first claims of one run: B's insert waited on A's alone, then deferred; one lease, fence 1
+a claim meeting an in-flight renewal: Busy(locked) in 0.01 s, job deferred one second
+R020 fence 1 after a takeover at 2: write and mint refused
+R020 in flight: the takeover waited on the open fenced unit, then took the next fence
+R107 expiry compared after the lock: a lease that lapsed during the wait refused the write
+R087 resume vs original: deferred, then fence 2; only it wrote and closed its job
+a handle asked for 3600 s keeps its TTL at its fence, is refused once its lease lapses; no mint
+release: job done, handles revoked, lease '-infinity' at the same fence; the next job takes +1
+release under a lapsed lease: refused; the job stays open and claimed, the lease unreleased
+claim and lease roll back together: no lease row, no claimed job

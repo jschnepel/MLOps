@@ -5,7 +5,7 @@ Every state transition, decision, grant, attempt step and event happens inside a
 (migrations/app/versions/0003 and 0004); nothing here writes runs.state or an audit table. A function refuses with
 SQLSTATE class OC, which `translate` turns into the typed exceptions services already catch. Any unit of work that
 touches a tenant table opens as `Session.unit(tenant_id)`, which sets the transaction-local tenant first: RLS admits
-nothing otherwise, and a reused connection's setting is '' between units (spike §1, §2). Pools arrive with T13.
+nothing otherwise, and a reused connection's setting is '' between units (spike §1, §2). Pools arrive with T30.
 """
 
 from __future__ import annotations
@@ -13,7 +13,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from collections.abc import AsyncIterator, Sequence
+import time
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -26,6 +27,7 @@ from psycopg.types.json import Jsonb
 
 from ops_core.canonical import sha256_hex
 from ops_core.jobs import JOB_RULES, JobType, Server, Tool, dedup_key
+from ops_core.lease import LOCK_FOR_SHARE, LOCK_FOR_UPDATE, LOCK_FOR_UPDATE_NOWAIT, RELEASED, Busy, Lease, LeaseLost
 from ops_core.outcomes import ActionOutcome, EventRuleViolation, EventSource, EventType, ToolOutcome
 from ops_core.settings import Postgres, Profile
 from ops_core.states import IllegalTransition, Intent, Reason, RunState
@@ -136,7 +138,7 @@ async def set_tenant(conn: Conn, tenant_id: UUID) -> None:
 class Session:
     """One connection, one unit of work at a time: the lock keeps concurrent requests from interleaving on the
     connection; the transaction makes the unit atomic. Never enter `unit()` while holding it (the lock is not
-    re-entrant); callers pass the `conn` a unit yields instead. TODO(T13): a pool."""
+    re-entrant); callers pass the `conn` a unit yields instead. TODO(T30): a pool (Plan H ruling 25)."""
 
     def __init__(self, conn: Conn) -> None:
         self.conn = conn
@@ -279,18 +281,30 @@ async def append_event(
     return Appended(UUID(str(row["event_id"])), int(row["sequence"]), row["occurred_at"])
 
 
-async def revoke_handles(conn: Conn, run_id: UUID) -> int:
-    """Every live handle of the run is revoked (BS:364); the fence argument is T13's."""
-    row = await _call(conn, "SELECT app.revoke_handles(%s, 1) AS n", (run_id,))
+async def revoke_handles(conn: Conn, run_id: UUID, fence: int) -> int:
+    """Revoke the run's live handles minted under `fence` or an older one (BS:364, Plan H ruling 8): a newer owner's
+    handles survive, and a stale fence is never refused (revoking only removes authority). Returns the count."""
+    row = await _call(conn, "SELECT app.revoke_handles(%s, %s) AS n", (run_id, fence))
     return 0 if row is None else int(row["n"])
 
 
-async def mark_unknown(conn: Conn, run_id: UUID) -> RunState:
-    """EXECUTING → OUTCOME_UNKNOWN with handles revoked and a recover job (SA:467); idempotent."""
-    row = await _call(conn, "SELECT app.mark_unknown(%s, 1) AS state", (run_id,))
+@dataclass(frozen=True)
+class Unknown:
+    """What mark_unknown returned: the run's state and the fence it moved the lease to."""
+
+    state: RunState
+    fence: int
+
+
+async def mark_unknown(conn: Conn, run_id: UUID, fence: int) -> Unknown:
+    """EXECUTING → OUTCOME_UNKNOWN under the caller's lease (SA:467, Plan H ruling 9): the lease row FOR UPDATE, a stale
+    fence or a lapsed lease refused (VersionConflict), the fence bumped to `fence + 1`, the old fence's handles revoked
+    and a recover job queued; a run already OUTCOME_UNKNOWN only gets the bump. The caller hands the returned fence to
+    its Lease (ruling 10)."""
+    row = await _call(conn, "SELECT * FROM app.mark_unknown(%s, %s)", (run_id, fence))
     if row is None:
         raise PersistenceError("mark_unknown returned nothing")
-    return RunState(str(row["state"]))
+    return Unknown(RunState(str(row["run_state"])), int(row["new_fence"]))
 
 
 @dataclass(frozen=True)
@@ -434,22 +448,24 @@ async def lookup_action(conn: Conn, *, handle: str) -> Grant:
     return _grant(row)
 
 
-async def mark_sent(conn: Conn, action_id: UUID) -> str:
-    """`sent`, `already_sent`, `resolved` or `cancelled` (SA:463); committed by the caller before any I/O."""
-    row = await _call(conn, "SELECT app.mark_sent(%s) AS outcome", (action_id,))
+async def mark_sent(conn: Conn, *, handle: str, action_id: UUID) -> str:
+    """`sent`, `already_sent`, `resolved` or `cancelled` (SA:463); committed by the caller before any I/O. The handle
+    binds the call to the run's lease fence (Plan H ruling 5): a moved fence or a lapsed lease is HandleRejected."""
+    row = await _call(conn, "SELECT app.mark_sent(%s, %s) AS outcome", (handle, action_id))
     if row is None:
         raise PersistenceError("mark_sent returned nothing")  # a missing row must never read as "go ahead"
     return str(row["outcome"])
 
 
-async def record_outcome(conn: Conn, *, action_id: UUID, outcome: ActionOutcome) -> ToolOutcome:
-    """RESOLVED plus the implied transition and the destination-sourced event (SA:464); returns what stands."""
+async def record_outcome(conn: Conn, *, handle: str, action_id: UUID, outcome: ActionOutcome) -> ToolOutcome:
+    """RESOLVED plus the implied transition and the destination-sourced event (SA:464); returns what stands. The handle
+    binds the record to the run's lease fence (ruling 5); after SENT its refusal is the caller's UNKNOWN (ruling 6)."""
     if outcome.status is ToolOutcome.UNKNOWN:
         raise ValueError("UNKNOWN is recorded by the worker through mark_unknown, never as an outcome")
     row = await _call(
         conn,
-        "SELECT app.record_outcome(%s, %s, %s) AS outcome",
-        (action_id, outcome.status.value, Jsonb(outcome.model_dump(mode="json"))),
+        "SELECT app.record_outcome(%s, %s, %s, %s) AS outcome",
+        (handle, action_id, outcome.status.value, Jsonb(outcome.model_dump(mode="json"))),
     )
     if row is None:
         raise PersistenceError("record_outcome returned nothing")
@@ -535,28 +551,266 @@ async def queued_count(conn: Conn) -> int:
     return 0 if row is None else int(row["n"])
 
 
-async def claim_job(conn: Conn, *, worker_name: str, tenant_ids: Sequence[UUID]) -> DictRow | None:
-    """Claim the oldest available job of the first tenant that has one (BUILD_SPEC §11: SKIP LOCKED).
+async def queued_runs_total(conn: Conn) -> int:
+    """QUEUED runs of every tenant through `app.queued_runs_total()` (api only, Plan H ruling 13): one number."""
+    row = await _call(conn, "SELECT app.queued_runs_total() AS n", ())
+    return 0 if row is None else int(row["n"])
 
-    jobs is under tenant_isolation for the worker (only the sweeper has sweeper_all), so the claim runs once per
-    tenant with the tenant set (Plan E ruling 18); the caller rotates the order. Runs inside a transaction so the
-    settings last exactly as long as the claim; `set_tenant` refuses outside a transaction. On return the
-    transaction's tenant stays set to the claimed job's tenant (or the last one tried). TODO(T13): lease + fence +
-    wake-ups instead of polling.
+
+@dataclass(frozen=True)
+class Claimed:
+    """A claimed job and the run lease its claim took in the same transaction (Plan H ruling 3)."""
+
+    job: DictRow
+    lease: Lease
+
+
+@dataclass(frozen=True)
+class Deferred:
+    """A job whose run lease was busy: moved behind the lease, not claimed (ruling 3)."""
+
+    job_id: UUID
+
+
+class _Held(Exception):
+    """Raised inside the acquisition savepoint to roll it back when the lease is live under another claim."""
+
+
+class _Locked(Exception):
+    """Raised inside the acquisition savepoint to roll it back when NOWAIT met a row another transaction holds."""
+
+
+_CREATE_LEASE = (
+    "INSERT INTO app.run_lease (run_id, owner, lease_until, fence) VALUES (%s, '', '-infinity', 0)"
+    " ON CONFLICT (run_id) DO NOTHING"
+)
+_TAKE_LEASE = (
+    "UPDATE app.run_lease SET owner = %s, fence = fence + 1,"
+    " lease_until = app.current_time() + make_interval(secs => %s) WHERE run_id = %s RETURNING fence"
+)
+
+
+async def _lock_row(conn: Conn, lock: str, run_id: UUID, *, wait: bool) -> psycopg.AsyncCursor[DictRow]:
+    """One of the acquisition's lock statements: with NOWAIT, a row another transaction holds is a busy lease
+    (`_Locked`, ruling 3); with `wait=True` the 55P03 of a wait past `lock_timeout` propagates (review round 2, N2:
+    both lock statements go through here, the one after the first-row INSERT included)."""
+    try:
+        return await conn.execute(lock, (run_id,))
+    except psycopg.errors.LockNotAvailable:
+        if wait:
+            raise  # a long lock wait, which the stress test counts, never a busy lease
+        raise _Locked from None  # NOWAIT met a held row: busy (ruling 3)
+
+
+async def acquire_lease(
+    conn: Conn,
+    *,
+    run_id: UUID,
+    owner: str,
+    lease_seconds: int,
+    wait: bool = False,
+    clock: Callable[[], float] = time.monotonic,
+) -> Lease | Busy:
+    """Take the run's lease inside the caller's transaction (AM-12 SA:173-174, Plan H rulings 2 and 3).
+
+    In a savepoint, so a busy lease rolls back alone and the caller's claim survives: the lease row FOR UPDATE NOWAIT
+    (plain FOR UPDATE with `wait=True`, which only the interleaving and stress tests use; there a lock wait past the
+    connection's `lock_timeout` raises 55P03 instead of looking like a busy lease, review round 1 I3), free when
+    `lease_until <= app.current_time()` compared after the lock, then `fence + 1`, the new owner and a fresh
+    `lease_until`. The row is
+    locked before anything is inserted, because an `INSERT … ON CONFLICT` waits for an in-progress update of an
+    existing row (a renewal, a release) and NOWAIT exists to avoid waits; it is created released (fence 0, so the
+    first real fence is 1) only when absent, and a concurrent first insert of the same run is the one wait left
+    (erratum 46).
+
+    Returns:
+        The Lease, whose local deadline counts from the monotonic instant before the first statement (ruling 18);
+        `Busy(locked=True)` when NOWAIT met a row another transaction holds, `Busy(locked=False)` when the lease is
+        live.
+
+    Raises:
+        psycopg.errors.LockNotAvailable: a wait (`wait=True`, or the first-row INSERT racing another first insert)
+            outlasted the connection's `lock_timeout`.
+    """
+    started = clock()
+    lock = LOCK_FOR_UPDATE if wait else LOCK_FOR_UPDATE_NOWAIT
+    taken: DictRow | None = None
+    try:
+        async with conn.transaction():
+            cur = await _lock_row(conn, lock, run_id, wait=wait)
+            row = await cur.fetchone()
+            if row is None:
+                await conn.execute(_CREATE_LEASE, (run_id,))
+                cur = await _lock_row(conn, lock, run_id, wait=wait)
+                row = await cur.fetchone()
+                if row is None:
+                    raise PersistenceError("the run's lease row is missing after its insert")
+            if row["live"]:
+                raise _Held
+            cur = await conn.execute(_TAKE_LEASE, (owner, lease_seconds, run_id))
+            taken = await cur.fetchone()
+    except _Held:
+        return Busy(locked=False)
+    except _Locked:
+        return Busy(locked=True)
+    if taken is None:
+        raise PersistenceError("the lease update returned nothing")
+    return Lease(
+        run_id=run_id, owner=owner, fence=int(taken["fence"]), lease_seconds=lease_seconds, started=started, clock=clock
+    )
+
+
+async def pick_job(conn: Conn, *, tenant_ids: Sequence[UUID]) -> DictRow | None:
+    """The oldest available job of the first tenant that has one, row-locked with SKIP LOCKED (BUILD_SPEC §11) until
+    the caller's transaction claims or defers it.
+
+    jobs is under tenant_isolation for the worker (only the sweeper has sweeper_all), so the pick runs once per tenant
+    with the tenant set (Plan E ruling 18); `set_tenant` refuses outside a transaction, and on return the
+    transaction's tenant is the picked job's (or the last one tried).
     """
     for tenant_id in tenant_ids:
         await set_tenant(conn, tenant_id)
         cur = await conn.execute(
-            "UPDATE app.jobs SET claimed_by = %s, claimed_at = app.current_time(), attempts = attempts + 1"
-            " WHERE id = (SELECT id FROM app.jobs WHERE done_at IS NULL AND claimed_at IS NULL"
-            "             AND available_at <= app.current_time()"
-            "             ORDER BY available_at, id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *",
-            (worker_name,),
+            "SELECT * FROM app.jobs WHERE done_at IS NULL AND claimed_at IS NULL"
+            " AND available_at <= app.current_time() ORDER BY available_at, id FOR UPDATE SKIP LOCKED LIMIT 1"
         )
         row = await cur.fetchone()
         if row is not None:
             return row
     return None
+
+
+async def claim_next(
+    conn: Conn,
+    *,
+    worker_name: str,
+    tenant_ids: Sequence[UUID],
+    lease_seconds: int,
+    clock: Callable[[], float] = time.monotonic,
+) -> Claimed | Deferred | None:
+    """Claim the next job together with its run's lease, in one transaction (Plan H ruling 3).
+
+    Claim and lease commit together, so a claimed run job always has a live lease taken at the same commit: no crash
+    window lies between them, and "claimed, not done, lease not live" can only mean a dead or lost owner (the
+    sweeper's reclaim, ruling 11). A job whose lease is busy is moved behind it and left unclaimed: to the live
+    lease's `lease_until`, or one second on when the lease row was locked; jobs are wake-ups (SA:173), so whoever
+    claims it later finds the run in the state the lease holder left. The moved job is not available again in the
+    same poll, so the caller simply tries again. TODO(T14): wake-ups instead of polling.
+    """
+    async with conn.transaction():
+        job = await pick_job(conn, tenant_ids=tenant_ids)
+        if job is None:
+            return None
+        if job["run_id"] is None:
+            # Maintenance jobs carry no tenant and RLS hides them from the worker; one here is a policy fault.
+            raise PersistenceError("the worker picked a job without a run")
+        got = await acquire_lease(
+            conn, run_id=job["run_id"], owner=worker_name, lease_seconds=lease_seconds, clock=clock
+        )
+        if isinstance(got, Busy):
+            if got.locked:
+                await conn.execute(
+                    "UPDATE app.jobs SET available_at = app.current_time() + interval '1 second' WHERE id = %s",
+                    (job["id"],),
+                )
+            else:
+                await conn.execute(
+                    "UPDATE app.jobs SET available_at = coalesce((SELECT l.lease_until FROM app.run_lease l"
+                    " WHERE l.run_id = %s AND l.lease_until > app.current_time()),"
+                    " app.current_time() + interval '1 second') WHERE id = %s",
+                    (job["run_id"], job["id"]),
+                )
+            return Deferred(UUID(str(job["id"])))
+        cur = await conn.execute(
+            "UPDATE app.jobs SET claimed_by = %s, claimed_at = app.current_time(), attempts = attempts + 1"
+            " WHERE id = %s RETURNING *",
+            (worker_name, job["id"]),
+        )
+        claimed = await cur.fetchone()
+        if claimed is None:
+            raise PersistenceError("the picked job vanished before its claim")
+        return Claimed(claimed, got)
+
+
+async def fenced(conn: Conn, lease: Lease) -> None:
+    """The first statement of every worker unit that writes for a run (AM-12 SA:176-184, Plan H ruling 5).
+
+    The lease row FOR SHARE, then owner, fence and expiry compared after the lock: a new owner's acquisition (FOR
+    UPDATE) waits for this transaction, so nothing this unit writes can land after a newer fence. A mismatch marks the
+    lease lost and raises LeaseLost, and the unit rolls back. `set_tenant` may come first: `set_config` takes no
+    lock. The local deadline is checked before the statement (ruling 18).
+    """
+    lease.check()
+    cur = await conn.execute(LOCK_FOR_SHARE, (lease.run_id,))
+    row = await cur.fetchone()
+    if row is None or row["owner"] != lease.owner or row["fence"] != lease.fence or not row["live"]:
+        lease.mark_lost("the fence moved or the lease expired")
+        raise LeaseLost("run lease lost")
+
+
+async def release_lease(conn: Conn, lease: Lease, *, job: dict[str, Any], requeue_seconds: int | None = None) -> None:
+    """The job's final unit (Plan H ruling 28): the local deadline checked first, then the lease row FOR UPDATE (this
+    unit writes it, SA:191) with owner, fence and liveness compared after the lock, the handles minted under this
+    fence revoked, the job finished (or re-queued after `requeue_seconds`) and the lease released (`lease_until =
+    '-infinity'`; owner and fence stay, so the run's next acquisition takes fence + 1). Together, so a crash leaves
+    either the claimed job with its lease or neither.
+
+    Liveness counts here like in every other unit. A lease that lapsed while the job's last call was in flight may
+    have made that call fail: mcp-write refuses the handle of a lapsed lease before SENT and answers INVALID_HANDLE.
+    Closing the job on that answer would leave an approved run with no grant and no job (final review, I1). Refused
+    here, the loss hands the job back (`handlers.abandon`) and the run's next owner runs it again.
+
+    Raises:
+        LeaseLost: the local deadline passed, another owner holds the lease, or it lapsed on the database clock;
+            nothing is written.
+    """
+    lease.check()
+    async with conn.transaction():
+        await set_tenant(conn, job["tenant_id"])  # jobs is under RLS; set_config takes no lock
+        cur = await conn.execute(LOCK_FOR_UPDATE, (lease.run_id,))
+        row = await cur.fetchone()
+        if row is None or row["owner"] != lease.owner or row["fence"] != lease.fence or not row["live"]:
+            lease.mark_lost("another owner holds the lease, or it lapsed")
+            raise LeaseLost("run lease lost")
+        await revoke_handles(conn, lease.run_id, lease.fence)
+        if requeue_seconds is None:
+            await finish_job(conn, job["id"])
+        else:
+            await requeue_job(conn, job["id"], requeue_seconds)
+        await conn.execute("UPDATE app.run_lease SET lease_until = '-infinity' WHERE run_id = %s", (lease.run_id,))
+    lease.mark_lost(RELEASED)
+
+
+async def unclaim_job(conn: Conn, job_id: UUID, *, worker_name: str) -> None:
+    """Hand a claimed job back, claimable now (ruling 19: jobs are wake-ups), unless another worker claimed it since."""
+    await conn.execute(
+        "UPDATE app.jobs SET claimed_by = NULL, claimed_at = NULL, available_at = app.current_time()"
+        " WHERE id = %s AND claimed_by = %s AND done_at IS NULL",
+        (job_id, worker_name),
+    )
+
+
+async def take_model_permit(conn: Conn, *, holder: str, run_id: UUID, ttl_seconds: int) -> int | None:
+    """One free model permit slot for `ttl_seconds` (Plan H ruling 12), or None while every slot is held. SKIP LOCKED
+    never waits, and a slot whose TTL passed counts as free on the application clock, so nobody needs to reclaim it."""
+    cur = await conn.execute(
+        "UPDATE app.model_permit SET holder = %s, run_id = %s,"
+        " leased_until = app.current_time() + make_interval(secs => %s)"
+        " WHERE slot = (SELECT slot FROM app.model_permit WHERE leased_until <= app.current_time()"
+        " ORDER BY slot FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING slot",
+        (holder, run_id, ttl_seconds),
+    )
+    row = await cur.fetchone()
+    return None if row is None else int(row["slot"])
+
+
+async def release_model_permit(conn: Conn, *, slot: int, holder: str) -> None:
+    """Give the permit back, unless its TTL passed and another holder took it meanwhile."""
+    await conn.execute(
+        "UPDATE app.model_permit SET holder = NULL, run_id = NULL, leased_until = '-infinity'"
+        " WHERE slot = %s AND holder = %s",
+        (slot, holder),
+    )
 
 
 async def finish_job(conn: Conn, job_id: UUID) -> None:
@@ -565,7 +819,7 @@ async def finish_job(conn: Conn, job_id: UUID) -> None:
 
 
 async def requeue_job(conn: Conn, job_id: UUID, delay_seconds: int) -> None:
-    """Release a claimed job and make it claimable again after `delay_seconds`. TODO(T13): bounded retries."""
+    """Release a claimed job and make it claimable again after `delay_seconds`. TODO(T22): bounded retries."""
     await conn.execute(
         "UPDATE app.jobs SET claimed_by = NULL, claimed_at = NULL,"
         " available_at = app.current_time() + make_interval(secs => %s) WHERE id = %s",
@@ -611,13 +865,28 @@ async def claim_maintenance_job(
 
 
 async def mint_handle(
-    conn: Conn, *, run_id: UUID, job_id: UUID, server: Server, azp: str, ttl_seconds: int = 60
+    conn: Conn, *, run_id: UUID, job_id: UUID, server: Server, azp: str, fence: int, ttl_seconds: int = 60
 ) -> str:
-    """A 256-bit capability bound to one job and one server (BUILD_SPEC §9); only its hash is stored (BS:360)."""
+    """A 256-bit capability bound to one job, one server and the lease fence it was minted under (BUILD_SPEC §9,
+    BS:360); only its hash is stored. It is minted only under a live lease at exactly that fence (Plan H ruling 5)
+    and expires after `ttl_seconds`. BS:558's other bound, the current lease, is enforced where the handle is used:
+    `app._resolve_handle` refuses it once its fence is not the lease's or the lease has lapsed. Capping `expires_at`
+    at mint time would freeze the lease end the handle saw, so a handle would die under a lease the heartbeat has
+    since renewed (T13 controller ruling, Task 4).
+
+    The caller's unit must already hold the run's lease row FOR SHARE (`fenced`, or the claim's FOR UPDATE): the
+    INSERT's own read of run_lease takes no lock, so only that lock keeps the fence from moving before the commit.
+
+    Raises:
+        LeaseLost: the run has no live lease at `fence`; nothing is written.
+    """
     handle = secrets.token_urlsafe(32)
-    await conn.execute(
-        "INSERT INTO app.invocation_context (handle_sha256, run_id, job_id, server, azp, expires_at)"
-        " VALUES (%s, %s, %s, %s, %s, app.current_time() + make_interval(secs => %s))",
-        (handle_hash(handle), run_id, job_id, server.value, azp, ttl_seconds),
+    cur = await conn.execute(
+        "INSERT INTO app.invocation_context (handle_sha256, run_id, job_id, server, azp, fence, expires_at)"
+        " SELECT %s, l.run_id, %s, %s, %s, l.fence, app.current_time() + make_interval(secs => %s)"
+        " FROM app.run_lease l WHERE l.run_id = %s AND l.fence = %s AND l.lease_until > app.current_time()",
+        (handle_hash(handle), job_id, server.value, azp, ttl_seconds, run_id, fence),
     )
+    if cur.rowcount != 1:
+        raise LeaseLost("no live lease at this fence")
     return handle

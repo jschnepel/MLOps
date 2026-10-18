@@ -8,6 +8,7 @@ error, never a silent fallback (R130). The fake draft says it is fake in its lim
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -54,10 +55,16 @@ class ModelRouteError(ValueError):
 
 
 class FakeDraftGenerator:
-    """The deterministic route that exercises the control path without a model (BUILD_SPEC §1)."""
+    """The deterministic route that exercises the control path without a model (BUILD_SPEC §1). `delay_seconds` makes
+    it as slow as a real model call without blocking the event loop (R088's "> 30 s fake drafter"; tests only)."""
+
+    def __init__(self, delay_seconds: float = 0.0) -> None:
+        self.delay_seconds = delay_seconds
 
     async def generate(self, request: DraftRequest, evidence: list[EvidenceItem]) -> ModelDraft:
         """Draft deterministically from the first evidence item; no evidence is an error."""
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
         if not evidence:
             raise ValueError("a proposal draft needs at least one evidence item")
         cited = evidence[0]  # the highest-ranked section; deterministic because the search is

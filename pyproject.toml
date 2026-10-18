@@ -47,7 +47,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = [
   "tests/plan_a", "tests/plan_b", "tests/plan_c", "tests/plan_d", "tests/plan_e", "tests/plan_f", "tests/plan_g",
-  "tests/e2e",
+  "tests/plan_h", "tests/e2e",
 ]
 asyncio_default_fixture_loop_scope = "function"
 # Setting this replaces pytest's defaults (which include ".*"), so ".*" is restated: otherwise pytest walks .hypothesis/.
@@ -55,6 +55,7 @@ norecursedirs = ["reference", ".venv", "node_modules", "build", ".*"]
 addopts = "-ra"
 markers = [
   "sweeper_stamps: the module's skeleton sweeper stamps memberships.synced_at; the autouse fixture must not",
+  "slow_live: a DoD timing test of 15-40 s (Plan H); deselect with -m 'not slow_live' while iterating, never in a gate",
 ]
 
 [tool.ruff]

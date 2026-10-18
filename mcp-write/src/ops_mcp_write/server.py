@@ -222,6 +222,8 @@ def build_app(server: MCPServer, state: State) -> Starlette:
             conn = await persistence.connect(settings.app_postgres(Role.MCP_EXEC))
             try:
                 await persistence.assert_clock_profile(conn, settings.profile())
+                # Revision 0007: mark_sent and record_outcome take the raw handle (T13); model_permit marks it.
+                await persistence.assert_relation(conn, "app.model_permit")
             except BaseException:  # a failed start must leak no connection
                 await conn.close()
                 raise
