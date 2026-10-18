@@ -698,6 +698,56 @@ needs no concurrency lock because every concurrent interleaving traced ends in a
 rollback, never in a wrong state. After the wave the gates were `check.py` `1270 passed, 191 skipped`, `check.py --profile test`
 `1440 passed, 21 skipped` and `verify_handoff.py` exit 0.
 
-## 30. What the process taught
+## 30. The read-tools plan gave mcp-read its asset half and the worker its checks
+
+**Problem.** Plan M takes T16. mcp-read served one tool. `get_asset_status` and `get_recent_alerts` had neither a
+definer nor a destination, asset-sim was a three-file stub, and corpus-1's assets carried no status. The search
+stamped `retrieved_at` from the wall clock and cut excerpts silently at 500 characters. Nothing re-checked a
+requester's membership at read time, and the worker called a tool without asking what the server offered or checking
+what came back. The fact sheet found eighteen open questions, and the controller's brief ruled on each, deferring
+vector mode to T18.
+
+**Change.** Revision 0012 adds `asset_scope` and re-creates the search: both re-check the requester, the search returns
+the instant it decided permission at, and an excerpt is now the whole section. asset-sim becomes a seventh process
+that derives status and alerts from corpus-1 without changing it. The two asset tools sit behind two committed
+database units and call asset-sim with mcp-read's own token. The search keeps to the run's asset type. The committed
+schemas are checked at run time on both sides of the boundary, and the worker refuses a server or a result that does
+not match them.
+
+**Review.** Writing the plan against the code moved four details. The search needs the run's scope too, so it runs
+three units. The excerpt and instant change had to land with the revision, because the function's return type
+changed. asset-sim's faults reuse three existing hooks and add one, which changed the "no orphan hook" invariant. And
+the worker's checks stay on the read calls, because mcp-write does not advertise the committed files. The plan was
+applied task by task to a scratch copy of the tree, where every dev count was measured. No database was reachable, so
+the SQL and the live tests first run at execution.
+
+**Problem.** The first static review (2 Critical, 2 Important, 7 Minor) found two live tests that would have failed
+and a claim that was not true. The plan said every live call of a read definer ran as a requester of its run's tenant,
+and that this had been checked. It had not been checked thoroughly enough: `test_ingest_live.py` creates two fresh
+tenants with no members and searches in one of them, so 0012's membership check would have refused it from the first
+task on. The second Critical was a timeout. The slow-answer test waits for mcp-read's 10-second limit toward asset-sim,
+but its client kept httpx2's default of 5 seconds and would have given up first, as a transport error instead of the
+envelope under test. The review also found that jsonschema's `date-time` check is silently off unless
+`rfc3339-validator` is installed, and only the dev group installed it, so a production worker would have accepted a
+day that does not exist.
+
+**Change.** The ingest test's fresh tenant now gets its requester, and the plan prints the full sweep instead of the
+claim: every live call site, its tenant, and whether the run's requester is a member there. The slow call gets its own
+client with a 30-second read timeout, and every other call keeps the shared one unchanged. `rfc3339-validator` became a
+runtime dependency of `ops-core`, with a unit test that an impossible date fails through the runtime helper. The other
+fixes were smaller: a debt line for the transport-level size bound, R029 recorded as proven in-process rather than
+live, the fault routes tested in every non-test profile, and the R105 evidence regenerated rather than restored.
+
+**Problem.** The second review accepted the plan and found five Minors. The one worth remembering is in the worker's
+discovery check. It compared the set of advertised tools with the three it expects, but it read only the first page of
+the listing. A server that put a fourth tool on a second page would have passed a check meant to fail closed. The
+others were a final gate still quoting the counts from before round 1, live files listed as evidence under a status
+that means "runs in CI", a new evidence directory that the secret scan did not cover, and two docstrings that still
+counted six processes.
+
+**Change.** The check now takes the whole listing and refuses one that announces another page. The counts, the R029
+evidence paths, the scan's roots and the two docstrings were corrected. No count moved.
+
+## 31. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.

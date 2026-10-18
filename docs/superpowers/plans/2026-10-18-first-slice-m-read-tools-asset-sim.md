@@ -124,6 +124,19 @@ The static review's 11 findings (`.superpowers/planm/round1-static.md`), all fix
   case (the real server passes) (Task 7).
 - **M7** Task 7 keeps and commits the R105 evidence the final live run regenerates.
 
+## Round 2 changes
+
+The second static review (`.superpowers/planm/round2-static.md`) accepted the plan; its five Minors are fixed:
+
+- **1** Task 7 Step 3's final gate expects 1344/205 (dev) and 1528/21 (live), the plan's own figures since round 1.
+- **2** R029 stays `RECORDED_LOCALLY` and its evidence paths list only the `tests/plan_m` files check.py and CI run;
+  the note names the live positive case and `reports/mcp-read/t16-read-tools.txt`.
+- **3** `reports/asset-sim` joins `tests/plan_b/test_evidence.py`'s `EVIDENCE_ROOTS` (Task 2 Step 5, Edit 3).
+- **4** `check_listing` takes the whole `ListToolsResult` and refuses one with a `next_cursor` (a later page could
+  add a tool); asserted inside `test_the_real_listing_and_a_valid_result_pass` (Task 5; no count change).
+- **5** "six processes" becomes seven in `sweeper/src/ops_sweeper/sync.py` and `tests/e2e/test_auth_live.py` (Task 6,
+  Edits 12-13).
+
 ## Global Constraints
 
 Carried from Plan L's header (its text applies with "Plan L"/"T17" read as the plan that wrote it); the Plan M
@@ -1944,7 +1957,7 @@ git commit -m "feat(db): revision 0012 - asset_scope, the requester re-check and
   `ASSET_SIM_FAULTS`), `scripts/skeleton.py` (docstrings, `PROCESSES`, `process_environment`),
   `tests/plan_e/test_skeleton_cli.py`, `tests/plan_h/test_faults_t13.py`, `tests/plan_d/test_settings.py`,
   `tests/plan_j/test_verifier_t15.py` and `tests/plan_k/test_verifier_t47.py` (`URLS`), `tests/e2e/conftest.py`
-  (`free_port`, the `asset_sim` fixture)
+  (`free_port`, the `asset_sim` fixture), `tests/plan_b/test_evidence.py` (`EVIDENCE_ROOTS`)
 
 **Requirements:** SA:78, SA:555 (asset-sim's trust and its own tenant filter), BS:405 (deterministic under an injected
 clock; test-only fault hooks), T16 DoD 2, R028's asset-sim half, rulings 4-6 and 8-10.
@@ -3231,6 +3244,38 @@ async def asset_sim(env: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> Asy
 async def app_conn(migrated: None) -> AsyncIterator[persistence.Conn]:
 ```
 
+Edit 3 (`tests/plan_b/test_evidence.py`, the module docstring: the new evidence file's writer handles three
+foreign workload tokens, so it is scanned like the others), replace:
+
+```python
+`reports/events` and `reports/outbox` (T14's journal and outbox evidence), `reports/mcp-read` (T15's handle,
+token and independent-client evidence) and `reports/mcp-write` (T47's write-path and independent-client evidence)
+are scanned the same way.
+```
+
+with:
+
+```python
+`reports/events` and `reports/outbox` (T14's journal and outbox evidence), `reports/mcp-read` (T15's handle,
+token and independent-client evidence), `reports/mcp-write` (T47's write-path and independent-client evidence) and
+`reports/asset-sim` (T16's token-refusal evidence) are scanned the same way.
+```
+
+then replace:
+
+```python
+    Path("reports/mcp-write"),
+)
+```
+
+with:
+
+```python
+    Path("reports/mcp-write"),
+    Path("reports/asset-sim"),
+)
+```
+
 Create `tests/e2e/test_asset_sim_live.py`:
 
 ```python
@@ -3363,7 +3408,7 @@ module now starts seven processes; its mcp-read reaches the skeleton's asset-sim
 git add asset-sim core/src/ops_core/settings.py core/src/ops_core/testing/faults.py scripts/skeleton.py uv.lock \
   tests/plan_m/test_asset_sim_data.py tests/plan_m/test_asset_sim_app.py tests/plan_e/test_skeleton_cli.py \
   tests/plan_h/test_faults_t13.py tests/plan_d/test_settings.py tests/plan_j/test_verifier_t15.py \
-  tests/plan_k/test_verifier_t47.py tests/e2e/conftest.py tests/e2e/test_asset_sim_live.py
+  tests/plan_k/test_verifier_t47.py tests/e2e/conftest.py tests/e2e/test_asset_sim_live.py tests/plan_b/test_evidence.py
 git commit -m "feat(asset-sim): the synthetic asset and alert API on corpus-1, mcp-read's token only (T16)"
 ```
 
@@ -5829,7 +5874,8 @@ and 6).
   `ops_core.jobs.JOB_RULES`, `JobType`, `Tool`; `mcp_types.CallToolResult`, `mcp_types.Tool`; mcp-read's real app
   (Task 3) over `httpx2.ASGITransport`; Plan H's worker fakes (`tests.plan_h.test_worker_units.Log`, `make`, `patch`,
   `JOB`).
-- Produces: `ops_worker.mcp.READ_TOOLS`, `check_listing(advertised, tool)`, `read_result(tool, result)`,
+- Produces: `ops_worker.mcp.READ_TOOLS`, `check_listing(listing, tool)` (the whole `ListToolsResult`, so a further
+  page is refused), `read_result(tool, result)`,
   `HttpMcpCaller(token_source, *, connect_timeout=10.0, transport=None)`; a read call that fails a check raises
   `McpCallFailed`, which the investigate handler already records as FAILED "retrieval failed".
 
@@ -5842,7 +5888,7 @@ Create `tests/plan_m/test_worker_r029.py`:
 database calls and asset-sim replaced, and its checks on scripted answers.
 
 Catches: a client that calls a tool without listing first, or calls it although the server lists a tool too many or
-too few, or advertises an input schema other than the committed file; a result that is error-flagged, malformed,
+too few, announces a further page of tools, or advertises an input schema other than the committed file; a result that is error-flagged, malformed,
 another tool's, an error envelope or larger than 256 KiB taken as success; and an investigate run that does anything
 but fail as "retrieval failed" when its read fails a check (no success assumption).
 """
@@ -5854,13 +5900,14 @@ from typing import Any
 
 import httpx2
 import pytest
-from mcp_types import CallToolResult, TextContent
-from ops_core import persistence
+from mcp_types import CallToolResult, ListToolsResult, TextContent
+from mcp_types import Tool as AdvertisedTool
+from ops_core import persistence, tool_contracts
 from ops_core.jobs import Tool
 from ops_core.states import RunState
 from ops_mcp_read import assets, server
 from ops_worker import handlers
-from ops_worker.mcp import HttpMcpCaller, McpCallFailed, read_result
+from ops_worker.mcp import READ_TOOLS, HttpMcpCaller, McpCallFailed, check_listing, read_result
 
 from tests.plan_h.test_worker_units import JOB, Log, make, patch
 from tests.plan_j.test_mcp_read_http import BASE, ISSUER, RESOURCE, KeyedVerifier
@@ -5905,6 +5952,12 @@ async def test_the_real_listing_and_a_valid_result_pass(monkeypatch: pytest.Monk
         doc = await caller.call(f"{BASE}/mcp", handle="h", tool="get_asset_status", arguments=STATUS_CALL)
     assert doc["status"] == "ok" and doc["data"] == STATUS
     assert [name for name, _, _ in db.calls] == ["resolve", "scope"]
+    # The same three committed tools pass on one page, and are refused when the server announces another page
+    # (round 2: a second page could carry a fourth tool the set check never saw).
+    tools = [AdvertisedTool(name=t.value, input_schema=tool_contracts.input_schema(t)) for t in sorted(READ_TOOLS)]
+    check_listing(ListToolsResult(tools=tools), Tool.GET_ASSET_STATUS)
+    with pytest.raises(McpCallFailed, match="unexpected tool set"):
+        check_listing(ListToolsResult(tools=tools, next_cursor="page-2"), Tool.GET_ASSET_STATUS)
 
 
 def run_shell() -> str:
@@ -6020,14 +6073,12 @@ investigate handler records as FAILED "retrieval failed": nothing is assumed to 
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any, Final, Protocol
 
 import httpx2
 from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
-from mcp_types import CallToolResult
-from mcp_types import Tool as AdvertisedTool
+from mcp_types import CallToolResult, ListToolsResult
 from ops_core import tool_contracts
 from ops_core.jobs import JOB_RULES, JobType, Tool
 from ops_core.mcp_protocol import PROTOCOL_VERSION
@@ -6053,15 +6104,21 @@ def failure_leaf(exc: BaseException) -> BaseException:
 TRANSPORT_FAILURES = (MCPError, httpx2.HTTPError, OSError)
 
 
-def check_listing(advertised: Sequence[AdvertisedTool], tool: Tool) -> None:
-    """R029's discovery check: the server lists exactly the read tools, once each, and advertises the called tool's
-    committed input schema (canonical JSON).
+def check_listing(listing: ListToolsResult, tool: Tool) -> None:
+    """R029's discovery check: the server lists exactly the read tools, once each, on one page, and advertises the
+    called tool's committed input schema (canonical JSON). A listing with a `next_cursor` is refused: a later page
+    could add a tool this check never saw.
 
     Raises:
-        McpCallFailed: a tool added, removed or listed twice, or the called tool's schema altered.
+        McpCallFailed: a tool added, removed or listed twice, a further page, or the called tool's schema altered.
     """
+    advertised = listing.tools
     names = [entry.name for entry in advertised]
-    if len(names) != len(set(names)) or set(names) != {read.value for read in READ_TOOLS}:
+    if (
+        listing.next_cursor is not None
+        or len(names) != len(set(names))
+        or set(names) != {read.value for read in READ_TOOLS}
+    ):
         raise McpCallFailed(f"{tool.value}: the server advertises an unexpected tool set")
     schema = next(entry.input_schema for entry in advertised if entry.name == tool.value)
     if not tool_contracts.same_input_schema(tool, schema):
@@ -6131,7 +6188,7 @@ class HttpMcpCaller:
                 Client(streamable_http_client(url, http_client=http), mode=PROTOCOL_VERSION) as client,
             ):
                 if read is not None:  # discovery in the same session, before the call (ruling 13)
-                    check_listing((await client.list_tools()).tools, read)
+                    check_listing(await client.list_tools(), read)
                 result = await client.call_tool(tool, arguments)
         except McpCallFailed:
             raise
@@ -6154,8 +6211,8 @@ class HttpMcpCaller:
 
 Run: `uv run ruff format worker tests/plan_m && uv run ruff check --fix worker tests/plan_m`, then
 `uv run python -m pytest tests/plan_m/test_worker_r029.py tests/plan_d/test_worker.py tests/plan_h/test_worker_units.py -q`
-→ every test passes (`test_worker_r029.py` 12: the real listing, three altered listings, seven refused results and the
-handler's FAILED "retrieval failed"; Plan D's transport test and Plan H's lost-lease test still pass, the list call
+→ every test passes (`test_worker_r029.py` 12: the real listing (with a paged listing refused inside the same test),
+three altered listings, seven refused results and the handler's FAILED "retrieval failed"; Plan D's transport test and Plan H's lost-lease test still pass, the list call
 now being the first thing the session does).
 
 - [ ] **Step 3: The live positive half**
@@ -6252,7 +6309,8 @@ git commit -m "feat(worker): R029 - list the read tools, compare their schemas, 
 **Files:**
 - Create: `docs/runbooks/asset-sim.md`
 - Modify: `tests/e2e/test_mcp_read_process_live.py` (R025's call), `docs/runbooks/mcp-read.md`, `mcp-read/README.md`,
-  `docs/runbooks/dev-topology.md`, `docs/runbooks/walking-skeleton.md`, `docs/retrieval.md`
+  `docs/runbooks/dev-topology.md`, `docs/runbooks/walking-skeleton.md`, `docs/retrieval.md`,
+  `sweeper/src/ops_sweeper/sync.py` and `tests/e2e/test_auth_live.py` (two docstrings that count the processes)
 
 **Requirements:** ruling 17 (the asset tools proven with an independent client over HTTP, BS:378, R025's pattern),
 ruling 4 (the rule documented), ruling 11 (`docs/retrieval.md` records the excerpt change), BS:405.
@@ -6607,7 +6665,31 @@ with:
 `OPS_SYNC_ALLOW_MASS_DEACTIVATION=1 uv run python scripts/skeleton.py up`, which restarts all seven processes, and the
 ```
 
-Edit 12 (`docs/retrieval.md`, the settings table), replace:
+Edit 12 (`sweeper/src/ops_sweeper/sync.py`, `sync_memberships`' docstring), replace:
+
+```python
+    scripts/skeleton.py up` restarts all six processes, and the sweeper clears it after its first successful sync.
+```
+
+with:
+
+```python
+    scripts/skeleton.py up` restarts all seven processes, and the sweeper clears it after its first successful sync.
+```
+
+Edit 13 (`tests/e2e/test_auth_live.py`, the `skeleton` fixture's docstring), replace:
+
+```python
+    """Six processes for the module (this module is opted out of the autouse stamp, so every later `synced_at` is the
+```
+
+with:
+
+```python
+    """Seven processes for the module (this module is opted out of the autouse stamp, so every later `synced_at` is the
+```
+
+Edit 14 (`docs/retrieval.md`, the settings table), replace:
 
 ```markdown
 | Results | `limit` 1 to 8 (the worker asks for 3; the measurement uses 5); excerpt the first 500 characters |
@@ -6633,7 +6715,8 @@ Constraints.
 
 ```bash
 git add tests/e2e/test_mcp_read_process_live.py docs/runbooks/asset-sim.md docs/runbooks/mcp-read.md \
-  mcp-read/README.md docs/runbooks/dev-topology.md docs/runbooks/walking-skeleton.md docs/retrieval.md
+  mcp-read/README.md docs/runbooks/dev-topology.md docs/runbooks/walking-skeleton.md docs/retrieval.md \
+  sweeper/src/ops_sweeper/sync.py tests/e2e/test_auth_live.py
 git commit -m "docs: asset-sim's runbook, mcp-read's three tools, an independent client reading an asset (T16)"
 ```
 
@@ -6644,7 +6727,7 @@ git commit -m "docs: asset-sim's runbook, mcp-read's three tools, an independent
   `handoff/acceptance-matrix.json` (R025's note, R028, R029, R131), `handoff/BUILD_BACKLOG.md` (T16 checked; one note each under
   T16 and T18), `SESSION_STATE.md` (the "Next task" lines, a "Plan M executed" section, the dev database state, the
   owner inputs), `STATUS.md` (an update section), `docs/ARCHITECTURE.md` (R131's read-half row, a new section 10),
-  `docs/PROJECT_HISTORY.md` (section 30; the last section becomes 31), this plan (its checkboxes); the evidence under
+  `docs/PROJECT_HISTORY.md` (section 30 gains its execution paragraph), this plan (its checkboxes); the evidence under
   `reports/asset-sim/` and `reports/mcp-read/` and the files the final live run rewrites
 
 **Requirements:** the T16 record (R028, R029 evidenced; R131's read half complete); every deferral to T16 in live code
@@ -6748,24 +6831,24 @@ rows = {
         "resolve_invocation still resolves the handle, and answer again once it is back; a run requested by a reader "
         "never answers. No forbidden data reaches the caller in any of these.",
     ),
+    # RECORDED_LOCALLY means the evidence paths pass in check.py and CI, so only the in-process files are listed; the
+    # note names the live positive case and its report (round 2, Minor 2).
     "R029": (
         [
             "tests/plan_m/test_worker_r029.py",
-            "tests/e2e/test_mcp_read_t16_live.py",
-            "reports/mcp-read/t16-read-tools.txt",
             "tests/plan_m/test_mcp_read_assets.py",
             "tests/plan_m/test_tool_contracts.py",
         ],
         "Plan M (T16): in-process (tests/plan_m/test_worker_r029.py: the worker's real client against mcp-read's real "
         "app over an ASGI transport, and its checks on scripted results), the client lists the read tools in the same "
         "session before it calls one and refuses (McpCallFailed, the run FAILED as retrieval failed) a tool added or "
-        "removed or an altered input schema of the called tool, compared with the committed file as canonical JSON, "
-        "without calling it; it refuses an error-flagged, malformed (nested data checked against "
+        "removed, a listing with a further page, or an altered input schema of the called tool, compared with the "
+        "committed file as canonical JSON, without calling it; it refuses an error-flagged, malformed (nested data checked against "
         "schemas/tool-result.schema.json, date-time formats included), another tool's, non-object, non-ok or "
         "larger-than-256-KiB result (the bound applies after the SDK has parsed the body; a transport-level bound is "
         "T30's). Live, only the positive case: tests/e2e/test_mcp_read_t16_live.py's "
-        "test_r029_the_workers_client_accepts_the_real_server_and_every_real_read, where the real server passes and "
-        "all three reads validate. mcp-read itself validates asset-sim's answers as whole tool results and against the "
+        "test_r029_the_workers_client_accepts_the_real_server_and_every_real_read (recorded in "
+        "reports/mcp-read/t16-read-tools.txt), where the real server passes and all three reads validate. mcp-read itself validates asset-sim's answers as whole tool results and against the "
         "run's scope before returning them (UPSTREAM_INVALID). The write calls keep T47's check (T20).",
     ),
 }
@@ -7046,36 +7129,23 @@ it is the committed contract's.
 ## Where the code will live (not yet written)
 ```
 
-Edit 9 (`docs/PROJECT_HISTORY.md`, before the last section), replace:
+Edit 9 (`docs/PROJECT_HISTORY.md`, the end of section 30, which the plan stage wrote; the last section is 31),
+replace:
 
 ```markdown
-## 30. What the process taught
+evidence paths, the scan's roots and the two docstrings were corrected. No count moved.
+
+## 31. What the process taught
 ```
 
 with:
 
 ```markdown
-## 30. The read-tools plan gave mcp-read its asset half and the worker its checks
+evidence paths, the scan's roots and the two docstrings were corrected. No count moved.
 
-**Problem.** Plan M takes T16. mcp-read served one tool; `get_asset_status` and `get_recent_alerts` had neither a
-definer nor a destination, asset-sim was a three-file stub, corpus-1's assets carried no status, the search stamped
-`retrieved_at` from the wall clock and cut excerpts silently at 500 characters, nothing re-checked a requester's
-membership at read time, and the worker called a tool without asking what the server offered or checking what came
-back. The fact sheet found eighteen open questions; the controller's brief ruled on each, deferring vector mode to
-T18.
-
-**Change.** Revision 0012 with `asset_scope` and the re-created search (the requester re-check in both, the definer's
-instant, the whole section as the excerpt); asset-sim as a seventh process deriving status and alerts from corpus-1
-without changing it; the two asset tools behind two committed units and mcp-read's own token; the search on the run's
-asset type; the committed schemas at run time on both sides of the boundary; and the worker's fail-closed discovery and
-result checks.
-
-**Review.** Writing the plan against the code moved four details: the search needs the run's scope too, so it runs
-three units; the excerpt and instant change had to land with the revision, because the function's return type changed;
-asset-sim's faults reused three existing hooks and added one, which changed the "no orphan hook" invariant; and the
-worker's checks stay on the read calls, because mcp-write does not advertise the committed files. The plan was applied
-task by task to a scratch copy of the tree, where every dev count was measured; the SQL and the live tests first run
-at execution. <review>
+**Execution.** Plan M was executed on branch `plan-m` (`<base>..<last>`). The gates afterwards were `check.py` `<dev>`,
+`check.py --profile test` `<live>` and `verify_handoff.py` exit 0. The live suite was the first to run 0012's SQL and
+asset-sim against Keycloak's tokens. <review>
 
 ## 31. What the process taught
 ```
@@ -7083,8 +7153,8 @@ at execution. <review>
 - [ ] **Step 3: Final gates and the evidence**
 
 With the dev stack up and every skeleton process down: `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN`,
-pytest `1341 passed, 205 skipped`; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → `CHECK: GREEN`,
-pytest `1525 passed, 21 skipped` (or the measured counts; Step 4 writes what was measured); `uv run python -I
+pytest `1344 passed, 205 skipped`; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → `CHECK: GREEN`,
+pytest `1528 passed, 21 skipped` (or the measured counts; Step 4 writes what was measured); `uv run python -I
 scripts/verify_handoff.py --reference-code --manifest --contracts` → exit 0. Then `git checkout -- reports/bootstrap
 reports/auth reports/admission reports/leases reports/events reports/outbox reports/mcp-write reports/retrieval`, and
 keep, from this run, `reports/asset-sim/t16-asset-sim.txt`, `reports/mcp-read/t16-read-tools.txt`, the two rewritten
@@ -7095,8 +7165,8 @@ R105 file's evidence line: it must still name a section (Review Focus 3).
 
 - [ ] **Step 4: Fill in the placeholders and commit**
 
-Replace `<base>`, `<last>`, `<date>`, `<dev>` and `<live>` everywhere this task wrote them, and `<review>` in
-`docs/PROJECT_HISTORY.md` with one sentence on the final review's outcome (or delete it when the review is still to
+Replace `<base>`, `<last>`, `<date>`, `<dev>` and `<live>` everywhere this task wrote them (`docs/PROJECT_HISTORY.md`
+included), and `<review>` there with one sentence on the final review's outcome (or delete it when the review is still to
 come). Check: `grep -rn "<base>\|<last>\|<date>\|<dev>\|<live>\|<review>" SESSION_STATE.md STATUS.md
 docs/PROJECT_HISTORY.md` → no output. Tick this plan's checkboxes.
 
