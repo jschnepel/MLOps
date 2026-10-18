@@ -60,6 +60,8 @@ def test_persona_token_sub_equals_seed_id(env, secret: Callable[[str], str]) -> 
         c = kc.claims(tok["access_token"])
         assert c["sub"] == SEEDS["personas"][name]["user_id"], name  # the join key to the seeded PostgreSQL rows
         assert c["azp"] == "ops-dev-direct" and c["preferred_username"] == name
+        aud = c["aud"]
+        assert "ops-api" in ([aud] if isinstance(aud, str) else aud)  # Keycloak emits a bare string for one audience
         _record(f"persona {name} (host)", redact(c))
 
 

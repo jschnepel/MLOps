@@ -75,6 +75,8 @@ services:
 secrets:
   postgres_password:
     file: ${OPS_SECRETS_DIR}/postgres_password
+  postgres_incident_password:
+    file: ${OPS_SECRETS_DIR}/postgres_incident_password
   kc_bootstrap_admin_password:
     file: ${OPS_SECRETS_DIR}/kc_bootstrap_admin_password
   kc_client_secret_ops_web:

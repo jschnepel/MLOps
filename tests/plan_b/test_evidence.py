@@ -1,4 +1,4 @@
-"""Nothing under reports/bootstrap/ may contain a token, a password or a client secret.
+"""Nothing under reports/bootstrap/ or reports/skeleton/ may contain a token, a password or a client secret.
 
 Locally the generated secret values are read from the secrets directory (`.env`'s OPS_SECRETS_DIR, else the default)
 and must not appear in any evidence file; in CI no secrets exist, so only the JWT-shape check applies.
@@ -12,7 +12,7 @@ import pytest
 
 from scripts.bootstrap_dev import secrets_dir
 
-EVIDENCE_ROOT = Path("reports/bootstrap")
+EVIDENCE_ROOTS = (Path("reports/bootstrap"), Path("reports/skeleton"))
 JWT = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
 
 
@@ -27,8 +27,6 @@ def local_secrets_dir() -> Path:
 
 
 def test_evidence_has_no_token_shapes():
-    if not EVIDENCE_ROOT.exists():
-        return
     directory = local_secrets_dir()
     files = [p for p in directory.glob("*") if p.is_file()] if directory.exists() else []
     # Empty values are skipped: "" is a substring of every text and would fail every file.
@@ -38,12 +36,15 @@ def test_evidence_has_no_token_shapes():
     # pairs instead and assert on that list only; neither a value nor any file text reaches the message.
     token_files = []
     leaked = []
-    for path in EVIDENCE_ROOT.rglob("*"):
-        if path.is_file():
-            text = path.read_text(encoding="utf-8")
-            if JWT.search(text):
-                token_files.append(path.name)
-            leaked.extend((path.name, i) for i, v in enumerate(values) if v in text)
+    for root in EVIDENCE_ROOTS:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if path.is_file():
+                text = path.read_text(encoding="utf-8")
+                if JWT.search(text):
+                    token_files.append(path.name)
+                leaked.extend((path.name, i) for i, v in enumerate(values) if v in text)
     assert not token_files, f"evidence files containing a JWT-shaped token: {token_files}"
     assert not leaked, f"evidence files containing a generated secret, as (file, secret index): {leaked}"
 
@@ -60,7 +61,7 @@ def test_evidence_failure_message_never_prints_the_literal(tmp_path, monkeypatch
     (evidence / "run.txt").write_text(f"admin password is {literal} oops\n", encoding="utf-8")
     module = sys.modules[__name__]
     monkeypatch.setattr(module, "local_secrets_dir", lambda: fake_secrets)
-    monkeypatch.setattr(module, "EVIDENCE_ROOT", evidence)
+    monkeypatch.setattr(module, "EVIDENCE_ROOTS", (evidence,))
     with pytest.raises(AssertionError) as excinfo:
         test_evidence_has_no_token_shapes()
     assert literal not in str(excinfo.value)

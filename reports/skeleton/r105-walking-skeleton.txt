@@ -1,0 +1,6 @@
+R105 walking skeleton — 2026-10-08T15:40:29Z
+run_id=b687ff38-5780-4c35-b7e2-400169816270 accepted status=QUEUED
+proposal_id=a2577de7-746f-4d62-ad6f-cc307a23978d revision=1 payload_sha256=222b5083d29d427a8b61468df2a3ce9d0566a9aa5ec8459c5e725c756ec62707 evidence=['ALPHA-TRIAGE:v1:scope']
+state=SUCCEEDED state_version=7 action_id=eb7245b8-979a-4103-a8e7-896a94139bbe incident_id=INC-000073
+events=run.accepted,tool.started,tool.completed,explanation.ready,proposal.ready,approval.recorded,action.granted,action.dispatched,action.confirmed
+replay=same_action_id refusals=api:worker,destination:persona+worker,mcp-write:persona+mcp-read

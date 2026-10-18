@@ -39,10 +39,12 @@ dev = [
   "hypothesis>=6.140,<7",
   "pyyaml>=6.0,<7",
   "rfc3339-validator>=0.1.4,<1",
+  "pytest-asyncio>=1.4,<2",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/plan_a", "tests/plan_b", "tests/plan_c"]
+testpaths = ["tests/plan_a", "tests/plan_b", "tests/plan_c", "tests/plan_d", "tests/e2e"]
+asyncio_default_fixture_loop_scope = "function"
 # Setting this replaces pytest's defaults (which include ".*"), so ".*" is restated: otherwise pytest walks .hypothesis/.
 norecursedirs = ["reference", ".venv", "node_modules", "build", ".*"]
 addopts = "-ra"

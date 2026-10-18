@@ -7,3 +7,12 @@ persona lee (host): {"azp": "ops-dev-direct", "iss": "http://localhost:18080/rea
 persona riley (host): {"azp": "ops-dev-direct", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "riley", "sub": "2f73af91-4906-5b79-9144-22c0df4e2316", "typ": "Bearer"}
 persona jordan (host): {"azp": "ops-dev-direct", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "jordan", "sub": "cb551e64-83ec-582b-9047-8dadf20e151a", "typ": "Bearer"}
 iss host vs container: {"container": "http://localhost:18080/realms/ops-dev", "host": "http://localhost:18080/realms/ops-dev"}
+ops-worker (host): {"aud": ["http://mcp-read:8081/mcp", "http://mcp-write:8082/mcp", "account"], "azp": "ops-worker", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "service-account-ops-worker", "sub": "e780a381-754d-4566-afee-d452bd1c0007", "typ": "Bearer"}
+ops-mcp-read (host): {"aud": ["asset-sim", "account"], "azp": "ops-mcp-read", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "service-account-ops-mcp-read", "sub": "8587f16c-1c39-4ea8-80c5-9226d9cbe566", "typ": "Bearer"}
+ops-mcp-write (host): {"aud": ["incident-sim", "account"], "azp": "ops-mcp-write", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "service-account-ops-mcp-write", "sub": "86957f93-349b-4364-a72a-7084f0f93476", "typ": "Bearer"}
+persona alex (host): {"aud": "ops-api", "azp": "ops-dev-direct", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "alex", "sub": "2fc05986-c7ec-544c-b628-fdb112bbf18a", "typ": "Bearer"}
+persona sam (host): {"aud": "ops-api", "azp": "ops-dev-direct", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "sam", "sub": "03f7eb09-e18d-5f33-bf75-12c57d5aaa54", "typ": "Bearer"}
+persona lee (host): {"aud": "ops-api", "azp": "ops-dev-direct", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "lee", "sub": "abcc1200-6791-57ab-87b5-9392d356b512", "typ": "Bearer"}
+persona riley (host): {"aud": "ops-api", "azp": "ops-dev-direct", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "riley", "sub": "2f73af91-4906-5b79-9144-22c0df4e2316", "typ": "Bearer"}
+persona jordan (host): {"aud": "ops-api", "azp": "ops-dev-direct", "iss": "http://localhost:18080/realms/ops-dev", "preferred_username": "jordan", "sub": "cb551e64-83ec-582b-9047-8dadf20e151a", "typ": "Bearer"}
+iss host vs container: {"container": "http://localhost:18080/realms/ops-dev", "host": "http://localhost:18080/realms/ops-dev"}
