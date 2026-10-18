@@ -185,6 +185,13 @@ HANDLE_BINDING: Final = ("app._resolve_handle(text, text, text)", "j.run_id = v_
 # with the new signatures, so it refuses to start without them (Plan K ruling 25). The same rule as above: a later
 # revision that re-creates `request_abort` keeps this text or changes it here in the same commit.
 WRITE_PATH: Final = ("app.request_abort(text, text, uuid)", "ABORT_NOT_DUE")
+# Revision 0011 (T17): mcp-read answers `search_procedures` from the governed corpus through `search_procedures_scoped`,
+# so it refuses to start without it (Plan L rulings 21 and 24). The same rule: a later revision that re-creates the
+# function keeps this text or changes it here in the same commit.
+GOVERNED_CORPUS: Final = (
+    "app.search_procedures_scoped(text, text, text, public.vector, text, integer, text)",
+    "ts_rank_cd(c.search, v_query)",
+)
 
 
 async def assert_function_text(conn: Conn, signature: str, marker: str) -> None:
@@ -440,6 +447,63 @@ async def resolve_invocation(conn: Conn, *, handle: str, azp: str, tool: Tool) -
         run_state,
         None if attempt_state is None else attempt_state.value,
     )
+
+
+@dataclass(frozen=True)
+class Procedure:
+    """One permitted section, as `search_procedures_scoped` ranked it. `rank` is `ts_rank_cd`'s score: it orders the
+    results of one query and means nothing across queries or methods (docs/retrieval.md); no tool result carries it."""
+
+    evidence_id: str
+    document_id: str
+    version: str
+    section: str
+    content_sha256: str
+    excerpt: str
+    effective_from: datetime
+    rank: float
+
+
+@dataclass(frozen=True)
+class Procedures:
+    """A search's answer: the tenant's latest ingested corpus version ("none" before any) and the sections, best
+    first."""
+
+    corpus_version: str
+    results: tuple[Procedure, ...]
+
+
+async def search_procedures(
+    conn: Conn, *, handle: str, azp: str, query: str, asset_type: str | None, limit: int
+) -> Procedures:
+    """Lexical search over the handle's tenant's approved, effective chunks (SA:461, T17); the embedding stays NULL
+    and the mode `lexical` until T18. The handle never reaches a log.
+
+    Raises:
+        HandleRejected: the handle does not resolve for mcp-read (the definer's `_resolve_handle`).
+        Refused: an argument outside the tool's bounds (`BAD_ARGUMENT`).
+    """
+    row = await _call(
+        conn,
+        "SELECT * FROM app.search_procedures_scoped(%s, %s, %s, NULL, %s, %s, 'lexical')",
+        (handle, azp, query, asset_type, limit),
+    )
+    if row is None:
+        raise PersistenceError("search_procedures_scoped returned nothing")
+    results = tuple(
+        Procedure(
+            evidence_id=str(hit["evidence_id"]),
+            document_id=str(hit["document_id"]),
+            version=str(hit["version"]),
+            section=str(hit["section"]),
+            content_sha256=str(hit["content_sha256"]),
+            excerpt=str(hit["excerpt"]),
+            effective_from=datetime.fromisoformat(str(hit["effective_from"])),
+            rank=float(hit["rank"]),
+        )
+        for hit in row["results"]
+    )
+    return Procedures(str(row["corpus_version"]), results)
 
 
 @dataclass(frozen=True)

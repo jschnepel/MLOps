@@ -2,17 +2,19 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan K (T47) is executed on branch `plan-k` (on top of `plan-j`: `dd9f7b1..ea0bf54` holds the debt list and
-the five building tasks, the close-out is `a335e1b..6ec740f`, the final-review fix wave `b2ba317..5c96f0d`, the final review record `30f47d4`). T47 is DONE subject to the owner's decisions on errata
-72, 84 and 91 (R131's function sets and the attempt-state allowlist). Owner inputs: (1) the holdout seal (T03 step 9),
-then the live probe (T02); (2) merge the stacked PRs #1-#10 in order (plan-b -> main through plan-k -> plan-j; #10 is
-https://github.com/jschnepel/MLOps/pull/10); (3) T44 step 10 (step A applied 2026-10-16; the other-device LAN check and the firewall rules remain)
-(`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F, G, H, I, J and K (K: 82-92
-below). The dev database is at revision 0010 (the owner migrated it on 2026-10-16). Next
-is Plan L = T17 (the governed corpus, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after
-T47, unblocked by T09).
+**Next task:** Plan L (T17) is executed on branch `plan-l` (on top of `plan-k`: `c329145..bbba69c` holds the debt list and
+the five building tasks, and the close-out is the commit after `bbba69c`). T17 is DONE subject to the owner's decision
+on erratum 102 (R033's "missing source remains missing": 15/20 no-source development questions answered with
+nothing at the 0.25 minimum rank; the other 5/20 stay open: SA:377 as written would not abstain on them, so T20 must add a relevance criterion beyond it); R131's read half is met subject to the
+owner's decision on erratum 96 (`asset_scope` still arrives with T16). Owner inputs: (1) the holdout seal (T03
+step 9), then the live probe (T02); (2) merge the stacked PRs #1-#11 in order (plan-b -> main through plan-l ->
+plan-k; #11 is https://github.com/jschnepel/MLOps/pull/11); (3) T44 step 10 (step A applied 2026-10-16; the
+other-device LAN check and the firewall rules remain) (`docs/runbooks/ollama-network.md` step A); (4) decide the
+proposed errata of Plans C, E, F, G, H, I, J, K and L (L: 93-102 below). The dev database is at 0011 with corpus-1
+ingested (owner, 2026-10-18). Next is Plan M = T16 (the read tools and asset-sim, the earliest dependency-satisfied PLANNED task in
+`handoff/tasks.json` after T17, now unblocked; T18 and T23 are unblocked too; T19 and T41 wait on owner steps).
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-k` (Plan K work on top of `plan-j`, on top of `plan-i`, on top of `plan-h`, on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#10 (plan-b -> main through plan-k -> plan-j) are open now; `plan-j` and `plan-k` are pushed (2026-10-16). Merging them in order is the owner's call.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-l` (Plan L work on top of `plan-k`, on top of `plan-j`, on top of `plan-i`, on top of `plan-h`, on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) are open now; `plan-j` and `plan-k` are pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11). Merging them in order is the owner's call.
 
 ## Done in the planning session (2026-10-06)
 
@@ -755,6 +757,96 @@ T47, unblocked by T09).
   (T30), the worker's recover handler and everything after it (T22), the deadline as a setting (T29), signed receipts
   (v1.1).
 
+## Plan L executed (2026-10-18 UTC, branch `plan-l`)
+
+- T17 = `c329145..bbba69c` (the debt list first, then the five building tasks; the close-out is the commit after
+  `bbba69c`). The plan (`docs/superpowers/plans/2026-10-16-first-slice-l-governed-corpus.md`) holds the 24 rulings of
+  the controller's brief as implemented, with seven departures named at its top; the input is
+  `docs/superpowers/research/2026-10-16-plan-l-inputs.md`. Evidence: `tests/e2e/test_migration_0011_live.py` (the
+  lifecycle cases at the definer, the test clock moved, tenant and asset-type filtering, ties, limits and refusals,
+  the ACL and the worker's RLS, the round trip to 0010 with the extension kept), `test_ingest_live.py` (R032),
+  `test_mcp_read_live.py` (the tool over HTTP on the governed corpus), `test_retrieval_baseline_live.py` and
+  `reports/retrieval/t17-lexical-baseline.md`/`.json` (R033); the unit half is in `tests/plan_l/` (R099:
+  `test_corpus_files.py`); the settings, the score interpretation and the freeze are in `docs/retrieval.md`.
+- **R033** is met subject to the owner's decision on erratum 102: at the 0.25 minimum rank 15/20 no-source
+  development questions were answered with nothing; the other 5/20 stay open: SA:377 as written counts any returned effective chunk as sufficient and would not abstain on them, so T20 must add a relevance criterion beyond it (for example a score or label-based sufficiency rule). The minimum rank was
+  chosen on the same 47 queries, so the baseline is a development figure, not a held-out one.
+- **The frozen corpus.** `corpus-1`, lock `81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862`
+  (`ops_core.corpus.RELEASES`), is the corpus T41 labels the holdout against; any change to a locked file after T41
+  is a new version and requires re-labelling.
+- Gates: `check.py` 1270 passed, 191 skipped; `check.py --profile test` 1440 passed, 21 skipped; `verify_handoff.py` exit 0 (STATUS.md, "Update —
+  Plan L executed").
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan K's
+  ninety-two:
+  93. SA:461 (`search_procedures_scoped`): the signature is `(raw_handle, client_azp, query, query_embedding
+      vector(768), asset_type, limit, mode)`, the caller's `azp` second as in `resolve_invocation` and the write path
+      (erratum 83), because `_resolve_handle` binds the handle to the presented token's `azp`; it returns one row
+      `(corpus_version, results)`, the tenant's latest ingested corpus version (`none` before any) and the ranked
+      results with a `rank` each, which mcp-read leaves out of the tool result.
+  94. AM-20.2 SA:431 with BS:241 (the corpus lifecycle): no role may UPDATE the corpus, so status and effective
+      interval are append-only `document_states` rows and the highest `seq` is current; a document's versions form
+      one chain (consecutive whole numbers, each naming the one before in `supersedes`); "superseded" is a status or
+      the effect of retirement (a later version that has left `draft` has reached its `effective_from`; final, even
+      if that successor is later revoked or expires, because ingestion refuses the only changes that could undo
+      it: a version that has left `draft` never returns to it and keeps its `effective_from`), "expired" is
+      `effective_to` at or before now, "revoked" is final.
+  95. AM-20.2 SA:431 and AM-20.5 SA:510: `document_states` and `corpus_ingestions` join `documents` and `chunks` with
+      the same cells (`worker` INSERT/SELECT, `app_definer` SELECT) and the `tenant_isolation` policy; `embeddings`
+      is created by T18, its first writer.
+  96. R131 with errata 72 and 91: `mcp_read` executes `current_time`, `resolve_invocation` and
+      `search_procedures_scoped`; only `asset_scope` (T16) is still to come; `mcp_exec`'s "no read function" now
+      includes `search_procedures_scoped` (42501 when called).
+  97. BS:413 ("tenant or explicit shared policy"): v1 documents are tenant-only; a document both tenants need is copied;
+      AM-20.5 keeps its two policies.
+  98. AM-20.4 and SA:440 (who writes the corpus): ingestion is an operator command, `scripts/skeleton.py ingest`,
+      connecting as `worker` (AM-20.2's ingestion cells), not a job type and not a `migrator` data migration; the
+      services start on an empty corpus and the worker then answers INSUFFICIENT_EVIDENCE.
+  99. SA:461 and SA:348 (vector mode): `mode = 'vector'` is refused inside the function (`OC005`
+      `VECTOR_MODE_UNAVAILABLE`) until T18 stores embeddings; the `vector` extension is bootstrap infrastructure
+      (`skeleton.py ensure_extensions`) that revision 0011 requires and never creates or drops.
+  100. BS:415 (chunking): one chunk per `## ` section (45-119 words in corpus-1, below the initial 300-600-token
+       proposal), measured in `[a-z0-9]+` words because no tokenizer is locked; another window is evaluated in T18's
+       comparison.
+  101. `data/handoff-fixtures/README.md` ("do not add attack variants to a normal approved corpus without an explicit
+       test flag"): AM-50 wins; one injected document per tenant is approved and labelled `injected`, stored and not
+       filtered; the delivered fixtures stay the 1.0 contract fixture and no service reads them.
+  102. R033 ("missing source remains missing, not guessed"): even above the 0.25 minimum rank, lexical OR-matching
+       can return a permitted section for a no-source question (15/20 of the development set's no-source questions
+       were answered with nothing); the share is measured and reported. The residue (5/20) is open: SA:377 as written
+       counts any returned effective chunk as sufficient, so it would not abstain on those cases; T20 must add a
+       relevance criterion beyond it (for example a score or label-based sufficiency rule). R033 is recorded as met subject to this erratum.
+- Rulings made during execution (the controller's, from the SDD ledger; none changes a spec line):
+  (a) the plan printed `search_procedures_scoped`'s argument types in the wrong order (`text, text, public.vector,
+  text, integer, text, text`); the function's real order is `(text, text, text, public.vector, text, integer,
+  text)`, found by the first live run of the revision and fixed in the type lists only (the revision, `privileges`,
+  `persistence`, the unit tests); the plan file still prints the wrong list in eight places and is left as written.
+  (b) The added refusal tests (Task 2) and the fix rounds' tests (Task 3) put the dev count 51 above the plan's
+  arithmetic (52 after the final-review wave added one test); every gate figure here is the measured one. (c) Ingestion refuses `superseded` -> `approved` (fail
+  closed; an owner who wants the text back publishes a new version). (d) A lock against concurrent ingestions was
+  declined (one operator; a concurrent run can raise a unique violation, and nothing is half-written within a
+  tenant). (e) The baseline measurement pins the test clock to the labelling instant (`AS_OF`) and asserts the
+  permitted set equals both `corpus.returnable(AS_OF)` and the hand-written `RETURNABLE_AT_AS_OF`, so the figures
+  reproduce on any date; the in-measurement forbidden check is circular (SQL against the same rule in Python) and
+  `docs/retrieval.md` names the hand-written anchor as the independent check.
+- **Open items for later** (minors parked by the task reviews; none changes a verdict):
+  the final whole-branch review (0 Critical, 0 Important, 5 Minor; record in
+  `docs/reviews/plan-l-final-review-2026-10-18.md`, fix wave 2f7efa4 and 34e9c42) took M1 to M3 in a fix wave (no
+  `type: ignore` left: `IngestInterrupted` chains the store failure and carries the tenants written; `skeleton.py
+  ingest` prints a `PersistenceError`'s own hint, class only for a driver error; this history), recorded M4 as a debt
+  line (the Plan L debt list: `retrieved_at` -> T16) and M5 as a line in `docs/retrieval.md`. It ruled three parked
+  minors harmless: the Task 5 test pins the rendered development-figure sentence, not the words inside
+  `SETTINGS["minimum_rank"]` (the constant already contains them and the markdown is rendered from it, so a test on the
+  constant adds nothing); the Task 5 `finally` resets the clock before `purge_run` (if the reset raised, the runs
+  would leak only into `ops_test`, which the next session drops, and the clock reset matters more); and `skeleton.py
+  ingest` has no concurrency lock (every concurrent interleaving traced ends in a primary-key collision and a tenant
+  rollback, never in a wrong state; the operator re-runs). Also open: a phase-2 refusal (the store changed between
+  ingestion's two phases, a concurrent run) can leave earlier tenants written and is reported as such, not prevented;
+  lengthening or clearing `effective_to` stays allowed; the query is normalised by
+  `regexp_replace('[^a-z0-9]+', ' ')` while chunk text is parsed raw, so `4.5` or `M8x1.25` cannot match as one
+  lexeme (T18); the no-source questions that still return a section (A15, B10, B13, B17, B18) come from generic
+  words such as `records` and are T18's tuning and T20's relevance criterion (SA:377 alone would not abstain on them), not a defect of `corpus-1`; the plan file
+  still prints the wrong regprocedure signature in eight places.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -993,6 +1085,33 @@ Allowed shortcuts in T47, each with its owning task:
 - the dev database stays at revision 0005 until the owner migrates it (0006 to 0010 pending); until then the API, the
   sweeper, the worker, mcp-read and mcp-write refuse to start on it, mcp-write now also without 0010 → owner input.
 
+## Plan L debt list (T17; committed before coding) [R6-B7]
+
+Allowed shortcuts in T17, each with its owning task:
+- vector retrieval: the `embeddings` table, the nomic-embed-text `search_document:`/`search_query:` embeddings, the
+  `mode = 'vector'` branch of `search_procedures_scoped` (refused `VECTOR_MODE_UNAVAILABLE` until then), tuning the
+  minimum rank (0.25, chosen on the development queries; `ts_rank_cd` is unnormalised, so it depends on query
+  length), and the evaluation of another chunk window than one per section → T18 (Plan L rulings
+  2, 4 and 18); mcp-read's `vector_exact` → `mode=vector` translation (until then `UNSUPPORTED_MODE` before the
+  database) → T16;
+- the query is normalised by `regexp_replace('[^a-z0-9]+', ' ')` while chunk text is parsed raw, so a token such as
+  `4.5` or `M8x1.25` cannot match as one lexeme (recall loss on numeric values) → T18;
+- `asset_scope`, the asset tools, asset-sim serving `data/corpus/assets.json`, and the run's own asset type passed to
+  the search (the tool takes `asset_type` from its caller only) → T16 (ruling 11);
+- the requester's current membership re-checked at read time (R028) → T16 (ruling 10);
+- the final grant's recheck that every cited source version is still approved and effective (BS:425, R045) → T21;
+  revoked text kept out of checkpoints, summaries and events (R035) → T26 (ruling 22);
+- the model-side proof that the injected documents grant nothing (R036), and detecting the conflicting pair and
+  abstaining → T19/T20 (rulings 13 and 14);
+- the excerpt is still cut silently at 500 characters (Plan D's open item) → T16;
+- `retrieved_at` is the wall clock (`datetime.now(UTC)` in mcp-read's `search_response`) while a version's
+  effectiveness is decided at `app.current_time()`, so under a moved test clock a result can carry a `retrieved_at`
+  earlier than its own `effective_from`; return the definer's instant (one more column) and stamp `retrieved_at` from
+  it, so the evidence row records the instant its permission was decided → T16 (Plan L final review, M4);
+- shared (cross-tenant) documents: none; a document both tenants need is copied per tenant → no task (erratum 97,
+  ruling 9);
+- the dev database: migrated to 0011 and corpus-1 ingested by the owner on 2026-10-18 → closed (ruling 24).
+
 ## Environment (observed)
 
 | Item | Observed |
@@ -1057,14 +1176,30 @@ creates `request_abort` and the helper `_dispatch_seconds()`, and changes no row
 app@head, incident at head`), so the dev `ops` database is at `0010_write_path`. `skeleton.py up` then brought all six
 processes to ready (mcp-write's startup check needs 0010) and `down` stopped them.
 
+**Update (2026-10-18 UTC):** Plan L adds revision 0011 and the governed corpus. The dev `ops` database stays at 0010 with no
+corpus until the owner runs `uv run python scripts/skeleton.py migrate` (dev profile: `vector` is created if missing,
+then 0011 adds `corpus_ingestions`, `documents`, `document_states`, `chunks`, `search_procedures_scoped` and `app._min_rank()`,
+changing no row) and then `uv run python scripts/skeleton.py ingest` (corpus-1 into alpha and beta, as the worker; a second run
+writes nothing). Until the migration mcp-read refuses to start (it checks 0011's function); until the ingestion every
+investigation ends INSUFFICIENT_EVIDENCE.
+
+**Update (2026-10-18, later):** the owner ran `uv run python scripts/skeleton.py migrate` on `plan-l` (dev profile: `app at
+app@head, incident at head`), so the dev `ops` database is at `0011_governed_corpus`. The corpus is not yet ingested.
+
+**Update (2026-10-18, later still):** the owner ran `uv run python scripts/skeleton.py ingest` (`INGEST: alpha corpus-1: 9
+new, 0 restated, 0 unchanged`; `INGEST: beta corpus-1: 7 new, 0 restated, 0 unchanged`), so corpus-1's 16 documents are in
+the dev `ops` database. At the owner's request the agent then ran `skeleton.py up`: all six processes reached ready on
+the dev profile (mcp-read's startup check needs 0011), and `down` stopped them.
+
 ## Open owner inputs
 
 - Decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed"), 60-71 (see
-  "Plan I executed"), 72-81 (see "Plan J executed") and 82-92 (see "Plan K executed").
+  "Plan I executed"), 72-81 (see "Plan J executed"), 82-92 (see "Plan K executed") and 93-102 (see "Plan L
+  executed").
 - R025 and R031 have every half evidenced (mcp-read by T15, mcp-write by T47, the import half by T04) but keep
   `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`, because no open task owns them: flipping their status is the owner's call
   (or T15's re-close).
-- Merge the stacked PRs #1-#10 in order (plan-b -> main through plan-k -> plan-j, all open; #1-#5 opened 2026-10-09 and green on CI; the first merge also exercises the push-to-main trigger).
+- Merge the stacked PRs #1-#11 in order (plan-b -> main through plan-l -> plan-k, all open; #1-#5 opened 2026-10-09 and green on CI; the first merge also exercises the push-to-main trigger).
 - Decide on the nine proposed contract errata (see "Plan C executed").
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
 - T06 is closed (public repo, PRs green). The first CI runs were red on ruff EXE001 (a shebang on a non-executable file, a rule ruff skips on Windows) with every test green; fixed by a file-mode commit on each branch.
@@ -1092,10 +1227,11 @@ To run the walking skeleton (dev stack up; see `docs/runbooks/walking-skeleton.m
 
 ```bash
 uv run python scripts/skeleton.py migrate
+uv run python scripts/skeleton.py ingest  # the governed corpus (T17); a repeat writes nothing
 uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; merging the PRs; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-K, up to 92) and write Plan L for T17 (the governed corpus and lexical baseline, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T47, unblocked by T09).
+Then wait for the owner inputs above (holdout seal, then live probe; merging the PRs; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-L, up to 102) and write Plan M for T16 (the read tools and asset-sim over the governed store, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T17, unblocked by T15, T10 and T17; T18 and T23 are unblocked too).
 
 Do not store secrets or private reasoning in this file.

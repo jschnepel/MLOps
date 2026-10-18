@@ -44,7 +44,7 @@ NO_MODEL = {
     "schemas/tool-result.schema.json": (
         "envelopes are built by the MCP servers (mcp-write's in tests/plan_k, T47; the read tools' with T16)"
     ),
-    "schemas/evidence.schema.json": "retrieval rows are produced by mcp-read (T17)",
+    "schemas/evidence.schema.json": "no Python model: search_procedures_scoped builds the rows (T17, test_mcp_read)",
     "schemas/route.schema.json": "enums only; the table is pinned in test_jobs_routes_outcomes",
     "schemas/job.schema.json": "JOB_RULES is pinned in test_jobs_routes_outcomes, the example by --contracts",
 }

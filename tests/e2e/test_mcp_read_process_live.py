@@ -38,15 +38,15 @@ from ops_core.tokens import WorkloadTokenSource
 from scripts.skeleton import healthy, process_environment
 from tests.e2e.conftest import lease_for, purge_run
 from tests.e2e.test_fenced_definers_live import investigate_job, read_handle
-from tests.e2e.test_mcp_read_t15_live import QUERY, free_port, raw_headers, tools_list, worker_token
+from tests.e2e.test_mcp_read_t15_live import ANSWER, QUERY, free_port, raw_headers, tools_list, worker_token
 from tests.e2e.test_migrations_and_persistence import new_run
 from tests.plan_b.live import kc
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested")]  # T17: the governed corpus
 
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 ROOT = Path(__file__).resolve().parents[2]
-ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")  # the seeded tenant: only seeded tenants have a fixture corpus
+ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")  # the seeded tenant, whose corpus is ingested
 EVIDENCE = Path("reports/mcp-read/t15-independent-client.txt")
 EXPECTED_LINES = 2  # one per test below
 
@@ -117,7 +117,7 @@ async def test_r025_an_independent_client_lists_and_calls_over_the_network(
         assert tools[0].input_schema["additionalProperties"] is False
         doc = result.structured_content
         assert not result.is_error and isinstance(doc, dict) and doc["status"] == "ok"
-        assert doc["data"]["results"][0]["evidence_id"] == "ALPHA-INCIDENT:v2:review"
+        assert doc["data"]["results"][0]["evidence_id"] == ANSWER  # first by a wide margin (round 1, M10)
         text = log.read_text(encoding="utf-8", errors="replace")
         leaked = any(value in text for value in (handle, token))  # one boolean: a failing assert prints its operands
         assert not leaked  # the child's own log, written through its redaction filter, holds neither

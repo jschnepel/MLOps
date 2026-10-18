@@ -256,8 +256,9 @@ refused before it learns anything, and nothing about the handle is written down.
 - **The handle third, in the database.** Its hash, the run's lease (shared lock), the fence and expiry, revocation, the
   `azp`, the job (its own run's, unfinished) and the server derived from the job type; then, in Python, the job
   type's tools and run states. Every refusal is the same plain envelope.
-- **Least privilege.** `mcp_read` can execute `current_time` and `resolve_invocation` and nothing else; the search
-  itself still reads the fixture corpus (T17 brings the governed store, T16 the asset tools).
+- **Least privilege.** `mcp_read` can execute `current_time`, `resolve_invocation` and, since T17,
+  `search_procedures_scoped`, and nothing else; the search reads the governed store through that function (section
+  9); the asset tools arrive with T16.
 
 | Requirement | What its test shows |
 |---|---|
@@ -265,7 +266,7 @@ refused before it learns anything, and nothing about the handle is written down.
 | R026 | Tokens for another audience or client are 401 on the request the worker's token passes |
 | R027 | A handle dies with its job, expiry, lease, fence and release, over HTTP; no log record holds it |
 | R085 | The tools come from the job type and run state; an unregistered tool is the SDK's error |
-| R131 (read half) | `mcp_read` executes two functions only; a recover and an execute handle at mcp-read are refused |
+| R131 (read half) | `mcp_read` executes three functions only (the third since T17); a recover and an execute handle at mcp-read are refused |
 
 ---
 
@@ -300,6 +301,39 @@ it leaves, and a recovery call can observe or end an existing action but never s
 | R030 | Execute and investigate handles and an APPROVED run's recover handle are refused at the recovery tools; a lookup changes no count and only GETs |
 | R131 (write half) | `mcp_exec` executes seven functions only; read handles are refused at mcp-write; incident-sim refuses mcp-read's token |
 | R025, R031 (write half) | An independent mcp-write process is listed and called by the official client over the network |
+
+---
+
+## 9. The governed corpus and its one reader (built in T17)
+
+**Claim.** A search returns a section of the handle's own tenant only while its version's latest state is approved,
+it is effective, and no later version that has left draft has reached its effective_from; and the corpus cannot
+change under a version without the change being refused or recorded.
+
+- **One reader.** `app.search_procedures_scoped` is the only way to read the corpus outside ingestion; only `mcp_read`
+  may execute it. The handle decides the tenant (the run's lease FOR SHARE, the fence, expiry, revocation, the token's
+  `azp`, the read server); the latest `document_states` row decides the lifecycle; `app.current_time()` decides
+  "effective"; a later version that left draft and reached its effective_from retires every earlier one for good
+  (the loader keeps each document's versions one chain, and ingestion refuses the only changes that could undo a
+  retirement); an asset type keeps documents of that family or of none;
+  only ranks above `app._min_rank()` (0.25) count. The four corpus tables are under FORCE RLS like every tenant
+  table.
+- **Append-only, idempotent ingestion.** The worker inserts and never updates: a version is its file's hash and
+  attributes, fixed once stored; a lifecycle change is a new state row; anything else that changes under a version is
+  refused for the whole run before a row is written, and so are a return to draft and a moved effective_from once a
+  version has left draft (either would un-retire a predecessor). A repeated run writes nothing.
+- **A frozen, locked corpus.** `data/corpus` is authored and synthetic; its lock is frozen per version in
+  `ops_core.corpus.RELEASES`, so a changed document without a new version fails the checker; `corpus-1` is what the
+  holdout is labelled against (T41).
+- **Measured on development data.** The lexical baseline's numbers, with denominators, are in `reports/retrieval/`;
+  the minimum rank was chosen on the same queries, so they are development figures; how to read a score is in
+  `docs/retrieval.md`.
+
+| Requirement | What its test shows |
+|---|---|
+| R032 | A repeat writes nothing; a changed file under a version is refused with nothing written; a revoke stops retrieval; a successor supersedes, and pulling it back to draft or postponing it is refused |
+| R033 | 47 labelled development queries measured at k = 5 with denominators; no forbidden section returned; "missing stays missing" subject to erratum 102 |
+| R099 | 16 documents of 332-349 prose words after title and banner (test bound 320-900, R099 floor 300), six assets, per-section hashes, tenant and alert UUIDs, every lifecycle case |
 
 ---
 

@@ -81,4 +81,4 @@ def test_keycloak_and_service_urls_default_to_the_dev_stack(secrets: Path, monke
     assert u.mcp_read_resource == "http://mcp-read:8081/mcp" and u.mcp_read == "http://127.0.0.1:8081/mcp"
     assert u.mcp_write_resource == "http://mcp-write:8082/mcp" and u.mcp_write == "http://127.0.0.1:8082/mcp"
     assert u.incident_sim == "http://127.0.0.1:8090"
-    assert settings.fixtures_dir() == Path("data/handoff-fixtures")
+    assert not hasattr(settings, "fixtures_dir")  # T17: no service reads the delivered fixtures any more

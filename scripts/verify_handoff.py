@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Validate this handoff package, not the target production application.
 
-Default checks need only Python's standard library (they import the stdlib-only scripts.gen_fixture_meta from this
-repository). --contracts requires the jsonschema package, plus rfc3339-validator so that its FormatChecker checks
+Default checks need only Python's standard library (they import the stdlib-only scripts.gen_fixture_meta and
+scripts.gen_corpus_meta from this repository; the latter loads the stdlib-only core/src/ops_core/corpus.py by
+path). --contracts requires the jsonschema package, plus rfc3339-validator so that its FormatChecker checks
 `date-time`; `uv run` provides both from the dev group. Snapshot/reference hash checks are intended before edits.
 
 --reference-tree (implied by --reference-code) enforces the whole reference/ tree against
@@ -29,6 +30,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # sys.path, so put the repository root on it explicitly; without this `scripts.*` cannot be imported (the
 # scripts/probe.py pattern). The imported module is stdlib-only, so the default checks stay stdlib-only.
 sys.path.insert(0, str(ROOT))
+from scripts.gen_corpus_meta import corpus_module
+from scripts.gen_corpus_meta import generate as generate_corpus_meta
 from scripts.gen_fixture_meta import generate as generate_fixture_meta
 
 # Directories the repository-wide walks ignore: environments and build output are not part of the package, and
@@ -278,6 +281,16 @@ def main() -> int:
         load("data/handoff-fixtures/meta.json") == generate_fixture_meta(ROOT / "data/handoff-fixtures"),
         "Fixture meta.json is stale: run uv run python -m scripts.gen_fixture_meta",
     )
+    # T17 (Plan L rulings 12 and 17): the governed corpus validates as a whole, its lock matches the files and is the
+    # released lock of its version, and its derived meta.json is current.
+    corpus_files = corpus_module()
+    try:
+        governed_corpus = corpus_files.load(ROOT / "data/corpus")
+        meta_current = load("data/corpus/meta.json") == generate_corpus_meta(ROOT / "data/corpus")
+    except corpus_files.CorpusError as exc:
+        # One FAIL line carrying every problem, like the checker's other failures (never a traceback).
+        raise ValueError("governed corpus refused: " + "; ".join(exc.problems)) from exc
+    check(meta_current, "Corpus meta.json is stale: run uv run python -m scripts.gen_corpus_meta")
     scenarios = []
     for line in (ROOT / "evals/handoff-development/scenarios.jsonl").read_text(encoding="utf-8").splitlines():
         if line.strip():
@@ -325,6 +338,11 @@ def main() -> int:
         f"PASS: {len(catalog['documents'])} source hashes; {len(scenarios)} development scenario cards; "
         f"{py_count} Python syntax checks; 6 SVG XML files; fixture meta.json current"
     )
+    print(
+        f"PASS: governed corpus {governed_corpus.corpus_version} ({len(governed_corpus.documents)} documents) "
+        "locked and released; "
+        "corpus meta.json current"
+    )
     print("PASS: synthetic proposal/decision/outcome example hashes agree")
 
     if args.contracts:
@@ -359,7 +377,7 @@ def main() -> int:
         # changes; tests/plan_b/test_text_hygiene.py applies the same rule to every tracked file).
         governed = [
             p
-            for d in ("schemas", "data/handoff-fixtures", "handoff/prompts", "evals")
+            for d in ("schemas", "data/handoff-fixtures", "data/corpus", "handoff/prompts", "evals")
             for p in (ROOT / d).rglob("*")
             if p.is_file() and p.suffix in {".json", ".md", ".jsonl", ".txt", ".sha256"}
         ]

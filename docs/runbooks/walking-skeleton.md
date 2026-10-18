@@ -11,7 +11,10 @@ files), so nothing is throwaway.
    `OPS_PG_DB`/`OPS_INCIDENT_PG_DB`; it creates or re-keys the login roles from `postgres_<role>_password` (run
    `scripts/bootstrap_dev.py secrets` once after pulling this branch to generate the seven new files); `up` refuses
    outside the test profile when `app.test_clock` exists; `keys` is the destination-vs-grant detective check; the live
-   suite runs against `ops_test`/`incident_test` and never touches the dev databases.
+   suite runs against `ops_test`/`incident_test` and never touches the dev databases. `migrate` also creates the
+   `vector` extension if the database lacks it (T17). Then `uv run python scripts/skeleton.py ingest` loads the
+   governed corpus (`data/corpus`, T17) as the worker; without it every investigation ends INSUFFICIENT_EVIDENCE, and a
+   repeated run writes nothing (`docs/retrieval.md`).
 3. Either, for a manual session: `uv run python scripts/skeleton.py up` — starts incident-sim :8090, mcp-read
    :8081, mcp-write :8082, api :8000, worker :8070 (health only), sweeper :8071
    (health only; membership sync every 30 s, expiry purges), all on 127.0.0.1; logs in `runtime/skeleton/`;

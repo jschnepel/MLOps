@@ -37,11 +37,18 @@ checked in this order; the first failure decides the answer.
 
 ## Starting it
 
-`python -m ops_mcp_read` (or `scripts/skeleton.py up`) needs the database at revision 0009: at start it refuses when
-`app.test_clock` exists outside the test profile, and when `app._resolve_handle` lacks 0009's job binding ("…
-predates this service; run scripts/skeleton.py migrate for this profile"). mcp-write makes the same check at its own
-start. The dev database stays at 0005 until the owner migrates it. Readiness (`/health/ready`) needs the realm's
-signing keys and the database.
+`python -m ops_mcp_read` (or `scripts/skeleton.py up`) needs the database at revision 0011: at start it refuses when
+`app.test_clock` exists outside the test profile, when `app._resolve_handle` lacks 0009's job binding, and when
+`app.search_procedures_scoped` (0011) is missing ("… predates this service; run scripts/skeleton.py migrate for this
+profile"). mcp-write makes the 0009 check at its own start. The tool answers from the governed corpus, so a database
+that was never ingested (`scripts/skeleton.py ingest`) answers every search with no results and `corpus_version`
+`none`. Readiness (`/health/ready`) needs the realm's signing keys and the database.
+
+The tool `search_procedures` takes `query` (1-500 characters), `limit` (1-8), `mode` (`lexical`; `vector_exact` is
+refused `UNSUPPORTED_MODE` until T18) and an optional `asset_type` (1-40 characters: documents of that family or of
+none). It resolves the handle in one unit, then calls `app.search_procedures_scoped` in a second, which resolves the
+handle again and decides the tenant from it; a handle refused at either is the same `INVALID_HANDLE` envelope. The
+settings and how to read the ranking are in `docs/retrieval.md`.
 
 | Variable | Default | What it is |
 |---|---|---|
@@ -77,5 +84,5 @@ SELECT state FROM app.runs WHERE run_id = '<run>';
 
 ## Not here yet
 
-The asset tools and asset-sim (T16), the governed store and vector search (T17), TLS and container host names (T30).
+The asset tools and asset-sim (T16), vector search (T18), TLS and container host names (T30).
 mcp-write's door, with the same verifier rules, is `docs/runbooks/mcp-write.md` (T47).

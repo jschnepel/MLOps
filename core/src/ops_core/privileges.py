@@ -5,7 +5,7 @@ One source of truth for two consumers: the migrations render GRANT, REVOKE and P
 tables each revision creates or changes (never for "every table": an applied revision must not change when a row is
 added here), and the R124/R106 tests enumerate the catalogs against it, so an extra or missing grant fails a test
 instead of hiding. Rows exist only for tables that exist; the owners of later tables (feedback → T21,
-operator_resolutions → T22, documents/chunks/embeddings → T17) add their rows. Ten departures from the printed
+operator_resolutions → T22, embeddings → T18) add their rows. Ten departures from the printed
 table, each a proposed erratum (Plan E rulings 6, 10, 17, 23; Plan F rulings 2, 3 and 17 with erratum 25; Plan G
 ruling 4; Plan H rulings 1 and 12; Plan I rulings 12 and 20): the worker (not the sweeper) may UPDATE
 jobs.available_at (re-queue after a transport failure), app_definer may UPDATE runs.updated_at, app_definer may
@@ -16,8 +16,10 @@ sweeper holds SELECT beside its DELETE on sessions, login_state, logout_jti and 
 WHERE reads the row), login_state and logout_jti are rows the printed table lacks, model_permit has no sweeper cell
 (an expired permit is free by the same comparison, erratum 50), the outbox has no api or worker cell (only
 `_append_event` writes intent, erratum 60), and the sweeper may DELETE from jobs, finished maintenance rows only (a
-restrictive policy, SWEEPER_PURGE, erratum 61). `test_harness` exists only in the test profile: the main-line
-revisions grant it nothing;
+restrictive policy, SWEEPER_PURGE, erratum 61). Plan L (T17) adds the corpus: AM-20.2's corpus row on `documents` and
+`chunks`, and the same cells on the two append-only tables the printed table lacks, `document_states` and
+`corpus_ingestions` (erratum 95). `test_harness` exists only in the test profile: the main-line revisions grant it
+nothing;
 the testclock branch grants it schema USAGE, EXECUTE on current_time() and its test_clock cells.
 """
 
@@ -138,6 +140,12 @@ GRANTS: Final[dict[str, dict[str, Grant]]] = {
     },
     "transitions": {DEFINER_ROLE: _S},
     "test_clock": {DEFINER_ROLE: _S, "test_harness": Grant(ins=True, upd=True, dele=True)},
+    # T17 (Plan L ruling 3): AM-20.2's corpus row, extended to the two append-only tables the matrix lacks (erratum
+    # 95); ingestion runs as the worker, and only search_procedures_scoped reads the rows.
+    "corpus_ingestions": {"worker": _SI, DEFINER_ROLE: _S},
+    "documents": {"worker": _SI, DEFINER_ROLE: _S},
+    "document_states": {"worker": _SI, DEFINER_ROLE: _S},
+    "chunks": {"worker": _SI, DEFINER_ROLE: _S},
 }
 
 # AM-20.5 tenant tables (of those that exist); FORCE applies to the owner, who is exempt only through BYPASSRLS.
@@ -156,6 +164,10 @@ RLS_TABLES: Final = (
     "action_attempt_state",
     "events",
     "outbox",
+    "corpus_ingestions",
+    "documents",
+    "document_states",
+    "chunks",
 )
 SWEEPER_ALL: Final = ("memberships", "jobs")  # SA:520: the permissive policies besides tenant_isolation
 # T14 (Plan I round 1, I6; erratum 61): a restrictive DELETE policy keeps the sweeper's purge to finished maintenance
@@ -193,6 +205,8 @@ DEFINER_FUNCTIONS: Final[dict[str, tuple[str, tuple[str, ...]]]] = {
     "freeze_proposal": ("uuid, uuid, bytea, timestamptz", ("worker",)),
     "record_decision": ("uuid, uuid, uuid, text, text, text, text", ("api",)),
     "resolve_invocation": ("text, text", ("mcp_read", "mcp_exec")),
+    # T17 (Plan L ruling 1): SA:461 with the caller's azp second, as the write path since T47 (erratum 93).
+    "search_procedures_scoped": ("text, text, text, public.vector, text, integer, text", ("mcp_read",)),
     # T13: the raw handle first, so the fence is checked (erratum 48); T47: the token's azp second (Plan K ruling 12).
     "grant_execution": ("text, text, uuid", ("mcp_exec",)),
     "mark_sent": ("text, text, uuid", ("mcp_exec",)),
@@ -213,6 +227,7 @@ HELPER_FUNCTIONS: Final[dict[str, str]] = {
     "_append_event": "uuid, uuid, text, text, jsonb",
     "_transition": "uuid, text, text, text, integer, text, jsonb",
     "_dispatch_seconds": "",  # T47: the dispatch deadline, 300 s (Plan K ruling 17)
+    "_min_rank": "",  # T17: the search's minimum rank, 0.25 (Plan L ruling 18, round 1)
 }
 
 

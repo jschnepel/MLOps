@@ -593,14 +593,20 @@
       "category": "retrieval",
       "requirement": "Source ingestion is versioned effective and idempotent",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r032_source_ingestion_is_versioned_effective_and_idem.py",
       "expected_evidence": "Repeat same document; change hash under same version; supersede/unapprove; only permitted effective version retrieves.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_ingest_live.py",
+        "tests/e2e/test_migration_0011_live.py",
+        "tests/plan_l/test_ingest_plan.py",
+        "tests/plan_l/test_corpus_files.py"
+      ],
       "owning_tasks": [
         "T17"
-      ]
+      ],
+      "note": "Plan L (T17): ingestion keys a version by (tenant, document_id, version) and the file's SHA-256, validates the whole catalog and plans every tenant before writing, and runs as the worker. Live: a repeated ingestion writes no row at all; a file changed under the same version refuses the whole run and leaves every tenant's row counts unchanged; a revoke appends a state row and the section is no longer retrieved; a revoked version cannot be approved again; a successor pulled back to draft or postponed is refused as a whole and its predecessor stays retired; a new approved version supersedes its predecessor at retrieval. The definer returns only versions whose latest state is approved, effective at app.current_time() and not retired (a later version that left draft has reached its effective_from; revoking or expiring it never brings the predecessor back, and ingestion refuses the changes that could): superseded, expired, revoked, draft, not-yet-effective, latest-state and retirement cases, and the test clock moved two days. The loader requires each document's versions to form one chain."
     },
     {
       "id": "R033",
@@ -608,14 +614,21 @@
       "category": "retrieval",
       "requirement": "Lexical baseline has labeled evidence measurements",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r033_lexical_baseline_has_labeled_evidence_measuremen.py",
       "expected_evidence": "Known questions return labeled permitted sections; missing source remains missing, not guessed.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_retrieval_baseline_live.py",
+        "reports/retrieval/t17-lexical-baseline.md",
+        "reports/retrieval/t17-lexical-baseline.json",
+        "tests/plan_l/test_retrieval_baseline.py",
+        "evals/retrieval/dev-queries.jsonl"
+      ],
       "owning_tasks": [
         "T17"
-      ]
+      ],
+      "note": "Plan L (T17): 47 agent-authored development queries labelled against corpus-1 (answerable ones with their permitted sections; no-source ones about expired, revoked, draft-only, missing and other-tenant content (superseded cases are answerable); asset-filtered, injected and conflicting cases) run through search_procedures_scoped as mcp_read at k=5. The report gives recall@5, precision@5, MRR@5, hit@5 and every-expected@5, the no-source cases answered empty and the cases without a forbidden section with Wilson 95% intervals and denominators, and every case's ranked answer; no forbidden section was returned (the test fails otherwise). Missing sources are measured, not guaranteed: at the 0.25 minimum rank 15/20 no-source questions were answered with nothing; R033 is met subject to the owner's decision on erratum 102: the other 5/20 stay open: SA:377 as written counts any returned effective chunk as sufficient and would not abstain on them, so T20 must add a relevance criterion beyond it (for example a score or label-based sufficiency rule). The minimum rank was chosen on these same queries, so the figures are development figures, not held-out ones."
     },
     {
       "id": "R034",
@@ -1675,17 +1688,22 @@
       "id": "R099",
       "category": "retrieval",
       "requirement": "Evidence corpus is large enough to measure retrieval",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": ">=12 documents of 300-900 words, >=6 assets, per-section hashes, tenant/alert UUID fixtures, superseded/conflicting/injected sources.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "tests/plan_l/test_corpus_files.py",
+        "data/corpus/catalog.json",
+        "data/corpus/meta.json"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M05",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T17"
       ],
-      "suggested_test": "tests/acceptance/test_r099_evidence_corpus_is_large_enough_to_measure_retri.py"
+      "suggested_test": "tests/acceptance/test_r099_evidence_corpus_is_large_enough_to_measure_retri.py",
+      "note": "Plan L (T17): 16 authored documents (catalog entries, 14 document IDs) of 332-349 prose words each, counted after the title and banner lines (corpus.prose_words; the test's bound is 320-900 and R099's floor is 300) over two tenants, six assets (three per tenant) with seven alerts, tenant UUIDs from data/seed-ids.json and alert UUIDs uuid5 of their ids with revisions, per-section evidence IDs and SHA-256 with offsets, a superseded pair, an expired, a revoked, a draft and an injected version per tenant and a conflicting pair, under a lock frozen as corpus-1."
     },
     {
       "id": "R100",
@@ -2255,7 +2273,8 @@
         "reports/mcp-read/t15-mcp-read.txt",
         "tests/e2e/test_mcp_write_t47_live.py",
         "reports/mcp-write/t47-mcp-write.txt",
-        "tests/plan_k/test_migration_0010.py"
+        "tests/plan_k/test_migration_0010.py",
+        "tests/e2e/test_migration_0011_live.py"
       ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r131_the_read_and_write_mcp_servers_hold_disjoint_fun.py",
@@ -2265,7 +2284,7 @@
         "T47"
       ],
       "blocking_for_v1": true,
-      "note": "Read half (Plan J, T15): mcp_read can EXECUTE current_time (erratum 15) and resolve_invocation and nothing else in app (asset_scope and search_procedures_scoped join with T16/T17, erratum 72); an attempted grant_execution is 42501; a recover and an execute handle presented to mcp-read are refused over HTTP. Write half (Plan K, T47): mcp_exec can EXECUTE exactly current_time (erratum 15), resolve_invocation, grant_execution, mark_sent, record_outcome, request_abort and lookup_action and nothing else in app (no read function exists yet to refuse, erratum 91); an attempted mark_unknown is 42501; an investigate and a resume_input handle are refused over HTTP at all three write tools, also when the stored server column lies, each live at mcp_read; incident-sim answers ops-mcp-read's workload token 403 at all three routes. That mcp-read cannot reach incident-sim over the network is T30's Docker network test."
+      "note": "Read half (Plan J, T15): mcp_read can EXECUTE current_time (erratum 15), resolve_invocation and, since Plan L (T17), search_procedures_scoped, and nothing else in app (asset_scope joins with T16; errata 72 and 96; the read half is met subject to the owner's decision on erratum 96); an attempted grant_execution is 42501; a recover and an execute handle presented to mcp-read are refused over HTTP. Write half (Plan K, T47): mcp_exec can EXECUTE exactly current_time (erratum 15), resolve_invocation, grant_execution, mark_sent, record_outcome, request_abort and lookup_action and nothing else in app; search_procedures_scoped, mcp-read's read function since T17, is 42501 when mcp_exec calls it (errata 91 and 96); an attempted mark_unknown is 42501; an investigate and a resume_input handle are refused over HTTP at all three write tools, also when the stored server column lies, each live at mcp_read; incident-sim answers ops-mcp-read's workload token 403 at all three routes. That mcp-read cannot reach incident-sim over the network is T30's Docker network test."
     }
   ]
 }

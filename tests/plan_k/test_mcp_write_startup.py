@@ -3,8 +3,9 @@ closes the connection it opened.
 
 Catches: a server that calls the definers with the token's `azp` on a database whose functions still take two
 arguments (every call would fail with "function does not exist" at run time instead of at start), a check that asks the
-wrong function or for the wrong text, and a failed start that leaks its connection. mcp-read checks nothing new: it
-calls none of the functions 0010 changes (`resolve_invocation` keeps its signature).
+wrong function or for the wrong text, and a failed start that leaks its connection. mcp-read checks nothing of 0010's:
+it calls none of the functions 0010 changes (`resolve_invocation` keeps its signature); since T17 it asks for 0011's
+corpus function instead (tests/plan_l/test_migration_0011.py).
 """
 
 from typing import Any
@@ -55,6 +56,6 @@ def test_mcp_write_starts_on_a_database_at_0010(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_mcp_read_does_not_ask_for_0010(monkeypatch: pytest.MonkeyPatch) -> None:
-    conn: Any = MarkerConn({persistence.HANDLE_BINDING[1]})
+    conn: Any = MarkerConn({persistence.HANDLE_BINDING[1], persistence.GOVERNED_CORPUS[1]})
     start(monkeypatch, conn)
     assert all(persistence.WRITE_PATH[1] not in asked for asked in conn.asked)

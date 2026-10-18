@@ -591,6 +591,113 @@ behaviour), and the process test's evidence path relative to the working directo
 After the wave the gates were `check.py` 1161 passed / 182 skipped, `check.py --profile test` 1322 passed /
 21 skipped, and `verify_handoff.py` exit 0.
 
-## 29. What the process taught
+## 29. The corpus plan built the store the evidence comes from, and measured it
+
+**Problem.** Plan L takes T17: the governed corpus. Until now mcp-read answered `search_procedures` from eight
+delivered fixture documents of 31-72 words held in memory, filtered by status only, with no effective interval, no
+revocation, no tables and no measurement; the spec's `search_procedures_scoped` did not exist. The fact sheet found
+twenty-four open questions, from who builds the function to how a revoked version can be recorded when no role may
+update the corpus; the controller's brief ruled on each.
+
+**Change.** Sixteen authored synthetic documents over two tenants with assets and alerts, locked and frozen as
+`corpus-1`; revision 0011 with four append-only tenant tables and the definer, which only mcp-read may call; an
+ingestion that plans every tenant before writing anything and records lifecycle changes as new rows; mcp-read
+switched to the definer; and a measurement of the definer itself on 47 labelled development queries, written as a
+report with denominators and intervals.
+
+**Review.** Writing the plan against the code moved two rulings: the function needs the caller's `azp`, because the
+handle resolver binds it, and it returns the tenant's corpus version beside the results, because nothing else could
+report it when nothing matched. The dry run could not reach a database, so the plan says so and leaves the SQL to the
+live suite at execution: the first real run of a corpus query happens there. The plan then went through two static
+reviews, each applying it task by task to a fresh copy of the tree.
+
+**Problem.** The plan's first review (0 Blocking, 3 Important, 10 Minor) found three promises the plan could not
+keep. R033's "a missing source remains missing" was claimed although an OR of lexemes answers almost any question
+with something; two versions of one document could both be returned, because "superseded" waited on a status
+nobody had to set; and R099's 300-900 words counted the title and the banner. **Change.** The search keeps only
+ranks above a minimum of 0.25, held in one helper granted to nobody and chosen on the development queries, and
+R033 is recorded as met subject to erratum 102, which leaves the rest open for T20's relevance criterion (SA:377 alone would not abstain). A document's
+versions became one chain, and a version is retired once a later one that has left draft reaches its
+effective_from, stated the same way in the SQL, the measurement's oracle and the docs. Words are now counted
+after the banner; every document was lengthened outside its labelled sections, so the lock was regenerated. The
+ten minors were folded in, among them byte-order tie-breaks, precision over five, an asset type advertised
+without a default, and a close-out that stops when the report is missing.
+
+**Problem.** The second review (1 Blocking, 2 Important, 3 Minor) found that round 1's own fix broke a live
+test: the migration round trip still named the search function alone, so the new helper made it fail on every
+run. "A retired version never comes back" was not true either: ingestion accepted a successor pulled back to
+draft, or its effective_from moved later, and either brought the retired predecessor back into answers. And this
+history left out the review rounds. **Change.** The round trip now takes 0011's tables, index and functions from
+the revision's own frozen lists, so a later helper cannot be forgotten there. Ingestion refuses both changes for
+the whole run once a version has left draft, with a unit case for each and a live case showing that the old
+pump-seal version stays out of every answer. This section now records every round. The minors took the measured
+figures out of the frozen revision's comment, made the close-out stop unless the report measured corpus-1 under
+its frozen lock or when a placeholder is left, and gave every edit in the plan a unique label.
+
+**Execution.** The branch ran as five building tasks, each built by an implementer, reviewed by a second model and fixed in a
+round of its own, then the close-out; every round below is in the ledger. **Problem.** Task 1 (the debt list, the extension bootstrap,
+revision 0011): the first live run of the revision failed at once, because the plan printed the function's
+argument types in the wrong order (`text, text, public.vector, ...`; the real order is `text, text, text,
+public.vector, text, integer, text`) and the `ALTER FUNCTION ... OWNER TO` that ends the migration named a function
+that did not exist. The review found five minors: a comment about locking that said "fresh rows", a query
+normalised unlike the chunk text, the extension's schema, an RLS test that never staged a second tenant, and a
+`_min_rank()` not marked immutable. **Change.** The type list was fixed in every place it appeared (live, then
+green: the lifecycle, retirement, minimum rank, tie-break, grants and the round trip passed unchanged), the
+extension is created `IF NOT EXISTS ... SCHEMA public`, `_min_rank()` is `IMMUTABLE`, and the RLS test now stages
+a second tenant. **Problem.** Task 2 (the corpus and its loader) passed with five minors, all about malformed
+input: a version compared before it was validated, raw JSON errors, refusal branches nothing tested, stray
+non-markdown files and a traceback from the checker. **Change.** Every malformed input is now a `CorpusError`,
+unlisted files are refused, the checker prints a FAIL line, and 39 refusal tests were added. **Problem.** Task 3
+(ingestion): the all-or-nothing promise was only tested where the refusal happened in the first tenant, so a
+refusal after one tenant had been planned and written would not have been caught; a `superseded` version could be
+approved again; and `skeleton.py ingest` showed raw tracebacks when the store failed. **Change.** A conflict on
+the beta side proves nothing is written to either tenant, a unit test pins the statement order against a stub
+connection, `superseded` -> `approved` is refused, and store failures are one line from the command. A lock
+against concurrent ingestions was declined for a single operator and recorded. **Problem.** Task 4 (mcp-read on
+the definer): the live check of the asset-type filter had no control, so a filter that removed everything would
+also have passed. **Change.** An unfiltered query of the same words must return the section the filter then
+excludes, and the run-state allowlist got its erratum-80 comment. **Problem.** Task 5 (the baseline) measured
+27/27 hit@5, recall 1.0, precision@5 0.2296, MRR 0.8963 and 15 of 20 no-source questions answered with nothing,
+with no forbidden section in 122 returned, and the review found its report overclaiming: it did not say the
+figures are development figures on a threshold chosen with the same queries, and the documentation called the
+forbidden check independent when the measurement and the SQL state the same rule. **Change.** The report says so
+in its first lines, the measurement pins the test clock to the labelling instant and asserts the permitted set
+equals the hand-written anchor, which `docs/retrieval.md` now names as the independent check, and the report gained
+the precision ceiling, null intervals for empty denominators and a hash of the queries. The fix rounds added
+tests, so the measured dev total is `1269 passed, 191 skipped` and the live total `1439 passed, 21 skipped`, 51
+above the plan's arithmetic in both (the final-review fix wave added one more test: 1270 and 1440, 52 above).
+
+**Problem.** Task 6 (the close-out: handoff records, acceptance rows, errata 93 to 102, the retrieval runbook): the close-out said that SA:377 would abstain on the 5 of 20 no-source questions that
+still return a section, which as written it would not, because SA:377 counts any returned effective chunk as
+sufficient; it also miscounted the corpus's categories and size, a function count, R131's line and a UTC date, six
+minors in all. **Change.** The residue is now worded everywhere as an open item for T20's relevance criterion (for
+example a score or label-based sufficiency rule), not as something the spec already covers, and the six wording
+minors were corrected in the same round.
+
+**Final review.** The whole-branch review (most capable model, read-only, no database) found 0 Critical, 0 Important
+and 5 Minor, and judged the authority, tenant, lifecycle, idempotency and dev-database boundaries sound with every
+figure in the records matching the measured report. **Problem.** (M1) The branch had added nine `type: ignore`
+comments against the plan's own "no `type: ignore`" constraint: one hung the list of already-written tenants on a
+third-party database exception as an attribute, and eight let a test stub stand in for a connection. (M2) Running
+`ingest` before `migrate`, the likeliest owner mistake, printed only `INGEST: failed (PersistenceError)` and dropped
+the hint "run scripts/skeleton.py migrate", because the command printed the class alone for every store failure. (M3)
+This history had no entry for Task 6's review round and still held the final-review placeholder. (M4)
+`retrieved_at` is stamped from the wall clock while a version's effectiveness is decided at the database's clock, so
+under a moved test clock a result can carry an earlier time than its own `effective_from`. (M5) The frozen revision's
+docstring says an ingestion row is written for a run "that changed something", but the planner also writes one when only the
+corpus version or lock changed. **Change.** M1: a typed `IngestInterrupted` carrying the tenants written is raised
+`from` the store failure, the command reads the cause's class from it, and the test stub is passed through a typed
+`cast`, so no ignore is left; a failure before any tenant committed still propagates unchanged and has its own test.
+M2: the command prints a `PersistenceError`'s message (our own text, safe by contract) and still only the class of a
+driver error, which can name a host; one test pins both. M3: this entry. M4 became a debt line for T16 (return the
+definer's instant and stamp `retrieved_at` from it). M5 became one sentence in `docs/retrieval.md`; the frozen
+revision stays untouched. The review also ruled three parked minors harmless: the Task 5 test pins the rendered
+sentence because the constant already holds the words and the markdown is rendered from it; the clock is reset before
+`purge_run` because a failed reset would leak runs only into `ops_test`, which the next session drops; and ingestion
+needs no concurrency lock because every concurrent interleaving traced ends in a primary-key collision and a tenant
+rollback, never in a wrong state. After the wave the gates were `check.py` `1270 passed, 191 skipped`, `check.py --profile test`
+`1440 passed, 21 skipped` and `verify_handoff.py` exit 0.
+
+## 30. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.

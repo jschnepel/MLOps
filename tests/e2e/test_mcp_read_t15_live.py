@@ -43,11 +43,13 @@ from tests.e2e.test_fenced_definers_live import investigate_job, read_handle
 from tests.e2e.test_mcp_write_live import approved_run
 from tests.e2e.test_migrations_and_persistence import new_run
 
-pytestmark = pytest.mark.asyncio
+# T17: the tool answers from the governed corpus, which the `ingested` fixture puts in the seeded tenants.
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested")]
 
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
-ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")  # the seeded tenant: only seeded tenants have a fixture corpus
-QUERY = {"query": "reviewer inspect exact content", "limit": 2, "mode": "lexical"}
+ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")  # the seeded tenant, whose corpus is ingested
+QUERY = {"query": "repeated alerts on one asset", "limit": 2, "mode": "lexical"}
+ANSWER = "ALPHA-ALERT-REVIEW:v1:repeated-alerts"  # data/corpus: the alpha section that answers QUERY
 REFUSAL = {"code": "INVALID_HANDLE", "message": "invocation handle rejected", "retryable": False}
 EVIDENCE = Path("reports/mcp-read/t15-mcp-read.txt")
 UVICORN = ("uvicorn", "uvicorn.error", "uvicorn.access", "uvicorn.asgi")
@@ -153,7 +155,7 @@ async def set_server(app_conn: persistence.Conn, handle: str, server: str) -> No
 def assert_answered(result: CallToolResult) -> None:
     doc = result.structured_content
     assert not result.is_error and isinstance(doc, dict) and doc["status"] == "ok"
-    assert doc["data"]["results"][0]["evidence_id"] == "ALPHA-INCIDENT:v2:review"
+    assert doc["data"]["results"][0]["evidence_id"] == ANSWER  # first by a wide margin (round 1, M10)
 
 
 async def set_job(app_conn: persistence.Conn, handle: str, job: UUID) -> None:
@@ -267,22 +269,26 @@ async def test_r085_r131_the_server_derives_tool_server_and_state_from_the_job(
 async def test_r131_mcp_read_can_execute_no_write_path_function(
     app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
 ) -> None:
-    """The pg_proc ACL as it is today: `current_time` (erratum 15) and `resolve_invocation`; `asset_scope` and
-    `search_procedures_scoped` join with their owners, T16 and T17 (erratum 72)."""
+    """The pg_proc ACL as it is today: `current_time` (erratum 15), `resolve_invocation` and, since T17,
+    `search_procedures_scoped`; `asset_scope` joins with its owner, T16 (erratum 72 as erratum 96 narrows it)."""
     cur = await app_conn.execute(
         "SELECT p.proname AS name, has_function_privilege('mcp_read', p.oid, 'EXECUTE') AS allowed"
         " FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app'"
     )
     rows = await cur.fetchall()
-    assert {row["name"] for row in rows if row["allowed"]} == {"current_time", "resolve_invocation"}
-    others = set(privileges.DEFINER_FUNCTIONS) - {"current_time", "resolve_invocation"}
+    allowed = {"current_time", "resolve_invocation", "search_procedures_scoped"}
+    assert {row["name"] for row in rows if row["allowed"]} == allowed
+    others = set(privileges.DEFINER_FUNCTIONS) - allowed
     assert others <= {row["name"] for row in rows}  # every other definer exists, so the line above is not vacuous
     mcp_read = await role_conn(Role.MCP_READ)
     assert (
         await refused(mcp_read, "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", ("not-a-handle", uuid4()))
         == "42501"
     )
-    lines.append(f"R131 read half: mcp_read EXECUTE = current_time, resolve_invocation; {len(others)} others refused")
+    lines.append(
+        "R131 read half: mcp_read EXECUTE = current_time, resolve_invocation, search_procedures_scoped;"
+        f" {len(others)} others refused"
+    )
 
 
 def raw_headers(token: str, version: str | None, method: str = "tools/list") -> dict[str, str]:

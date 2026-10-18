@@ -10,7 +10,6 @@ leave `token_type` unset.
 """
 
 import asyncio
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -82,7 +81,7 @@ def test_the_resource_is_stamped_only_from_the_audience() -> None:
 def test_the_sdk_resource_check_is_on() -> None:
     """A second layer behind McpVerifier's own audience check (it cannot refuse while the stamp is this server's URL),
     pinned so a refactor cannot switch it off unnoticed."""
-    state = server.State(session=None, corpora={}, verifier=production_like())
+    state = server.State(session=None, verifier=production_like())
     mcp = server.build_server(state, issuer=ISSUER, resource_url=AUDIENCE)
     assert mcp.settings.auth is not None and mcp.settings.auth.validate_token_resource is True
 
@@ -99,7 +98,6 @@ def test_production_app_builds_its_verifier_through_read_verifier(monkeypatch: p
 
     monkeypatch.setattr(settings, "keycloak", lambda: KC)
     monkeypatch.setattr(settings, "urls", lambda: URLS)
-    monkeypatch.setattr(settings, "fixtures_dir", lambda: Path("data/handoff-fixtures"))
     monkeypatch.setattr(server, "read_verifier", recording)
     server.production_app()
     assert calls == [(KC, URLS)]

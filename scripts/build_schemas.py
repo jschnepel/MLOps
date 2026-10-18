@@ -317,7 +317,7 @@ def error() -> Doc:
 
 
 def evidence() -> Doc:
-    """A retrieval row (unchanged from 1.0; per-section hashes are consumed from T17)."""
+    """A retrieval row (unchanged from 1.0; since T17 its `content_sha256` is the section's hash)."""
     return contract("evidence", EVIDENCE_ROW)
 
 
@@ -909,9 +909,9 @@ REQUEST = "00000000-0000-4000-8000-000000000009"
 AUTHOR = "00000000-0000-4000-8000-00000000000a"  # proposal-valid's authored_by: a placeholder, not a seed persona
 CLOCK = "2026-10-06T12:00:00Z"  # the fixture clock (data/handoff-fixtures/observations.json)
 EVIDENCE_ID = "ALPHA-INCIDENT:v2:review"
-# The whole-file hash of the ALPHA-INCIDENT fixture, as delivered. TODO(T17): evidence rows switch to the per-section
-# hash from data/handoff-fixtures/meta.json when T17 consumes it.
-EVIDENCE_SHA = "8bc7631462663afea7fb457da5159c99f9ef3d3cffe21056d487c45c55931c4a"
+# The section hash of ALPHA-INCIDENT:v2:review from data/handoff-fixtures/meta.json (T17, Plan L ruling 16): an
+# evidence row cites the bytes of its section, never the whole file (the delivered examples cited 8bc76314...).
+EVIDENCE_SHA = "62a90906c7bb706ae8a968eb0f7102f76b05d2c3be911c182d528a1fd25ef008"
 EXCERPT = (
     "Repeated simulated warnings may be summarized in a reviewable incident draft. A different authorized reviewer "
     "must inspect the exact content before submission. The warning count alone does not establish root cause."
@@ -1089,7 +1089,7 @@ def examples(root: Path = ROOT) -> list[tuple[Doc, Doc]]:
         "model_route": "fake",
         "model_digest": None,
         "prompt_version": "incident-draft-v1",
-        "corpus_version": "fixture-1",
+        "corpus_version": "handoff-1",  # the catalog's own name (data/handoff-fixtures/catalog.json, ruling 17)
         "retrieval_mode": "lexical",
     }
     failed = outcome("FAILED_NO_COMMIT", tombstone=tombstone, reason="cancelled_before_send")
@@ -1254,7 +1254,7 @@ def examples(root: Path = ROOT) -> list[tuple[Doc, Doc]]:
                     }
                 ],
                 "retrieval_mode": "lexical",
-                "corpus_version": "fixture-1",
+                "corpus_version": "handoff-1",
             },
         ),
     )

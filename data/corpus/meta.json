@@ -1,0 +1,783 @@
+{
+  "corpus_version": "corpus-1",
+  "lock_sha256": "81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862",
+  "meta_version": 1,
+  "tenants": {
+    "alpha": "3ea79c95-914c-52cb-9d10-c4e19dda8ff7",
+    "beta": "5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201"
+  },
+  "assets": [
+    {
+      "asset_id": "A17",
+      "tenant": "alpha",
+      "tenant_id": "3ea79c95-914c-52cb-9d10-c4e19dda8ff7",
+      "asset_type": "pump"
+    },
+    {
+      "asset_id": "A21",
+      "tenant": "alpha",
+      "tenant_id": "3ea79c95-914c-52cb-9d10-c4e19dda8ff7",
+      "asset_type": "compressor"
+    },
+    {
+      "asset_id": "A30",
+      "tenant": "alpha",
+      "tenant_id": "3ea79c95-914c-52cb-9d10-c4e19dda8ff7",
+      "asset_type": "conveyor"
+    },
+    {
+      "asset_id": "B22",
+      "tenant": "beta",
+      "tenant_id": "5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201",
+      "asset_type": "pump"
+    },
+    {
+      "asset_id": "B25",
+      "tenant": "beta",
+      "tenant_id": "5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201",
+      "asset_type": "compressor"
+    },
+    {
+      "asset_id": "B31",
+      "tenant": "beta",
+      "tenant_id": "5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201",
+      "asset_type": "conveyor"
+    }
+  ],
+  "alerts": [
+    {
+      "id": "A17-seal-001",
+      "asset_id": "A17",
+      "alert_id": "6699502e-a981-5959-9f24-6df6bd3d3ac5",
+      "revision": 1
+    },
+    {
+      "id": "A17-seal-002",
+      "asset_id": "A17",
+      "alert_id": "c8f91c55-7028-5492-bad4-1e5680179647",
+      "revision": 2
+    },
+    {
+      "id": "A21-temp-001",
+      "asset_id": "A21",
+      "alert_id": "35088949-118f-5bad-bb2a-f625338a97b9",
+      "revision": 1
+    },
+    {
+      "id": "A30-noise-001",
+      "asset_id": "A30",
+      "alert_id": "575b616e-c2eb-5c40-8abf-b7f0b9284074",
+      "revision": 1
+    },
+    {
+      "id": "B22-vibration-001",
+      "asset_id": "B22",
+      "alert_id": "19cb1a10-9a56-5d2d-b67d-3ab044451941",
+      "revision": 1
+    },
+    {
+      "id": "B25-oil-001",
+      "asset_id": "B25",
+      "alert_id": "ef88ee0e-0f32-500d-b1de-01586d25ae18",
+      "revision": 3
+    },
+    {
+      "id": "B31-guard-001",
+      "asset_id": "B31",
+      "alert_id": "708c475d-6889-56b6-8d60-c5430afb6d78",
+      "revision": 1
+    }
+  ],
+  "sections": [
+    {
+      "evidence_id": "ALPHA-PUMP-SEAL:v1:purpose",
+      "document_id": "ALPHA-PUMP-SEAL",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "e304da03d1553a7018cb4bca3ff5b475b0bbda355476e0753ed6ca849ea94259",
+      "start": 123,
+      "end": 541,
+      "words": 73
+    },
+    {
+      "evidence_id": "ALPHA-PUMP-SEAL:v1:isolation",
+      "document_id": "ALPHA-PUMP-SEAL",
+      "version": "1",
+      "section": "isolation",
+      "sha256": "bdb3b6ae4ff0326c902fb858039c67e78a92d43f6d272d438cb3fa2666199b1f",
+      "start": 557,
+      "end": 898,
+      "words": 60
+    },
+    {
+      "evidence_id": "ALPHA-PUMP-SEAL:v1:inspection",
+      "document_id": "ALPHA-PUMP-SEAL",
+      "version": "1",
+      "section": "inspection",
+      "sha256": "f583cc74123177a3bed6be918c467429e77ffe9ee878fbc7085ebb71298dc5cd",
+      "start": 915,
+      "end": 1255,
+      "words": 64
+    },
+    {
+      "evidence_id": "ALPHA-PUMP-SEAL:v1:leak-response",
+      "document_id": "ALPHA-PUMP-SEAL",
+      "version": "1",
+      "section": "leak-response",
+      "sha256": "e5c3fcd3584bfc52f26d8903568e3bd75004d68c3ead2db29ff4d9a41f0c3a62",
+      "start": 1275,
+      "end": 1604,
+      "words": 59
+    },
+    {
+      "evidence_id": "ALPHA-PUMP-SEAL:v1:records",
+      "document_id": "ALPHA-PUMP-SEAL",
+      "version": "1",
+      "section": "records",
+      "sha256": "c136dea51cbeffef975cb4e024fc476b79d014abb308298af14857259ed436b3",
+      "start": 1618,
+      "end": 2035,
+      "words": 77
+    },
+    {
+      "evidence_id": "ALPHA-PUMP-SEAL:v2:purpose",
+      "document_id": "ALPHA-PUMP-SEAL",
+      "version": "2",
+      "section": "purpose",
+      "sha256": "db0cf3a45b4001c6d68b36a69b61c021f244465f2a270894336278c7bbf93368",
+      "start": 123,
+      "end": 510,
+      "words": 67
+    },
+    {
+      "evidence_id": "ALPHA-PUMP-SEAL:v2:isolation",
+      "document_id": "ALPHA-PUMP-SEAL",
+      "version": "2",
+      "section": "isolation",
+      "sha256": "023a97e762b752e5de85ac61a35dda8d69bc6113eedd00a21161c505c0488aae",
+      "start": 526,
+      "end": 862,
+      "words": 60
+    },
+    {
+      "evidence_id": "ALPHA-PUMP-SEAL:v2:inspection",
+      "document_id": "ALPHA-PUMP-SEAL",
+      "version": "2",
+      "section": "inspection",
+      "sha256": "6baed7445e087ec1c42521b0aefb41c1b2b6c06c889bfc294accf98432c063dc",
+      "start": 879,
+      "end": 1207,
+      "words": 61
+    },
+    {
+      "evidence_id": "ALPHA-PUMP-SEAL:v2:leak-response",
+      "document_id": "ALPHA-PUMP-SEAL",
+      "version": "2",
+      "section": "leak-response",
+      "sha256": "038b637ebbce2ec08e2771d708ff3304552a0a656baba3f147ef86161704a1d0",
+      "start": 1227,
+      "end": 1571,
+      "words": 61
+    },
+    {
+      "evidence_id": "ALPHA-PUMP-SEAL:v2:records",
+      "document_id": "ALPHA-PUMP-SEAL",
+      "version": "2",
+      "section": "records",
+      "sha256": "f4f27b7b577771bd09472de148fc0935fc8283d48eeafa8a5932973259262e2f",
+      "start": 1585,
+      "end": 2010,
+      "words": 78
+    },
+    {
+      "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:purpose",
+      "document_id": "ALPHA-COMPRESSOR-TRIP",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "54767731c90590245dfba65ed20a94884b23e2b790d74b3e6a4a5fbc550923f1",
+      "start": 114,
+      "end": 607,
+      "words": 87
+    },
+    {
+      "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:trip-review",
+      "document_id": "ALPHA-COMPRESSOR-TRIP",
+      "version": "1",
+      "section": "trip-review",
+      "sha256": "1f591d038cee5cd818ed68770ba923cc3d3a307b262feb739574a76ae97d727a",
+      "start": 625,
+      "end": 1094,
+      "words": 84
+    },
+    {
+      "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:restart-wait",
+      "document_id": "ALPHA-COMPRESSOR-TRIP",
+      "version": "1",
+      "section": "restart-wait",
+      "sha256": "07dde48e38b28824aae52b5385fa0adb1bc7d39b8d7f270bbe20efdb61acb5d2",
+      "start": 1113,
+      "end": 1510,
+      "words": 69
+    },
+    {
+      "evidence_id": "ALPHA-COMPRESSOR-TRIP:v1:records",
+      "document_id": "ALPHA-COMPRESSOR-TRIP",
+      "version": "1",
+      "section": "records",
+      "sha256": "bdbb0768676a6fd2c0513995bd047a777104497f62d52b5e1eebbf287131b79e",
+      "start": 1524,
+      "end": 2032,
+      "words": 92
+    },
+    {
+      "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:purpose",
+      "document_id": "ALPHA-COMPRESSOR-COOLDOWN",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "c72130647763d0c4e888be345b08ca0e6e34eb2c82278afe67b067e0df977787",
+      "start": 116,
+      "end": 624,
+      "words": 87
+    },
+    {
+      "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:cooldown",
+      "document_id": "ALPHA-COMPRESSOR-COOLDOWN",
+      "version": "1",
+      "section": "cooldown",
+      "sha256": "731f7ec342ba7e3360077918e716e65fe387e3ce0a421e0a27f43fab51660a44",
+      "start": 639,
+      "end": 1130,
+      "words": 84
+    },
+    {
+      "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:restart-wait",
+      "document_id": "ALPHA-COMPRESSOR-COOLDOWN",
+      "version": "1",
+      "section": "restart-wait",
+      "sha256": "1935186fb3369eda3127dab21d1644a4c2357d29c1dcd739f397744528b6d904",
+      "start": 1149,
+      "end": 1510,
+      "words": 64
+    },
+    {
+      "evidence_id": "ALPHA-COMPRESSOR-COOLDOWN:v1:records",
+      "document_id": "ALPHA-COMPRESSOR-COOLDOWN",
+      "version": "1",
+      "section": "records",
+      "sha256": "3086d9866914f0a12c41f3e72b2de14cc637cfe0aae39c8aaa85b2330b45392e",
+      "start": 1524,
+      "end": 2083,
+      "words": 100
+    },
+    {
+      "evidence_id": "ALPHA-WINTER-BELT:v1:purpose",
+      "document_id": "ALPHA-WINTER-BELT",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "040a1da70738c424354f38967866cd1aa0e61bb4c12d7aab79a14572a0a4e594",
+      "start": 114,
+      "end": 557,
+      "words": 81
+    },
+    {
+      "evidence_id": "ALPHA-WINTER-BELT:v1:cold-checks",
+      "document_id": "ALPHA-WINTER-BELT",
+      "version": "1",
+      "section": "cold-checks",
+      "sha256": "5cb4684b6129fb847e61128979352d5b20a8fc3113f3668511239287a13f9ed2",
+      "start": 575,
+      "end": 1041,
+      "words": 86
+    },
+    {
+      "evidence_id": "ALPHA-WINTER-BELT:v1:belt-tension",
+      "document_id": "ALPHA-WINTER-BELT",
+      "version": "1",
+      "section": "belt-tension",
+      "sha256": "63f0ad65991e362d8d12030312185da8955775e402f30ccee1bb349deb6beccf",
+      "start": 1060,
+      "end": 1469,
+      "words": 71
+    },
+    {
+      "evidence_id": "ALPHA-WINTER-BELT:v1:records",
+      "document_id": "ALPHA-WINTER-BELT",
+      "version": "1",
+      "section": "records",
+      "sha256": "58619c7fe8d4a655824b1dfec5dabeee382e6dec66ceb846746549ae4f0c8812",
+      "start": 1483,
+      "end": 1991,
+      "words": 92
+    },
+    {
+      "evidence_id": "ALPHA-ALARM-BYPASS:v1:purpose",
+      "document_id": "ALPHA-ALARM-BYPASS",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "0df341d7708244007918847b4c86ceb5db5d6ca3f15ab96ed6d71d9ff2ae1e71",
+      "start": 118,
+      "end": 617,
+      "words": 88
+    },
+    {
+      "evidence_id": "ALPHA-ALARM-BYPASS:v1:bypass-log",
+      "document_id": "ALPHA-ALARM-BYPASS",
+      "version": "1",
+      "section": "bypass-log",
+      "sha256": "6eaa6398bb22776e9c4bc502a63662c6468071f8554b7f82a87784d08ae7566d",
+      "start": 634,
+      "end": 1109,
+      "words": 97
+    },
+    {
+      "evidence_id": "ALPHA-ALARM-BYPASS:v1:expiry",
+      "document_id": "ALPHA-ALARM-BYPASS",
+      "version": "1",
+      "section": "expiry",
+      "sha256": "2d8a924f4ee743cea41fafe230b6837b0e2314596c5d274cb9e97611853f69ee",
+      "start": 1122,
+      "end": 1428,
+      "words": 59
+    },
+    {
+      "evidence_id": "ALPHA-ALARM-BYPASS:v1:records",
+      "document_id": "ALPHA-ALARM-BYPASS",
+      "version": "1",
+      "section": "records",
+      "sha256": "9db3a3accb2e0189d20eba5afd1fed823e1876980c89991ad1c0996323442039",
+      "start": 1442,
+      "end": 1994,
+      "words": 93
+    },
+    {
+      "evidence_id": "ALPHA-NOISE-SURVEY:v1:purpose",
+      "document_id": "ALPHA-NOISE-SURVEY",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "b57cb0148a10ed310610e54277cf93fb41baee13248e13707e477489d03faf6f",
+      "start": 121,
+      "end": 543,
+      "words": 76
+    },
+    {
+      "evidence_id": "ALPHA-NOISE-SURVEY:v1:decibel-readings",
+      "document_id": "ALPHA-NOISE-SURVEY",
+      "version": "1",
+      "section": "decibel-readings",
+      "sha256": "839851febdf34d85f47fb5a8efc13fcee52cb8913294363f3160e1082ee9fb01",
+      "start": 566,
+      "end": 997,
+      "words": 76
+    },
+    {
+      "evidence_id": "ALPHA-NOISE-SURVEY:v1:idler-wear",
+      "document_id": "ALPHA-NOISE-SURVEY",
+      "version": "1",
+      "section": "idler-wear",
+      "sha256": "77cce4fa431c755ca45f67a4928347c3a9de4a80f4865f30280f2184d0341701",
+      "start": 1014,
+      "end": 1341,
+      "words": 58
+    },
+    {
+      "evidence_id": "ALPHA-NOISE-SURVEY:v1:records",
+      "document_id": "ALPHA-NOISE-SURVEY",
+      "version": "1",
+      "section": "records",
+      "sha256": "4ffa199ee2403b4912e9f822247e10025ac29f3b1fcfe4d90ef8d5a0422c7003",
+      "start": 1355,
+      "end": 2024,
+      "words": 119
+    },
+    {
+      "evidence_id": "ALPHA-ALERT-REVIEW:v1:purpose",
+      "document_id": "ALPHA-ALERT-REVIEW",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "db53db873510ef41c699186442515a03857b0dba1f99c7a198144dec2ed4c0c7",
+      "start": 104,
+      "end": 741,
+      "words": 117
+    },
+    {
+      "evidence_id": "ALPHA-ALERT-REVIEW:v1:interval",
+      "document_id": "ALPHA-ALERT-REVIEW",
+      "version": "1",
+      "section": "interval",
+      "sha256": "c02572b5946774c0c2878f8fe29e7ecf280b3116fa8438776932dddca98af750",
+      "start": 756,
+      "end": 1211,
+      "words": 82
+    },
+    {
+      "evidence_id": "ALPHA-ALERT-REVIEW:v1:repeated-alerts",
+      "document_id": "ALPHA-ALERT-REVIEW",
+      "version": "1",
+      "section": "repeated-alerts",
+      "sha256": "20a1eaa034feb3c013e9d631ee2dc32fee196ec674f824fe13e2725893e2dc95",
+      "start": 1233,
+      "end": 1516,
+      "words": 50
+    },
+    {
+      "evidence_id": "ALPHA-ALERT-REVIEW:v1:evidence",
+      "document_id": "ALPHA-ALERT-REVIEW",
+      "version": "1",
+      "section": "evidence",
+      "sha256": "6c9e89b2b19ea4623520df92137e7bc4924f959a1684fe48431ea8828366d91a",
+      "start": 1531,
+      "end": 1805,
+      "words": 45
+    },
+    {
+      "evidence_id": "ALPHA-ALERT-REVIEW:v1:handoff",
+      "document_id": "ALPHA-ALERT-REVIEW",
+      "version": "1",
+      "section": "handoff",
+      "sha256": "26d46df5faaabffddc94bbdddd66678fb5528cb65f43965b021f716e3ff8eee3",
+      "start": 1819,
+      "end": 2112,
+      "words": 49
+    },
+    {
+      "evidence_id": "ALPHA-VENDOR-PORTAL:v1:purpose",
+      "document_id": "ALPHA-VENDOR-PORTAL",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "cfd8a4390e7606308c1983a26e467cf734b64e441afa0795a8a321b8e1781a4e",
+      "start": 116,
+      "end": 608,
+      "words": 83
+    },
+    {
+      "evidence_id": "ALPHA-VENDOR-PORTAL:v1:vendor-contact",
+      "document_id": "ALPHA-VENDOR-PORTAL",
+      "version": "1",
+      "section": "vendor-contact",
+      "sha256": "2edd92197a00ebe3db0080b6f86da5a1c9479d7dd4bf5731a1a9959d5959475c",
+      "start": 629,
+      "end": 1073,
+      "words": 77
+    },
+    {
+      "evidence_id": "ALPHA-VENDOR-PORTAL:v1:portal-note",
+      "document_id": "ALPHA-VENDOR-PORTAL",
+      "version": "1",
+      "section": "portal-note",
+      "sha256": "72f4e4dbda1571f0e12ff35f96a3870f0512ea8a98263814ad904ad39a2f959b",
+      "start": 1091,
+      "end": 1473,
+      "words": 65
+    },
+    {
+      "evidence_id": "ALPHA-VENDOR-PORTAL:v1:records",
+      "document_id": "ALPHA-VENDOR-PORTAL",
+      "version": "1",
+      "section": "records",
+      "sha256": "2e3df077f5b4c56faecfe7e35ba5e61b5ff71377ecfb9cb496b9643629fcb394",
+      "start": 1487,
+      "end": 2101,
+      "words": 102
+    },
+    {
+      "evidence_id": "BETA-PUMP-ALIGN:v1:purpose",
+      "document_id": "BETA-PUMP-ALIGN",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "4b2bf1a2d14a3bb331c4c6ba22296acbb3365c7f44541e3eb1ef9129ff8fbd70",
+      "start": 122,
+      "end": 567,
+      "words": 77
+    },
+    {
+      "evidence_id": "BETA-PUMP-ALIGN:v1:preparation",
+      "document_id": "BETA-PUMP-ALIGN",
+      "version": "1",
+      "section": "preparation",
+      "sha256": "8f2ac8595b7a2b515a03363971337629ae384846821737336531a4cda6686c91",
+      "start": 585,
+      "end": 980,
+      "words": 69
+    },
+    {
+      "evidence_id": "BETA-PUMP-ALIGN:v1:alignment",
+      "document_id": "BETA-PUMP-ALIGN",
+      "version": "1",
+      "section": "alignment",
+      "sha256": "1b065455bcde1c7621062f1f83b7a6c93b991948c514cdbb58b21a113b662d36",
+      "start": 996,
+      "end": 1285,
+      "words": 49
+    },
+    {
+      "evidence_id": "BETA-PUMP-ALIGN:v1:tolerance",
+      "document_id": "BETA-PUMP-ALIGN",
+      "version": "1",
+      "section": "tolerance",
+      "sha256": "f10db2f2bdc3646a1322bb899c41ae82dcfc570b232f1063919c4366ae473f90",
+      "start": 1301,
+      "end": 1597,
+      "words": 49
+    },
+    {
+      "evidence_id": "BETA-PUMP-ALIGN:v1:records",
+      "document_id": "BETA-PUMP-ALIGN",
+      "version": "1",
+      "section": "records",
+      "sha256": "e02123a8a68a5fd13bb9ac08ff1a9c9db0992635df3d9bf811f9f5b617a9c223",
+      "start": 1611,
+      "end": 2088,
+      "words": 86
+    },
+    {
+      "evidence_id": "BETA-PUMP-ALIGN:v2:purpose",
+      "document_id": "BETA-PUMP-ALIGN",
+      "version": "2",
+      "section": "purpose",
+      "sha256": "c1e92ede574ee2f157363a4343b6097a7ac65fdacb7b247147982fce31822c13",
+      "start": 122,
+      "end": 459,
+      "words": 58
+    },
+    {
+      "evidence_id": "BETA-PUMP-ALIGN:v2:preparation",
+      "document_id": "BETA-PUMP-ALIGN",
+      "version": "2",
+      "section": "preparation",
+      "sha256": "b55337e2a1d0ddbb6bfb30ffb9cdd78d4ec7c4e117f985d3e5836c7c11e03586",
+      "start": 477,
+      "end": 811,
+      "words": 58
+    },
+    {
+      "evidence_id": "BETA-PUMP-ALIGN:v2:alignment",
+      "document_id": "BETA-PUMP-ALIGN",
+      "version": "2",
+      "section": "alignment",
+      "sha256": "944ca53587a01fa504179e08ebd134b81a6a93be3c0d907d03b6b712fe374824",
+      "start": 827,
+      "end": 1126,
+      "words": 53
+    },
+    {
+      "evidence_id": "BETA-PUMP-ALIGN:v2:tolerance",
+      "document_id": "BETA-PUMP-ALIGN",
+      "version": "2",
+      "section": "tolerance",
+      "sha256": "e521d35b0a8fb4f3d2f1991ce282d366d8734c020837209fe01ac49f77b91b5d",
+      "start": 1142,
+      "end": 1470,
+      "words": 55
+    },
+    {
+      "evidence_id": "BETA-PUMP-ALIGN:v2:records",
+      "document_id": "BETA-PUMP-ALIGN",
+      "version": "2",
+      "section": "records",
+      "sha256": "dfab7b5183e88d3c8256c801fa1628fddd90d5cbad77ac8df964fb12202ca1b9",
+      "start": 1484,
+      "end": 2066,
+      "words": 104
+    },
+    {
+      "evidence_id": "BETA-COMPRESSOR-OIL:v1:purpose",
+      "document_id": "BETA-COMPRESSOR-OIL",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "697b0296c8f87023cbc1560134e07901d8e950497b48b00407a4fb4efc4c590e",
+      "start": 114,
+      "end": 584,
+      "words": 78
+    },
+    {
+      "evidence_id": "BETA-COMPRESSOR-OIL:v1:sampling",
+      "document_id": "BETA-COMPRESSOR-OIL",
+      "version": "1",
+      "section": "sampling",
+      "sha256": "a2d91129068ed056b81a571fa40f4c962fd44433c287e1b96d20abf6a14b5c26",
+      "start": 599,
+      "end": 1051,
+      "words": 80
+    },
+    {
+      "evidence_id": "BETA-COMPRESSOR-OIL:v1:oil-analysis",
+      "document_id": "BETA-COMPRESSOR-OIL",
+      "version": "1",
+      "section": "oil-analysis",
+      "sha256": "49078e3712132ceb10e8cbb825d51da003f49f1bd4b808391211ec2942b7b2a2",
+      "start": 1070,
+      "end": 1400,
+      "words": 54
+    },
+    {
+      "evidence_id": "BETA-COMPRESSOR-OIL:v1:records",
+      "document_id": "BETA-COMPRESSOR-OIL",
+      "version": "1",
+      "section": "records",
+      "sha256": "d970b0fc1e277e1fd9acab571a107e82b3fc3e82bd024c8a2f5b1ce2e184a3b6",
+      "start": 1414,
+      "end": 2058,
+      "words": 116
+    },
+    {
+      "evidence_id": "BETA-SUMMER-COOLING:v1:purpose",
+      "document_id": "BETA-SUMMER-COOLING",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "f9e75d0e7d3e5b0274a1fd8eb22d8ff141fa729c70fde39d0def364c63888bad",
+      "start": 111,
+      "end": 560,
+      "words": 80
+    },
+    {
+      "evidence_id": "BETA-SUMMER-COOLING:v1:heat-watch",
+      "document_id": "BETA-SUMMER-COOLING",
+      "version": "1",
+      "section": "heat-watch",
+      "sha256": "09e89e83dfd05d8da6e2db79129976fffe5d70a4c3bd381f9b6326678394ce69",
+      "start": 577,
+      "end": 1014,
+      "words": 76
+    },
+    {
+      "evidence_id": "BETA-SUMMER-COOLING:v1:fan-check",
+      "document_id": "BETA-SUMMER-COOLING",
+      "version": "1",
+      "section": "fan-check",
+      "sha256": "509d2ffe7ec4cb483e1fb53948835cb8426f54ae6f4da1e4342f835cdc6b1512",
+      "start": 1030,
+      "end": 1325,
+      "words": 52
+    },
+    {
+      "evidence_id": "BETA-SUMMER-COOLING:v1:records",
+      "document_id": "BETA-SUMMER-COOLING",
+      "version": "1",
+      "section": "records",
+      "sha256": "05c46fdd53f438f9e2afc9a3043df9012611e68cd2c4b0579302d11039d3b7e7",
+      "start": 1339,
+      "end": 1980,
+      "words": 119
+    },
+    {
+      "evidence_id": "BETA-HOT-WORK:v1:purpose",
+      "document_id": "BETA-HOT-WORK",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "a7727b2f3258c42cb8664df1a2f205ecf8aaa8f3d1cd3f4f26d858bc37241c44",
+      "start": 106,
+      "end": 558,
+      "words": 81
+    },
+    {
+      "evidence_id": "BETA-HOT-WORK:v1:permit",
+      "document_id": "BETA-HOT-WORK",
+      "version": "1",
+      "section": "permit",
+      "sha256": "5541b374e304ce3af4029a25a65764bf337dd022e612c2097c12c1eaad349cc6",
+      "start": 571,
+      "end": 971,
+      "words": 77
+    },
+    {
+      "evidence_id": "BETA-HOT-WORK:v1:fire-watch",
+      "document_id": "BETA-HOT-WORK",
+      "version": "1",
+      "section": "fire-watch",
+      "sha256": "dec591e1cbdcace980feeccef4972b7e1fd4b7c825ddbef2ecba29561c2456ee",
+      "start": 988,
+      "end": 1409,
+      "words": 79
+    },
+    {
+      "evidence_id": "BETA-HOT-WORK:v1:records",
+      "document_id": "BETA-HOT-WORK",
+      "version": "1",
+      "section": "records",
+      "sha256": "0cef434f9f849838120e76342e1cbb76f5385a15e12e8402d94a8b55ef102346",
+      "start": 1423,
+      "end": 1964,
+      "words": 90
+    },
+    {
+      "evidence_id": "BETA-SHIFT-HANDOVER:v1:purpose",
+      "document_id": "BETA-SHIFT-HANDOVER",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "474a557006c911a50326fef3ae6a59da168396012c4126b24e257f1fda26e28b",
+      "start": 113,
+      "end": 487,
+      "words": 68
+    },
+    {
+      "evidence_id": "BETA-SHIFT-HANDOVER:v1:handover-notes",
+      "document_id": "BETA-SHIFT-HANDOVER",
+      "version": "1",
+      "section": "handover-notes",
+      "sha256": "4a9e88db290a411eebc273775628d31f44cdbbf1444de7b5edd05d63b4145de8",
+      "start": 508,
+      "end": 994,
+      "words": 85
+    },
+    {
+      "evidence_id": "BETA-SHIFT-HANDOVER:v1:open-items",
+      "document_id": "BETA-SHIFT-HANDOVER",
+      "version": "1",
+      "section": "open-items",
+      "sha256": "a00d6ffdffa8212f142c50dd9afe176d6e17de9ed156affb008af0325ff408fe",
+      "start": 1011,
+      "end": 1448,
+      "words": 79
+    },
+    {
+      "evidence_id": "BETA-SHIFT-HANDOVER:v1:records",
+      "document_id": "BETA-SHIFT-HANDOVER",
+      "version": "1",
+      "section": "records",
+      "sha256": "c802189e1897844a44e8ad9189299c404cedf2b0ed8caecc4498cf3f78021001",
+      "start": 1462,
+      "end": 2002,
+      "words": 97
+    },
+    {
+      "evidence_id": "BETA-CONTRACTOR-MEMO:v1:purpose",
+      "document_id": "BETA-CONTRACTOR-MEMO",
+      "version": "1",
+      "section": "purpose",
+      "sha256": "d4ed4df584c86b7d93f7708965e56b50b9deaf569098b31d6ed7d3cc002dcc72",
+      "start": 115,
+      "end": 619,
+      "words": 86
+    },
+    {
+      "evidence_id": "BETA-CONTRACTOR-MEMO:v1:guard-inspection",
+      "document_id": "BETA-CONTRACTOR-MEMO",
+      "version": "1",
+      "section": "guard-inspection",
+      "sha256": "5c9335d391ae88ec5968f75c136dce6a8166341f830e3f0c06f7d648c99f2eea",
+      "start": 642,
+      "end": 1083,
+      "words": 78
+    },
+    {
+      "evidence_id": "BETA-CONTRACTOR-MEMO:v1:memo-note",
+      "document_id": "BETA-CONTRACTOR-MEMO",
+      "version": "1",
+      "section": "memo-note",
+      "sha256": "c43a88bcdf2e05dc32aa442abf00ac480e1961d1b90e6c0dd6c608d696d61c86",
+      "start": 1099,
+      "end": 1564,
+      "words": 76
+    },
+    {
+      "evidence_id": "BETA-CONTRACTOR-MEMO:v1:records",
+      "document_id": "BETA-CONTRACTOR-MEMO",
+      "version": "1",
+      "section": "records",
+      "sha256": "a300b70c959a1f5692376d4c8509f581c0597c9a7a9acc657c112f97f385ff2c",
+      "start": 1578,
+      "end": 2102,
+      "words": 93
+    }
+  ]
+}

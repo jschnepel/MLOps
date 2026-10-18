@@ -12,7 +12,6 @@ versions of these cases, with Keycloak's tokens over a socket, are tests/e2e/tes
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -22,12 +21,11 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from ops_core import persistence
 from ops_core.tokens import Principal, TokenRejected
-from ops_mcp_read import procedures, server
+from ops_mcp_read import server
 from ops_mcp_write import server as write_server
 from starlette.testclient import TestClient
 
 ISSUER = "http://localhost:18080/realms/ops-dev"
-FIXTURES = Path("data/handoff-fixtures")
 RESOURCE = "http://mcp-read:8081/mcp"
 BASE = "http://127.0.0.1:8081"  # a loopback Host, which the SDK's DNS-rebinding guard admits
 TOOLS_LIST = {
@@ -73,7 +71,7 @@ class IdleConn:
 
 
 def read_app() -> Any:
-    state = server.State(session=None, corpora=procedures.load_corpora(FIXTURES), verifier=KeyedVerifier())
+    state = server.State(session=None, verifier=KeyedVerifier())
     idle: Any = IdleConn()
     state.session = persistence.Session(idle)  # already set, so the lifespan opens no connection
     return server.build_app(server.build_server(state, issuer=ISSUER, resource_url=RESOURCE), state)

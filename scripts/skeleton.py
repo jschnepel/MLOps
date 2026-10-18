@@ -1,5 +1,5 @@
-"""Walking-skeleton operations (T08, T09, T10): `migrate` both databases, `up`/`down`/`status` the six processes,
-`keys` the destination-vs-grant detective check.
+"""Walking-skeleton operations (T08, T09, T10, T17): `migrate` both databases, `ingest` the governed corpus,
+`up`/`down`/`status` the six processes, `keys` the destination-vs-grant detective check.
 
 Reads `.env` (written by scripts/bootstrap_dev.py) for ports and the secrets directory, exports the `OPS_*` variables
 every service reads (ops_core.settings), and runs the two Alembic trees programmatically with a shared connection
@@ -8,11 +8,13 @@ from a `URL` object, so the password is never rendered into a string. Roles and 
 concern, schema and grants are the migrations' (SA:395): every AM-20.1 login role is created or re-keyed from its
 secret file on each run, the NOLOGIN owner roles are created, and database CONNECT is narrowed to the roles that use
 each database, all before Alembic runs. The profile picks the Alembic target: only the test profile applies the
-`testclock` branch (SA:529), and `up` refuses to start the dev skeleton against a database that carries it.
+`testclock` branch (SA:529), and `up` refuses to start the dev skeleton against a database that carries it. The
+`vector` extension is bootstrap infrastructure too (`ensure_extensions`, T17).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import signal
@@ -29,7 +31,8 @@ from uuid import UUID
 import psycopg
 from alembic import command
 from alembic.config import Config
-from ops_core import privileges, settings
+from ops_core import corpus, persistence, privileges, settings
+from ops_core import ingest as corpus_ingest
 from ops_core.settings import Profile, Role
 from psycopg import sql
 from sqlalchemy import create_engine
@@ -37,6 +40,8 @@ from sqlalchemy.engine import URL, Engine
 
 ROOT = Path(__file__).resolve().parent.parent
 MIGRATIONS = {"app": ROOT / "migrations" / "app", "incident": ROOT / "migrations" / "incident"}
+CORPUS = ROOT / "data" / "corpus"
+SEED_IDS = ROOT / "data" / "seed-ids.json"
 
 
 def load_dotenv(path: Path = Path(".env")) -> dict[str, str]:
@@ -165,6 +170,22 @@ def ensure_roles(superuser: settings.Postgres, app_db: str, incident_db: str, pr
         narrow_connect(conn, incident_db, ("incident",))
 
 
+# Extensions are bootstrap infrastructure, like the roles (Plan L ruling 2): pgvector's type appears in
+# `search_procedures_scoped`'s signature (SA:461), and a revision that created the extension could not drop it again
+# exactly. The Compose init script creates it in `ops` on the volume's first start; this covers every database
+# `migrate` targets, the live suite's freshly created `ops_test` included.
+EXTENSIONS: tuple[str, ...] = ("vector",)
+
+
+def ensure_extensions(pg: settings.Postgres) -> None:
+    """CREATE EXTENSION IF NOT EXISTS for each bootstrap extension, as the superuser, in the database `pg` names."""
+    with psycopg.connect(pg.conninfo(), autocommit=True) as conn:
+        for name in EXTENSIONS:
+            # SCHEMA public: the revision and the function signature name `public.vector`, wherever a site's default
+            # creation schema points.
+            conn.execute(sql.SQL("CREATE EXTENSION IF NOT EXISTS {} SCHEMA public").format(sql.Identifier(name)))
+
+
 def _config(tree: str, connection: object) -> Config:
     cfg = Config()
     cfg.set_main_option("script_location", str(MIGRATIONS[tree]))
@@ -201,7 +222,8 @@ def migrate_target(profile: Profile) -> str:
 
 
 def migrate(profile: Profile | None = None) -> int:
-    """Roles first, then both trees; the profile (default `PROFILE`, else dev) decides if the test clock exists."""
+    """Roles, then the bootstrap extensions, then both trees; the profile (default `PROFILE`, else dev) decides if the
+    test clock exists."""
     export_environment(load_dotenv(ROOT / ".env"))
     profile = profile or settings.profile()
     superuser = settings.superuser_postgres()
@@ -210,10 +232,64 @@ def migrate(profile: Profile | None = None) -> int:
         superuser.host, superuser.port, superuser.user, incident_db, superuser.password
     )
     ensure_roles(superuser, superuser.dbname, incident_db, profile)
+    ensure_extensions(superuser)
     target = migrate_target(profile)
     upgrade("app", superuser, target)
     upgrade("incident", incident_as_superuser, "head")
     print(f"MIGRATE: app at {target}, incident at head (profile {profile.value})")
+    return 0
+
+
+def corpus_tenants() -> dict[str, UUID]:
+    """Tenant slug -> seeded tenant UUID (data/seed-ids.json): how the corpus catalog's slugs resolve."""
+    seeds = json.loads(SEED_IDS.read_text(encoding="utf-8"))
+    return {slug: UUID(value) for slug, value in seeds["tenants"].items()}
+
+
+async def _ingest(pg: settings.Postgres, governed: corpus.Corpus) -> list[corpus_ingest.Report]:
+    conn = await persistence.connect(pg)
+    try:
+        return await corpus_ingest.ingest(conn, governed, corpus_tenants())
+    finally:
+        await conn.close()
+
+
+def ingest() -> int:
+    """Ingest data/corpus as role `worker` into the database the environment names (`OPS_PG_DB`, default `ops`; the
+    live suite's `ops_test`), T17 / Plan L ruling 5. Exit 1 with every problem, and nothing written, when the corpus or
+    the store refuses the run; a repeated run writes nothing. The dev database waits for the owner (after `migrate`)."""
+    export_environment(load_dotenv(ROOT / ".env"))
+    try:
+        governed = corpus.load(CORPUS)
+        pg = settings.app_postgres(Role.WORKER)
+        if sys.platform == "win32":  # psycopg async refuses the Proactor loop (as in serve_app)
+            reports = asyncio.run(_ingest(pg, governed), loop_factory=asyncio.SelectorEventLoop)
+        else:
+            reports = asyncio.run(_ingest(pg, governed))
+    except (persistence.PersistenceError, psycopg.Error, corpus_ingest.IngestInterrupted) as error:
+        # A phase-2 failure arrives wrapped, with the tenants already committed; the failure itself is its cause.
+        cause: BaseException | None = error
+        written: tuple[str, ...] = ()
+        if isinstance(error, corpus_ingest.IngestInterrupted):
+            cause, written = error.__cause__, error.written
+        # Our own PersistenceError text is safe by contract and carries the hint ("run ... migrate"), so it is
+        # printed (final review, M2). A driver message can name the host, so only its class is.
+        detail = f": {cause}" if isinstance(cause, persistence.PersistenceError) else ""
+        after = f" after writing {', '.join(written)}" if written else ""
+        print(f"INGEST: failed ({type(cause).__name__}{detail}){after}")
+        return 1
+    except (corpus.CorpusError, corpus_ingest.IngestRefused) as error:
+        written = getattr(error, "written", ())
+        print(f"INGEST: refused after writing {', '.join(written)}" if written else "INGEST: refused, nothing written")
+        for problem in error.problems:
+            print(f"  {problem}")
+        return 1
+    for report in reports:
+        wrote = "" if report.recorded else " (nothing to write)"
+        print(
+            f"INGEST: {report.tenant} {report.corpus_version}: {report.documents_added} new, "
+            f"{report.states_added} restated, {report.unchanged} unchanged{wrote}"
+        )
     return 0
 
 
@@ -405,7 +481,7 @@ def status() -> int:
 
 
 def main(argv: list[str]) -> int:
-    commands = {"migrate": migrate, "up": up, "down": down, "status": status, "keys": keys}
+    commands = {"migrate": migrate, "ingest": ingest, "up": up, "down": down, "status": status, "keys": keys}
     if len(argv) == 2 and argv[1] in commands:
         return commands[argv[1]]()
     print(__doc__)
