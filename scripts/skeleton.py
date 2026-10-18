@@ -1,5 +1,5 @@
 """Walking-skeleton operations (T08, T09, T10, T17): `migrate` both databases, `ingest` the governed corpus,
-`up`/`down`/`status` the six processes, `keys` the destination-vs-grant detective check.
+`up`/`down`/`status` the seven processes, `keys` the destination-vs-grant detective check.
 
 Reads `.env` (written by scripts/bootstrap_dev.py) for ports and the secrets directory, exports the `OPS_*` variables
 every service reads (ops_core.settings), and runs the two Alembic trees programmatically with a shared connection
@@ -344,6 +344,7 @@ class Process:
 
 
 PROCESSES: tuple[Process, ...] = (
+    Process("asset-sim", "ops_asset_sim", 8091),  # T16: before mcp-read, which reads assets from it
     Process("incident-sim", "ops_incident_sim", 8090),
     Process("mcp-read", "ops_mcp_read", 8081),
     Process("mcp-write", "ops_mcp_write", 8082),
@@ -369,6 +370,7 @@ def process_environment() -> dict[str, str]:
     env.setdefault("OPS_MCP_READ_PORT", "8081")
     env.setdefault("OPS_MCP_WRITE_PORT", "8082")
     env.setdefault("OPS_INCIDENT_SIM_PORT", "8090")
+    env.setdefault("OPS_ASSET_SIM_PORT", "8091")
     return env
 
 
@@ -382,7 +384,7 @@ def healthy(url: str) -> bool:
 
 
 class Skeleton:
-    """The six host processes as children of this one; logs under runtime/skeleton/ (never committed)."""
+    """The seven host processes as children of this one; logs under runtime/skeleton/ (never committed)."""
 
     def __init__(self) -> None:
         self.children: dict[str, subprocess.Popen[bytes]] = {}
@@ -433,7 +435,7 @@ class Skeleton:
 
 
 def up() -> int:
-    """Start the six processes and record their pids for `down`; they outlive this script. Refuses a second set."""
+    """Start the seven processes and record their pids for `down`; they outlive this script. Refuses a second set."""
     export_environment(load_dotenv(ROOT / ".env"))
     try:
         clock_guard(settings.superuser_postgres(), settings.profile())

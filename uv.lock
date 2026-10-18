@@ -801,11 +801,17 @@ name = "ops-asset-sim"
 version = "0.0.1"
 source = { editable = "asset-sim" }
 dependencies = [
+    { name = "fastapi" },
     { name = "ops-core" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ops-core", editable = "core" }]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.142,<1" },
+    { name = "ops-core", editable = "core" },
+    { name = "uvicorn", specifier = ">=0.54,<1" },
+]
 
 [[package]]
 name = "ops-core"

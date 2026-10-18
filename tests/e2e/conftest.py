@@ -8,6 +8,7 @@ connection (`app_conn`); assertions about what a role may do use `role_conn`.
 
 import asyncio
 import os
+import socket
 import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -17,6 +18,7 @@ from uuid import UUID
 import psycopg
 import pytest
 import pytest_asyncio
+import uvicorn
 from ops_core import corpus, ingest, persistence, settings
 from ops_core.lease import Lease
 from ops_core.settings import Profile, Role
@@ -87,6 +89,48 @@ async def ingested(migrated: None) -> None:
         await ingest.ingest(conn, corpus.load(CORPUS), corpus_tenants())
     finally:
         await conn.close()
+
+
+def free_port() -> int:
+    """A loopback port nobody holds right now (the skeleton's own processes may be up on their fixed ports)."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+@pytest_asyncio.fixture
+async def asset_sim(env: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
+    """asset-sim's production app (T16) under uvicorn on a free loopback port in the test's own loop, with this
+    session's profile (test: its fault routes exist). Its base URL is exported as OPS_ASSET_SIM_URL for an mcp-read
+    built afterwards, in-process or as a child through `process_environment`; stopped by uvicorn's own shutdown,
+    never a cancel."""
+    from ops_asset_sim.app import production_app
+
+    port = free_port()
+    # log_config=None, as test_mcp_read_t15_live's `serving`: uvicorn must not reconfigure the process's loggers.
+    config = uvicorn.Config(production_app(), host="127.0.0.1", port=port, log_level="warning", log_config=None)
+    server = uvicorn.Server(config)
+
+    async def guarded() -> None:
+        # uvicorn answers a failed lifespan (keys it cannot load) with sys.exit; a SystemExit escaping a task would
+        # leave the event loop at once, so it becomes an ordinary error (test_mcp_read_t15_live's `guarded`).
+        try:
+            await server.serve()
+        except SystemExit as exc:
+            raise RuntimeError("asset-sim did not start; see the log above") from exc
+
+    task = asyncio.create_task(guarded())
+    try:
+        while not server.started:
+            if task.done():
+                task.result()  # a failed start raises its RuntimeError here instead of waiting for ever
+            await asyncio.sleep(0.05)
+        url = f"http://127.0.0.1:{port}"
+        monkeypatch.setenv("OPS_ASSET_SIM_URL", url)
+        yield url
+    finally:
+        server.should_exit = True
+        await asyncio.wait({task})
 
 
 @pytest_asyncio.fixture

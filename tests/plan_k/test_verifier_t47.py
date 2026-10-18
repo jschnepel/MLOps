@@ -28,6 +28,7 @@ URLS = Urls(
     mcp_read="http://127.0.0.1:8081/mcp",
     mcp_write="http://127.0.0.1:8082/mcp",
     incident_sim="http://127.0.0.1:8090",
+    asset_sim="http://127.0.0.1:8091",
 )
 KC = Keycloak(base_url="http://localhost:18080", issuer=ISSUER, server_url="http://127.0.0.1:18080")
 

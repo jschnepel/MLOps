@@ -7,14 +7,23 @@ for a kind that ignores it, and a factory that starts in dev or demo.
 
 import pytest
 from ops_core.settings import Profile
-from ops_core.testing.faults import BS405, DEFAULT_SECONDS, SWEEPER_FAULTS, FaultKind, Faults, FaultsDisabled
+from ops_core.testing.faults import (
+    ASSET_SIM_FAULTS,
+    BS405,
+    DEFAULT_SECONDS,
+    SWEEPER_FAULTS,
+    FaultKind,
+    Faults,
+    FaultsDisabled,
+)
 
 
 def test_every_bs405_phrase_maps_to_one_kind_or_the_harness() -> None:
     assert len(BS405) == 9  # BS:405 names nine
     kinds = [kind for kind in BS405.values() if kind is not None]
-    # One hook each, and no orphan hook: every kind outside BS:405 is the sweeper's outbox sink fault (T14).
-    assert len(kinds) == len(set(kinds)) and set(kinds) == set(FaultKind) - SWEEPER_FAULTS
+    # One hook each, and no orphan hook: every kind outside BS:405 is the sweeper's outbox sink fault (T14) or
+    # asset-sim's `unavailable` state (T16).
+    assert len(kinds) == len(set(kinds)) and set(kinds) == set(FaultKind) - SWEEPER_FAULTS - ASSET_SIM_FAULTS
     assert [phrase for phrase, kind in BS405.items() if kind is None] == ["concurrent same-key submission"]
 
 
