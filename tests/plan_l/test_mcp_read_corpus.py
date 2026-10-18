@@ -119,15 +119,22 @@ class RunType:
 
 
 async def call(
-    monkeypatch: pytest.MonkeyPatch, db: Database, arguments: dict[str, Any], assets: RunType | None = None
+    monkeypatch: pytest.MonkeyPatch,
+    db: Database,
+    arguments: dict[str, Any],
+    assets: RunType | None = None,
+    configured: bool = True,
 ) -> CallToolResult:
+    """One search over the in-process stack; `configured=False` leaves the server without an asset-sim client."""
     monkeypatch.setattr(persistence, "resolve_invocation", db.resolve_invocation)
     monkeypatch.setattr(persistence, "asset_scope", db.asset_scope)
     monkeypatch.setattr(persistence, "search_procedures", db.search_procedures)
     state = server.State(session=None, verifier=KeyedVerifier())
     fake: Any = db.conn
     state.session = persistence.Session(fake)  # already set, so the lifespan opens no connection
-    state.assets = assets or RunType("pump")  # A17 is a pump (data/corpus/assets.json)
+    state.assets = (assets or RunType("pump")) if configured else None  # A17 is a pump (data/corpus/assets.json)
+    if not configured:  # the lifespan would build the real client from the settings
+        monkeypatch.setattr(server.assets.HttpAssetSim, "from_settings", classmethod(lambda cls: None))
     app = server.build_app(server.build_server(state, issuer=ISSUER, resource_url=RESOURCE), state)
     headers = {"Authorization": "Bearer good", "X-Ops-Invocation": HANDLE}
     async with app.router.lifespan_context(app):

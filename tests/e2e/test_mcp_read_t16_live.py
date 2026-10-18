@@ -201,6 +201,9 @@ async def test_r028_the_search_keeps_to_the_runs_asset_type_and_never_returns_a_
         documents = {r["document_id"] for r in own["data"]["results"]}
         # A17 is a pump: pump documents or any-asset ones only; ALPHA-ALARM-BYPASS (a pump document) is revoked.
         assert documents and documents <= {"ALPHA-PUMP-SEAL", "ALPHA-ALERT-REVIEW"}
+        # This can fail: ALARM-BYPASS is a pump document whose bypass-log section would rank about 1.5, far above the
+        # 0.25 floor, under the pump filter and this OR query; only the definer's approved-status filter keeps it out.
+        assert not any(r["evidence_id"].startswith("ALPHA-ALARM-BYPASS:") for r in own["data"]["results"])
         assert all(r["retrieved_at"] == own["observed_at"] for r in own["data"]["results"])  # the definer's instant
         assert other["error"]["code"] == "ASSET_TYPE_OUT_OF_SCOPE" and other["data"] is None
         lines.append(f"R028 search: run type pump -> {sorted(documents)}; revoked bypass absent; compressor refused")

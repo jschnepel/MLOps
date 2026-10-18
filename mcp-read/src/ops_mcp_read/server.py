@@ -347,8 +347,9 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         limit: Annotated[int, Field(ge=1, le=8)],
         mode: Literal["lexical", "vector_exact"],
         ctx: Context,
-        # Absent means "any asset". The empty default is never validated (pydantic leaves defaults alone), so a
-        # caller cannot send "" or null (Plan L ruling 11); the advertised schema is the committed file.
+        # Absent means the run's own asset type (any asset only when asset-sim does not know the run's asset). The
+        # empty default is never validated (pydantic leaves defaults alone), so a caller cannot send "" or null
+        # (Plan L ruling 11); the advertised schema is the committed file.
         asset_type: Annotated[str, Field(min_length=1, max_length=40)] = "",
     ) -> ToolResult:
         """Lexical search over the calling run's tenant's approved, effective procedure sections of the run's asset

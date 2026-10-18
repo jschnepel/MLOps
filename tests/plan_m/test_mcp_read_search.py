@@ -28,6 +28,13 @@ async def test_a_caller_type_that_is_not_the_runs_is_refused_before_the_definer(
     assert [name for name, _, _ in db.calls] == ["resolve", "scope"]  # the definer never ran
     doc = refused.structured_content
     assert doc is not None and doc["error"]["code"] == "ASSET_TYPE_OUT_OF_SCOPE" and doc["data"] is None
+    assert doc["observed_at"] == "2026-10-16T12:00:00Z"  # the scope's as_of, not the wall clock
+    for spelling in ("Pump", "PUMP"):  # the comparison is exact: another case is another type
+        cased = Database(UnitConn())
+        result = await call(monkeypatch, cased, {**QUERY, "asset_type": spelling}, RunType("pump"))
+        assert [name for name, _, _ in cased.calls] == ["resolve", "scope"]
+        assert result.structured_content is not None
+        assert result.structured_content["error"]["code"] == "ASSET_TYPE_OUT_OF_SCOPE"
     same = Database(UnitConn())
     await call(monkeypatch, same, {**QUERY, "asset_type": "pump"}, RunType("pump"))  # repeating it is allowed
     assert same.calls[2][2]["asset_type"] == "pump"
@@ -43,6 +50,25 @@ async def test_an_unreachable_asset_sim_fails_the_search_closed(monkeypatch: pyt
         "message": "asset-sim could not be reached",
         "retryable": True,
     }
+
+
+async def test_an_invalid_type_lookup_or_no_client_never_reaches_the_definer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = Database(UnitConn())
+    result = await call(
+        monkeypatch, db, QUERY, RunType(assets.UpstreamInvalid("asset-sim answered outside the contract"))
+    )
+    assert [name for name, _, _ in db.calls] == ["resolve", "scope"]
+    doc = result.structured_content
+    assert doc is not None and doc["data"] is None and doc["observed_at"] == "2026-10-16T12:00:00Z"
+    assert doc["error"]["code"] == "UPSTREAM_INVALID" and doc["error"]["retryable"] is False
+    bare = Database(UnitConn())
+    result = await call(monkeypatch, bare, QUERY, configured=False)  # no asset-sim client at all
+    assert [name for name, _, _ in bare.calls] == ["resolve", "scope"]
+    doc = result.structured_content
+    assert doc is not None and doc["data"] is None and doc["observed_at"] == "2026-10-16T12:00:00Z"
+    assert doc["error"]["code"] == "UNAVAILABLE" and doc["error"]["retryable"] is True
 
 
 async def test_the_answer_is_stamped_with_the_definers_instant(monkeypatch: pytest.MonkeyPatch) -> None:
