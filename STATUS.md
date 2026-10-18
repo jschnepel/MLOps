@@ -296,9 +296,11 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 - Plan L (T17: the governed corpus, its ingestion and the lexical baseline) executed on branch `plan-l`
   (`c329145..bbba69c`, on top of `plan-k`). The plan is `docs/superpowers/plans/2026-10-16-first-slice-l-governed-corpus.md`.
-- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1269 passed, 191 skipped`.
-  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1439 passed, 21 skipped`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1270 passed, 191 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1440 passed, 21 skipped`.
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
+  The final whole-branch review (0 Critical, 0 Important, 5 Minor) was followed by one fix wave (`IngestInterrupted`, the
+  command's hint, history, one debt line, one docs sentence); these are the gates after it.
 - **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`): R032 and R033 (`RECORDED_LOCALLY_LIVE`; R033 subject to the owner's
   decision on erratum 102: 15/20 no-source development questions answered with nothing at the 0.25 minimum
   rank; the other 5/20 are open: SA:377 as written would not abstain on them, so T20 must add a relevance

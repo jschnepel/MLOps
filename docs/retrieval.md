@@ -60,9 +60,11 @@ It plans every tenant first and writes nothing if any version conflicts with wha
 | `draft`, or another `effective_from`, for a version stored as approved or superseded | refuses the whole run (either would un-retire its predecessors; publish a new version instead) |
 | nothing (the version left the catalog) | refuses the whole run (revoke it instead) |
 
-A new version gets its `documents` row, one `chunks` row per section and its first state row. A tenant whose run
-changes nothing and whose latest `corpus_ingestions` row already names this version and lock gets no row at all, so a
-repeated run writes nothing. The tool reports the tenant's latest ingested version, or `none`.
+A new version gets its `documents` row, one `chunks` row per section and its first state row. A `corpus_ingestions`
+row is written when anything changed, or when the tenant's latest row does not already name this corpus version and
+lock (a new release changes the version the tool reports even if no document changed); a tenant whose run changes
+nothing and whose latest row already names this version and lock gets no row at all, so a repeated run writes
+nothing. The tool reports the tenant's latest ingested version, or `none`.
 
 ## The search
 

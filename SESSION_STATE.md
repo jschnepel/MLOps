@@ -777,7 +777,7 @@ start on it. Next is Plan M = T16 (the read tools and asset-sim, the earliest de
 - **The frozen corpus.** `corpus-1`, lock `81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862`
   (`ops_core.corpus.RELEASES`), is the corpus T41 labels the holdout against; any change to a locked file after T41
   is a new version and requires re-labelling.
-- Gates: `check.py` 1269 passed, 191 skipped; `check.py --profile test` 1439 passed, 21 skipped; `verify_handoff.py` exit 0 (STATUS.md, "Update —
+- Gates: `check.py` 1270 passed, 191 skipped; `check.py --profile test` 1440 passed, 21 skipped; `verify_handoff.py` exit 0 (STATUS.md, "Update —
   Plan L executed").
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan K's
   ninety-two:
@@ -824,7 +824,7 @@ start on it. Next is Plan M = T16 (the read tools and asset-sim, the earliest de
   text)`, found by the first live run of the revision and fixed in the type lists only (the revision, `privileges`,
   `persistence`, the unit tests); the plan file still prints the wrong list in eight places and is left as written.
   (b) The added refusal tests (Task 2) and the fix rounds' tests (Task 3) put the dev count 51 above the plan's
-  arithmetic; every gate figure here is the measured one. (c) Ingestion refuses `superseded` -> `approved` (fail
+  arithmetic (52 after the final-review wave added one test); every gate figure here is the measured one. (c) Ingestion refuses `superseded` -> `approved` (fail
   closed; an owner who wants the text back publishes a new version). (d) A lock against concurrent ingestions was
   declined (one operator; a concurrent run can raise a unique violation, and nothing is half-written within a
   tenant). (e) The baseline measurement pins the test clock to the labelling instant (`AS_OF`) and asserts the
@@ -832,11 +832,19 @@ start on it. Next is Plan M = T16 (the read tools and asset-sim, the earliest de
   reproduce on any date; the in-measurement forbidden check is circular (SQL against the same rule in Python) and
   `docs/retrieval.md` names the hand-written anchor as the independent check.
 - **Open items for later** (minors parked by the task reviews; none changes a verdict):
-  the Task 5 test pins the rendered development-figure sentence, not the words inside
-  `SETTINGS["minimum_rank"]`, and restores the clock in a `finally` ordered like `test_admission_live` (both for the
-  final review to fold in or leave); a phase-2 refusal (the store changed between ingestion's two phases, a
-  concurrent run) can leave earlier tenants written and is reported as such, not prevented; `skeleton.py ingest`
-  has no concurrency lock; lengthening or clearing `effective_to` stays allowed; the query is normalised by
+  the final whole-branch review (0 Critical, 0 Important, 5 Minor; record in
+  `.superpowers/sdd/2026-10-16-first-slice-l-governed-corpus/final-fix-report.md`) took M1 to M3 in a fix wave (no
+  `type: ignore` left: `IngestInterrupted` chains the store failure and carries the tenants written; `skeleton.py
+  ingest` prints a `PersistenceError`'s own hint, class only for a driver error; this history), recorded M4 as a debt
+  line (the Plan L debt list: `retrieved_at` -> T16) and M5 as a line in `docs/retrieval.md`. It ruled three parked
+  minors harmless: the Task 5 test pins the rendered development-figure sentence, not the words inside
+  `SETTINGS["minimum_rank"]` (the constant already contains them and the markdown is rendered from it, so a test on the
+  constant adds nothing); the Task 5 `finally` resets the clock before `purge_run` (if the reset raised, the runs
+  would leak only into `ops_test`, which the next session drops, and the clock reset matters more); and `skeleton.py
+  ingest` has no concurrency lock (every concurrent interleaving traced ends in a primary-key collision and a tenant
+  rollback, never in a wrong state; the operator re-runs). Also open: a phase-2 refusal (the store changed between
+  ingestion's two phases, a concurrent run) can leave earlier tenants written and is reported as such, not prevented;
+  lengthening or clearing `effective_to` stays allowed; the query is normalised by
   `regexp_replace('[^a-z0-9]+', ' ')` while chunk text is parsed raw, so `4.5` or `M8x1.25` cannot match as one
   lexeme (T18); the no-source questions that still return a section (A15, B10, B13, B17, B18) come from generic
   words such as `records` and are T18's tuning and T20's relevance criterion (SA:377 alone would not abstain on them), not a defect of `corpus-1`; the plan file
@@ -1099,6 +1107,10 @@ Allowed shortcuts in T17, each with its owning task:
 - the model-side proof that the injected documents grant nothing (R036), and detecting the conflicting pair and
   abstaining → T19/T20 (rulings 13 and 14);
 - the excerpt is still cut silently at 500 characters (Plan D's open item) → T16;
+- `retrieved_at` is the wall clock (`datetime.now(UTC)` in mcp-read's `search_response`) while a version's
+  effectiveness is decided at `app.current_time()`, so under a moved test clock a result can carry a `retrieved_at`
+  earlier than its own `effective_from`; return the definer's instant (one more column) and stamp `retrieved_at` from
+  it, so the evidence row records the instant its permission was decided → T16 (Plan L final review, M4);
 - shared (cross-tenant) documents: none; a document both tenants need is copied per tenant → no task (erratum 97,
   ruling 9);
 - the dev database stays at revision 0010 with no corpus until the owner runs `scripts/skeleton.py migrate` and then

@@ -665,9 +665,37 @@ in its first lines, the measurement pins the test clock to the labelling instant
 equals the hand-written anchor, which `docs/retrieval.md` now names as the independent check, and the report gained
 the precision ceiling, null intervals for empty denominators and a hash of the queries. The fix rounds added
 tests, so the measured dev total is `1269 passed, 191 skipped` and the live total `1439 passed, 21 skipped`, 51
-above the plan's arithmetic in both.
+above the plan's arithmetic in both (the final-review fix wave added one more test: 1270 and 1440, 52 above). **Problem.** Task 6 (the close-out: handoff records, acceptance rows, errata 93
+to 102, the retrieval runbook): the close-out said that SA:377 would abstain on the 5 of 20 no-source questions that
+still return a section, which as written it would not, because SA:377 counts any returned effective chunk as
+sufficient; it also miscounted the corpus's categories and size, a function count, R131's line and a UTC date, six
+minors in all. **Change.** The residue is now worded everywhere as an open item for T20's relevance criterion (for
+example a score or label-based sufficiency rule), not as something the spec already covers, and the six wording
+minors were corrected in the same round.
 
-**Final review.** (Final review: filled in after the whole-branch review.)
+**Final review.** The whole-branch review (most capable model, read-only, no database) found 0 Critical, 0 Important
+and 5 Minor, and judged the authority, tenant, lifecycle, idempotency and dev-database boundaries sound with every
+figure in the records matching the measured report. **Problem.** (M1) The branch had added nine `type: ignore`
+comments against the plan's own "no `type: ignore`" constraint: one hung the list of already-written tenants on a
+third-party database exception as an attribute, and eight let a test stub stand in for a connection. (M2) Running
+`ingest` before `migrate`, the likeliest owner mistake, printed only `INGEST: failed (PersistenceError)` and dropped
+the hint "run scripts/skeleton.py migrate", because the command printed the class alone for every store failure. (M3)
+This history had no entry for Task 6's review round and still held the final-review placeholder. (M4)
+`retrieved_at` is stamped from the wall clock while a version's effectiveness is decided at the database's clock, so
+under a moved test clock a result can carry an earlier time than its own `effective_from`. (M5) The frozen revision's
+docstring says an ingestion row is written "when something changed", but the planner also writes one when only the
+corpus version or lock changed. **Change.** M1: a typed `IngestInterrupted` carrying the tenants written is raised
+`from` the store failure, the command reads the cause's class from it, and the test stub is passed through a typed
+`cast`, so no ignore is left; a failure before any tenant committed still propagates unchanged and has its own test.
+M2: the command prints a `PersistenceError`'s message (our own text, safe by contract) and still only the class of a
+driver error, which can name a host; one test pins both. M3: this entry. M4 became a debt line for T16 (return the
+definer's instant and stamp `retrieved_at` from it). M5 became one sentence in `docs/retrieval.md`; the frozen
+revision stays untouched. The review also ruled three parked minors harmless: the Task 5 test pins the rendered
+sentence because the constant already holds the words and the markdown is rendered from it; the clock is reset before
+`purge_run` because a failed reset would leak runs only into `ops_test`, which the next session drops; and ingestion
+needs no concurrency lock because every concurrent interleaving traced ends in a primary-key collision and a tenant
+rollback, never in a wrong state. After the wave the gates were `check.py` `1270 passed, 191 skipped`, `check.py --profile test`
+`1440 passed, 21 skipped` and `verify_handoff.py` exit 0.
 
 ## 30. What the process taught
 
