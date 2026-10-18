@@ -8,6 +8,7 @@ but fail as "retrieval failed" when its read fails a check (no success assumptio
 """
 
 import asyncio
+import dataclasses
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -21,7 +22,7 @@ from ops_core.jobs import Tool
 from ops_core.states import RunState
 from ops_mcp_read import assets, server
 from ops_worker import handlers
-from ops_worker.mcp import READ_TOOLS, HttpMcpCaller, McpCallFailed, check_listing, read_result
+from ops_worker.mcp import READ_TOOLS, HttpMcpCaller, McpCallFailed, check_listing, leaves, read_result
 
 from tests.plan_h.test_worker_units import JOB, Log, make, patch
 from tests.plan_j.test_mcp_read_http import BASE, ISSUER, RESOURCE, KeyedVerifier
@@ -84,7 +85,8 @@ def run_shell() -> str:
     [
         (lambda mcp: mcp.add_tool(run_shell), "unexpected tool set"),  # a tool added
         (lambda mcp: mcp.remove_tool("get_recent_alerts"), "unexpected tool set"),  # a tool removed
-        (  # the called tool's schema loosened: a longer asset id would be accepted
+        (  # the called tool's schema loosened: a longer asset id would be accepted. This reaches into FastMCP's
+            # private `_tool_manager`, so it depends on the pinned mcp==2.3.0 and must be revisited with the pin.
             lambda mcp: (
                 mcp._tool_manager.get_tool("get_asset_status").parameters["properties"]["asset_id"].update(maxLength=64)
             ),
@@ -132,13 +134,83 @@ REFUSED = {"code": "UNAVAILABLE", "message": "asset-sim could not be reached", "
         (result([status_doc()]), "fails the contract"),  # not an object
         (result(None), "fails the contract"),  # no structured content at all
         (result({**status_doc(), "status": "error", "data": None, "error": REFUSED}), "rejected the call"),
-        (result(status_doc(), padding=300 * 1024), "larger than the bound"),  # oversized
+        (result(status_doc(note="x" * (300 * 1024))), "larger than the bound"),  # oversized envelope
     ],
 )
 def test_a_result_that_is_not_a_valid_ok_answer_fails_closed(answer: CallToolResult, why: str) -> None:
     with pytest.raises(McpCallFailed, match=why):
         read_result(Tool.GET_ASSET_STATUS, answer)
     assert read_result(Tool.GET_ASSET_STATUS, result(status_doc()))["status"] == "ok"  # the valid shape passes
+
+
+def test_the_size_bound_measures_the_envelope_not_the_text_copy_around_it() -> None:
+    """Ruling 13 bounds the tool result: FastMCP's second, text copy of the same envelope does not count twice."""
+    padded = result(status_doc(), padding=300 * 1024)
+    assert read_result(Tool.GET_ASSET_STATUS, padded)["status"] == "ok"
+
+
+def tamper_output_schema(tool_name: str) -> Any:
+    """A server that advertises an output schema its own answer cannot satisfy: the SDK's `call_tool` then raises
+    RuntimeError inside the session, before `read_result` runs (the reviewer's probe of Task 5)."""
+
+    def alter(mcp: Any) -> None:
+        mcp._tool_manager.get_tool(tool_name).fn_metadata.output_schema = {"type": "object", "required": ["never"]}
+
+    return alter
+
+
+@pytest.mark.asyncio
+async def test_a_failure_inside_the_sdk_session_is_a_failed_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The SDK's own RuntimeError (the answer does not satisfy the advertised output schema) arrives as an exception
+    group out of the client; the worker must still see McpCallFailed, or the handler crashes the run."""
+    db = Database(UnitConn())
+    async with caller_against(monkeypatch, db, tamper_output_schema("get_asset_status")) as caller:
+        with pytest.raises(McpCallFailed, match="session failed"):
+            await caller.call(f"{BASE}/mcp", handle="h", tool="get_asset_status", arguments=STATUS_CALL)
+
+
+def test_every_leaf_of_a_nested_group_is_inspected() -> None:
+    nested = ExceptionGroup("outer", [ExceptionGroup("inner", [RuntimeError("a"), ValueError("b")]), KeyError("c")])
+    assert [type(leaf) for leaf in leaves(nested)] == [RuntimeError, ValueError, KeyError]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        BaseExceptionGroup("outer", [RuntimeError("a"), BaseExceptionGroup("inner", [asyncio.CancelledError()])]),
+        asyncio.CancelledError(),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_cancellation_among_the_failures_still_propagates(failure: BaseException) -> None:
+    """A group is a failed read only when none of its leaves (all are checked, not the first) is a cancellation."""
+
+    class Cancelling:
+        async def token(self) -> str:
+            raise failure
+
+    caller = HttpMcpCaller(Cancelling())
+    with pytest.raises(BaseException) as raised:
+        await caller.call(f"{BASE}/mcp", handle="h", tool="get_asset_status", arguments={})
+    assert raised.value is failure and not isinstance(raised.value, McpCallFailed)
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_read_is_not_turned_into_a_failed_read() -> None:
+    """asyncio cancellation of the caller (a lost lease cancels the effect) must keep propagating."""
+
+    class Slow:
+        async def token(self) -> str:
+            await asyncio.sleep(30)
+            return "never"
+
+    task = asyncio.ensure_future(
+        HttpMcpCaller(Slow()).call(f"{BASE}/mcp", handle="h", tool="get_asset_status", arguments={})
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 def test_a_failed_check_fails_the_run_as_retrieval_failed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -160,5 +232,31 @@ def test_a_failed_check_fails_the_run_as_retrieval_failed(monkeypatch: pytest.Mo
     deps, lease = make(log)
     deps.mcp = Refusing()
     asyncio.run(handlers.investigate(deps, dict(JOB), lease))
+    assert moves[-1] == (RunState.RETRIEVING, RunState.FAILED, {"message": "retrieval failed"})
+    assert "freeze_proposal" not in log.entries and "take_model_permit" not in log.entries
+
+
+@pytest.mark.asyncio
+async def test_a_real_sdk_failure_fails_the_run_as_retrieval_failed_not_interrupted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same outcome through the real caller and the real server: the answer to the handler's search does not
+    satisfy the output schema the server advertises, the SDK raises inside the session, and the run still ends FAILED
+    "retrieval failed" (before the fix the group escaped the handler and the run was left to the lease)."""
+    log = Log()
+    patch(monkeypatch, log)
+    moves: list[tuple[Any, Any, Any]] = []
+
+    async def transition_run(_conn: Any, *, run_id: Any, src: Any, dst: Any, detail: Any = None) -> int:
+        moves.append((src, dst, detail))
+        return 2
+
+    monkeypatch.setattr(persistence, "transition_run", transition_run)
+    db = Database(UnitConn())
+    async with caller_against(monkeypatch, db, tamper_output_schema("search_procedures")) as caller:
+        deps, lease = make(log)
+        deps.mcp = caller
+        deps.urls = dataclasses.replace(deps.urls, mcp_read=f"{BASE}/mcp")
+        await handlers.investigate(deps, dict(JOB), lease)
     assert moves[-1] == (RunState.RETRIEVING, RunState.FAILED, {"message": "retrieval failed"})
     assert "freeze_proposal" not in log.entries and "take_model_permit" not in log.entries

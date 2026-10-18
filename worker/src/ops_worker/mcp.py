@@ -13,6 +13,7 @@ investigate handler records as FAILED "retrieval failed": nothing is assumed to 
 
 from __future__ import annotations
 
+import json
 from typing import Any, Final, Protocol
 
 import httpx2
@@ -41,6 +42,13 @@ def failure_leaf(exc: BaseException) -> BaseException:
     return exc
 
 
+def leaves(exc: BaseException) -> list[BaseException]:
+    """Every leaf of a possibly nested exception group, in order (a plain exception is its own only leaf)."""
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for member in exc.exceptions for leaf in leaves(member)]
+    return [exc]
+
+
 TRANSPORT_FAILURES = (MCPError, httpx2.HTTPError, OSError)
 
 
@@ -48,6 +56,11 @@ def check_listing(listing: ListToolsResult, tool: Tool) -> None:
     """R029's discovery check: the server lists exactly the read tools, once each, on one page, and advertises the
     called tool's committed input schema (canonical JSON). A listing with a `next_cursor` is refused: a later page
     could add a tool this check never saw.
+
+    Limit (measured, mcp 2.3.0): the SDK filters the listing before this function sees it, dropping a tool whose
+    `x-mcp-header` annotation is invalid (`ClientSession._absorb_tool_listing`). A server that adds a tool in that
+    shape therefore passes this check unseen; the tool can still not be called through this client, which lists
+    only to compare. A check on the raw listing is a debt line (Plan M, T30, with the transport-level bound).
 
     Raises:
         McpCallFailed: a tool added, removed or listed twice, a further page, or the called tool's schema altered.
@@ -69,14 +82,20 @@ def read_result(tool: Tool, result: CallToolResult) -> dict[str, Any]:
     """R029's result check: the read tool's answer as a valid `ok` tool result.
 
     Raises:
-        McpCallFailed: larger than 256 KiB serialized, error-flagged, not a valid result of this tool, or not `ok`.
+        McpCallFailed: error-flagged, larger than 256 KiB serialized, not a valid result of this tool, or not `ok`.
     """
-    # The SDK has parsed the body by the time it hands the result over (no hook stops it earlier), so the bound is
-    # applied to the whole result as received, before anything of it is used.
-    if len(result.model_dump_json(by_alias=True).encode("utf-8")) > tool_contracts.MAX_RESULT_BYTES:
-        raise McpCallFailed(f"{tool.value}: the result is larger than the bound")
     if result.is_error:
         raise McpCallFailed(f"{tool.value}: the result is error-flagged")
+    # Ruling 13: the bound is on the tool result itself, the UTF-8 JSON of its structured content (the envelope), not
+    # on the CallToolResult around it, which FastMCP fills with a second, text copy of the same envelope. The SDK has
+    # parsed the body by the time it hands the result over (no hook stops it earlier), so the bound is applied after
+    # parsing and before the content is used (a transport-level bound is T30's).
+    try:
+        size = len(json.dumps(result.structured_content, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    except (TypeError, ValueError) as exc:
+        raise McpCallFailed(f"{tool.value}: the result fails the contract") from exc
+    if size > tool_contracts.MAX_RESULT_BYTES:
+        raise McpCallFailed(f"{tool.value}: the result is larger than the bound")
     try:
         document = tool_contracts.check_result(tool, result.structured_content)
     except tool_contracts.ContractViolation as exc:
@@ -129,18 +148,35 @@ class HttpMcpCaller:
             ):
                 if read is not None:  # discovery in the same session, before the call (ruling 13)
                     check_listing(await client.list_tools(), read)
+                # The SDK itself checks the result against the output schema the server advertised and raises
+                # RuntimeError on a mismatch, and if the server answers a call with a header mismatch it lists again
+                # and retries inside this call, outside `check_listing`. Both are acceptable here: any failure of a
+                # read becomes McpCallFailed below, and a retried answer still goes through `read_result` in full.
                 result = await client.call_tool(tool, arguments)
         except McpCallFailed:
             raise
         except TRANSPORT_FAILURES as exc:
             raise McpCallFailed(f"{tool}: transport or protocol failure") from exc
         except BaseExceptionGroup as group:
+            found = leaves(group)
+            if read is not None:
+                # Every leaf, not the first: a read that fails inside the session in any way is a failed read, unless
+                # one leaf is a cancellation or another BaseException-only signal, which must go on propagating.
+                if all(isinstance(leaf, Exception) for leaf in found):
+                    failed = next((leaf for leaf in found if isinstance(leaf, McpCallFailed)), None)
+                    if failed is not None:  # a failed check inside the session: the client's task group wraps it
+                        raise failed from None
+                    raise McpCallFailed(f"{tool}: the session failed ({type(found[0]).__name__})") from group
+                raise
             leaf = failure_leaf(group)
-            if isinstance(leaf, McpCallFailed):  # a failed check inside the session: the client's task group wraps it
-                raise leaf from None
             if isinstance(leaf, TRANSPORT_FAILURES):
                 raise McpCallFailed(f"{tool}: transport or protocol failure") from leaf
             raise
+        except Exception as exc:
+            if read is None:
+                raise
+            # e.g. the SDK's RuntimeError for a result that does not satisfy the advertised output schema
+            raise McpCallFailed(f"{tool}: the session failed ({type(exc).__name__})") from exc
         if read is not None:
             return read_result(read, result)
         # TODO(T20): the write tools (mcp-write) still get only T47's check: no discovery and no result-schema check.

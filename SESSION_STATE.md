@@ -1126,6 +1126,11 @@ Allowed shortcuts in T16, each with its owning task:
   AM-12's `execute_approved_proposal (mcp-write)` node (SA:207) and every route of R129;
 - the worker's 256 KiB result bound is applied after the MCP SDK has read and parsed the body (no hook stops it
   earlier); a transport-level bound → T30, with the container network work (departure 5);
+- the worker's listing check sees the listing as the MCP SDK (2.3.0) hands it over: the SDK drops a tool whose
+  `x-mcp-header` annotation is invalid before `check_listing` runs (`ClientSession._absorb_tool_listing`), and a
+  HEADER_MISMATCH retry inside `call_tool` re-lists outside `check_listing`; a check on the raw listing → T30, with the
+  transport-level bound (the called result is still validated in full, and the dropped tool cannot be called through
+  this client);
 - a run's asset is not tied to its tenant at admission (an alpha run may name beta's B22; asset-sim's own tenant filter
   answers NOT_FOUND, and the search then has no run type) → T21 (the asset guard; its review note names alpha-for-B22);
 - a handle that dies between `asset_scope` and the asset-sim call still yields one read of the run's own asset (no
