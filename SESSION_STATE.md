@@ -1188,7 +1188,8 @@ app@head, incident at head`), so the dev `ops` database is at `0011_governed_cor
 
 **Update (2026-10-18, later still):** the owner ran `uv run python scripts/skeleton.py ingest` (`INGEST: alpha corpus-1: 9
 new, 0 restated, 0 unchanged`; `INGEST: beta corpus-1: 7 new, 0 restated, 0 unchanged`), so corpus-1's 16 documents are in
-the dev `ops` database.
+the dev `ops` database. At the owner's request the agent then ran `skeleton.py up`: all six processes reached ready on
+the dev profile (mcp-read's startup check needs 0011), and `down` stopped them.
 
 ## Open owner inputs
 
