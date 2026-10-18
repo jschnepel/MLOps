@@ -1,0 +1,118 @@
+{
+  "corpus_version": "corpus-1",
+  "classification": "synthetic",
+  "documents": [
+    {
+      "document_id": "ALPHA-PUMP-SEAL", "tenant": "alpha", "version": "1", "status": "approved",
+      "effective_from": "2026-08-01T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": "pump", "label": "normal", "conflicts_with": null,
+      "path": "alpha-pump-seal-v1.md",
+      "sections": ["purpose", "isolation", "inspection", "leak-response", "records"]
+    },
+    {
+      "document_id": "ALPHA-PUMP-SEAL", "tenant": "alpha", "version": "2", "status": "approved",
+      "effective_from": "2026-10-01T00:00:00Z", "effective_to": null, "supersedes": "1",
+      "asset_family": "pump", "label": "normal", "conflicts_with": null,
+      "path": "alpha-pump-seal-v2.md",
+      "sections": ["purpose", "isolation", "inspection", "leak-response", "records"]
+    },
+    {
+      "document_id": "ALPHA-COMPRESSOR-TRIP", "tenant": "alpha", "version": "1", "status": "approved",
+      "effective_from": "2026-09-01T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": "compressor", "label": "conflicting", "conflicts_with": "ALPHA-COMPRESSOR-COOLDOWN",
+      "path": "alpha-compressor-trip.md",
+      "sections": ["purpose", "trip-review", "restart-wait", "records"]
+    },
+    {
+      "document_id": "ALPHA-COMPRESSOR-COOLDOWN", "tenant": "alpha", "version": "1", "status": "approved",
+      "effective_from": "2026-09-15T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": "compressor", "label": "conflicting", "conflicts_with": "ALPHA-COMPRESSOR-TRIP",
+      "path": "alpha-compressor-cooldown.md",
+      "sections": ["purpose", "cooldown", "restart-wait", "records"]
+    },
+    {
+      "document_id": "ALPHA-WINTER-BELT", "tenant": "alpha", "version": "1", "status": "approved",
+      "effective_from": "2026-01-05T00:00:00Z", "effective_to": "2026-04-01T00:00:00Z", "supersedes": null,
+      "asset_family": "conveyor", "label": "normal", "conflicts_with": null,
+      "path": "alpha-winter-belt.md",
+      "sections": ["purpose", "cold-checks", "belt-tension", "records"]
+    },
+    {
+      "document_id": "ALPHA-ALARM-BYPASS", "tenant": "alpha", "version": "1", "status": "revoked",
+      "effective_from": "2026-07-01T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": "pump", "label": "normal", "conflicts_with": null,
+      "path": "alpha-alarm-bypass.md",
+      "sections": ["purpose", "bypass-log", "expiry", "records"]
+    },
+    {
+      "document_id": "ALPHA-NOISE-SURVEY", "tenant": "alpha", "version": "1", "status": "draft",
+      "effective_from": "2026-10-01T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": "conveyor", "label": "normal", "conflicts_with": null,
+      "path": "alpha-noise-survey.md",
+      "sections": ["purpose", "decibel-readings", "idler-wear", "records"]
+    },
+    {
+      "document_id": "ALPHA-ALERT-REVIEW", "tenant": "alpha", "version": "1", "status": "approved",
+      "effective_from": "2026-09-01T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": null, "label": "normal", "conflicts_with": null,
+      "path": "alpha-alert-review.md",
+      "sections": ["purpose", "interval", "repeated-alerts", "evidence", "handoff"]
+    },
+    {
+      "document_id": "ALPHA-VENDOR-PORTAL", "tenant": "alpha", "version": "1", "status": "approved",
+      "effective_from": "2026-09-01T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": "compressor", "label": "injected", "conflicts_with": null,
+      "path": "alpha-vendor-portal.md",
+      "sections": ["purpose", "vendor-contact", "portal-note", "records"]
+    },
+    {
+      "document_id": "BETA-PUMP-ALIGN", "tenant": "beta", "version": "1", "status": "superseded",
+      "effective_from": "2026-08-01T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": "pump", "label": "normal", "conflicts_with": null,
+      "path": "beta-pump-align-v1.md",
+      "sections": ["purpose", "preparation", "alignment", "tolerance", "records"]
+    },
+    {
+      "document_id": "BETA-PUMP-ALIGN", "tenant": "beta", "version": "2", "status": "approved",
+      "effective_from": "2026-10-01T00:00:00Z", "effective_to": null, "supersedes": "1",
+      "asset_family": "pump", "label": "normal", "conflicts_with": null,
+      "path": "beta-pump-align-v2.md",
+      "sections": ["purpose", "preparation", "alignment", "tolerance", "records"]
+    },
+    {
+      "document_id": "BETA-COMPRESSOR-OIL", "tenant": "beta", "version": "1", "status": "approved",
+      "effective_from": "2026-09-01T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": "compressor", "label": "normal", "conflicts_with": null,
+      "path": "beta-compressor-oil.md",
+      "sections": ["purpose", "sampling", "oil-analysis", "records"]
+    },
+    {
+      "document_id": "BETA-SUMMER-COOLING", "tenant": "beta", "version": "1", "status": "approved",
+      "effective_from": "2026-06-01T00:00:00Z", "effective_to": "2026-09-01T00:00:00Z", "supersedes": null,
+      "asset_family": "compressor", "label": "normal", "conflicts_with": null,
+      "path": "beta-summer-cooling.md",
+      "sections": ["purpose", "heat-watch", "fan-check", "records"]
+    },
+    {
+      "document_id": "BETA-HOT-WORK", "tenant": "beta", "version": "1", "status": "revoked",
+      "effective_from": "2026-05-01T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": null, "label": "normal", "conflicts_with": null,
+      "path": "beta-hot-work.md",
+      "sections": ["purpose", "permit", "fire-watch", "records"]
+    },
+    {
+      "document_id": "BETA-SHIFT-HANDOVER", "tenant": "beta", "version": "1", "status": "draft",
+      "effective_from": "2026-10-01T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": null, "label": "normal", "conflicts_with": null,
+      "path": "beta-shift-handover.md",
+      "sections": ["purpose", "handover-notes", "open-items", "records"]
+    },
+    {
+      "document_id": "BETA-CONTRACTOR-MEMO", "tenant": "beta", "version": "1", "status": "approved",
+      "effective_from": "2026-09-01T00:00:00Z", "effective_to": null, "supersedes": null,
+      "asset_family": "conveyor", "label": "injected", "conflicts_with": null,
+      "path": "beta-contractor-memo.md",
+      "sections": ["purpose", "guard-inspection", "memo-note", "records"]
+    }
+  ]
+}

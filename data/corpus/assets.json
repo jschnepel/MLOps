@@ -1,0 +1,27 @@
+{
+  "asset_types": ["compressor", "conveyor", "pump"],
+  "assets": [
+    {"asset_id": "A17", "tenant": "alpha", "asset_type": "pump", "name": "Alpha transfer pump A17"},
+    {"asset_id": "A21", "tenant": "alpha", "asset_type": "compressor", "name": "Alpha air compressor A21"},
+    {"asset_id": "A30", "tenant": "alpha", "asset_type": "conveyor", "name": "Alpha product conveyor A30"},
+    {"asset_id": "B22", "tenant": "beta", "asset_type": "pump", "name": "Beta feed pump B22"},
+    {"asset_id": "B25", "tenant": "beta", "asset_type": "compressor", "name": "Beta air compressor B25"},
+    {"asset_id": "B31", "tenant": "beta", "asset_type": "conveyor", "name": "Beta loading conveyor B31"}
+  ],
+  "alerts": [
+    {"id": "A17-seal-001", "asset_id": "A17", "kind": "seal_leak", "severity": "warning",
+     "raised_at": "2026-10-05T14:00:00Z", "revision": 1},
+    {"id": "A17-seal-002", "asset_id": "A17", "kind": "seal_leak", "severity": "warning",
+     "raised_at": "2026-10-06T08:30:00Z", "revision": 2},
+    {"id": "A21-temp-001", "asset_id": "A21", "kind": "high_discharge_temperature", "severity": "critical",
+     "raised_at": "2026-10-04T22:10:00Z", "revision": 1},
+    {"id": "A30-noise-001", "asset_id": "A30", "kind": "noise", "severity": "info",
+     "raised_at": "2026-10-03T09:45:00Z", "revision": 1},
+    {"id": "B22-vibration-001", "asset_id": "B22", "kind": "vibration", "severity": "warning",
+     "raised_at": "2026-10-05T11:20:00Z", "revision": 1},
+    {"id": "B25-oil-001", "asset_id": "B25", "kind": "oil_condition", "severity": "warning",
+     "raised_at": "2026-10-02T16:05:00Z", "revision": 3},
+    {"id": "B31-guard-001", "asset_id": "B31", "kind": "guard_open", "severity": "critical",
+     "raised_at": "2026-10-06T07:15:00Z", "revision": 1}
+  ]
+}
