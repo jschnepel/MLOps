@@ -1,6 +1,6 @@
 # Walking skeleton (T08)
 
-Six host processes against the dev profile (PostgreSQL + Keycloak in Compose). Containers for the application
+Seven host processes against the dev profile (PostgreSQL + Keycloak in Compose). Containers for the application
 processes arrive with T30; everything here reads its configuration the way a container would (environment plus secret
 files), so nothing is throwaway.
 

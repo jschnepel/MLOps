@@ -78,8 +78,9 @@ route does not exist (`Faults` refuses to be built there).
 
 ## When something looks wrong
 
-- **mcp-read answers `NOT_FOUND`**: the run's asset is not one of its tenant's in `assets.json` (the admission does not
-  tie a run's asset to its tenant yet, T21; an alpha run naming B22 gets exactly this).
+- **`get_asset_status` or `get_recent_alerts` answers `NOT_FOUND`**: the run's asset is not one of its tenant's in `assets.json` (the admission does not
+  tie a run's asset to its tenant yet, T21; an alpha run naming B22 gets exactly this). `search_procedures` does not fail on it: it proceeds with the caller's
+  `asset_type`, or none.
 - **mcp-read answers `UNAVAILABLE`**: asset-sim is down, slower than mcp-read's 10 seconds (one budget for fetching
   its token and asking), answering 5xx, or refusing mcp-read's token with a 401 (its log shows it).
 - **mcp-read answers `UPSTREAM_INVALID`**: asset-sim's answer failed the tool-result contract or named another asset or

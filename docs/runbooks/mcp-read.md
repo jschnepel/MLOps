@@ -109,7 +109,7 @@ SELECT state FROM app.runs WHERE run_id = '<run>';
   handle no longer fits its run (the lease lapsed or moved to another worker, the job finished, the run moved on).
   Use the query above; the server says nothing more on purpose.
 - **mcp-read will not start**: read the message. "predates this service" is the missing revision; "signing keys
-  unavailable" is the realm; "secret file kc_client_secret_ops_mcp_read is missing" is `OPS_SECRETS_DIR`.
+  unavailable" is the realm; "secret file kc_client_secret_ops_mcp_read is missing or unreadable" is `OPS_SECRETS_DIR`.
 - **Every asset tool answers `UNAVAILABLE`**: asset-sim is down or not at `OPS_ASSET_SIM_URL` (`scripts/skeleton.py
   status`), or it answers 401 to mcp-read's token (its log shows it), or the realm's token endpoint does not answer.
   The search answers `UNAVAILABLE` for the same reasons: it asks asset-sim for the run's type. If the realm's

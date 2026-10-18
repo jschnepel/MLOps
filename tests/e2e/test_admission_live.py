@@ -54,7 +54,7 @@ SAMPLE = {
 # window is SA:297's; the bound is ruling 7's maximum).
 WEEK = AdmissionSettings(idempotency_ttl_seconds=604800)
 EXPECTED_LINES = 16  # the evidence lines the tests append between them (T12's fourteen, T13's two)
-SKELETON_PORTS = (8000, 8070, 8071, 8081, 8082, 8090)
+SKELETON_PORTS = (8000, 8070, 8071, 8081, 8082, 8090, 8091)
 KEYS: list[str] = []  # every Idempotency-Key a test sent, so the `created` fixture can delete its records
 
 

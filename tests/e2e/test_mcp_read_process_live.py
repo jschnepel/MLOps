@@ -13,6 +13,10 @@ handle (the refusal comes before the tool and the handle lookup; mcp-read forwar
 handle or a token (the worker's, or a foreign one) in the child's own log. That log is written through the service's
 redaction filter (`serve()` installs it first) at uvicorn's "warning" level, so its check is weaker than the in-process
 DEBUG capture of tests/e2e/test_mcp_read_t15_live.py, which runs with no filter at all.
+
+T16: mcp-read is the only separately started process here. asset-sim is the in-process uvicorn fixture (`asset_sim`)
+on a loopback port, so the asset tool's hop from the child to asset-sim, with mcp-read's own token, is a real HTTP
+call; asset-sim itself does not run as a child.
 """
 
 import asyncio
