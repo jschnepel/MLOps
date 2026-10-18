@@ -489,7 +489,7 @@ class LeaseRowConn(FakeConn):
 def releasing(monkeypatch: pytest.MonkeyPatch, log: Log) -> None:
     """The real `release_lease` with recorders for the calls it makes besides its own SQL."""
     monkeypatch.setattr(persistence, "release_lease", REAL_RELEASE)
-    for name in ("set_tenant", "revoke_handles", "finish_job", "requeue_job"):
+    for name in ("set_tenant", "revoke_handles", "finish_job", "requeue_job", "pull_forward"):
 
         async def call(*_: Any, _name: str = name, **__: Any) -> None:
             log.entries.append(_name)
@@ -503,7 +503,8 @@ def test_release_of_a_live_lease_closes_the_job(monkeypatch: pytest.MonkeyPatch)
     _, lease = make(log)
     conn: Any = LeaseRowConn(log, live=True)
     asyncio.run(persistence.release_lease(conn, lease, job=dict(JOB)))
-    assert log.units() == [["set_tenant", "lock_lease", "revoke_handles", "finish_job", "release"]]
+    # T14 (Plan I ruling 10): the run's deferred jobs are made due in the same unit, before the lease is released.
+    assert log.units() == [["set_tenant", "lock_lease", "revoke_handles", "finish_job", "pull_forward", "release"]]
     assert lease.lost == RELEASED
 
 

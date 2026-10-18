@@ -421,6 +421,12 @@ def event() -> Doc:
             "outcome": {"type": "string", "enum": [ToolOutcome.SUCCEEDED.value, ToolOutcome.FAILED_NO_COMMIT.value]},
             "receipt": RECEIPT,  # replaces 1.0's flat receipt_id/incident_id
             "tombstone": TOMBSTONE,
+            # T14 (Plan I ruling 4, erratum 65): keys today's writers already use. The clarification reply names the
+            # question it answers and the reply message (the API's reply unit); a dead letter's notification.failed
+            # names its outbox row, which is how the sweeper's re-check finds it.
+            "question_id": UUID,
+            "message_id": UUID,
+            "outbox_id": UUID,
         },
         [],
     )
@@ -526,6 +532,14 @@ def event() -> Doc:
                         }
                     ),
                 },
+                # (9) A status is the destination's assertion about the run (AM-14), so only the four
+                # destination-evidence types carry one; an application event (tool.completed from the worker, T14
+                # review note 2) never does. Mirrors event_rules_ok and revision 0008's _append_event. Last in the
+                # list, so an example that also breaks an earlier rule still fails for that rule first (R104).
+                when(
+                    {"not": props(type={"enum": DESTINATION_TYPES})},
+                    props(payload={"not": {"required": ["status"]}}),
+                ),
             ],
         ),
     )
@@ -976,7 +990,8 @@ def event_doc(source: str, payload: Doc, event_type: str = EventType.ACTION_CONF
 def examples(root: Path = ROOT) -> list[tuple[Doc, Doc]]:
     """(index entry, document) for every example, in index order.
 
-    The delivered 29, then 10 new valid and 27 invalid (Task 6), then 4 valid and 15 invalid from the final review.
+    The delivered 29, then 10 new valid and 27 invalid (Task 6), then 4 valid and 15 invalid from the final review,
+    then 1 valid and 1 invalid for T14's payload rules (Plan I ruling 4).
 
     Reads only data/handoff-fixtures/{meta,observations}.json (the two in-window alerts, AM-80 row "draft/alerts
     consistency") under `root`.
@@ -1666,6 +1681,31 @@ def examples(root: Path = ROOT) -> list[tuple[Doc, Doc]]:
         {**event_valid, "occurred_at": "2026-10-06T12:04:01Z\n"},
         "rfc3339-validator accepts a trailing newline; the date-time pattern does not.",
         "^\\$\\.occurred_at: '2026-10-06T12:04:01Z\\\\n' does not match",
+    )
+    # T14 (Plan I ruling 4): the dead letter's event as the sweeper appends it, and the status review note 2 forbids.
+    valid(
+        "event-notification-failed-valid",
+        "event",
+        event_doc(
+            "application",
+            {
+                "code": "notification_dead_letter",
+                "message": "The notification could not be delivered.",
+                "outbox_id": "00000000-0000-4000-8000-00000000000c",
+            },
+            EventType.NOTIFICATION_FAILED.value,
+        ),
+    )
+    invalid(
+        "event-invalid-status-on-tool-event",
+        "event",
+        event_doc(
+            "application",
+            {"message": "search_procedures", "status": "SUCCEEDED"},
+            EventType.TOOL_COMPLETED.value,
+        ),
+        "A status is the destination's assertion; an application tool event never carries one (T14 review note 2).",
+        "^\\$\\.payload: .* should not be valid under \\{'required': \\['status'\\]\\}$",
     )
     return items
 

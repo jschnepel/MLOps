@@ -695,7 +695,8 @@ async def claim_next(
     sweeper's reclaim, ruling 11). A job whose lease is busy is moved behind it and left unclaimed: to the live
     lease's `lease_until`, or one second on when the lease row was locked; jobs are wake-ups (SA:173), so whoever
     claims it later finds the run in the state the lease holder left. The moved job is not available again in the
-    same poll, so the caller simply tries again. TODO(T14): wake-ups instead of polling.
+    same poll, so the caller simply tries again. Polling is the v1 wake mechanism (erratum 64): a job is due through
+    its `available_at`, and the lease holder's release makes the run's deferred jobs due at once (`pull_forward`).
     """
     async with conn.transaction():
         job = await pick_job(conn, tenant_ids=tenant_ids)
@@ -777,6 +778,9 @@ async def release_lease(conn: Conn, lease: Lease, *, job: dict[str, Any], requeu
             await finish_job(conn, job["id"])
         else:
             await requeue_job(conn, job["id"], requeue_seconds)
+        # The lease is free from this commit on, so a job of the run that a claim deferred behind it need not wait
+        # for the old lease_until (Plan I ruling 10; the abandon path does not: its lease lapses on its own).
+        await pull_forward(conn, lease.run_id, except_job=job["id"])
         await conn.execute("UPDATE app.run_lease SET lease_until = '-infinity' WHERE run_id = %s", (lease.run_id,))
     lease.mark_lost(RELEASED)
 
@@ -788,6 +792,28 @@ async def unclaim_job(conn: Conn, job_id: UUID, *, worker_name: str) -> None:
         " WHERE id = %s AND claimed_by = %s AND done_at IS NULL",
         (job_id, worker_name),
     )
+
+
+async def pull_forward(conn: Conn, run_id: UUID, *, except_job: UUID) -> int:
+    """Make due now the run's jobs that a claim deferred behind the lease being released (Plan I ruling 10).
+
+    Called in the release's unit before the lease row's `lease_until` is reset: a job waiting for an instant no later
+    than that `lease_until` was moved behind this lease (`claim_next` defers to the live lease's end, or one second
+    on); a job delayed beyond it on purpose (a re-queue backoff, T22's recover cadence) keeps its time (round 1, M2).
+    Rows are picked with SKIP LOCKED, so a row another worker's claim holds is never waited on and this UPDATE stays
+    outside the lock order. Such a claim, if it found the lease live before this release took the lease row, commits
+    its own deferral to the old lease end, so that one job can still wait up to it: bounded, and rare. Returns how
+    many jobs were made due.
+    """
+    cur = await conn.execute(
+        "UPDATE app.jobs SET available_at = app.current_time() WHERE id IN (SELECT id FROM app.jobs"
+        " WHERE run_id = %s AND id <> %s AND done_at IS NULL AND claimed_at IS NULL"
+        " AND available_at > app.current_time()"
+        " AND available_at <= (SELECT l.lease_until FROM app.run_lease l WHERE l.run_id = %s)"
+        " FOR UPDATE SKIP LOCKED)",
+        (run_id, except_job, run_id),
+    )
+    return cur.rowcount
 
 
 async def take_model_permit(conn: Conn, *, holder: str, run_id: UUID, ttl_seconds: int) -> int | None:

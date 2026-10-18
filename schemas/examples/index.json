@@ -629,6 +629,20 @@
       "note": "Synthetic target contract example; not a live result.",
       "reason": "rfc3339-validator accepts a trailing newline; the date-time pattern does not.",
       "reason_match": "^\\$\\.occurred_at: '2026-10-06T12:04:01Z\\\\n' does not match"
+    },
+    {
+      "path": "schemas/examples/event-notification-failed-valid.json",
+      "schema": "schemas/event.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
+      "path": "schemas/examples/event-invalid-status-on-tool-event.json",
+      "schema": "schemas/event.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "A status is the destination's assertion; an application tool event never carries one (T14 review note 2).",
+      "reason_match": "^\\$\\.payload: .* should not be valid under \\{'required': \\['status'\\]\\}$"
     }
   ]
 }

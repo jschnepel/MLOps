@@ -270,8 +270,22 @@ async def test_r106_policy_text_force_and_no_rls_tables(app_conn: persistence.Co
         " WHERE schemaname = 'app'"
     )
     policies = {(r["tablename"], r["policyname"]): r for r in await cur.fetchall()}
-    expected = {(t, "tenant_isolation") for t in p.RLS_TABLES} | {(t, "sweeper_all") for t in p.SWEEPER_ALL}
+    purge_table, purge_name, purge_qual = p.SWEEPER_PURGE
+    expected = (
+        {(t, "tenant_isolation") for t in p.RLS_TABLES}
+        | {(t, "sweeper_all") for t in p.SWEEPER_ALL}
+        | {(purge_table, purge_name)}
+    )
     assert set(policies) == expected
+    # T14 (erratum 61): the one restrictive policy, the sweeper's DELETE on finished maintenance rows only.
+    purge = policies.pop((purge_table, purge_name))
+    assert (purge["permissive"], purge["cmd"], purge["roles"], purge["qual"], purge["with_check"]) == (
+        "RESTRICTIVE",
+        "DELETE",
+        ["sweeper"],
+        purge_qual,
+        None,
+    )
     for (table, name), row in policies.items():
         assert row["permissive"] == "PERMISSIVE" and row["cmd"] == "ALL", (table, name)
         if name == "tenant_isolation":

@@ -208,6 +208,18 @@
             "reason",
             "decided_at"
           ]
+        },
+        "question_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "message_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "outbox_id": {
+          "type": "string",
+          "format": "uuid"
         }
       },
       "required": []
@@ -504,6 +516,33 @@
                     "tombstone"
                   ]
                 }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "type": {
+              "enum": [
+                "action.confirmed",
+                "action.failed",
+                "action.conflict",
+                "action.late_evidence"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "not": {
+              "required": [
+                "status"
               ]
             }
           }

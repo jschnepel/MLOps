@@ -1,0 +1,6 @@
+T14 outbox — 2026-10-16T02:04:08Z
+R024 outcome SUCCEEDED, one intent; 5 sink failures on the database clock: retrying x4, then dead_letter; run state and events unchanged; the outcome replayed as mcp_exec and its event re-appended as app_definer added no intent; notification.failed appended once by the re-check after the result
+delivered: one attempt, delivered_at set, never claimed again; the log names a recipient hash
+crash: one row of three crashed the sink; the other two delivered, the crashed one after its backoff
+killed at the cap: two lost deliveries, then dead-lettered by the claim and announced once
+late result: attempt 1's result after attempt 2 was delivered wrote nothing

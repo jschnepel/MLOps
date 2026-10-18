@@ -219,6 +219,29 @@ even if it does not know yet.
 
 ---
 
+## 6. The event journal, wake-ups and the outbox (built in T14)
+
+**Claim.** A run's events are numbered without gaps in the order they commit, whoever writes them; a notification
+is promised in the same transaction as the event that needs it and attempted, apart from the run, until delivered
+or dead-lettered; and a wake-up the worker consumed without moving its run is noticed and re-armed.
+
+- **One counter under one lock.** `_append_event` takes the run row `FOR UPDATE`, `next_event_seq + 1` and the
+  insert in the writer's transaction; a cursor on the events route therefore never skips.
+- **Payload rules in the database.** The payload's keys are the schema's, and only the destination asserts a
+  status; the schema, `event_rules_ok` and the SQL give one verdict on one table of cases.
+- **A transactional outbox, delivered by the sweeper.** Intent is written by `_append_event`; delivery claims with a
+  lease, sends outside any transaction (a log line in v1), records the result apart from the run, backs off,
+  dead-letters and announces the dead letter with an event of its own transaction.
+- **Wake-ups are jobs.** The sweep re-arms a consumed job whose run did not move; a released lease makes deferred jobs
+  due at once; polling remains the wake mechanism.
+
+| Requirement | What its test shows |
+|---|---|
+| R024 | A failed delivery retries, dead-letters and is announced once; the run is untouched; a replay adds no intent |
+| R089 | Four roles' writers wait on the run lock; the route never shows n + 1 before n; a stress run ends gap-free |
+
+---
+
 ## Where the code will live (not yet written)
 
 | Directory | What to look at first |

@@ -429,14 +429,21 @@
       "category": "durability",
       "requirement": "Notification intent is transactional and deduplicated",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r024_notification_intent_is_transactional_and_dedupli.py",
       "expected_evidence": "Fail delivery after state commit; result remains recorded and dedup key preserves intent.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_outbox_live.py",
+        "reports/outbox/t14-outbox.txt",
+        "tests/e2e/test_migration_0008_live.py",
+        "tests/plan_i/test_outbox.py",
+        "tests/plan_i/test_migration_0008.py"
+      ],
       "owning_tasks": [
         "T14"
-      ]
+      ],
+      "note": "Plan I (T14): a run is driven to SUCCEEDED through record_outcome, which commits action.confirmed and its notification intent in one transaction; the sink's test-profile fault fails five deliveries on the database clock: the row goes retrying with its attempts counted, then dead_letter, while the run's state and events stay as the outcome left them (the delivery result is recorded on the outbox row, apart from the run); a replayed record_outcome adds no second intent, and a re-appended action.confirmed, run as app_definer under its INSERT-only grant and the outbox's forced RLS, hits the dedup key and adds none (dedup key run:type:channel:recipient); notification.failed is appended once, in a transaction after the result, by the re-check that also closes the crash window between the two. No external channel: the sink is a log line."
     },
     {
       "id": "R025",
@@ -1446,17 +1453,22 @@
       "id": "R089",
       "category": "events",
       "requirement": "Per-run event sequences are gap-free and commit-ordered",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Concurrent writers; SSE replay never skips.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_event_journal_live.py",
+        "reports/events/t14-events.txt",
+        "tests/plan_i/test_locking_t14.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M04",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T14"
       ],
-      "suggested_test": "tests/acceptance/test_r089_per_run_event_sequences_are_gap_free_and_commit_.py"
+      "suggested_test": "tests/acceptance/test_r089_per_run_event_sequences_are_gap_free_and_commit_.py",
+      "note": "Plan I (T14): the sequence comes from runs.next_event_seq under the runs row lock in the writer's transaction (revision 0003, unchanged). Stepped live tests hold writer A's sequence n uncommitted and show with pg_blocking_pids that writer B waits on A, for the worker's transition_run against the API's append_event and mcp-write's mark_sent against the sweeper's append_event, while the events route (the after cursor of GET /api/v1/runs/{id}/events) returns n only after A commits and n + 1 only after B commits; a writer that rolls back leaves its number to the waiting writer; a 10 s stress run of eight connections of the four roles on three runs, about half of the transactions rolled back, ends with every run exactly 1..next_event_seq while a cursor reader followed every run to its counter without a skip and a counting reader saw each run grow without a hole, with no 40P01 and no 55P03. SSE and Last-Event-ID replay are T27's."
     },
     {
       "id": "R090",

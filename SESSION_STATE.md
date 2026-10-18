@@ -2,9 +2,18 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan H (T13) is executed on branch `plan-h` (`c5eeb89..06e961a`, on top of `plan-g`: the eight tasks, the close-out `e9d624d` and `6fd1ec3`, and the final-review fix `06e961a`; the docs commit recording that fix sits on top). Owner inputs: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) merge the stacked PRs in order and open the plan-h -> plan-g PR; (3) T44 step 10 (`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F, G and H (H: 45-59 below); (5) migrate the dev database to revision 0007 (`uv run python scripts/skeleton.py migrate`, dev profile: from 0005 it applies 0006 and 0007 together; 0007 adds `app.model_permit` and the `jobs.type` CHECK, re-creates the handle functions and deletes nothing). Next is the earliest dependency-satisfied task in `handoff/tasks.json` after T13 (T14: gap-free event journal, wake-ups and the outbox; T15 also became unblocked).
+**Next task:** Plan I (T14) is executed and closed on branch `plan-i` (`4aa5f92..e485c56`, on top of `plan-h`: the debt
+list, then six tasks, the sixth the close-out `9ce23a0`, and the final-review fix wave `e485c56`; a docs commit after
+it records the wave). Owner inputs: (1) the holdout seal (T03 step 9), then the live probe
+(T02); (2) merge the stacked PRs in order and open the plan-h -> plan-g and plan-i -> plan-h PRs; (3) T44 step 10
+(`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F, G, H and I (I: 60-71
+below); (5) migrate the dev database to revision 0008 (`uv run python scripts/skeleton.py migrate`, dev profile: from
+0005 it applies 0006, 0007 and 0008 together; 0008 adds `app.outbox`, gives the sweeper DELETE on `jobs` and
+re-creates `_append_event` with the payload rules; it deletes nothing). Next is Plan J = T15 (mcp-read, the
+earliest dependency-satisfied PLANNED task in `handoff/tasks.json`, unblocked by T13; T14 also unblocks T20 and T27
+once their other dependencies are done).
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-h` (Plan H work on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09 (`origin/plan-e` is two docs commits behind local `plan-e`; a `git push origin plan-e` brings it level before the plan-f -> plan-e PR). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`). Merging them in order is the owner's call.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-i` (Plan I work on top of `plan-h`, on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09 (`origin/plan-e` is two docs commits behind local `plan-e`; a `git push origin plan-e` brings it level before the plan-f -> plan-e PR). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`). Merging them in order is the owner's call.
 
 ## Done in the planning session (2026-10-06)
 
@@ -417,7 +426,121 @@
     exist, which only `PROFILE=test` allows; the R098 note says so), and `malformed_response` on a CONFLICT row
     answers 200.
 
-## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
+## Plan I executed (2026-10-15, branch `plan-i`)
+
+- T14 = `4aa5f92..e485c56` (the debt list, then six tasks, the sixth the close-out `9ce23a0`, and the final-review
+  fix wave `e485c56`; a docs commit after it records the wave). The plan
+  (`docs/superpowers/plans/2026-10-15-first-slice-i-journal-wakeups-outbox.md`) holds the 29 rulings of the
+  controller's brief as implemented; the input is `docs/superpowers/research/2026-10-15-plan-i-inputs.md`.
+  Evidence: `tests/e2e/test_event_journal_live.py` (R089: the stepped writers of four roles, the rollback, the
+  stress run with its readers), `test_outbox_live.py` (R024, the delivered row, a sink crash on one row of three, a
+  delivery lost with its sweeper at the cap, a late result),
+  `test_wakeups_live.py`, `test_migration_0008_live.py` (the round trip, the payload table in SQL, the intent, the
+  outbox grants, the MCP catalog check) and `reports/events/t14-events.txt`, `reports/outbox/t14-outbox.txt`; the
+  unit half is in `tests/plan_i/`.
+- Gates: `check.py` 1031 passed / 154 skipped; `check.py --profile test` 1164 passed / 21
+  skipped (the plan's final tails are 1031/154 and 1164/21, equal to measured); the final-review wave added one unit
+  test (1032 / 154 and 1165 / 21); `verify_handoff.py` exit 0 (STATUS.md, "Update — Plan I executed").
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan H's
+  fifty-nine:
+  60. SA:427 (AM-20.2 `outbox`): `outbox(outbox_id, tenant_id, run_id, event_id → events, channel 'local',
+      recipient, dedup_key UNIQUE, attempts, leased_until, delivered_at, result ∈ {delivered, retrying,
+      dead_letter}, created_at)` with the composite key to `runs` and `tenant_isolation` only; `leased_until` is
+      both the claim's lease and the next attempt's time; `app_definer` `ins`, the sweeper `sel, upd(leased_until,
+      attempts, delivered_at, result)`, and `api` and `worker` no cell (only `_append_event` writes intent).
+  61. SA:419 (`jobs`) and SA:520 (the policies): the sweeper holds DELETE on `jobs`, and a restrictive policy
+      `sweeper_purge_maintenance` holds it to finished maintenance rows; the purge deletes those older than
+      `OPS_MAINTENANCE_RETENTION_HOURS` (24); a run's job is never deleted.
+  62. AM-20.4 (SA:500-505) and SA:345: the sweeper re-arms a lost wake-up by reopening its job (the same row and
+      dedup key); it never inserts a `resume_input` or `execute` row.
+  63. SA:471 (extending erratum 49): lost wake-ups are re-armed by `wakeups.sweep`, a sweeper routine with direct
+      grants separate from the lease reclaim, for QUEUED runs whose `investigate` jobs and APPROVED runs whose
+      `execute` jobs are all done, past a 60 s grace (`OPS_WAKEUP_GRACE_SECONDS`) and below a 10-claim cap
+      (`OPS_WAKEUP_MAX_ATTEMPTS`), never for a run whose cancellation was requested, with every condition repeated
+      on the row the re-arm takes; past the cap it logs instead. A grant refusal the worker takes as final leaves
+      its run APPROVED and is therefore re-dispatched up to the cap (moving such a run out of APPROVED is T21's).
+      **Trade-off for the owner (final review, M9).** AM-10 says a refused grant moves the run to BLOCKED_REVIEW;
+      that is T21's work. Until then the re-arm re-dispatches an APPROVED run whose grant was refused, up to
+      `OPS_WAKEUP_MAX_ATTEMPTS` claims (about ten minutes at the defaults). Each dispatch re-runs the full grant
+      check (approval, active and freshly synced memberships, no cancellation), so nothing executes under authority
+      that is invalid at that moment. In v1 a deactivated membership cannot be reactivated (no admin surface; the
+      sync only deactivates), so such a refusal does not clear and the re-dispatch only costs attempts; and the
+      GRANT_DEFERRED (stale sync) retries depend on the re-arm. The conservative alternative is to drop the
+      `("APPROVED", "execute")` pair from `WAKEUPS` until T21 lands BLOCKED_REVIEW. The owner decides.
+  64. BS:340 and the polling debt of Plans E and H: a wake-up is the job committed with its user event, plus the
+      sweep; there is no LISTEN/NOTIFY; the worker's 0.5 s per-tenant poll is the v1 wake mechanism, and a lease's
+      release makes the jobs deferred behind it due at once (a job delayed beyond the lease's end keeps its time).
+  65. SA:452 and AM-80's event schema: `_append_event` refuses (OC006) a payload key outside the event schema's
+      thirteen (the schema gains `question_id`, `message_id`, `outbox_id`) and a `status` on any type but the
+      destination's four (schema rule 9); `event_rules_ok` mirrors both, on one table of cases.
+  66. BS:524 (intent): notification intent is written inside `_append_event`, in the event's transaction, for
+      `action.confirmed`, `action.failed`, `action.conflict`, `run.escalated` and `run.abandoned_unverified` (the
+      first three are emitted today by `record_outcome`; the last two have no emitter until T22); the recipient is
+      the run's requester, the channel `local`, the dedup key `run_id:type:channel:recipient` with a target-less
+      `ON CONFLICT DO NOTHING`.
+  67. BS:524 (delivery): the sweeper's tick, one tenant after another, claims the tenant's due rows (`FOR UPDATE
+      SKIP LOCKED`, a 30 s lease, `OPS_OUTBOX_BATCH` 10), delivers them outside any transaction to `LogSink` (one
+      log line, no egress), and records each result in its own unit for the attempt it was claimed at; the backoff
+      is `min(300, 2 × 2^(n−1))` s plus up to 25 % jitter; the fifth failure dead-letters; a sink that crashes on a
+      row is caught at the sink boundary and counted as that row's failed attempt, sparing its batch, the later
+      tenants and the announcements; a delivery lost with its sweeper is retried when its lease ends and
+      dead-lettered by the claim once its attempts reached the same cap; no result overwrites a dead letter; the
+      wake-up sweep runs before the delivery; `outbox_sink_fail` is the sink's test-profile fault.
+  68. SA:188 and BS:514: `notification.failed` (payload `code`, `message`, `outbox_id`) is appended once per dead
+      letter in a separate transaction after the result unit, opened by a transaction advisory lock on the outbox id
+      and followed by the re-check, so a second sweeper waits for the first and finds the event; every tick re-checks
+      the dead letters that lack it.
+  69. SA:520: the sweeper iterates `tenants` and runs per-tenant work in one transaction per tenant
+      (`ops_sweeper.tenants.for_each_tenant`): the delivery and the wake-up sweep now, T21's expiry and T22's
+      deadline escalation later.
+  70. SA:504: the `deliver_outbox` and `sweep_wakeups` rows are audit records like `sync_memberships`' (inserted,
+      claimed and finished in one transaction per minute; the work runs outside it, and a second tick in the minute
+      records nothing new).
+  71. SA:188 (extending erratum 52): a third advisory lock, the dead letter's announcement, after the asset guard;
+      `_append_event` takes `runs → events → outbox`; the delivery's claim and result units lock `outbox` only;
+      `notification.failed` takes its advisory lock, then `runs`, in a unit of its own; the re-arm and the purge lock
+      `jobs` at the finish position; the release's pull-forward picks with SKIP LOCKED.
+- Earlier debt lines that named T14 and what became of them: the gap-free sequence is proved (walking-skeleton and
+  Plan D lines); the outbox and its grant row are done (Plan E); `sweep_wakeups`, `deliver_outbox` and the purge of
+  finished maintenance jobs are done (Plan F); lost wake-ups are re-armed by the sweep (Plan H; recover jobs stay
+  T22's); a deferred job no longer waits for a released lease (Plan H); polling and per-tenant claims are kept as the
+  v1 wake mechanism (erratum 64, Plans E and H); `_idempotent`'s "use a new key" answer for a key that just became
+  reusable stays harmless and is on the Plan I debt list for T28.
+- Rulings made during execution (test-level or ordering choices, not spec errata; the plan text stays as written):
+  - Task 3: the stress run's gathers use `return_exceptions=True` and always release the readers before the purge,
+    and `stepped`'s `finally` always settles writer B. Reason: a failing run then reports its real error and never
+    cancels a database unit or races the purge, which the plan's own constraints forbid. Cost if wrong: none to
+    behaviour; tests only.
+  - Task 4: the R024 dedup re-append runs as `app_definer` (`SET LOCAL ROLE`, tenant set), not as the superuser the
+    plan text describes. Reason: a replayed `record_outcome` returns at RESOLVED before `_append_event`, so only a
+    re-append under the definer's INSERT-only grant and the outbox's forced RLS exercises the target-less
+    `ON CONFLICT`; with it removed the test fails on the dedup key. Cost if wrong: none to behaviour.
+  - Task 5: a database error in the wake-up sweep skips that tick's delivery; both retry on the next tick (30 s).
+    Reason: round 1 required only that delivery never starves the sweep. Cost if wrong: one tick's delayed delivery
+    during a database fault.
+- **Open items for later** (minors from the SDD ledger
+  `.superpowers/sdd/2026-10-15-first-slice-i-journal-wakeups-outbox/progress.md`, parked for the final review):
+  - Dead letters are re-scanned every tick per tenant (a `NOT EXISTS` on events, no index on `result = 'dead_letter'`)
+    and delivered rows are never purged, so the cost grows with history: retention (T32) or a partial index.
+  - Done in the final-review wave: `wakeups.LOST`'s `CASE` is built from `WAKEUPS` (`job_type_case`), pinned by a unit
+    test, so a pair added to `WAKEUPS` alone (T20, T22) is no longer silently skipped.
+  - The sink boundary logs the exception and traceback unredacted (safe for `LogSink`): a note for T39's real sink.
+  - No live test runs `deliver_outbox` through `persistence.tenants` (the unit tests use fakes).
+  - Smaller: the tick summary counts results with `recorded=False`; `pull_forward`'s bound cannot tell a deferral from
+    a short deliberate delay inside the lease window (an earlier retry only); the R105 leftover check fails on a
+    leftover at the attempts cap and misses runs with an open job (errs loud); the newest-job tie-break differs
+    between the scan (`created_at`) and the re-arm (strict `done_at`), benign; the catalog test follows only
+    `app.x(` calls (complete today); the rollback test settles writer B only when not done; `stepped` waits its full
+    5 s when B fails early. (0008's comment naming `SWEEPER_PURGE_QUAL` was corrected in the final-review wave.)
+  - From the final review (debt lines; none breaches a v1 boundary): batch delivery order is random, since
+    `outbox.CLAIM` picks by `created_at` but returns by `outbox_id`, harmless until T22 emits `run.escalated` beside
+    `action.conflict` for one run → T22; the claim's dead-letter UPDATE is a plain multi-row UPDATE, not SKIP LOCKED,
+    which matters only with two sweeper instances (v1 runs one, and PostgreSQL resolves a deadlock) → T30;
+    `notification.*` is not a reserved event type in `append_event`, so an api or worker caller could append a
+    misleading `notification.failed` (reserve it for the sweeper) → T26/T45; no live test runs the real tick's T14
+    steps (`main.sweep_wakeups`, `main.deliver_outbox` through `persistence.tenants`), only R105's skeleton sweeper
+    does and its failure would only be logged → T30 (R105 could assert a delivered intent meanwhile); T32's plan must
+    give some role DELETE on `app.outbox`, ordered before events, before any event retention can run.
 
 Allowed shortcuts in T08, each with its owning task:
 - single owner DB role, no AM-20.2 grants, no RLS → T09;
@@ -552,6 +675,47 @@ Allowed shortcuts in T13, each with its owning task:
   and a spent budget all end as the same FAILED reason, and no run event, distinct reason or metric records a loss or
   a reclaim → T28.
 
+## Plan I debt list (T14; committed before coding) [R6-B7]
+
+Allowed shortcuts in T14, each with its owning task:
+- the worker still finishes a `resume_input` job it does not handle, and the wake-up sweep does not look at
+  AWAITING_INPUT runs (no handler consumes the reply yet) → T20;
+- the worker still finishes a `recover` job it does not handle, and OUTCOME_UNKNOWN and ESCALATED runs are not swept
+  (the recover cadence of SA:506 included) → T22;
+- the wake-up sweep re-arms the `investigate` job of a run that sits in QUEUED with every investigate job done; a run
+  that T20's `resume_input` handler moves back to QUEUED would meet the same predicate, so T20 decides whether that is
+  its wake-up → T20;
+- the decision-to-processing crash test of R023 (inject a crash between decision, event, checkpoint and job
+  acknowledgement; the sweeper resumes exactly the accepted event) → T21;
+- `outcomes.Event` validates neither `append_event`'s input (the function assigns id, sequence and instant) nor the
+  events route's output → T26 (response schemas);
+- SSE, `Last-Event-ID` replay and the cursor-expiry reset (R053, BS:518's 200-event page) → T27; the events route
+  keeps `after`/`limit ≤ 500` → T26/T27;
+- no event and no outbox row is ever deleted (BS:578's 30-day replay, the outbox's delivered and dead-lettered rows)
+  → T32;
+- the only sink is `LogSink` (one log line per delivery, no egress); recipient mapping from approved identities,
+  per-channel redaction and a destination's own deduplication → T39 (Slack, M15);
+- a delivery slower than the 30 s outbox lease can be delivered twice (at-least-once, BS:76), and so can a delivery
+  whose result unit fails after the sink succeeded → T39 (a real channel's deduplication);
+- `run.escalated` and `run.abandoned_unverified` are notification triggers with no emitter yet (`escalate_run` and
+  `resolve_escalation` do not exist); today a run escalates only through `record_outcome`'s CONFLICT, whose
+  `action.conflict` is a trigger → T22;
+- a grant refusal the execute handler takes as final (an inactive membership, a missing approval) finishes the job
+  and leaves the run APPROVED, so the wake-up sweep re-dispatches it until the job has been claimed
+  `OPS_WAKEUP_MAX_ATTEMPTS` times; moving such a run out of APPROVED (BLOCKED_REVIEW, AM-10) so the sweep stops → T21;
+- `_idempotent`'s "not reusable yet" refusal tells the client to use a new key for a key that just became reusable
+  (harmless; moved from the Plan G line that named T14/T28) → T28;
+- operator visibility of a dead letter is the `notification.failed` event plus a log line; a wake-up past its re-arm
+  cap is a log line once per tick; dashboards and metrics → T28/T29;
+- `_append_event` bounds the payload's keys and `status`, not its size (BS:514 "bounded safe payload") → T45;
+- added by the final review: batch delivery order inside a claim is random (T22); the claim's dead-letter UPDATE is not
+  SKIP LOCKED, which matters only with two sweepers (T30); `notification.*` is not a reserved type in `append_event`
+  (T26/T45); no live test runs the real tick's T14 steps (T30);
+- incident-sim's fault route accepts any `FaultKind`, so `outbox_sink_fail` can be armed there and is never consumed
+  → T47;
+- the dev database stays at revision 0005 until the owner migrates it (0006, 0007 and 0008 pending); until then the
+  API, the sweeper, the worker and mcp-write refuse to start on it → owner input.
+
 ## Environment (observed)
 
 | Item | Observed |
@@ -594,10 +758,17 @@ revision's relation. 0007 creates `app.model_permit` (one seeded slot), adds the
 has one of the eight types), grants `app_definer` UPDATE on `run_lease.fence`, and re-creates the handle functions
 with the fence check; it deletes nothing.
 
+**Update (2026-10-15):** Plan I adds revision 0008. The dev `ops` database stays at 0005 until the owner runs
+`uv run python scripts/skeleton.py migrate` (dev profile), which applies 0006, 0007 and 0008 together; until then the
+sweeper also refuses to start (it needs `app.outbox`). 0008 creates `app.outbox` (empty), gives the sweeper DELETE on
+`jobs`, and re-creates `_append_event` with the payload rules and the notification intent; every event the dev
+database holds was written under the old rules and stays as it is (the rules apply to new events); it deletes nothing.
+
 ## Open owner inputs
 
-- Migrate the dev database to revision 0007 (`uv run python scripts/skeleton.py migrate`, dev profile; it applies 0006
-  and 0007 together), then decide errata 35-44 (see "Plan G executed") and 45-59 (see "Plan H executed").
+- Migrate the dev database to revision 0008 (`uv run python scripts/skeleton.py migrate`, dev profile; it applies
+  0006, 0007 and 0008 together), then decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed") and
+  60-71 (see "Plan I executed").
 - Merge the stacked PRs #1-#5 in order (opened 2026-10-09, all green on CI; the first merge also exercises the push-to-main trigger).
 - Decide on the nine proposed contract errata (see "Plan C executed").
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
@@ -630,6 +801,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A) and write Plan I (the next earliest dependency-satisfied task in `handoff/tasks.json`: T14 or T15, both unblocked by T13).
+Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A; the dev database migration to 0008; the proposed errata of Plans C-I, up to 71) and write Plan J for T15 (mcp-read, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json`; T17 is also unblocked).
 
 Do not store secrets or private reasoning in this file.
