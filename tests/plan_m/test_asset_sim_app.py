@@ -10,6 +10,8 @@ outside the test profile, or accepting a fault this service never consumes. The 
 tokens, is tests/e2e/test_asset_sim_live.py.
 """
 
+import base64
+import struct
 from typing import Any
 from uuid import UUID
 
@@ -48,6 +50,7 @@ def test_only_mcp_reads_access_token_is_served() -> None:
         "a persona's (aud ops-api)": ({"aud": "ops-api", "azp": "ops-dev-direct"}, 403),
         "the worker client with asset-sim's audience": ({"aud": ["asset-sim"], "azp": "ops-worker"}, 403),
         "an ID token of mcp-read": ({**MCP_READ, "typ": "ID"}, 401),
+        "a refresh token of mcp-read": ({**MCP_READ, "typ": "Refresh"}, 401),
         "no audience at all": ({"aud": None, "azp": "ops-mcp-read"}, 401),
     }
     with client() as http:
@@ -139,3 +142,21 @@ def test_fault_routes_answer_under_the_test_profile() -> None:
         foreign = http.post("/internal/faults/asset_unavailable", headers=headers(azp="ops-worker"), json=arm)
         assert foreign.status_code == 403  # only mcp-read's token arms a fault
         assert UUID(http.get("/assets/Z99", headers=headers()).json()["request_id"])  # a safe error, nothing armed
+
+
+def test_a_malformed_tenant_or_cursor_is_a_400_never_a_500() -> None:
+    query = {"start_at": "2026-10-05T00:00:00Z", "end_at": "2026-10-07T00:00:00Z", "limit": "1"}
+    alerts_headers = headers(as_of="2026-10-16T12:00:00Z")
+    with client() as http:
+        for tenant in ("not-a-uuid", "", "3ea79c95-914c-52cb-9d10-c4e19dda8ff7x"):
+            answer = http.get("/assets/A17/status", headers={**headers(), "X-Ops-Tenant-Id": tenant})
+            assert answer.status_code == 400 and answer.json()["code"] == "INVALID_INPUT", tenant
+        first_page = http.get("/assets/A17/alerts", headers=alerts_headers, params=query).json()
+        real = first_page["next_cursor"]
+        bound = data.binding(UUID(ALPHA), "A17", data.instant(query["start_at"]), data.instant(query["end_at"]))
+        raw = struct.pack(">Bq", data.CURSOR_VERSION, 2**63 - 1) + UUID(int=0).bytes + bound
+        forged = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+        for cursor in ("!!", real + "=", forged):  # malformed, non-canonical, and bound but out of range
+            answer = http.get("/assets/A17/alerts", headers=alerts_headers, params={**query, "cursor": cursor})
+            assert answer.status_code == 400 and answer.json()["code"] == "INVALID_INPUT", cursor
+            assert cursor not in answer.text  # never echoed

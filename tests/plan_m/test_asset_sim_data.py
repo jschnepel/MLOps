@@ -9,9 +9,11 @@ asset or interval, or a tampered one, accepted; data that does not validate agai
 malformed alert file served instead of refused at start.
 """
 
+import base64
 import json
 import shutil
-from datetime import datetime, timedelta
+import struct
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -183,3 +185,49 @@ def test_a_malformed_alert_file_is_refused_at_start(tmp_path: Path) -> None:
             data.load(tmp_path)
     (tmp_path / "assets.json").write_text(json.dumps(original), encoding="utf-8")
     assert len(data.load(tmp_path).assets) == 6  # the unbroken copy loads: the refusals were the edits'
+
+
+def forged(micros: int, a17: data.Asset, *, end: str = "2026-10-07T00:00:00Z") -> str:
+    """A cursor with a valid binding for the request (the binding is an unkeyed hash of known values) and any position."""
+    bound = data.binding(a17.tenant_id, a17.asset_id, at("2026-10-05T00:00:00Z"), at(end))
+    raw = struct.pack(">Bq", data.CURSOR_VERSION, micros) + UUID(SEAL_1).bytes + bound
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def test_a_forged_or_non_canonical_cursor_is_refused_not_an_error() -> None:
+    a17 = asset(ALPHA, "A17")
+    for micros in (2**63 - 1, -(2**63), 2**62, -(2**62)):  # outside datetime's range, though the binding holds
+        with pytest.raises(data.CursorRefused):
+            page(a17, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z", limit=1, cursor=forged(micros, a17))
+    sane = forged(0, a17)  # a position inside the range is a valid (if odd) cursor: it selects, it does not crash
+    assert page(a17, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z", limit=1, cursor=sane)["alerts"]
+    real = page(a17, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z", limit=1)["next_cursor"]
+    assert real is not None
+    for spelling in (real + "=", real + "\n", real[:10] + "*" + real[10:], real.replace("-", "+").replace("_", "/")):
+        if spelling == real:  # the replacement is a no-op when the cursor has neither character
+            continue
+        with pytest.raises(data.CursorRefused):
+            page(a17, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z", limit=1, cursor=spelling)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "20261006T000000Z",  # basic format
+        "2026-10-06 00:00:00Z",  # space separator
+        "2026-W41-2T00:00:00Z",  # ISO week date
+        "2026-10-06T00Z",  # hour only
+        "2026-10-06T00:00:00,5Z",  # comma decimal
+        "2026-10-06T00:00:00",  # no offset
+        "2026-10-06T02:00:00+02:00",  # not UTC
+    ],
+)
+def test_an_instant_must_be_rfc_3339_utc(text: str) -> None:
+    with pytest.raises(ValueError):
+        data.instant(text)
+    assert data.instant("2026-10-06T00:00:00.5+00:00") == datetime(2026, 10, 6, 0, 0, 0, 500000, tzinfo=UTC)
+
+
+def test_a_page_of_no_alerts_is_refused() -> None:
+    with pytest.raises(ValueError):
+        page(asset(ALPHA, "A17"), "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z", limit=0)

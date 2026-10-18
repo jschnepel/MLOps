@@ -44,6 +44,10 @@ SEVERITIES: Final = frozenset({"info", "warning", "critical"})
 WARNING_SEVERITIES: Final = frozenset({"warning", "critical"})
 WARNING_WINDOW: Final = timedelta(hours=24)
 MESSAGE: Final = "Synthetic {severity} alert: {kind} on {name}."
+# RFC 3339 as the tool input schemas spell it (`Z` or `+00:00`); fromisoformat alone also takes basic format, a space
+# separator, week dates and hour-only forms, none of which a contract instant may be.
+INSTANT: Final = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|\+00:00)")
+CURSOR_ALPHABET: Final = re.compile(r"[A-Za-z0-9_-]+")
 EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 CURSOR_VERSION: Final = 1
 CURSOR_BYTES: Final = 1 + 8 + 16 + 32  # version, occurred_at in microseconds, alert UUID, request binding
@@ -103,8 +107,8 @@ def instant(text: str) -> datetime:
     Raises:
         ValueError: not an instant, or not in UTC.
     """
-    if not text.endswith(("Z", "+00:00")):
-        raise ValueError("an instant must be UTC")
+    if not INSTANT.fullmatch(text):
+        raise ValueError("an instant must be RFC 3339 UTC")
     value = datetime.fromisoformat(text)
     if value.utcoffset() != timedelta(0):
         raise ValueError("an instant must be UTC")
@@ -190,13 +194,22 @@ def decode_cursor(text: str, bound: bytes) -> tuple[datetime, str]:
         CursorRefused: not a cursor of this format, or bound to another request.
     """
     try:
+        if not CURSOR_ALPHABET.fullmatch(text):  # b64decode would silently skip anything outside the alphabet
+            raise ValueError("outside the base64url alphabet")
         raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+        if base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=") != text:  # one spelling per cursor
+            raise ValueError("not canonical")
     except (ValueError, binascii.Error) as exc:
         raise CursorRefused("malformed cursor") from exc
     if len(raw) != CURSOR_BYTES or raw[0] != CURSOR_VERSION or not hmac.compare_digest(raw[25:], bound):
         raise CursorRefused("cursor does not belong to this request")
     (micros,) = struct.unpack(">q", raw[1:9])
-    return (EPOCH + timedelta(microseconds=micros), str(UUID(bytes=raw[9:25])))
+    try:
+        # The binding is an unkeyed hash of values the caller knows, so a forged cursor can pass it with any micros.
+        when = EPOCH + timedelta(microseconds=micros)
+    except (OverflowError, ValueError) as exc:
+        raise CursorRefused("cursor names an instant out of range") from exc
+    return (when, str(UUID(bytes=raw[9:25])))
 
 
 def alerts_page(
@@ -214,7 +227,10 @@ def alerts_page(
 
     Raises:
         CursorRefused: the cursor is malformed or another request's.
+        ValueError: `limit` is below 1 (the route refuses it first; this keeps the data rule total).
     """
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
     bound = binding(asset.tenant_id, asset.asset_id, start_at, end_at)
     window = [
         alert
