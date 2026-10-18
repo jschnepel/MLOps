@@ -206,6 +206,8 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         if mode != "lexical":
             # TODO(T16): translate vector_exact to mode=vector once T18 stores embeddings (erratum 3).
             return envelope("search_procedures", error=tool_error("UNSUPPORTED_MODE", "vector_exact arrives with T18"))
+        # The run-state allowlist runs in the resolution unit only; the definer re-checks the handle's job, fence and
+        # expiry itself (erratum 80).
         # A second unit, after the resolution committed (erratum 80): the definer resolves the same handle again, so a
         # handle released in between is refused here too, and the tenant comes from the handle, never an argument.
         try:

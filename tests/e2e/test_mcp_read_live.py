@@ -64,7 +64,10 @@ async def test_search_over_http(app_conn: persistence.Conn, role_conn, secret) -
             )
             pumps = await client.call_tool(
                 "search_procedures",
-                {"query": "inspection interval and alerts", "limit": 8, "mode": "lexical", "asset_type": "pump"},
+                {"query": "the reviewer records each reading", "limit": 8, "mode": "lexical", "asset_type": "pump"},
+            )
+            everything = await client.call_tool(
+                "search_procedures", {"query": "the reviewer records each reading", "limit": 8, "mode": "lexical"}
             )
             vector = await client.call_tool("search_procedures", {"query": "seal", "limit": 1, "mode": "vector_exact"})
         doc = res.structured_content
@@ -75,6 +78,10 @@ async def test_search_over_http(app_conn: persistence.Conn, role_conn, secret) -
         assert all(governed[r["evidence_id"]] == r["content_sha256"] for r in doc["data"]["results"])
         documents = {r["document_id"] for r in pumps.structured_content["data"]["results"]}
         assert documents and documents <= {"ALPHA-PUMP-SEAL", "ALPHA-ALERT-REVIEW"}  # pump documents or any-asset ones
+        # The control: the same query with no asset type reaches other assets' documents, so a filter that was dropped
+        # (or an empty asset type forwarded as "any") would fail the line above.
+        unfiltered = {r["document_id"] for r in everything.structured_content["data"]["results"]}
+        assert unfiltered - {"ALPHA-PUMP-SEAL", "ALPHA-ALERT-REVIEW"}, unfiltered
         assert vector.structured_content["error"]["code"] == "UNSUPPORTED_MODE"
         # The persona's token (aud ops-api) and mcp-write's token (aud incident-sim) are refused at the transport.
         alex = kc.token_password(kcs.base_url, "ops-dev-direct", "alex", secret("kc_persona_alex_password"))
