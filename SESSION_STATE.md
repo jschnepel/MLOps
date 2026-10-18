@@ -10,9 +10,8 @@ owner's decision on erratum 96 (`asset_scope` still arrives with T16). Owner inp
 step 9), then the live probe (T02); (2) merge the stacked PRs #1-#11 in order (plan-b -> main through plan-l ->
 plan-k; #11 is https://github.com/jschnepel/MLOps/pull/11); (3) T44 step 10 (step A applied 2026-10-16; the
 other-device LAN check and the firewall rules remain) (`docs/runbooks/ollama-network.md` step A); (4) decide the
-proposed errata of Plans C, E, F, G, H, I, J, K and L (L: 93-102 below); (5) ingest the corpus into the dev database
-(`uv run python scripts/skeleton.py ingest`: corpus-1 into alpha and beta as the worker; the owner migrated it to 0011
-on 2026-10-18); until then every investigation on dev ends INSUFFICIENT_EVIDENCE. Next is Plan M = T16 (the read tools and asset-sim, the earliest dependency-satisfied PLANNED task in
+proposed errata of Plans C, E, F, G, H, I, J, K and L (L: 93-102 below). The dev database is at 0011 with corpus-1
+ingested (owner, 2026-10-18). Next is Plan M = T16 (the read tools and asset-sim, the earliest dependency-satisfied PLANNED task in
 `handoff/tasks.json` after T17, now unblocked; T18 and T23 are unblocked too; T19 and T41 wait on owner steps).
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-l` (Plan L work on top of `plan-k`, on top of `plan-j`, on top of `plan-i`, on top of `plan-h`, on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) are open now; `plan-j` and `plan-k` are pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11). Merging them in order is the owner's call.
@@ -1111,8 +1110,7 @@ Allowed shortcuts in T17, each with its owning task:
   it, so the evidence row records the instant its permission was decided → T16 (Plan L final review, M4);
 - shared (cross-tenant) documents: none; a document both tenants need is copied per tenant → no task (erratum 97,
   ruling 9);
-- the dev database (migrated to 0011 by the owner on 2026-10-18) has no corpus until the owner runs
-  `scripts/skeleton.py ingest` → owner input (ruling 24).
+- the dev database: migrated to 0011 and corpus-1 ingested by the owner on 2026-10-18 → closed (ruling 24).
 
 ## Environment (observed)
 
@@ -1188,13 +1186,15 @@ investigation ends INSUFFICIENT_EVIDENCE.
 **Update (2026-10-18, later):** the owner ran `uv run python scripts/skeleton.py migrate` on `plan-l` (dev profile: `app at
 app@head, incident at head`), so the dev `ops` database is at `0011_governed_corpus`. The corpus is not yet ingested.
 
+**Update (2026-10-18, later still):** the owner ran `uv run python scripts/skeleton.py ingest` (`INGEST: alpha corpus-1: 9
+new, 0 restated, 0 unchanged`; `INGEST: beta corpus-1: 7 new, 0 restated, 0 unchanged`), so corpus-1's 16 documents are in
+the dev `ops` database.
+
 ## Open owner inputs
 
 - Decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed"), 60-71 (see
   "Plan I executed"), 72-81 (see "Plan J executed"), 82-92 (see "Plan K executed") and 93-102 (see "Plan L
   executed").
-- Ingest the corpus into the dev database (`skeleton.py ingest`; it is at 0011 since 2026-10-18; see "Dev database
-  state").
 - R025 and R031 have every half evidenced (mcp-read by T15, mcp-write by T47, the import half by T04) but keep
   `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`, because no open task owns them: flipping their status is the owner's call
   (or T15's re-close).
@@ -1231,6 +1231,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; merging the PRs; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-L, up to 102; the dev database's ingestion; it is at 0011) and write Plan M for T16 (the read tools and asset-sim over the governed store, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T17, unblocked by T15, T10 and T17; T18 and T23 are unblocked too).
+Then wait for the owner inputs above (holdout seal, then live probe; merging the PRs; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-L, up to 102) and write Plan M for T16 (the read tools and asset-sim over the governed store, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T17, unblocked by T15, T10 and T17; T18 and T23 are unblocked too).
 
 Do not store secrets or private reasoning in this file.
