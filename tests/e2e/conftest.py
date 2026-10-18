@@ -221,12 +221,13 @@ async def add_requester(conn: persistence.Conn, tenant_id: object, subject: obje
     has no members. The issuer is the seeded rows' own; `purge_tenant` removes the row with the tenant."""
     if str(tenant_id) in SEEDED_TENANTS:
         raise ValueError("a seeded tenant's memberships are the migration's, never a test's")
-    await conn.execute(
+    cur = await conn.execute(
         "INSERT INTO app.memberships (tenant_id, issuer, subject, role, synced_at)"
         " SELECT %s, m.issuer, %s, 'requester', app.current_time() FROM app.memberships m"
         " WHERE m.tenant_id = %s LIMIT 1",
         (tenant_id, subject, SEEDED_ALPHA),
     )
+    assert cur.rowcount == 1  # none would mean the seeded alpha rows are gone, and the run's reads would be refused
 
 
 async def purge_tenant(conn: persistence.Conn, tenant_id: object) -> None:

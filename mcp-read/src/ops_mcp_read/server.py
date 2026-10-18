@@ -76,7 +76,7 @@ def envelope(
     truncated: bool = False,
 ) -> ToolResult:
     """Wrap data or an error in the AM-80 envelope with a fresh request_id. `observed_at` is the database instant the
-    answer was decided at (Plan M ruling 3); a refusal before any database unit has none and takes the wall clock."""
+    answer was decided at (Plan M ruling 3); an error envelope has no decided instant and takes the wall clock."""
     return {
         "tool_name": tool_name,
         "request_id": str(uuid4()),

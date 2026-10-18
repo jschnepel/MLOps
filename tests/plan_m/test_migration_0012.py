@@ -146,6 +146,12 @@ def test_mcp_read_refuses_a_database_without_0012(monkeypatch: pytest.MonkeyPatc
         start(monkeypatch, conn)
     assert conn.closed
     assert conn.asked[-1] == (persistence.ASSET_SCOPE[1], persistence.ASSET_SCOPE[0])
+    # 0012's second marker is checked too: a database with asset_scope but the old search is refused all the same.
+    half: Any = MarkerConn({persistence.HANDLE_BINDING[1], persistence.GOVERNED_CORPUS[1], persistence.ASSET_SCOPE[1]})
+    with pytest.raises(persistence.PersistenceError, match="predates this service"):
+        start(monkeypatch, half)
+    assert half.closed
+    assert half.asked[-1] == (persistence.SEARCH_INSTANT[1], persistence.SEARCH_INSTANT[0])
 
 
 def test_a_search_answer_carries_the_definers_instant_and_its_cut() -> None:
