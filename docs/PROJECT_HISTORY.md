@@ -665,8 +665,9 @@ in its first lines, the measurement pins the test clock to the labelling instant
 equals the hand-written anchor, which `docs/retrieval.md` now names as the independent check, and the report gained
 the precision ceiling, null intervals for empty denominators and a hash of the queries. The fix rounds added
 tests, so the measured dev total is `1269 passed, 191 skipped` and the live total `1439 passed, 21 skipped`, 51
-above the plan's arithmetic in both (the final-review fix wave added one more test: 1270 and 1440, 52 above). **Problem.** Task 6 (the close-out: handoff records, acceptance rows, errata 93
-to 102, the retrieval runbook): the close-out said that SA:377 would abstain on the 5 of 20 no-source questions that
+above the plan's arithmetic in both (the final-review fix wave added one more test: 1270 and 1440, 52 above).
+
+**Problem.** Task 6 (the close-out: handoff records, acceptance rows, errata 93 to 102, the retrieval runbook): the close-out said that SA:377 would abstain on the 5 of 20 no-source questions that
 still return a section, which as written it would not, because SA:377 counts any returned effective chunk as
 sufficient; it also miscounted the corpus's categories and size, a function count, R131's line and a UTC date, six
 minors in all. **Change.** The residue is now worded everywhere as an open item for T20's relevance criterion (for
@@ -683,7 +684,7 @@ the hint "run scripts/skeleton.py migrate", because the command printed the clas
 This history had no entry for Task 6's review round and still held the final-review placeholder. (M4)
 `retrieved_at` is stamped from the wall clock while a version's effectiveness is decided at the database's clock, so
 under a moved test clock a result can carry an earlier time than its own `effective_from`. (M5) The frozen revision's
-docstring says an ingestion row is written "when something changed", but the planner also writes one when only the
+docstring says an ingestion row is written for a run "that changed something", but the planner also writes one when only the
 corpus version or lock changed. **Change.** M1: a typed `IngestInterrupted` carrying the tenants written is raised
 `from` the store failure, the command reads the cause's class from it, and the test stub is passed through a typed
 `cast`, so no ignore is left; a failure before any tenant committed still propagates unchanged and has its own test.

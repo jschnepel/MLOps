@@ -833,7 +833,7 @@ start on it. Next is Plan M = T16 (the read tools and asset-sim, the earliest de
   `docs/retrieval.md` names the hand-written anchor as the independent check.
 - **Open items for later** (minors parked by the task reviews; none changes a verdict):
   the final whole-branch review (0 Critical, 0 Important, 5 Minor; record in
-  `.superpowers/sdd/2026-10-16-first-slice-l-governed-corpus/final-fix-report.md`) took M1 to M3 in a fix wave (no
+  `docs/reviews/plan-l-final-review-2026-10-18.md`, fix wave 2f7efa4 and 34e9c42) took M1 to M3 in a fix wave (no
   `type: ignore` left: `IngestInterrupted` chains the store failure and carries the tenants written; `skeleton.py
   ingest` prints a `PersistenceError`'s own hint, class only for a driver error; this history), recorded M4 as a debt
   line (the Plan L debt list: `retrieved_at` -> T16) and M5 as a line in `docs/retrieval.md`. It ruled three parked
