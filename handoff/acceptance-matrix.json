@@ -465,7 +465,7 @@
       "owning_tasks": [
         "T15"
       ],
-      "note": "Read half (Plan J, T15): python -m ops_mcp_read runs as a child process on a loopback port and the official SDK Client (mode 2026-07-28) in the test process lists exactly search_procedures and calls it with a valid handle over the network. Write half (Plan K, T47): python -m ops_mcp_write runs as a child process pointed at incident-sim, lists exactly the three write tools to the official client and answers get_incident_receipt with a recover handle for an existing action (SUCCEEDED; no grant, attempt, job or incident created). Both halves are evidenced; the row's status is left to its owner, T15."
+      "note": "Read half (Plan J, T15): python -m ops_mcp_read runs as a child process on a loopback port and the official SDK Client (mode 2026-07-28) in the test process lists exactly the three read tools (get_asset_status, get_recent_alerts, search_procedures; since Plan M, T16) and calls search_procedures and get_asset_status, the latter answered through asset-sim, with a valid handle over the network. Write half (Plan K, T47): python -m ops_mcp_write runs as a child process pointed at incident-sim, lists exactly the three write tools to the official client and answers get_incident_receipt with a recover handle for an existing action (SUCCEEDED; no grant, attempt, job or incident created). Both halves are evidenced; the row's status is left to its owner, T15."
     },
     {
       "id": "R026",
@@ -519,14 +519,23 @@
       "category": "security",
       "requirement": "Read tools enforce current source and asset access",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r028_read_tools_enforce_current_source_and_asset_acce.py",
       "expected_evidence": "Alpha requests B22 or revoked procedure; no forbidden data reaches the model.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_mcp_read_t16_live.py",
+        "reports/mcp-read/t16-read-tools.txt",
+        "tests/e2e/test_asset_sim_live.py",
+        "reports/asset-sim/t16-asset-sim.txt",
+        "tests/e2e/test_migration_0012_live.py",
+        "tests/plan_m/test_mcp_read_assets.py",
+        "tests/plan_m/test_asset_sim_app.py"
+      ],
       "owning_tasks": [
         "T16"
-      ]
+      ],
+      "note": "Plan M (T16): alpha never reads B22: an A17 run naming B22 is ASSET_OUT_OF_SCOPE before asset-sim is asked, an alpha run whose own asset is B22 gets NOT_FOUND from asset-sim's own tenant filter (the same 404 as an unknown asset), and asset-sim answers alpha's tenant 404 for B22 directly; another interval is INTERVAL_OUT_OF_SCOPE; the search keeps to the run's asset type (ASSET_TYPE_OUT_OF_SCOPE otherwise) and never returns the revoked ALPHA-ALARM-BYPASS. Current access: asset_scope and search_procedures_scoped re-check that the run's requester still holds an active requester membership in its tenant (matched without an issuer, erratum 105); with alex's switched off, all three tools answer the one plain INVALID_HANDLE while resolve_invocation still resolves the handle, and answer again once it is back; a run requested by a reader never answers. The re-check needs an active row only, with no synced_at freshness bound, so a deprovisioned requester keeps read access until the sweeper's next sync (60 s at most). No forbidden data reaches the caller in any of these."
     },
     {
       "id": "R029",
@@ -534,14 +543,19 @@
       "category": "security",
       "requirement": "Unexpected tools and invalid results fail closed",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r029_unexpected_tools_and_invalid_results_fail_closed.py",
       "expected_evidence": "Alter discovered tool/schema; return error-flagged/malformed/oversized payload; no success assumption.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "tests/plan_m/test_worker_r029.py",
+        "tests/plan_m/test_mcp_read_assets.py",
+        "tests/plan_m/test_tool_contracts.py"
+      ],
       "owning_tasks": [
         "T16"
-      ]
+      ],
+      "note": "Plan M (T16): in-process (tests/plan_m/test_worker_r029.py: the worker's real client against mcp-read's real app over an ASGI transport, and its checks on scripted results), the client lists the read tools in the same session before it calls one and refuses (McpCallFailed, the run FAILED as retrieval failed) a tool added or removed, a listing with a further page, or an altered input schema of the called tool, compared with the committed file as canonical JSON, without calling it; it refuses an error-flagged, malformed (nested data checked against schemas/tool-result.schema.json, date-time formats included), another tool's, non-object, non-ok or larger-than-256-KiB result (the bound applies after the SDK has parsed the body; a transport-level bound is T30's). Live, only the positive case: tests/e2e/test_mcp_read_t16_live.py's test_r029_the_workers_client_accepts_the_real_server_and_every_real_read (recorded in reports/mcp-read/t16-read-tools.txt), where the real server passes and all three reads validate. mcp-read itself validates asset-sim's answers as whole tool results and against the run's scope before returning them (UPSTREAM_INVALID). The write calls keep T47's check (T20)."
     },
     {
       "id": "R030",
@@ -2274,7 +2288,8 @@
         "tests/e2e/test_mcp_write_t47_live.py",
         "reports/mcp-write/t47-mcp-write.txt",
         "tests/plan_k/test_migration_0010.py",
-        "tests/e2e/test_migration_0011_live.py"
+        "tests/e2e/test_migration_0011_live.py",
+        "tests/e2e/test_migration_0012_live.py"
       ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r131_the_read_and_write_mcp_servers_hold_disjoint_fun.py",
@@ -2284,7 +2299,7 @@
         "T47"
       ],
       "blocking_for_v1": true,
-      "note": "Read half (Plan J, T15): mcp_read can EXECUTE current_time (erratum 15), resolve_invocation and, since Plan L (T17), search_procedures_scoped, and nothing else in app (asset_scope joins with T16; errata 72 and 96; the read half is met subject to the owner's decision on erratum 96); an attempted grant_execution is 42501; a recover and an execute handle presented to mcp-read are refused over HTTP. Write half (Plan K, T47): mcp_exec can EXECUTE exactly current_time (erratum 15), resolve_invocation, grant_execution, mark_sent, record_outcome, request_abort and lookup_action and nothing else in app; search_procedures_scoped, mcp-read's read function since T17, is 42501 when mcp_exec calls it (errata 91 and 96); an attempted mark_unknown is 42501; an investigate and a resume_input handle are refused over HTTP at all three write tools, also when the stored server column lies, each live at mcp_read; incident-sim answers ops-mcp-read's workload token 403 at all three routes. That mcp-read cannot reach incident-sim over the network is T30's Docker network test."
+      "note": "Read half (Plan J, T15): mcp_read can EXECUTE current_time (erratum 15), resolve_invocation, search_procedures_scoped (since Plan L, T17) and asset_scope (since Plan M, T16), and nothing else in app (errata 72, 96 and 104; the read half is complete subject to the owner's decisions on errata 96 and 104); an attempted grant_execution is 42501; a recover and an execute handle presented to mcp-read are refused over HTTP. Write half (Plan K, T47): mcp_exec can EXECUTE exactly current_time (erratum 15), resolve_invocation, grant_execution, mark_sent, record_outcome, request_abort and lookup_action and nothing else in app; search_procedures_scoped and asset_scope, mcp-read's read functions since T17 and T16, are 42501 when mcp_exec calls them (errata 91, 96 and 104); an attempted mark_unknown is 42501; an investigate and a resume_input handle are refused over HTTP at all three write tools, also when the stored server column lies, each live at mcp_read; incident-sim answers ops-mcp-read's workload token 403 at all three routes. That mcp-read cannot reach incident-sim over the network is T30's Docker network test."
     }
   ]
 }

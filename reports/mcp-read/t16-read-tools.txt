@@ -1,0 +1,7 @@
+T16 read tools — 2026-10-18T23:47:29Z
+asset tools: A17 normal r2 now, warning r2 at 2026-10-06T12:00Z; alerts paged 1+1 by cursor; a forged cursor INVALID_CURSOR
+R028: alpha -> B22 ['ASSET_OUT_OF_SCOPE', 'INTERVAL_OUT_OF_SCOPE', 'NOT_FOUND', 'NOT_FOUND']
+R028 membership: all three tools INVALID_HANDLE while alex was inactive; ok before and after
+R028 search: run type pump -> ['ALPHA-PUMP-SEAL']; revoked bypass absent; compressor refused
+asset-sim faults through mcp-read: {'asset_unavailable': 'unavailable', 'drop_before_commit': ('UNAVAILABLE', True), 'malformed_response': ('UPSTREAM_INVALID', False), 'timeout_before_accept': ('UNAVAILABLE', True)}
+R029: the worker's client listed, compared the schemas and validated all three reads: ok

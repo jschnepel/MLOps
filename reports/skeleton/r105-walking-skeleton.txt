@@ -1,7 +1,7 @@
-R105 walking skeleton — 2026-10-18T06:24:47Z
-run_id=e330be30-8367-41ec-9b6c-2193c68cdb50 accepted status=QUEUED
-proposal_id=f129c335-7f4d-4554-afa9-fdfd5b8ab545 revision=1 payload_sha256=13d0ef8d2c007f253589bc35453fe1d229490f84c259575618e5383b35dd1fd9 evidence=['ALPHA-ALERT-REVIEW:v1:repeated-alerts']
-state=SUCCEEDED state_version=7 action_id=0f70f96a-7388-4a4f-a97e-36c562b21ac9 incident_id=INC-000077
+R105 walking skeleton — 2026-10-18T23:48:42Z
+run_id=b7730017-1eaa-4d0b-8b1d-27c6c0f67d51 accepted status=QUEUED
+proposal_id=784e70e9-db20-4186-830c-61328e0d1995 revision=1 payload_sha256=ff9fa0e42fb89ebae8ae94c0a93295f99a463e3f970c5ae6171a78436d198a7c evidence=['ALPHA-ALERT-REVIEW:v1:repeated-alerts']
+state=SUCCEEDED state_version=7 action_id=9215ba01-ab18-4555-a901-a5b9d32bc5b6 incident_id=INC-000077
 events=run.accepted,tool.started,tool.completed,explanation.ready,proposal.ready,approval.recorded,action.granted,action.dispatched,action.confirmed
 replay=refused_finished_job refusals=api:worker,destination:persona+worker,mcp-write:persona+mcp-read
 destination_refusals=persona:403,worker:403

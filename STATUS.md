@@ -321,3 +321,25 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   T21; revocation in derived state -> T26; the injected and conflicting sources' model-side proofs -> T19/T20;
   tuning the minimum rank -> T18. Ten errata (93-102) are proposed.
 - Next: Plan M = T16 (read tools, asset_scope, asset-sim) on branch plan-m from main.
+
+## Update — Plan M executed (2026-10-18, branch `plan-m`)
+
+- Plan M (T16: the read tools, `asset_scope` and asset-sim) executed on branch `plan-m` (`9e7d716..bbaba40`, from
+  `main`). The plan is `docs/superpowers/plans/2026-10-18-first-slice-m-read-tools-asset-sim.md`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1371 passed, 205 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1555 passed, 21 skipped`.
+  `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
+- **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`): R028, `RECORDED_LOCALLY_LIVE` (alpha never reads B22, by
+  mcp-read's scope check and by asset-sim's own tenant filter; a requester who lost the membership gets nothing from
+  any of the three tools; the search keeps to the run's asset type and never returns a revoked procedure), and R029,
+  `RECORDED_LOCALLY` (in-process, the worker refuses an altered tool list or schema before calling, and an
+  error-flagged, malformed or oversized result, and the run fails as "retrieval failed"; live, the real server
+  passes). R131's read half is complete (`asset_scope` joins; subject to errata 96 and
+  104).
+- Also built: revision 0012; asset-sim, the seventh process (port 8091); `ops_core.tool_contracts`; mcp-read's asset
+  tools and its asset-sim client; the search's instant and whole-section excerpt; `docs/runbooks/asset-sim.md`.
+- The dev `ops` database waits at 0011 for the owner's migrate to 0012 (mcp-read refuses to start until then).
+- Deferred, each with its owner in `SESSION_STATE.md`: vector mode -> T18; the worker's asset reads, the evidence
+  bundle and the write calls' discovery -> T20; the status observation at the grant and the run's asset tied to its
+  tenant -> T21; packaging and the network tests -> T30. Four errata (103-106) are proposed.
+- Next: T18 (vector retrieval, now with mcp-read's vector mode) or T23.

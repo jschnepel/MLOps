@@ -266,7 +266,7 @@ refused before it learns anything, and nothing about the handle is written down.
 | R026 | Tokens for another audience or client are 401 on the request the worker's token passes |
 | R027 | A handle dies with its job, expiry, lease, fence and release, over HTTP; no log record holds it |
 | R085 | The tools come from the job type and run state; an unregistered tool is the SDK's error |
-| R131 (read half) | `mcp_read` executes three functions only (the third since T17); a recover and an execute handle at mcp-read are refused |
+| R131 (read half) | `mcp_read` executes four functions only (`search_procedures_scoped` since T17, `asset_scope` since T16); a recover and an execute handle at mcp-read are refused |
 
 ---
 
@@ -334,6 +334,29 @@ change under a version without the change being refused or recorded.
 | R032 | A repeat writes nothing; a changed file under a version is refused with nothing written; a revoke stops retrieval; a successor supersedes, and pulling it back to draft or postponing it is refused |
 | R033 | 47 labelled development queries measured at k = 5 with denominators; no forbidden section returned; "missing stays missing" subject to erratum 102 |
 | R099 | 16 documents of 332-349 prose words after title and banner (test bound 320-900, R099 floor 300), six assets, per-section hashes, tenant and alert UUIDs, every lifecycle case |
+
+---
+
+## 10. The read tools and asset-sim (built in T16)
+
+**Claim.** A read tool answers only for the handle's own run: its tenant, its asset, its fixed interval and the
+database's instant, and only while the run's requester is still a member; and nothing the worker reads is used unless
+it is the committed contract's.
+
+- **The scope comes from the run.** `app.asset_scope` (mcp_read only) resolves the handle as every read definer does,
+  re-checks the requester's active requester membership (R028) and returns the run's asset, interval and `as_of`;
+  mcp-read refuses another asset or interval before anything leaves it.
+- **asset-sim filters by tenant itself.** It trusts only mcp-read's own workload token and the forwarded tenant and
+  instant, never the handle; an asset of another tenant is the same 404 as an unknown one; its data are derived from
+  corpus-1 at the forwarded instant, so a moved test clock moves every answer.
+- **Contracts at run time.** mcp-read advertises exactly the committed input schemas and validates asset-sim's answers
+  as whole tool results; the worker lists the tools before it calls, compares the schemas with the same files, and
+  validates every read result; anything else fails the run as "retrieval failed" (R029).
+
+| Requirement | What its test shows |
+|---|---|
+| R028 | Alpha never reads B22 (refused before asset-sim, or asset-sim's own 404); a requester who lost the membership gets nothing from any of the three tools; the search keeps to the run's asset type and never returns a revoked procedure |
+| R029 | An added or removed tool, an altered schema, an error-flagged, malformed or oversized result each fail the worker's call closed (in-process); the real server passes (live) |
 
 ---
 

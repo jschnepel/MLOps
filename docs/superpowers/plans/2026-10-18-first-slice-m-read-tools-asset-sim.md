@@ -421,7 +421,7 @@ R131's read half complete (ruling 18), the Plan M debt list (SA:698).
   truncated=False)`, `server.search_response(found)`; `tests.e2e.conftest.add_requester(conn, tenant_id, subject)`,
   `SEEDED_ALPHA`; `new_run(..., requester=None, asset_id="A17", interval=None)`.
 
-- [ ] **Step 1a: Record both baselines**
+- [x] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN` with pytest `1270 passed, 191 skipped`; with the
 dev stack up and `uv run python scripts/skeleton.py status` showing every process down, run
@@ -431,14 +431,14 @@ reports/outbox reports/mcp-read reports/mcp-write reports/retrieval`. Run `uv ru
 --reference-code --manifest --contracts` → exit 0. Record the three lines in the report (Global Constraints,
 "Counts"). A gate that is not GREEN stops the plan here, before anything is committed.
 
-- [ ] **Step 1b: Record the base**
+- [x] **Step 1b: Record the base**
 
 Run `git rev-parse --short HEAD` and write the hash it prints as `BASE=<hash>` in the report and in the SDD ledger
 (`.superpowers/sdd/2026-10-18-first-slice-m-read-tools-asset-sim/progress.md`). Task 7's commit span is
 `<base>..<last>`. `git status --short` must show only ` M docs/superpowers/research/2026-10-16-plan-k-inputs.md`,
 which no step of this plan stages.
 
-- [ ] **Step 1c: Commit the debt list (before any code)**
+- [x] **Step 1c: Commit the debt list (before any code)**
 
 Edit 1 (`SESSION_STATE.md`, at the end of "Plan L debt list (T17; committed before coding) [R6-B7]"), replace:
 
@@ -485,7 +485,7 @@ git add SESSION_STATE.md
 git commit -m "docs: declare Plan M's shortcuts before coding (T16 debt list)"
 ```
 
-- [ ] **Step 2: Put `tests/plan_m` on the test path**
+- [x] **Step 2: Put `tests/plan_m` on the test path**
 
 Edit 1 (`pyproject.toml`, `testpaths`), replace:
 
@@ -505,7 +505,7 @@ Create `tests/plan_m/__init__.py`:
 """Plan M (T16): the read tools, asset_scope and asset-sim, without a database."""
 ```
 
-- [ ] **Step 3: Write the failing revision tests**
+- [x] **Step 3: Write the failing revision tests**
 
 Create `tests/plan_m/test_migration_0012.py`:
 
@@ -685,7 +685,7 @@ Expected: `10 failed`: eight with `FileNotFoundError` (the revision file does no
 at 0011), and `test_a_search_answer_carries_the_definers_instant_and_its_cut` with `TypeError:
 Procedures.__init__() takes 3 positional arguments but 5 were given` (measured on the scratch copy).
 
-- [ ] **Step 4: The revision, the matrix, persistence and mcp-read**
+- [x] **Step 4: The revision, the matrix, persistence and mcp-read**
 
 The search body is derived from 0011's frozen text by the five `CHANGES_0012` replacements (the 0009 pattern); the
 complete resulting body is printed after the file for review.
@@ -1373,7 +1373,7 @@ tests/plan_k tests/plan_d tests/plan_l && uv run ruff check --fix migrations cor
 Expected: every test passes (`test_migration_0012.py` 10 passed; the transitions module's bind scan and
 `test_locking.py`'s documented units each gain one parametrised case).
 
-- [ ] **Step 5: The live half: a requester for random tenants, R131's equality, the 0012 definer tests**
+- [x] **Step 5: The live half: a requester for random tenants, R131's equality, the 0012 definer tests**
 
 Edit 1 (`tests/e2e/conftest.py`, after `SEEDED_TENANTS`), replace:
 
@@ -1933,7 +1933,7 @@ scripts/check.py` → `CHECK: GREEN`, pytest `1282 passed, 196 skipped`; `uv run
 `test_migration_0012_live.py` is the first execution of the 0012 SQL: read it against "For review" above before
 changing a test.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add migrations/app/versions/0012_asset_scope.py core/src/ops_core/privileges.py core/src/ops_core/persistence.py \
@@ -1974,7 +1974,7 @@ clock; test-only fault hooks), T16 DoD 2, R028's asset-sim half, rulings 4-6 and
   `skeleton.PROCESSES[0] == Process("asset-sim", "ops_asset_sim", 8091)`; `tests.e2e.conftest.free_port()` and the
   `asset_sim` fixture (yields the base URL, exports `OPS_ASSET_SIM_URL`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_m/test_asset_sim_data.py`:
 
@@ -2315,7 +2315,7 @@ def test_fault_routes_answer_under_the_test_profile() -> None:
 Run: `uv run python -m pytest tests/plan_m/test_asset_sim_data.py tests/plan_m/test_asset_sim_app.py -q`
 Expected: `2 errors` during collection (`ops_asset_sim` has no `data` and no `app` module yet).
 
-- [ ] **Step 2: The dependencies and the shared settings**
+- [x] **Step 2: The dependencies and the shared settings**
 
 Edit 1 (`asset-sim/pyproject.toml`), replace:
 
@@ -2462,7 +2462,7 @@ with:
 )
 ```
 
-- [ ] **Step 3: The data rules and the service**
+- [x] **Step 3: The data rules and the service**
 
 Create `asset-sim/src/ops_asset_sim/data.py`:
 
@@ -3059,7 +3059,7 @@ Fault hooks (`POST /internal/faults/{kind}`: `asset_unavailable`, `drop_before_c
 `timeout_before_accept`) exist only under `PROFILE=test`. See `docs/runbooks/asset-sim.md`.
 ```
 
-- [ ] **Step 4: The skeleton's seventh process**
+- [x] **Step 4: The skeleton's seventh process**
 
 Edit 1 (`scripts/skeleton.py`, line 2 of the module docstring), replace:
 
@@ -3152,7 +3152,7 @@ tests/plan_h/test_faults_t13.py tests/plan_j/test_verifier_t15.py tests/plan_k/t
 Expected: every test passes (`test_asset_sim_data.py` 14, `test_asset_sim_app.py` 6: the non-test-profile case runs
 for dev and demo).
 
-- [ ] **Step 5: The live half**
+- [x] **Step 5: The live half**
 
 Edit 1 (`tests/e2e/conftest.py`, the imports), replace:
 
@@ -3402,7 +3402,7 @@ down; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → `CHECK: G
 (arithmetic), then the `git checkout -- reports/...` of the Global Constraints (keep `reports/asset-sim/`). The R105
 module now starts seven processes; its mcp-read reaches the skeleton's asset-sim at the default URL.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add asset-sim core/src/ops_core/settings.py core/src/ops_core/testing/faults.py scripts/skeleton.py uv.lock \
@@ -3440,7 +3440,7 @@ BS:399, R028 (asset half), T16 DoD 1 (cross-tenant asset reads denied), rulings 
   `get_asset_status(asset_id)` and `get_recent_alerts(asset_id, start_at, end_at, limit, cursor="")`;
   `tests.plan_j.test_mcp_read_http.IdleAssets`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_m/test_tool_contracts.py`:
 
@@ -3839,7 +3839,7 @@ async def test_the_advertised_schemas_are_the_committed_files_and_agree_with_the
 Run: `uv run python -m pytest tests/plan_m/test_tool_contracts.py tests/plan_m/test_mcp_read_assets.py -q`
 Expected: `2 errors` during collection (`ops_core` has no `tool_contracts`; `ops_mcp_read` has no `assets`).
 
-- [ ] **Step 2: jsonschema at run time, and the contracts module**
+- [x] **Step 2: jsonschema at run time, and the contracts module**
 
 Edit 1 (`core/pyproject.toml`), replace:
 
@@ -3964,7 +3964,7 @@ def check_result(tool: Tool, document: object) -> dict[str, Any]:
 
 Run: `uv run python -m pytest tests/plan_m/test_tool_contracts.py -q` → `6 passed`.
 
-- [ ] **Step 3: mcp-read's asset-sim client and the two asset tools**
+- [x] **Step 3: mcp-read's asset-sim client and the two asset tools**
 
 Create `mcp-read/src/ops_mcp_read/assets.py`:
 
@@ -4907,7 +4907,7 @@ Run: `uv run ruff format core mcp-read tests && uv run ruff check --fix core mcp
 Expected: every test passes (`test_tool_contracts.py` 6, `test_mcp_read_assets.py` 19, of which 12 are the
 parametrised failure mappings).
 
-- [ ] **Step 4: The live asset tools**
+- [x] **Step 4: The live asset tools**
 
 Create `tests/e2e/test_mcp_read_t16_live.py`:
 
@@ -5147,7 +5147,7 @@ Constraints (keep `reports/mcp-read/t16-read-tools.txt` and `reports/asset-sim/`
 `test_asset_sim_failures_reach_the_caller_as_their_envelopes` takes about 11 seconds by design: asset-sim holds 11 s,
 mcp-read gives up at 10 s, and that one call's client waits up to 30 s (round 1, C2).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add core/pyproject.toml pyproject.toml uv.lock core/src/ops_core/tool_contracts.py mcp-read/src/ops_mcp_read \
@@ -5177,7 +5177,7 @@ ruling 7's live "all three tools refuse", R028's "revoked procedure" half, BS:41
   `UPSTREAM_INVALID`; `tests.plan_l.test_mcp_read_corpus.SCOPE`, `RunType`, `Database.asset_scope`, and `call(...,
   assets=None)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Replace `tests/plan_l/test_mcp_read_corpus.py` whole with (three units now; the run's type; a refusal at the scope
 unit; `test_no_asset_type_means_any_asset` becomes `test_the_runs_asset_type_is_searched_and_an_unknown_asset_leaves_the_callers`,
@@ -5473,7 +5473,7 @@ Expected: `6 failed, 5 passed` (measured): the units test, the run-type test, th
 refusal test and the two new refusal tests fail, because the search reads neither the scope nor the run's type yet;
 the vector test, the `resolve` case, the definer-refusal test, the instant test and the real client's test pass.
 
-- [ ] **Step 2: The run's asset type**
+- [x] **Step 2: The run's asset type**
 
 Edit 1 (`mcp-read/src/ops_mcp_read/server.py`, the module docstring), replace:
 
@@ -5594,7 +5594,7 @@ Run: `uv run ruff format mcp-read core scripts tests && uv run ruff check --fix 
 `test_mcp_read_search.py` 4). `grep -rn "TODO(T16)" --include=*.py core mcp-read worker api scripts migrations` →
 no output.
 
-- [ ] **Step 3: asset-sim behind every live search**
+- [x] **Step 3: asset-sim behind every live search**
 
 Edit 1 (`tests/e2e/test_mcp_read_t15_live.py`), replace:
 
@@ -5850,7 +5850,7 @@ pytest `1515 passed, 21 skipped` (arithmetic), then the `git checkout -- reports
 The R105 module's run asks about A17, a pump: its search is filtered to pump and any-asset documents; if its
 proposal has no evidence, read Review Focus 3 before touching the test.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add mcp-read/src/ops_mcp_read/server.py core/src/ops_core/routing.py scripts/build_schemas.py \
@@ -5879,7 +5879,7 @@ and 6).
   `HttpMcpCaller(token_source, *, connect_timeout=10.0, transport=None)`; a read call that fails a check raises
   `McpCallFailed`, which the investigate handler already records as FAILED "retrieval failed".
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_m/test_worker_r029.py`:
 
@@ -6053,7 +6053,7 @@ def test_a_failed_check_fails_the_run_as_retrieval_failed(monkeypatch: pytest.Mo
 Run: `uv run python -m pytest tests/plan_m/test_worker_r029.py -q`
 Expected: `1 error` during collection (`ops_worker.mcp` has no `read_result`).
 
-- [ ] **Step 2: The client's checks**
+- [x] **Step 2: The client's checks**
 
 Replace `worker/src/ops_worker/mcp.py` whole with:
 
@@ -6215,7 +6215,7 @@ Run: `uv run ruff format worker tests/plan_m && uv run ruff check --fix worker t
 three altered listings, seven refused results and the handler's FAILED "retrieval failed"; Plan D's transport test and Plan H's lost-lease test still pass, the list call
 now being the first thing the session does).
 
-- [ ] **Step 3: The live positive half**
+- [x] **Step 3: The live positive half**
 
 Edit 1 (`tests/e2e/test_mcp_read_t16_live.py`, the docstring), replace:
 
@@ -6297,7 +6297,7 @@ scripts/check.py` → `CHECK: GREEN`, pytest `1344 passed, 205 skipped`; `uv run
 Constraints. The R105 module's worker now lists mcp-read's tools before its search and validates the answer: a
 failure there is R029 refusing the real server, which Review Focus 4 explains how to read.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add worker/src/ops_worker/mcp.py tests/plan_m/test_worker_r029.py tests/e2e/test_mcp_read_t16_live.py
@@ -6315,7 +6315,7 @@ git commit -m "feat(worker): R029 - list the read tools, compare their schemas, 
 **Requirements:** ruling 17 (the asset tools proven with an independent client over HTTP, BS:378, R025's pattern),
 ruling 4 (the rule documented), ruling 11 (`docs/retrieval.md` records the excerpt change), BS:405.
 
-- [ ] **Step 1: The independent process reads an asset**
+- [x] **Step 1: The independent process reads an asset**
 
 Edit 1 (`tests/e2e/test_mcp_read_process_live.py`, R025's session), replace:
 
@@ -6362,7 +6362,7 @@ with:
             f" {PROTOCOL_VERSION} listed the three read tools, called search_procedures and get_asset_status ok"
 ```
 
-- [ ] **Step 2: The runbooks**
+- [x] **Step 2: The runbooks**
 
 Create `docs/runbooks/asset-sim.md`:
 
@@ -6711,7 +6711,7 @@ scripts/check.py` → `CHECK: GREEN`, pytest `1344 passed, 205 skipped`; `uv run
 `CHECK: GREEN`, pytest `1528 passed, 21 skipped` (arithmetic), then the `git checkout -- reports/...` of the Global
 Constraints.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/e2e/test_mcp_read_process_live.py docs/runbooks/asset-sim.md docs/runbooks/mcp-read.md \
@@ -6737,7 +6737,7 @@ Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-
 `<base>` is the `BASE` recorded in Task 1 Step 1b (excluded by the range) and `<last>` the newest commit before this
 task's own. `<date>` is `date -u +%F` on the day of the close-out. Step 4 replaces every one of them.
 
-- [ ] **Step 1: Handoff records**
+- [x] **Step 1: Handoff records**
 
 Run this once from the repository root, with `BASE` set to the hash Task 1 Step 1b recorded (it rewrites the two JSON
 files in their own format: two-space indent, non-ASCII kept, one trailing newline). It is a script file, not an
@@ -6921,7 +6921,7 @@ print(span)
 Expected: it prints the span (for example `1a2b3c4..5d6e7f8`). `git diff --stat handoff` shows three files changed;
 `git diff handoff/acceptance-matrix.json` shows four rows: R025, R028, R029 and R131.
 
-- [ ] **Step 2: Project state**
+- [x] **Step 2: Project state**
 
 Edit 1 (`SESSION_STATE.md`, under "Session state"), replace:
 
@@ -7150,7 +7150,7 @@ asset-sim against Keycloak's tokens. <review>
 ## 31. What the process taught
 ```
 
-- [ ] **Step 3: Final gates and the evidence**
+- [x] **Step 3: Final gates and the evidence**
 
 With the dev stack up and every skeleton process down: `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN`,
 pytest `1344 passed, 205 skipped`; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → `CHECK: GREEN`,
@@ -7163,7 +7163,7 @@ T15 files under `reports/mcp-read/` (their lines now name the three tools and th
 worker's R029 checks, so the evidence of this run replaces the one that predates Plan M; it is redacted). Read the
 R105 file's evidence line: it must still name a section (Review Focus 3).
 
-- [ ] **Step 4: Fill in the placeholders and commit**
+- [x] **Step 4: Fill in the placeholders and commit**
 
 Replace `<base>`, `<last>`, `<date>`, `<dev>` and `<live>` everywhere this task wrote them (`docs/PROJECT_HISTORY.md`
 included), and `<review>` there with one sentence on the final review's outcome (or delete it when the review is still to

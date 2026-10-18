@@ -1,3 +1,3 @@
-T15 independent client — 2026-10-18T06:23:44Z
-R025 (read half; mcp-write with T47) / R031 (network half): child process; official client mode 2026-07-28 listed [search_procedures], called ok
+T15 independent client — 2026-10-18T23:47:20Z
+R025 (read half; mcp-write with T47) / R031 (network half): child process; official client mode 2026-07-28 listed the three read tools, called search_procedures and get_asset_status ok
 R026: persona, ops-mcp-write and ops-mcp-read tokens 401 invalid_token on a tools/call with a valid handle; the worker's token answers ok

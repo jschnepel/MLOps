@@ -748,6 +748,67 @@ counted six processes.
 **Change.** The check now takes the whole listing and refuses one that announces another page. The counts, the R029
 evidence paths, the scan's roots and the two docstrings were corrected. No count moved.
 
+**Execution.** Plan M was executed on branch `plan-m` (`9e7d716..bbaba40`) in six tasks, and every task had a review
+and one fix round. The gates afterwards were `check.py` `1371 passed, 205 skipped`, `check.py --profile test` `1555 passed, 21 skipped` and
+`verify_handoff.py` exit 0. The plan's own arithmetic (1344 and 1528) was out of date by then, because the review
+rounds added tests. The live suite was the first to run 0012's SQL and asset-sim against Keycloak's tokens, and the SQL
+needed no change, including the round trip down to 0011 and back.
+
+**Problem.** Task 1 (revision 0012) passed with four minors. No test showed that mcp-read refuses a database that
+has every marker but the last one, so the startup check for the search's new return shape could have been dead code.
+The membership check had no freshness bound and said so nowhere, and `add_requester` did not check that it wrote a
+row. An envelope docstring left out where an error envelope's instant comes from. **Change.** The startup test asks
+for every marker and refuses a database missing only the last. The debt list now says a deprovisioned requester keeps
+read access until the sweeper's next sync, at most 60 seconds, which became the note on erratum 105.
+`add_requester` asserts one row and the docstring says an error envelope takes the wall clock. **Problem.** Task 2
+(asset-sim) had a real bug. A forged cursor with a valid binding but a number too large for a date raised an
+`OverflowError` and asset-sim answered 500, and the plan's own decoding had no guard. The four minors were lenient
+date parsing, a page limit of 0 that raised `IndexError`, three HTTP cases nothing tested, and cursors that decoded
+from a non-canonical spelling. **Change.** A forged cursor is a 400, an instant must match the RFC 3339 pattern, a
+limit under 1 is refused, a cursor must re-encode to the same text, and ten tests were added; eight of them failed
+against the old code first.
+
+**Problem.** Task 3 (mcp-read's asset tools) passed its own tests but checked a status answer only against the run's
+asset. A status carrying another `observed_at` than the instant mcp-read had forwarded would have been returned as
+current. The seven minors: a bad token reply or a closed client escaped as an exception instead of a retryable
+`UNAVAILABLE`, the token fetch and the request had separate timeouts instead of one budget of 10 seconds, an alerts
+page longer than its limit was accepted, the lifespan closed its two resources in one block, an unconfigured branch
+had no test, and the packaging of `schemas/` was missing from the debt list. **Change.** `within_scope` now requires
+the status's `observed_at` to equal `as_of` and an alerts page to hold no more than `limit`, the token fetch and the
+request share one 10-second budget, the exceptions map to `UNAVAILABLE`, and the shutdown closes both resources in
+nested blocks. The broad catch that does this could hide a bug as `UNAVAILABLE`; the controller ruled it harmless
+because the window is small and the code says why, and parked it. **Problem.** Task 4 (the search on the run's asset
+type) passed with four minors, and the carried risk, that the R105 walking skeleton could end
+INSUFFICIENT_EVIDENCE under the pump filter, did not happen: its proposal still cites
+`ALPHA-ALERT-REVIEW:v1:repeated-alerts`. The minors were a stale comment about what an absent `asset_type` means, a
+revoked-document check that was only implicit, three search envelope cases with no test, and the case of the type
+(`Pump` against `pump`) not pinned. **Change.** The comment, an explicit assertion that `ALPHA-ALARM-BYPASS` is
+absent, the three tests and the case test. The reviewer checked that the assertion can fail: that procedure ranks
+about 1.5 against the 0.25 floor, so only the approval filter keeps it out.
+
+**Problem.** Task 5 (the worker's R029 checks) had a hole that only a reproduction showed. The MCP SDK validates a
+result against the tool's advertised output schema itself and raises inside `call_tool`. The raise came out of the
+session as an exception group, which the worker's handler did not catch, so a tampered result ended the run
+INTERRUPTED instead of FAILED with "retrieval failed". The five minors included a size bound that measured the whole
+call result with FastMCP's text copy, which counted the payload twice, and the SDK dropping a tool with a bad header
+annotation before the worker could see it. **Change.** Every failure of a read inside the session, plain or nested in
+a group, is now `McpCallFailed`, while a cancellation still propagates (a lost lease is a cancellation), the bound
+measures the structured result, the dropped-tool limit is a comment and a debt line for T30, and seven tests were added.
+**Problem.** Task 6 (the runbooks and the independent client) wrote two false statements into the documentation.
+`docs/retrieval.md` said no excerpt changed, but 15 of corpus-1's 69 sections are 504 to 669 characters long and now
+come back whole instead of cut at 500; the reviewer found it and the sections were measured to prove it. The
+walking-skeleton runbook still said six processes. The minors were a missing port in the guard that knows the
+skeleton's ports (8091), two imprecise sentences and a docstring. **Change.** The retrieval row says the 15 sections
+return in full, that `truncated` never fires on corpus-1 and that no rank moved, the runbook says seven, and
+`SKELETON_PORTS` has asset-sim's port. Task 6 had also corrected thirteen sentences of the brief to match the built
+code; the clearest was that a lost audience makes asset-sim answer 403, which mcp-read reports as `UPSTREAM_INVALID`,
+not as the retryable `UNAVAILABLE` the brief wrote.
+
+**Process.** Implementers twice started a `python3 -` command with an empty heredoc, which hangs; the controller stopped
+each, and no code ran. During a records commit an agent ended every `python.exe` on the machine with
+`taskkill` by image name; no file was touched, and the standing rule against it now appears in every dispatch. The
+whole-branch review of Plan M is still to come.
+
 ## 31. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.
