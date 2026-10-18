@@ -1,12 +1,14 @@
 """mcp-read without a network (AM-15 read tools, AM-80 tool-result contract, R131 in miniature).
 
-Catches: the per-section hash the tool cites drifting from meta.json (an evidence_ref the proposal cannot prove), a
-superseded or draft document served as evidence, beta evidence visible to alpha, a non-deterministic ranking (the same
-query giving a different first citation on retry), a tool schema that drifts from schemas/tools/, an extra argument
-such as tenant_id silently ignored (SA:350), and an envelope that does not validate against tool-result.schema.json.
+Catches: an envelope that does not validate against tool-result.schema.json, a rank or other field the contract lacks
+leaking into a result, a timestamp not in the contract's spelling, mcp-read reading a corpus from files again instead
+of the governed store (T17 retired the fixture corpus; the lifecycle, tenant and ranking cases it used to pin here are
+now the definer's, tests/e2e/test_migration_0011_live.py), a tool schema that drifts from schemas/tools/, and an extra
+argument such as tenant_id silently ignored (SA:350).
 """
 
-import hashlib
+import importlib.util
+import inspect
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,83 +18,62 @@ from uuid import UUID
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 from mcp import Client
+from ops_core import corpus, persistence
 from ops_core.tokens import Principal, TokenRejected
-from ops_mcp_read import procedures, server
+from ops_mcp_read import server
 
-FIXTURES = Path("data/handoff-fixtures")
 ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")
-BETA = UUID("5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201")
-NOW = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
+NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 TOOL_RESULT = Draft202012Validator(
     json.loads(Path("schemas/tool-result.schema.json").read_text(encoding="utf-8")), format_checker=FormatChecker()
 )
 INPUT = json.loads(Path("schemas/tools/search_procedures.input.schema.json").read_text(encoding="utf-8"))
 
 
-def test_section_bodies_hash_exactly_as_meta_json_says():
-    meta = json.loads((FIXTURES / "meta.json").read_text(encoding="utf-8"))
-    catalog = json.loads((FIXTURES / "catalog.json").read_text(encoding="utf-8"))
-    expected = {(s["document_id"], s["version"], s["section"]): s["sha256"] for s in meta["sections"]}
-    seen = 0
-    for doc in catalog["documents"]:
-        bodies = procedures.section_bodies((FIXTURES / doc["path"]).read_text(encoding="utf-8"))
-        for name in doc["sections"]:
-            assert (
-                hashlib.sha256(bodies[name].encode("utf-8")).hexdigest()
-                == expected[(doc["document_id"], doc["version"], name)]
-            )
-            seen += 1
-    assert seen == len(expected)
+def found_in_corpus(document_id: str, names: tuple[str, ...]) -> persistence.Procedures:
+    """What the definer would return for sections of a committed document (their real hashes and offsets)."""
+    doc = next(d for d in corpus.load(Path("data/corpus")).documents if d.document_id == document_id)
+    hits = tuple(
+        persistence.Procedure(
+            evidence_id=doc.evidence_id(s),
+            document_id=doc.document_id,
+            version=doc.version,
+            section=s.name,
+            content_sha256=s.sha256,
+            excerpt=s.body[:500],
+            effective_from=doc.effective_from,
+            rank=0.5 - i / 10,
+        )
+        for i, s in enumerate(x for x in doc.sections if x.name in names)
+    )
+    return persistence.Procedures("corpus-1", hits)
 
 
-def test_corpus_is_tenant_scoped_and_approved_only():
-    alpha = procedures.Corpus.load(FIXTURES, "alpha")
-    ids = sorted(s.evidence_id for s in alpha.sections)
-    assert ids == [
-        "ALPHA-EVIDENCE:v1:quality",
-        "ALPHA-INCIDENT:v2:evidence",
-        "ALPHA-INCIDENT:v2:review",
-        "ALPHA-TRIAGE:v1:limits",
-        "ALPHA-TRIAGE:v1:scope",
-    ]  # no v1 (superseded), no ALPHA-DRAFT (draft)
-    beta = procedures.Corpus.load(FIXTURES, "beta")
-    assert {s.document_id for s in beta.sections} == {"BETA-INCIDENT", "BETA-TRIAGE", "BETA-EVIDENCE"}
-    assert alpha.corpus_version == "handoff-1"
-    review = next(s for s in alpha.sections if s.evidence_id == "ALPHA-INCIDENT:v2:review")
-    assert review.content_sha256 == "62a90906c7bb706ae8a968eb0f7102f76b05d2c3be911c182d528a1fd25ef008"
-    assert review.effective_from == "2026-10-01T00:00:00Z"
-    corpora = procedures.load_corpora(FIXTURES)
-    assert set(corpora) == {ALPHA, BETA} and corpora[ALPHA] is not corpora[BETA]
-
-
-def test_search_is_lexical_deterministic_and_bounded():
-    alpha = procedures.Corpus.load(FIXTURES, "alpha")
-    hits = alpha.search("a different authorized reviewer must inspect the exact content", limit=3)
-    assert hits[0].section.evidence_id == "ALPHA-INCIDENT:v2:review" and len(hits) <= 3
-    assert [h.section.evidence_id for h in hits] == [
-        h.section.evidence_id
-        for h in alpha.search("a different authorized reviewer must inspect the exact content", limit=3)
-    ]
-    assert alpha.search("zzzz qqqq", limit=8) == []
-    assert len(alpha.search("the", limit=1)) == 1
-
-
-def test_search_response_matches_the_tool_result_contract():
-    corpora = procedures.load_corpora(FIXTURES)
-    doc = server.search_response(corpora, tenant_id=ALPHA, query="warnings incident draft", limit=2, now=NOW)
+def test_search_response_matches_the_tool_result_contract() -> None:
+    found = found_in_corpus("ALPHA-ALERT-REVIEW", ("repeated-alerts", "evidence"))
+    doc = server.search_response(found, now=NOW)
     TOOL_RESULT.validate(doc)
     assert doc["status"] == "ok" and doc["data"]["retrieval_mode"] == "lexical"
-    assert (
-        doc["data"]["corpus_version"] == "handoff-1"
-        and doc["data"]["results"][0]["retrieved_at"] == "2026-10-08T12:00:00Z"
-    )
-    assert {r["document_id"] for r in doc["data"]["results"]} <= {"ALPHA-INCIDENT", "ALPHA-TRIAGE", "ALPHA-EVIDENCE"}
-    unknown = server.search_response(corpora, tenant_id=UUID(int=99), query="x", limit=1, now=NOW)
-    TOOL_RESULT.validate(unknown)
-    assert unknown["data"] == {"results": [], "retrieval_mode": "lexical", "corpus_version": "handoff-1"}
+    assert doc["data"]["corpus_version"] == "corpus-1"
+    assert [r["evidence_id"] for r in doc["data"]["results"]] == [
+        "ALPHA-ALERT-REVIEW:v1:repeated-alerts",
+        "ALPHA-ALERT-REVIEW:v1:evidence",
+    ]
+    first = doc["data"]["results"][0]
+    assert (first["effective_from"], first["retrieved_at"]) == ("2026-09-01T00:00:00Z", "2026-10-16T12:00:00Z")
+    assert all("rank" not in r for r in doc["data"]["results"])  # the score stays in the database's answer
+    nothing = server.search_response(persistence.Procedures("none", ()), now=NOW)
+    TOOL_RESULT.validate(nothing)
+    assert nothing["data"] == {"results": [], "retrieval_mode": "lexical", "corpus_version": "none"}
     err = server.envelope("search_procedures", error=server.tool_error("INVALID_HANDLE", "missing invocation handle"))
     TOOL_RESULT.validate(err)
     assert err["status"] == "error" and err["data"] is None
+
+
+def test_mcp_read_reads_no_corpus_file() -> None:
+    assert importlib.util.find_spec("ops_mcp_read.procedures") is None  # T17 retired the in-memory corpus
+    source = inspect.getsource(server)
+    assert "handoff-fixtures" not in source and "data/corpus" not in source
 
 
 class StubVerifier:
@@ -108,8 +89,8 @@ class StubVerifier:
 
 
 @pytest.mark.asyncio
-async def test_tool_schema_conforms_to_the_contract_and_rejects_extra_arguments():
-    state = server.State(session=None, corpora=procedures.load_corpora(FIXTURES), verifier=StubVerifier())
+async def test_tool_schema_conforms_to_the_contract_and_rejects_extra_arguments() -> None:
+    state = server.State(session=None, verifier=StubVerifier())
     mcp = server.build_server(
         state, issuer="http://localhost:18080/realms/ops-dev", resource_url="http://mcp-read:8081/mcp"
     )
@@ -119,10 +100,13 @@ async def test_tool_schema_conforms_to_the_contract_and_rejects_extra_arguments(
         schema: dict[str, Any] = tools["search_procedures"].input_schema
         assert schema["additionalProperties"] is False
         assert set(schema["required"]) == set(INPUT["required"])
-        assert set(schema["properties"]) <= set(INPUT["properties"])
+        assert set(schema["properties"]) == set(INPUT["properties"])  # since T17 the optional asset_type too
         assert schema["properties"]["mode"]["enum"] == INPUT["properties"]["mode"]["enum"]
         assert (schema["properties"]["limit"]["minimum"], schema["properties"]["limit"]["maximum"]) == (1, 8)
         assert (schema["properties"]["query"]["minLength"], schema["properties"]["query"]["maxLength"]) == (1, 500)
+        asset_type = schema["properties"]["asset_type"]
+        assert (asset_type["type"], asset_type["minLength"], asset_type["maxLength"]) == ("string", 1, 40)
+        assert "default" not in asset_type  # nothing for a schema-driven client to copy (round 1, M3)
         extra = await client.call_tool(
             "search_procedures", {"query": "x", "limit": 1, "mode": "lexical", "tenant_id": str(ALPHA)}
         )
@@ -133,6 +117,9 @@ async def test_tool_schema_conforms_to_the_contract_and_rejects_extra_arguments(
             assert (
                 await client.call_tool("search_procedures", {"query": "x", "limit": lax, "mode": "lexical"})
             ).is_error
+        for empty in ("", None, "x" * 41):  # the contract's asset_type is a string of 1 to 40 characters
+            arguments = {"query": "x", "limit": 1, "mode": "lexical", "asset_type": empty}
+            assert (await client.call_tool("search_procedures", arguments)).is_error, empty
         # Without the bearer middleware there is no access token, so the tool body refuses before any lookup.
         res = await client.call_tool("search_procedures", {"query": "x", "limit": 1, "mode": "lexical"})
         assert not res.is_error and res.structured_content["status"] == "error"

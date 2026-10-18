@@ -10,11 +10,11 @@ from typing import Any
 
 import pytest
 from ops_core import persistence, settings
-from ops_mcp_read import procedures, server
+from ops_mcp_read import server
 from ops_mcp_write import server as write_server
 from starlette.testclient import TestClient
 
-from tests.plan_j.test_mcp_read_http import FIXTURES, ISSUER, RESOURCE, KeyedVerifier
+from tests.plan_j.test_mcp_read_http import ISSUER, RESOURCE, KeyedVerifier
 
 
 class CatalogConn:
@@ -45,7 +45,7 @@ def start(monkeypatch: pytest.MonkeyPatch, conn: CatalogConn) -> None:
     monkeypatch.setattr(persistence, "connect", connect)
     monkeypatch.setattr(settings, "app_postgres", lambda role: role)
     monkeypatch.setenv("PROFILE", "dev")
-    state = server.State(session=None, corpora=procedures.load_corpora(FIXTURES), verifier=KeyedVerifier())
+    state = server.State(session=None, verifier=KeyedVerifier())
     app = server.build_app(server.build_server(state, issuer=ISSUER, resource_url=RESOURCE), state)
     with TestClient(app, base_url="http://127.0.0.1:8081") as client:
         assert client.get("/health/live").status_code == 200

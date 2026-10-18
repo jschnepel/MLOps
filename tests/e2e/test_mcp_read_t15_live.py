@@ -43,11 +43,13 @@ from tests.e2e.test_fenced_definers_live import investigate_job, read_handle
 from tests.e2e.test_mcp_write_live import approved_run
 from tests.e2e.test_migrations_and_persistence import new_run
 
-pytestmark = pytest.mark.asyncio
+# T17: the tool answers from the governed corpus, which the `ingested` fixture puts in the seeded tenants.
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested")]
 
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
-ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")  # the seeded tenant: only seeded tenants have a fixture corpus
-QUERY = {"query": "reviewer inspect exact content", "limit": 2, "mode": "lexical"}
+ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")  # the seeded tenant, whose corpus is ingested
+QUERY = {"query": "repeated alerts on one asset", "limit": 2, "mode": "lexical"}
+ANSWER = "ALPHA-ALERT-REVIEW:v1:repeated-alerts"  # data/corpus: the alpha section that answers QUERY
 REFUSAL = {"code": "INVALID_HANDLE", "message": "invocation handle rejected", "retryable": False}
 EVIDENCE = Path("reports/mcp-read/t15-mcp-read.txt")
 UVICORN = ("uvicorn", "uvicorn.error", "uvicorn.access", "uvicorn.asgi")
@@ -153,7 +155,7 @@ async def set_server(app_conn: persistence.Conn, handle: str, server: str) -> No
 def assert_answered(result: CallToolResult) -> None:
     doc = result.structured_content
     assert not result.is_error and isinstance(doc, dict) and doc["status"] == "ok"
-    assert doc["data"]["results"][0]["evidence_id"] == "ALPHA-INCIDENT:v2:review"
+    assert doc["data"]["results"][0]["evidence_id"] == ANSWER  # first by a wide margin (round 1, M10)
 
 
 async def set_job(app_conn: persistence.Conn, handle: str, job: UUID) -> None:

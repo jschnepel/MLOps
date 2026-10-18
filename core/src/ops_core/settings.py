@@ -444,7 +444,3 @@ def workload_client_id() -> str:
     dropped and an all-blank value counts as unset: no token's `azp` carries a space, so a padded value would only
     turn an editing slip into an opaque 401 at both servers (Plan K final fix wave)."""
     return os.environ.get("OPS_WORKLOAD_CLIENT_ID", "").strip() or "ops-worker"
-
-
-def fixtures_dir() -> Path:
-    return Path(env("OPS_FIXTURES_DIR", "data/handoff-fixtures"))

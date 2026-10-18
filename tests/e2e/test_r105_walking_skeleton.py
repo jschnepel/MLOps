@@ -40,7 +40,8 @@ EXPECTED_EVENTS = [
     ("action.dispatched", "application"),
     ("action.confirmed", "destination"),
 ]
-pytestmark = pytest.mark.sweeper_stamps  # the skeleton's own sweeper keeps the memberships fresh here
+# The skeleton's own sweeper keeps the memberships fresh here; the worker's search needs the corpus (T17).
+pytestmark = [pytest.mark.sweeper_stamps, pytest.mark.usefixtures("ingested")]
 
 
 @pytest.fixture(scope="module")
