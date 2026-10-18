@@ -359,7 +359,8 @@ class RunManifest(BaseModel):
     corpus_version: str = Field(min_length=1, max_length=100)
     # Plan ruling 3: the externally visible mode keeps the delivered `vector_exact`, which says what the search
     # guarantees (exact, not approximate, vector search); AM-20.3's `mode=vector` is the SQL function's argument value.
-    # TODO(T16): mcp-read, the caller of `search_procedures_scoped` (T17), translates `vector_exact` to `mode=vector`.
+    # TODO(T18): mcp-read, the caller of `search_procedures_scoped`, translates `vector_exact` to `mode=vector`
+    # (Plan M ruling 1: the translation arrives with T18's embeddings, erratum 103).
     retrieval_mode: Literal["lexical", "vector_exact"]
 
     @model_validator(mode="after")

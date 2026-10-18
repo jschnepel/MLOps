@@ -6,8 +6,9 @@ the `asset_sim` fixture's, both in the test's loop; mcp-read reaches asset-sim w
 Catches: a status or alert page that is not asset-sim's answer for the run's asset at the database instant (a moved
 test clock must move it into the A17 seal-leak window); a page whose `truncated` disagrees with `next_cursor`; alpha
 reading beta's B22, whether it names B22 on an A17 run (refused before asset-sim) or its run itself names B22
-(asset-sim's own tenant filter: NOT_FOUND); another interval served; a requester who lost the membership still served
-by the asset tools; and an asset-sim failure (unavailable, malformed, slow) that is not the documented envelope.
+(asset-sim's own tenant filter: NOT_FOUND); another interval served; a search that leaves the run's asset type or
+returns a revoked procedure; a requester who lost the membership still served by any of the three tools; and an
+asset-sim failure (unavailable, malformed, slow) that is not the documented envelope.
 Writes reports/mcp-read/t16-read-tools.txt (codes and counts only).
 """
 
@@ -42,7 +43,7 @@ SEAL_WINDOW = (datetime(2026, 10, 5, tzinfo=UTC), datetime(2026, 10, 7, tzinfo=U
 INTERVAL = {"start_at": "2026-10-05T00:00:00Z", "end_at": "2026-10-07T00:00:00Z"}
 MOVE = "UPDATE app.test_clock SET clock_offset = %s::timestamptz - clock_timestamp()"  # test_harness only (AM-20.6)
 EVIDENCE = Path("reports/mcp-read/t16-read-tools.txt")
-EXPECTED_LINES = 4  # one per test below
+EXPECTED_LINES = 5  # one per test below
 
 
 @pytest.fixture(scope="module")
@@ -162,6 +163,7 @@ async def test_r028_a_requester_who_lost_the_membership_gets_no_asset_data(
     calls = (
         (Tool.GET_ASSET_STATUS, {"asset_id": "A17"}),
         (Tool.GET_RECENT_ALERTS, {"asset_id": "A17", **INTERVAL, "limit": 5}),
+        (Tool.SEARCH_PROCEDURES, {"query": "seal inspection", "limit": 3, "mode": "lexical"}),
     )
     try:
         async with serving() as url:
@@ -179,8 +181,29 @@ async def test_r028_a_requester_who_lost_the_membership_gets_no_asset_data(
             assert all([(await tool(url, token, handle, n, a))["status"] == "ok" for n, a in calls])
         assert [doc["error"] for doc in refused] == [
             {"code": "INVALID_HANDLE", "message": "invocation handle rejected", "retryable": False}
-        ] * 2  # the one plain refusal: nothing tells the caller it was the membership (SA:355)
-        lines.append("R028 membership: both asset tools INVALID_HANDLE while alex was inactive; ok before and after")
+        ] * 3  # the one plain refusal: nothing tells the caller it was the membership (SA:355)
+        lines.append("R028 membership: all three tools INVALID_HANDLE while alex was inactive; ok before and after")
+    finally:
+        await purge_run(app_conn, run)
+
+
+async def test_r028_the_search_keeps_to_the_runs_asset_type_and_never_returns_a_revoked_procedure(
+    app_conn: persistence.Conn, role_conn: RoleConn, secret: Callable[[str], str], lines: list[str]
+) -> None:
+    _, _, run = await new_run(app_conn, ALPHA, api=await role_conn(Role.API))
+    token = await worker_token(secret)
+    query = {"query": "alarm bypass seal inspection", "limit": 8, "mode": "lexical"}
+    try:
+        async with serving() as url:
+            handle = await handle_for(app_conn, role_conn, run, "t16-search")
+            own = await tool(url, token, handle, Tool.SEARCH_PROCEDURES, query)
+            other = await tool(url, token, handle, Tool.SEARCH_PROCEDURES, {**query, "asset_type": "compressor"})
+        documents = {r["document_id"] for r in own["data"]["results"]}
+        # A17 is a pump: pump documents or any-asset ones only; ALPHA-ALARM-BYPASS (a pump document) is revoked.
+        assert documents and documents <= {"ALPHA-PUMP-SEAL", "ALPHA-ALERT-REVIEW"}
+        assert all(r["retrieved_at"] == own["observed_at"] for r in own["data"]["results"])  # the definer's instant
+        assert other["error"]["code"] == "ASSET_TYPE_OUT_OF_SCOPE" and other["data"] is None
+        lines.append(f"R028 search: run type pump -> {sorted(documents)}; revoked bypass absent; compressor refused")
     finally:
         await purge_run(app_conn, run)
 

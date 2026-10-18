@@ -14,7 +14,8 @@ envelope. Three tools (T16):
   asset and fixed interval only (`ASSET_OUT_OF_SCOPE`, `INTERVAL_OUT_OF_SCOPE`), and validate asset-sim's data as a
   whole tool result before returning it (`UPSTREAM_INVALID`, ruling 15).
 - `search_procedures` answers from the governed corpus through `search_procedures_scoped` (T17); mcp-read reads no
-  file.
+  file. It reads the run's scope the same way and asks asset-sim for the run's asset type, which it passes to the
+  definer: a caller's `asset_type` may only repeat it (`ASSET_TYPE_OUT_OF_SCOPE`, ruling 12).
 """
 
 from __future__ import annotations
@@ -350,18 +351,35 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         # caller cannot send "" or null (Plan L ruling 11); the advertised schema is the committed file.
         asset_type: Annotated[str, Field(min_length=1, max_length=40)] = "",
     ) -> ToolResult:
-        """Lexical search over the calling run's tenant's approved, effective procedure sections (AM-15 read tool),
-        through `search_procedures_scoped` (T17)."""
+        """Lexical search over the calling run's tenant's approved, effective procedure sections of the run's asset
+        type (AM-15 read tool), through `search_procedures_scoped` (T17, T16)."""
         name = ToolName.SEARCH_PROCEDURES
         caller = await resolve(name, ctx)
         if not isinstance(caller, Caller):
             return caller
         if mode != "lexical":
-            # TODO(T16): translate vector_exact to mode=vector once T18 stores embeddings (erratum 3).
+            # The handle first, then the mode: an invalid handle never learns what the server supports (ruling 14).
+            # TODO(T18): translate vector_exact to mode=vector and compute the nomic `search_query:` embedding once
+            # T18 stores embeddings (erratum 3; Plan M ruling 1, erratum 103).
             return envelope(name.value, error=tool_error("UNSUPPORTED_MODE", "vector_exact arrives with T18"))
+        scope = await scope_of(name, caller)
+        if not isinstance(scope, persistence.AssetScope):
+            return scope
+        if state.assets is None:
+            return unconfigured(name, scope)
+        # The run's asset type is a relevance filter, not an access boundary: the tenant filter is the definer's. An
+        # asset asset-sim does not know leaves the caller's type or none; asset-sim unreachable fails closed.
+        try:
+            run_type = await state.assets.asset_type(scope)
+        except assets.AssetSimError as exc:
+            error = tool_error(exc.code, str(exc), retryable=exc.retryable)
+            return envelope(name.value, error=error, observed_at=scope.as_of)
+        if asset_type and run_type is not None and asset_type != run_type:
+            error = tool_error("ASSET_TYPE_OUT_OF_SCOPE", "only the run's own asset type may be searched")
+            return envelope(name.value, error=error, observed_at=scope.as_of)
         assert state.session is not None  # resolve() answered only with a session
-        # A second unit, after the resolution committed (erratum 80): the definer resolves the same handle again, so a
-        # handle released in between is refused here too, and the tenant comes from the handle, never an argument.
+        # A third unit (erratum 80): the definer resolves the same handle again, so a handle released in between is
+        # refused here too, and the tenant comes from the handle, never an argument.
         try:
             async with state.session.unit() as conn:
                 found = await persistence.search_procedures(
@@ -369,7 +387,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
                     handle=caller.handle,
                     azp=caller.azp,
                     query=query,
-                    asset_type=asset_type or None,
+                    asset_type=run_type or asset_type or None,
                     limit=limit,
                 )
         except persistence.HandleRejected as exc:

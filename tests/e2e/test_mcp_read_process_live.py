@@ -42,7 +42,8 @@ from tests.e2e.test_mcp_read_t15_live import ANSWER, QUERY, free_port, raw_heade
 from tests.e2e.test_migrations_and_persistence import new_run
 from tests.plan_b.live import kc
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested")]  # T17: the governed corpus
+# T17: the governed corpus; T16: asset-sim, whose URL the child inherits (`asset_sim` exports OPS_ASSET_SIM_URL).
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested", "asset_sim")]
 
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 ROOT = Path(__file__).resolve().parents[2]

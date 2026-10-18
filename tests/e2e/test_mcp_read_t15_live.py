@@ -44,7 +44,8 @@ from tests.e2e.test_mcp_write_live import approved_run
 from tests.e2e.test_migrations_and_persistence import new_run
 
 # T17: the tool answers from the governed corpus, which the `ingested` fixture puts in the seeded tenants.
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested")]
+# T17: the governed corpus; T16: asset-sim, which the search asks for the run's asset type.
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested", "asset_sim")]
 
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")  # the seeded tenant, whose corpus is ingested
