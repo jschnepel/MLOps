@@ -5,11 +5,14 @@ Catches: asset-sim asked before the handle resolved and the scope was read, or i
 the handle forwarded to asset-sim, or the tenant, the instant or the interval taken from anywhere but `asset_scope`;
 another asset or another interval forwarded instead of refused; an answer stamped from the wall clock; `truncated`
 that disagrees with `next_cursor`; an asset-sim failure that is not mapped to its code and retry flag, or data outside
-the contract or the run's scope passed on; a refused handle or a lost membership answered with anything but the one
+the contract or the run's scope passed on (a status at another instant than the forwarded one, more alerts than the
+limit asked for); an exception from the token fetch, or a slow one, that skips the envelope or outlasts one 10 s
+budget; a missing asset-sim client that is not answered as unavailable; a refused handle or a lost membership answered with anything but the one
 plain INVALID_HANDLE; and an advertised input schema that is not the committed file, or that disagrees with the
 argument model on what it accepts.
 """
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -99,9 +102,16 @@ Answer = Callable[[httpx2.Request], httpx2.Response]
 
 @asynccontextmanager
 async def mcp_read(
-    monkeypatch: pytest.MonkeyPatch, db: Database, answer: Answer, tokens: Tokens | None = None
+    monkeypatch: pytest.MonkeyPatch,
+    db: Database,
+    answer: Answer,
+    tokens: Any = None,
+    *,
+    configured: bool = True,
 ) -> AsyncIterator[tuple[Client, list[httpx2.Request]]]:
-    """The app with the two database calls replaced and asset-sim answered by `answer`; every request it got."""
+    """The app with the two database calls replaced and asset-sim answered by `answer`; every request it got.
+    `configured=False` takes the asset-sim client away once the lifespan has run (the lifespan builds one when the
+    state has none), which is the state before the lifespan ran: the tools' `unconfigured` branch."""
     monkeypatch.setattr(persistence, "resolve_invocation", db.resolve_invocation)
     monkeypatch.setattr(persistence, "asset_scope", db.asset_scope)
     seen: list[httpx2.Request] = []
@@ -119,6 +129,9 @@ async def mcp_read(
     app = server.build_app(server.build_server(state, issuer=ISSUER, resource_url=RESOURCE), state)
     headers = {"Authorization": "Bearer good", "X-Ops-Invocation": HANDLE}
     async with app.router.lifespan_context(app):
+        if not configured:
+            await state.assets.aclose()
+            state.assets = None
         transport = httpx2.ASGITransport(app=app)
         async with (
             httpx2.AsyncClient(transport=transport, base_url=BASE, headers=headers) as http,
@@ -220,6 +233,19 @@ def body(text: bytes) -> Answer:
             "UPSTREAM_INVALID",
             False,
         ),  # an alert from after as_of
+        ("status", respond(200, {**STATUS, "observed_at": "2026-10-06T00:00:01Z"}), "UPSTREAM_INVALID", False),
+        (
+            "status",
+            respond(200, {**STATUS, "observed_at": "2026-10-06T00:00:00.250000+01:00"}),
+            "UPSTREAM_INVALID",
+            False,
+        ),
+        (
+            "alerts",
+            respond(200, alerts(alerts=[ALERT, {**ALERT, "alert_id": str(UUID(int=9)), "revision": 2}])),
+            "UPSTREAM_INVALID",
+            False,
+        ),  # two alerts to a request for one
     ],
 )
 async def test_asset_sim_failures_map_to_their_codes(
@@ -248,6 +274,73 @@ async def test_a_401_drops_mcp_reads_cached_token(monkeypatch: pytest.MonkeyPatc
     async with mcp_read(monkeypatch, Database(UnitConn()), respond(401, {}), tokens) as (client, _):
         await client.call_tool("get_asset_status", {"asset_id": "A17"})
     assert tokens.invalidated == ["mcp-read-token"]
+
+
+class BrokenTokens(Tokens):
+    """A token source whose fetch fails the way the realm's reply can: unparseable, a bad expires_in, a closed client."""
+
+    def __init__(self, exc: Exception) -> None:
+        super().__init__()
+        self.exc = exc
+
+    async def token(self) -> str:
+        raise self.exc
+
+
+class SlowTokens(Tokens):
+    async def token(self) -> str:
+        await asyncio.sleep(5)
+        return "too-late"
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ValueError("Expecting value: line 1 column 1 (char 0) secret-body"),
+        TypeError("float() argument must be a string or a real number"),
+        RuntimeError("Cannot send a request, as the client has been closed."),
+    ],
+)
+async def test_a_token_fetch_that_fails_oddly_is_still_an_unavailable_envelope(
+    monkeypatch: pytest.MonkeyPatch, exc: Exception
+) -> None:
+    async with mcp_read(monkeypatch, Database(UnitConn()), respond(200, STATUS), BrokenTokens(exc)) as (client, seen):
+        doc = doc_of(await client.call_tool("get_asset_status", {"asset_id": "A17"}))
+    assert seen == []
+    assert doc["error"] == {"code": "UNAVAILABLE", "message": "asset-sim could not be reached", "retryable": True}
+    assert "secret-body" not in str(doc)  # nothing of the exception reaches the caller
+    tool_contracts.check_result(Tool.GET_ASSET_STATUS, doc)
+
+
+async def test_the_token_fetch_and_the_request_share_one_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(assets, "TIMEOUT_SECONDS", 0.05)  # the client is built inside mcp_read, after this
+    async with mcp_read(monkeypatch, Database(UnitConn()), respond(200, STATUS), SlowTokens()) as (client, seen):
+        doc = doc_of(await client.call_tool("get_asset_status", {"asset_id": "A17"}))
+    assert seen == [] and (doc["error"]["code"], doc["error"]["retryable"]) == ("UNAVAILABLE", True)
+
+
+async def test_without_an_asset_sim_client_both_tools_answer_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with mcp_read(monkeypatch, Database(UnitConn()), respond(200, STATUS), configured=False) as (client, seen):
+        status = doc_of(await client.call_tool("get_asset_status", {"asset_id": "A17"}))
+        alerts_doc = doc_of(await client.call_tool("get_recent_alerts", {"asset_id": "A17", **INTERVAL, "limit": 1}))
+    assert seen == []
+    for doc, tool in ((status, Tool.GET_ASSET_STATUS), (alerts_doc, Tool.GET_RECENT_ALERTS)):
+        assert doc["error"] == {"code": "UNAVAILABLE", "message": "asset-sim is not configured", "retryable": True}
+        assert doc["observed_at"] == "2026-10-06T00:00:00Z"  # decided after asset_scope
+        tool_contracts.check_result(tool, doc)
+
+
+async def test_within_scope_binds_the_instant_and_the_page_size() -> None:
+    ok = server.within_scope(Tool.GET_ASSET_STATUS, STATUS, SCOPE)
+    assert ok
+    for observed in ("2026-10-06T00:00:00.249999Z", "2026-10-06T00:00:00.250001Z", "not an instant", None):
+        assert not server.within_scope(Tool.GET_ASSET_STATUS, {**STATUS, "observed_at": observed}, SCOPE)
+    assert not server.within_scope(
+        Tool.GET_ASSET_STATUS, {k: v for k, v in STATUS.items() if k != "observed_at"}, SCOPE
+    )
+    page = alerts(alerts=[ALERT, {**ALERT, "alert_id": str(UUID(int=9))}])
+    assert server.within_scope(Tool.GET_RECENT_ALERTS, page, SCOPE, 2)
+    assert not server.within_scope(Tool.GET_RECENT_ALERTS, page, SCOPE, 1)
 
 
 @pytest.mark.parametrize("where", ["resolve", "scope"])

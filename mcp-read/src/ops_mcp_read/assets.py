@@ -13,6 +13,7 @@ next call fetches a fresh one.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import UTC, datetime
 from typing import Any, Final, Protocol
@@ -121,17 +122,22 @@ class HttpAssetSim:
         if not ASSET_ID.fullmatch(scope.asset_id):
             raise AssetMissing("the run's asset id is not an asset id")
         try:
-            token = await self._tokens.token()
-            response = await self._http.get(
-                f"{self._base}/assets/{quote(scope.asset_id, safe='')}{suffix}",
-                params=params,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "X-Ops-Tenant-Id": str(scope.tenant_id),
-                    "X-Ops-As-Of": rfc3339(scope.as_of),
-                },
-            )
-        except (httpx2.HTTPError, OSError, TokenRejected) as exc:
+            # One 10-second budget for the token fetch and the request together (ruling 15), not 10 s for each phase.
+            async with asyncio.timeout(TIMEOUT_SECONDS):
+                token = await self._tokens.token()
+                response = await self._http.get(
+                    f"{self._base}/assets/{quote(scope.asset_id, safe='')}{suffix}",
+                    params=params,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "X-Ops-Tenant-Id": str(scope.tenant_id),
+                        "X-Ops-As-Of": rfc3339(scope.as_of),
+                    },
+                )
+        # Beyond transport errors: the token endpoint's reply can fail to parse or hold a bad `expires_in` (ValueError,
+        # TypeError), a client closed by a shutting-down lifespan raises RuntimeError, and the budget's own expiry is
+        # a TimeoutError (an OSError). None of them may skip the envelope, and none puts its text in the answer.
+        except (httpx2.HTTPError, OSError, TokenRejected, ValueError, TypeError, RuntimeError) as exc:
             raise Unavailable("asset-sim could not be reached") from exc
         status = response.status_code
         if status == 200:
@@ -149,6 +155,9 @@ class HttpAssetSim:
             raise Unavailable("asset-sim refused mcp-read's token")
         if status >= 500:
             raise Unavailable("asset-sim is unavailable")
+        # asset-sim answers 400 for any invalid request, but mcp-read builds every other parameter itself (the run's
+        # interval in canonical spelling, a limit inside the schema's bounds), so a 400 to a request that carried the
+        # caller's cursor can only be the cursor.
         if status == 400 and params is not None and "cursor" in params:
             raise CursorRejected("asset-sim refused the cursor")
         raise UpstreamInvalid(f"asset-sim answered {status}")

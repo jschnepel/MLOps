@@ -1134,7 +1134,8 @@ Allowed shortcuts in T16, each with its owning task:
   (the handle first) → no task (ruling 14);
 - asset-sim and mcp-read read `data/corpus/` and `schemas/` from the checkout; packaging them, asset-sim's Dockerfile
   and `tests/` directory, TLS and container host names, and the network test that only mcp-read reaches asset-sim →
-  T30 (ruling 5);
+  T30 (ruling 5); `ops_core.tool_contracts.SCHEMAS` finds `schemas/` three directories above its own source file, so
+  the images of mcp-read and the worker must ship `schemas/` at that path (or the path becomes a setting) → T30;
 - the requester's membership is matched without an issuer (the run keeps none) → owner decision (erratum 105);
 - the read path's membership re-check requires only an active row, with no `synced_at` freshness bound like the write
   gate's `MEMBERSHIP_STALE` (0005:129-139): a deprovisioned requester keeps read access until the sweeper's next sync

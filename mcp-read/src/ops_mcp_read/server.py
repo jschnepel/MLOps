@@ -129,17 +129,23 @@ def search_response(found: persistence.Procedures) -> ToolResult:
     )
 
 
-def within_scope(tool: ToolName, data: dict[str, Any], scope: persistence.AssetScope) -> bool:
-    """asset-sim answered for the run's asset (and, for alerts, the run's interval, with no alert outside it or after
-    `as_of`): what the schema cannot say about the data (ruling 15)."""
+def within_scope(tool: ToolName, data: dict[str, Any], scope: persistence.AssetScope, limit: int | None = None) -> bool:
+    """asset-sim answered for the run's asset at the instant it was asked to (a status carries exactly `as_of`) and,
+    for alerts, for the run's interval, with no alert outside it or after `as_of` and no more than the `limit` asked
+    for: what the schema cannot say about the data (ruling 15)."""
     if data.get("asset_id") != scope.asset_id:
         return False
     if tool is not ToolName.GET_RECENT_ALERTS:
-        return True
+        try:
+            return datetime.fromisoformat(data["observed_at"]) == scope.as_of
+        except (KeyError, TypeError, ValueError):
+            return False
     try:
         interval = (datetime.fromisoformat(data["start_at"]), datetime.fromisoformat(data["end_at"]))
         alerts = [(alert["asset_id"], datetime.fromisoformat(alert["occurred_at"])) for alert in data["alerts"]]
     except (KeyError, TypeError, ValueError):
+        return False
+    if limit is not None and len(alerts) > limit:
         return False
     return interval == (scope.start_at, scope.end_at) and all(
         asset_id == scope.asset_id and scope.start_at <= occurred < scope.end_at and occurred <= scope.as_of
@@ -255,7 +261,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
             return envelope(tool.value, error=tool_error("INVALID_HANDLE", str(exc)))
 
     async def from_asset_sim(
-        tool: ToolName, scope: persistence.AssetScope, call: Awaitable[dict[str, Any]]
+        tool: ToolName, scope: persistence.AssetScope, call: Awaitable[dict[str, Any]], limit: int | None = None
     ) -> ToolResult:
         """asset-sim's data as the tool's result, stamped with `as_of`, or the error envelope of its failure. The
         whole result is validated against the committed contract, and the data against the run's scope, before it
@@ -272,7 +278,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         except tool_contracts.ContractViolation:
             pass
         else:
-            if within_scope(tool, data, scope):
+            if within_scope(tool, data, scope, limit):
                 return doc
         error = tool_error("UPSTREAM_INVALID", "asset-sim answered outside the contract")
         return envelope(tool.value, error=error, observed_at=scope.as_of)
@@ -332,7 +338,8 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
             return envelope(name.value, error=error, observed_at=scope.as_of)
         if state.assets is None:
             return unconfigured(name, scope)
-        return await from_asset_sim(name, scope, state.assets.alerts(scope, limit=limit, cursor=cursor or None))
+        page = state.assets.alerts(scope, limit=limit, cursor=cursor or None)
+        return await from_asset_sim(name, scope, page, limit)
 
     async def search_procedures(
         query: Annotated[str, Field(min_length=1, max_length=500)],
@@ -410,9 +417,15 @@ def build_app(server: MCPServer, state: State) -> Starlette:
             async with mcp_app.router.lifespan_context(mcp_app):
                 yield
         finally:
-            if state.assets is not None:
-                await state.assets.aclose()
-            await state.session.conn.close()
+            # Nested, so a close that raises cannot leave the other open; a closed client is never left in the state.
+            try:
+                if state.assets is not None:
+                    try:
+                        await state.assets.aclose()
+                    finally:
+                        state.assets = None
+            finally:
+                await state.session.conn.close()
 
     async def live(_: Request) -> JSONResponse:
         """Liveness: the process is up."""

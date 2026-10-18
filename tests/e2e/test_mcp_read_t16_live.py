@@ -101,6 +101,10 @@ async def test_the_asset_tools_answer_for_the_run_at_the_database_instant(
             assert len(second["data"]["alerts"]) == 1 and not second["truncated"]
             assert second["data"]["next_cursor"] is None
             assert [a["revision"] for a in first["data"]["alerts"] + second["data"]["alerts"]] == [1, 2]
+            forged = {"asset_id": "A17", **INTERVAL, "limit": 1, "cursor": "c" * 76}  # asset-sim's 400, as an envelope
+            refused = await tool(url, token, handle, Tool.GET_RECENT_ALERTS, forged)
+            assert refused["data"] is None and refused["error"]["code"] == "INVALID_CURSOR"
+            assert refused["error"]["retryable"] is False
             try:
                 # The database clock moved back inside the A17 window. The handle stays good: its lease and its 60 s
                 # lie further ahead of a clock moved back. At 2026-10-06T12:00Z the status asset-sim derives at the
@@ -116,7 +120,9 @@ async def test_the_asset_tools_answer_for_the_run_at_the_database_instant(
                 assert [a["revision"] for a in early["data"]["alerts"]] == [1]  # seal-002 is still in the future
             finally:
                 await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
-        lines.append("asset tools: A17 normal r2 now, warning r2 at 2026-10-06T12:00Z; alerts paged 1+1 by cursor")
+        lines.append(
+            "asset tools: A17 normal r2 now, warning r2 at 2026-10-06T12:00Z; alerts paged 1+1 by cursor; a forged cursor INVALID_CURSOR"
+        )
     finally:
         await purge_run(app_conn, run)
 
