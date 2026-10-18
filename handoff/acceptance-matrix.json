@@ -258,14 +258,20 @@
       "category": "durability",
       "requirement": "Accepted work is committed before acknowledgement",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r015_accepted_work_is_committed_before_acknowledgemen.py",
       "expected_evidence": "In one transaction the API inserts the message and calls create_run(tenant_id, ...) which inserts run, directory, history, job and run.accepted; the 202 follows the commit; a crash before commit leaves nothing; no other path creates a run.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_admission_live.py",
+        "reports/admission/t12-admission.txt",
+        "tests/plan_g/test_store_units.py",
+        "tests/plan_g/test_api_admission.py"
+      ],
       "owning_tasks": [
         "T12"
-      ]
+      ],
+      "note": "Plan G (T12): the before-commit crash is proved live with the drop_before_commit fault (no message, run, job or record, then the same key commits); the after-commit side (the ack lost after the commit, the retry replays the recorded 202) is R016's replay; the lose_after_commit fault arrives with T13."
     },
     {
       "id": "R016",
@@ -273,14 +279,20 @@
       "category": "idempotency",
       "requirement": "HTTP replay resolves once and conflicting body fails",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r016_http_replay_resolves_once_and_conflicting_body_f.py",
       "expected_evidence": "Repeat same scoped key/body then changed body; one logical run then 409.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_admission_live.py",
+        "reports/admission/t12-admission.txt",
+        "tests/plan_g/test_idempotency.py",
+        "tests/plan_g/test_api_admission.py"
+      ],
       "owning_tasks": [
         "T12"
-      ]
+      ],
+      "note": "Plan G (T12): live evidence runs under check.py --profile test."
     },
     {
       "id": "R017",
@@ -288,14 +300,20 @@
       "category": "workflow",
       "requirement": "Only one active mutating run per conversation",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r017_only_one_active_mutating_run_per_conversation.py",
       "expected_evidence": "Concurrent requests cannot start two mutating investigations; status question makes no incident job.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_admission_live.py",
+        "reports/admission/t12-admission.txt",
+        "tests/plan_g/test_store_units.py",
+        "tests/plan_g/test_routing_admission.py"
+      ],
       "owning_tasks": [
         "T12"
-      ]
+      ],
+      "note": "Plan G (T12): live evidence runs under check.py --profile test."
     },
     {
       "id": "R018",
@@ -303,14 +321,20 @@
       "category": "domain",
       "requirement": "Relative intervals resolve once and ambiguity clarifies",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r018_relative_intervals_resolve_once_and_ambiguity_cl.py",
       "expected_evidence": "Retry after clock advance and conflict text/form asset; interval remains fixed and ambiguity pauses.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_admission_live.py",
+        "reports/admission/t12-admission.txt",
+        "tests/plan_g/test_routing_admission.py",
+        "tests/plan_g/test_store_units.py"
+      ],
       "owning_tasks": [
         "T12"
-      ]
+      ],
+      "note": "Plan G (T12): the interval is resolved on app.current_time() inside the unit; the live test moves the test clock by 3 days and replays."
     },
     {
       "id": "R019",
@@ -1846,17 +1870,24 @@
       "id": "R115",
       "category": "api",
       "requirement": "Errors use the safe schema and documented status mapping",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Tests for 401/403/404/409/422/429/503 cases; no stack traces or unauthorized IDs.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_admission_live.py",
+        "reports/admission/t12-admission.txt",
+        "tests/plan_g/test_error_surface.py",
+        "tests/plan_g/test_limits.py",
+        "tests/plan_g/test_api_admission.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M03",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T12"
       ],
-      "suggested_test": "tests/acceptance/test_r115_errors_use_the_safe_schema_and_documented_status.py"
+      "suggested_test": "tests/acceptance/test_r115_errors_use_the_safe_schema_and_documented_status.py",
+      "note": "Plan G (T12): live evidence runs under check.py --profile test."
     },
     {
       "id": "R116",
@@ -2085,10 +2116,15 @@
       "id": "R129",
       "category": "routing",
       "requirement": "Every route is enumerable and unroutable input never starts work",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Admission router: each of the six routes tested; conflicting text/fields yields a stored clarification and no job; unroutable kinds 422. Graph router: a test walks every row of the route table and asserts the node reached; a model hint can only produce clarify.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "tests/e2e/test_admission_live.py",
+        "reports/admission/t12-admission.txt",
+        "tests/plan_g/test_routing_admission.py",
+        "tests/plan_g/test_api_admission.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r129_every_route_is_enumerable_and_unroutable_input_n.py",
       "milestone": "M03",
@@ -2096,7 +2132,8 @@
         "T12",
         "T20"
       ],
-      "blocking_for_v1": true
+      "blocking_for_v1": true,
+      "note": "Plan G (T12): the admission router half; the graph router's table and its walk land with T20."
     },
     {
       "id": "R130",

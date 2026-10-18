@@ -34,7 +34,8 @@ def world():
 
 
 def browser(csrf: str, **extra: str) -> dict[str, str]:
-    return {"Origin": ORIGIN, "X-CSRF-Token": csrf, **extra}
+    """A cookie-mode mutation's headers: Origin, the CSRF token and (since Plan G) a fresh Idempotency-Key."""
+    return {"Origin": ORIGIN, "X-CSRF-Token": csrf, "Idempotency-Key": str(uuid4()), **extra}
 
 
 def test_login_redirect_shape(world) -> None:
@@ -130,7 +131,10 @@ def test_browser_mutations_need_origin_and_csrf_token(world) -> None:
     assert c.post("/api/v1/conversations", headers=browser(csrf, Origin="null")).status_code == 403
     ok = c.post("/api/v1/conversations", headers=browser(csrf))
     assert ok.status_code == 201
-    referer_only = c.post("/api/v1/conversations", headers={"Referer": ORIGIN + "/app", "X-CSRF-Token": csrf})
+    referer_only = c.post(
+        "/api/v1/conversations",
+        headers={"Referer": ORIGIN + "/app", "X-CSRF-Token": csrf, "Idempotency-Key": str(uuid4())},
+    )
     assert referer_only.status_code == 201
     assert c.get("/api/v1/me").status_code == 200  # reads need neither
     # The bearer path is exempt from both (BUILD_SPEC §7: CSRF/origin protection in cookie mode).

@@ -141,6 +141,8 @@ PURGE_ORDER = (
     "DELETE FROM app.jobs WHERE run_id = %s",
     "DELETE FROM app.run_state_history WHERE run_id = %s",
     "DELETE FROM app.run_directory WHERE run_id = %s",  # the directory references runs
+    # T12: the idempotency record of the admission that started the run (its response names the run).
+    "DELETE FROM app.idempotency_request WHERE response->>'run_id' = %s::text",
 )
 
 
@@ -159,6 +161,24 @@ async def purge_run(conn: persistence.Conn, run_id: object) -> None:
         if row is not None:
             await conn.execute("DELETE FROM app.messages WHERE message_id = %s", (row["message_id"],))
             await conn.execute("DELETE FROM app.conversations WHERE conversation_id = %s", (row["conversation_id"],))
+
+
+async def purge_conversation(conn: persistence.Conn, conversation_id: object) -> None:
+    """Remove a conversation the admission tests made with everything in it: its runs (as `purge_run` does), every
+    message (status answers and clarification questions included, which revision 0006's downgrade refuses to keep)
+    and the records whose response names it."""
+    cur = await conn.execute("SELECT run_id FROM app.runs WHERE conversation_id = %s", (conversation_id,))
+    runs = [row["run_id"] for row in await cur.fetchall()]
+    async with conn.transaction():
+        for run_id in runs:
+            for statement in PURGE_ORDER:
+                await conn.execute(statement, (run_id,))
+        await conn.execute("DELETE FROM app.runs WHERE conversation_id = %s", (conversation_id,))
+        await conn.execute("DELETE FROM app.messages WHERE conversation_id = %s", (conversation_id,))
+        await conn.execute(
+            "DELETE FROM app.idempotency_request WHERE response->>'conversation_id' = %s::text", (conversation_id,)
+        )
+        await conn.execute("DELETE FROM app.conversations WHERE conversation_id = %s", (conversation_id,))
 
 
 SEEDED_TENANTS = {"3ea79c95-914c-52cb-9d10-c4e19dda8ff7", "5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201"}

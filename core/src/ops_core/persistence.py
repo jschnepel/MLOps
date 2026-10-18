@@ -464,7 +464,7 @@ async def insert_job(conn: Conn, *, job_type: JobType, run_id: UUID, **ids: UUID
     if found is None:
         raise NotFound("run not found")  # an unknown run must not read as "already queued"
     # ON CONFLICT (target) and RETURNING need SELECT (spike §3): this helper serves the tests and the superuser;
-    # the API's `resume_input` insert (T12) goes through a definer function or a target-less ON CONFLICT DO NOTHING.
+    # the API's `resume_input` insert goes through `insert_job_untargeted` (Plan G ruling 15).
     cur = await conn.execute(
         "INSERT INTO app.jobs (id, type, tenant_id, run_id, dedup_key) VALUES (%s, %s, %s, %s, %s)"
         " ON CONFLICT (dedup_key) DO NOTHING RETURNING id",
@@ -472,6 +472,67 @@ async def insert_job(conn: Conn, *, job_type: JobType, run_id: UUID, **ids: UUID
     )
     row = await cur.fetchone()
     return None if row is None else UUID(str(row["id"]))
+
+
+async def insert_job_untargeted(conn: Conn, *, job_type: JobType, tenant_id: UUID, run_id: UUID, key: str) -> bool:
+    """A wake-up inserted by a role that holds INSERT only on `jobs` (the api's `resume_input`, SA:419): a target-less
+    ON CONFLICT DO NOTHING needs no SELECT, and the rowcount is the verdict, False for a dedup key already queued
+    (Plan G spike §2; the same shape as the logout jti store)."""
+    cur = await conn.execute(
+        "INSERT INTO app.jobs (id, type, tenant_id, run_id, dedup_key, available_at)"
+        " VALUES (%s, %s, %s, %s, %s, app.current_time()) ON CONFLICT DO NOTHING",
+        (uuid4(), job_type.value, tenant_id, run_id, key),
+    )
+    return cur.rowcount == 1
+
+
+async def current_time(conn: Conn) -> datetime:
+    """The application clock (SA:157-158): `clock_timestamp()` plus the test offset when the testclock branch exists.
+
+    Admission resolves "last N hours" against this, inside its unit, so a test that moves the clock moves the window
+    the same way it moves the run's history and job rows (Plan G ruling 11; spike §7 measured the two clocks apart).
+    """
+    cur = await conn.execute("SELECT app.current_time() AS now")
+    row = await cur.fetchone()
+    if row is None:
+        raise PersistenceError("app.current_time() returned nothing")
+    now: datetime = row["now"]
+    return now
+
+
+async def latest_active_run(conn: Conn, conversation_id: UUID) -> DictRow | None:
+    """The run holding the conversation's slot, under the caller's tenant unit (Plan G ruling 9: read, not locked)."""
+    cur = await conn.execute(
+        "SELECT run_id, state, state_version FROM app.runs WHERE conversation_id = %s AND slot_held"
+        " ORDER BY created_at DESC LIMIT 1",
+        (conversation_id,),
+    )
+    return await cur.fetchone()
+
+
+async def latest_run(conn: Conn, conversation_id: UUID) -> DictRow | None:
+    """The conversation's newest run of any state, the one a status question describes (ruling 14)."""
+    cur = await conn.execute(
+        "SELECT run_id, state, state_version FROM app.runs WHERE conversation_id = %s"
+        " ORDER BY created_at DESC, run_id DESC LIMIT 1",
+        (conversation_id,),
+    )
+    return await cur.fetchone()
+
+
+async def latest_event(conn: Conn, run_id: UUID) -> DictRow | None:
+    """A run's newest event by its gap-free sequence (`type`, `occurred_at`)."""
+    cur = await conn.execute(
+        "SELECT type, occurred_at FROM app.events WHERE run_id = %s ORDER BY sequence DESC LIMIT 1", (run_id,)
+    )
+    return await cur.fetchone()
+
+
+async def queued_count(conn: Conn) -> int:
+    """QUEUED runs of the unit's tenant: RLS scopes the count (spike §8), which is why the bound is per tenant."""
+    cur = await conn.execute("SELECT count(*) AS n FROM app.runs WHERE state = 'QUEUED'")
+    row = await cur.fetchone()
+    return 0 if row is None else int(row["n"])
 
 
 async def claim_job(conn: Conn, *, worker_name: str, tenant_ids: Sequence[UUID]) -> DictRow | None:

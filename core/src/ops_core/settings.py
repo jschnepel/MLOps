@@ -279,6 +279,38 @@ def admin_check_timeout() -> float:
 
 
 @dataclass(frozen=True)
+class AdmissionSettings:
+    """The admission limits (BUILD_SPEC §17: starting defaults in validated configuration, BS:542).
+
+    The key bounds are constants, not environment: they are part of the API contract a client codes against
+    (Plan G ruling 1), while the body limit, the replay window and the tenant quota are deployment choices.
+    """
+
+    max_body_bytes: int = 65536  # BS:546: 64 KiB inbound body
+    idempotency_ttl_seconds: int = 86400  # SA:297: the 24 h request-dedup replay window
+    idempotency_key_min: int = 8
+    idempotency_key_max: int = 128
+    tenant_queue_quota: int = 100  # BS:550: queued work, as a per-tenant bound (ruling 18)
+
+
+def _bounded(name: str, default: int, low: int, high: int) -> int:
+    """An integer variable inside [low, high]; the message names the bounds, never the value."""
+    value = env_int(name, default)
+    if not low <= value <= high:
+        raise SettingsError(f"{name} must be between {low} and {high}")
+    return value
+
+
+def admission() -> AdmissionSettings:
+    """`OPS_MAX_BODY_BYTES`, `OPS_IDEMPOTENCY_TTL_SECONDS` and `OPS_TENANT_QUEUE_QUOTA`, each bounded (ruling 27)."""
+    return AdmissionSettings(
+        max_body_bytes=_bounded("OPS_MAX_BODY_BYTES", 65536, 1024, 1048576),
+        idempotency_ttl_seconds=_bounded("OPS_IDEMPOTENCY_TTL_SECONDS", 86400, 60, 604800),
+        tenant_queue_quota=_bounded("OPS_TENANT_QUEUE_QUOTA", 100, 1, 10000),
+    )
+
+
+@dataclass(frozen=True)
 class Urls:
     mcp_read_resource: str
     mcp_write_resource: str

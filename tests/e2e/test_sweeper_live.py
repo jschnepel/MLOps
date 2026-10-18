@@ -126,11 +126,28 @@ async def test_purge_expired_deletes_only_what_is_past(app_conn, role_conn) -> N
                     f"INSERT INTO app.{table} ({key}, expires_at{cols}) VALUES (%s, {when}{extra})",
                     (f"{tag}-{name}",) * (2 if table == "login_state" else 1),
                 )
+        # Plan G ruling 7: one expired idempotency record beside whatever earlier modules left (all inside their
+        # replay window, so the purge must leave every one of them).
+        cur = await app_conn.execute("SELECT count(*) AS n FROM app.idempotency_request")
+        others = (await cur.fetchone())["n"]
+        await app_conn.execute(
+            "INSERT INTO app.idempotency_request (tenant_id, subject, route, key, fingerprint_sha256, status_code,"
+            f" response, expires_at) VALUES (%s, %s, 'POST /api/v1/conversations', %s, %s, 201, '{{}}', {past})",
+            (ALPHA, ALEX, f"{tag}-expired", "0" * 64),
+        )
         counts = await sync.purge_expired(sweeper)
-        assert counts == {"sessions": 2, "login_state": 1, "logout_jti": 1}
+        assert counts == {"sessions": 2, "login_state": 1, "logout_jti": 1, "idempotency_request": 1}
         for table, key in (("sessions", "session_sha256"), ("login_state", "login_sha256"), ("logout_jti", "jti")):
             cur = await app_conn.execute(f"SELECT {key} AS k FROM app.{table} WHERE {key} LIKE %s", (f"{tag}-%",))
             assert [r["k"] for r in await cur.fetchall()] == [f"{tag}-live"]
+        cur = await app_conn.execute("SELECT count(*) AS n FROM app.idempotency_request")
+        assert (await cur.fetchone())["n"] == others  # exactly the seeded record went
+        cur = await app_conn.execute(
+            "SELECT count(*) AS n FROM app.idempotency_request WHERE key = %s", (f"{tag}-expired",)
+        )
+        seeded_left = (await cur.fetchone())["n"]
+        assert seeded_left == 0  # and it is that one, not another row
     finally:
         for table, key in (("sessions", "session_sha256"), ("login_state", "login_sha256"), ("logout_jti", "jti")):
             await app_conn.execute(f"DELETE FROM app.{table} WHERE {key} LIKE %s", (f"{tag}-%",))
+        await app_conn.execute("DELETE FROM app.idempotency_request WHERE key LIKE %s", (f"{tag}-%",))

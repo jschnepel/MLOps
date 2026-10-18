@@ -9,7 +9,7 @@ import time
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx2
 import jwt
@@ -26,6 +26,28 @@ pytestmark = pytest.mark.sweeper_stamps  # this module's skeleton sweeper stamps
 EVIDENCE = Path("reports/auth/t11-sessions-revocation.txt")
 ALEX = "2fc05986-c7ec-544c-b628-fdb112bbf18a"
 SAM = "03f7eb09-e18d-5f33-bf75-12c57d5aaa54"
+
+
+SENT_KEYS: list[str] = []  # every Idempotency-Key this module sent, so its clean-up deletes exactly their records
+
+
+def sent_key() -> str:
+    """A fresh Idempotency-Key (required on every /api/v1 mutation since T12), remembered for the clean-up."""
+    key = str(uuid4())
+    SENT_KEYS.append(key)
+    return key
+
+
+@pytest.fixture(scope="module", autouse=True)
+def forget_sent_keys(migrated: None) -> Iterator[None]:
+    """Delete the idempotency records of this module's keys after it, whatever the outcome."""
+    try:
+        yield
+    finally:
+        if SENT_KEYS:
+            with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+                conn.execute("DELETE FROM app.idempotency_request WHERE key = ANY(%s)", (SENT_KEYS,))
+        SENT_KEYS.clear()
 
 
 STAMP: dict[str, datetime] = {}  # min(synced_at) right after the skeleton came up: only its sweeper writes it here
@@ -113,7 +135,9 @@ async def test_login_csrf_idle_expiry_and_logout(
         ).status_code,
     ]
     assert refused == [403, 403, 403, 403], refused
-    created = session.api.post("/api/v1/conversations", headers=session.mutation_headers())
+    created = session.api.post(
+        "/api/v1/conversations", headers={**session.mutation_headers(), "Idempotency-Key": sent_key()}
+    )
     assert created.status_code == 201
     lines.append(f"login: me=200 csrf_refusals={refused} mutation_with_token={created.status_code}")
     # A callback replayed by another client (no login cookie) is refused before any exchange (review focus 1).
@@ -229,7 +253,8 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
             # Positive controls (final review I2): the bearer token works and the enabled check passes for an enabled
             # sam, so the later 401s are the disable and the sync, not a token that never worked.
             me_enabled = c.get("/api/v1/me", headers=headers).status_code
-            decided_enabled = c.post(decision_url, headers=headers, json=body).status_code
+            keyed = {**headers, "Idempotency-Key": sent_key()}  # every /api/v1 mutation carries one (T12)
+            decided_enabled = c.post(decision_url, headers=keyed, json=body).status_code
             assert me_enabled == 200 and decided_enabled == 404, (me_enabled, decided_enabled)
             disabled = admin.set_enabled(SAM, False)
             # Before the sync: the membership is still active, so a read still works (R013 attribution below).
@@ -238,7 +263,7 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
             assert me_unsynced == 200, me_unsynced
             # A decision on a random proposal: the enabled check runs before any lookup, so a disabled user is 401,
             # never 404 (the check is a dependency, T11 review note 2).
-            decided = c.post(decision_url, headers=headers, json=body)
+            decided = c.post(decision_url, headers={**headers, "Idempotency-Key": sent_key()}, json=body)
             decided_code, decided_body = decided.status_code, decided.json()
             assert decided_code == 401, decided_code
             refusal = (decided_body["code"], decided_body["message"])

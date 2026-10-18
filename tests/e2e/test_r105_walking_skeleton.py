@@ -10,7 +10,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx2
 import psycopg
@@ -81,6 +81,29 @@ async def mcp_call(url: str, token: str, handle: str, tool: str, arguments: dict
     return content if isinstance(content, dict) else {"is_error": res.is_error}
 
 
+SENT_KEYS: list[str] = []  # every Idempotency-Key this module sent, so its clean-up deletes exactly their records
+
+
+@pytest.fixture(scope="module", autouse=True)
+def forget_sent_keys(migrated: None) -> Iterator[None]:
+    """Delete the idempotency records of this module's keys after it, whatever the outcome (Plan G scratch objects:
+    the run's conversation stays as R105 evidence, but no record of a key this module made outlives it)."""
+    try:
+        yield
+    finally:
+        if SENT_KEYS:
+            with psycopg.connect(settings.superuser_postgres().conninfo(), autocommit=True) as conn:
+                conn.execute("DELETE FROM app.idempotency_request WHERE key = ANY(%s)", (SENT_KEYS,))
+        SENT_KEYS.clear()
+
+
+def keyed(headers: dict[str, str]) -> dict[str, str]:
+    """A mutation's headers with a fresh Idempotency-Key (BS:264; required on every /api/v1 mutation since T12)."""
+    key = str(uuid4())
+    SENT_KEYS.append(key)
+    return {**headers, "Idempotency-Key": key}
+
+
 def wait_for(client: httpx2.Client, url: str, headers: dict[str, str], states: set[str], timeout: float = 45.0) -> dict:
     """Poll a run snapshot until its status is in `states`; fail with the last status when the time is up."""
     deadline = time.monotonic() + timeout
@@ -116,10 +139,10 @@ async def test_r105_walking_skeleton(
         # Responses are bound before every assert: pytest prints assert operands, and a header would carry a token.
         refused = c.get("/api/v1/me", headers={"Authorization": f"Bearer {worker}"})
         assert refused.status_code == 401  # a workload token at the API: wrong audience and azp
-        cid = c.post("/api/v1/conversations", headers=a).json()["conversation_id"]
+        cid = c.post("/api/v1/conversations", headers=keyed(a)).json()["conversation_id"]
         accepted = c.post(
             f"/api/v1/conversations/{cid}/messages",
-            headers=a,
+            headers=keyed(a),
             json={
                 "kind": "investigate",
                 "text": "Investigate the alerts on Asset A17 over the last 24 hours.",
@@ -144,15 +167,17 @@ async def test_r105_walking_skeleton(
             "decision": "approve",
             "reason": "Reviewed the exact synthetic proposal.",
         }
-        self_decision = c.post(f"/api/v1/proposals/{pid}/decisions", headers=a, json=decision)
+        self_decision = c.post(f"/api/v1/proposals/{pid}/decisions", headers=keyed(a), json=decision)
         assert self_decision.status_code == 403  # the requester may not approve their own proposal
         stale = c.post(
-            f"/api/v1/proposals/{pid}/decisions", headers=s, json={**decision, "expected_payload_sha256": "0" * 64}
+            f"/api/v1/proposals/{pid}/decisions",
+            headers=keyed(s),
+            json={**decision, "expected_payload_sha256": "0" * 64},
         )
         assert stale.status_code == 409 and stale.json()["code"] == "VERSION_CONFLICT"
-        approved = c.post(f"/api/v1/proposals/{pid}/decisions", headers=s, json=decision)
+        approved = c.post(f"/api/v1/proposals/{pid}/decisions", headers=keyed(s), json=decision)
         assert approved.status_code == 200 and approved.json()["status"] == "APPROVED", approved.text
-        second = c.post(f"/api/v1/proposals/{pid}/decisions", headers=s, json=decision)
+        second = c.post(f"/api/v1/proposals/{pid}/decisions", headers=keyed(s), json=decision)
         assert second.status_code == 409  # the first decision wins
         final = wait_for(c, f"/api/v1/runs/{run_id}", a, {"SUCCEEDED", "FAILED", "OUTCOME_UNKNOWN", "ESCALATED"})
         assert final["status"] == "SUCCEEDED", final

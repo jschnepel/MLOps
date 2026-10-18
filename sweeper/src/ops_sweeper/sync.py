@@ -86,8 +86,9 @@ async def sync_memberships(
 
 
 async def purge_expired(conn: persistence.Conn) -> dict[str, int]:
-    """Delete what nothing can use any more: sessions a day past their end, expired login state, old jti
-    rows (erratum 25: the sweeper holds SELECT with its DELETE on all three)."""
+    """Delete what nothing can use any more: sessions a day past their end, expired login state, old jti rows and
+    idempotency records past their replay window (erratum 25: the sweeper holds SELECT with its DELETE on all four;
+    Plan G ruling 7: no job type, the purge rides the tick like the other three)."""
     counts: dict[str, int] = {}
     async with conn.transaction():
         for table, where in (
@@ -100,6 +101,7 @@ async def purge_expired(conn: persistence.Conn) -> dict[str, int]:
             ),
             ("login_state", "expires_at < app.current_time()"),
             ("logout_jti", "expires_at < app.current_time()"),
+            ("idempotency_request", "expires_at < app.current_time()"),
         ):
             cur = await conn.execute(f"DELETE FROM app.{table} WHERE {where}")
             counts[table] = cur.rowcount
