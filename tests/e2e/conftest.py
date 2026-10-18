@@ -17,7 +17,7 @@ from uuid import UUID
 import psycopg
 import pytest
 import pytest_asyncio
-from ops_core import persistence, settings
+from ops_core import corpus, ingest, persistence, settings
 from ops_core.lease import Lease
 from ops_core.settings import Profile, Role
 from psycopg import sql
@@ -74,6 +74,19 @@ def migrated(env: dict[str, str]) -> None:
 
     recreate_databases()
     assert migrate(Profile.TEST) == 0
+
+
+@pytest_asyncio.fixture
+async def ingested(migrated: None) -> None:
+    """The committed corpus in the seeded tenants, ingested as the worker (T17). A no-op when it is there already
+    (ingestion is idempotent), and a fresh ingestion after a migration round trip dropped the corpus tables."""
+    from scripts.skeleton import CORPUS, corpus_tenants
+
+    conn = await persistence.connect(settings.app_postgres(Role.WORKER))
+    try:
+        await ingest.ingest(conn, corpus.load(CORPUS), corpus_tenants())
+    finally:
+        await conn.close()
 
 
 @pytest_asyncio.fixture

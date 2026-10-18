@@ -1,5 +1,5 @@
-"""Walking-skeleton operations (T08, T09, T10): `migrate` both databases, `up`/`down`/`status` the six processes,
-`keys` the destination-vs-grant detective check.
+"""Walking-skeleton operations (T08, T09, T10, T17): `migrate` both databases, `ingest` the governed corpus,
+`up`/`down`/`status` the six processes, `keys` the destination-vs-grant detective check.
 
 Reads `.env` (written by scripts/bootstrap_dev.py) for ports and the secrets directory, exports the `OPS_*` variables
 every service reads (ops_core.settings), and runs the two Alembic trees programmatically with a shared connection
@@ -14,6 +14,7 @@ each database, all before Alembic runs. The profile picks the Alembic target: on
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import signal
@@ -30,7 +31,8 @@ from uuid import UUID
 import psycopg
 from alembic import command
 from alembic.config import Config
-from ops_core import privileges, settings
+from ops_core import corpus, persistence, privileges, settings
+from ops_core import ingest as corpus_ingest
 from ops_core.settings import Profile, Role
 from psycopg import sql
 from sqlalchemy import create_engine
@@ -38,6 +40,8 @@ from sqlalchemy.engine import URL, Engine
 
 ROOT = Path(__file__).resolve().parent.parent
 MIGRATIONS = {"app": ROOT / "migrations" / "app", "incident": ROOT / "migrations" / "incident"}
+CORPUS = ROOT / "data" / "corpus"
+SEED_IDS = ROOT / "data" / "seed-ids.json"
 
 
 def load_dotenv(path: Path = Path(".env")) -> dict[str, str]:
@@ -236,6 +240,47 @@ def migrate(profile: Profile | None = None) -> int:
     return 0
 
 
+def corpus_tenants() -> dict[str, UUID]:
+    """Tenant slug -> seeded tenant UUID (data/seed-ids.json): how the corpus catalog's slugs resolve."""
+    seeds = json.loads(SEED_IDS.read_text(encoding="utf-8"))
+    return {slug: UUID(value) for slug, value in seeds["tenants"].items()}
+
+
+async def _ingest(pg: settings.Postgres, governed: corpus.Corpus) -> list[corpus_ingest.Report]:
+    conn = await persistence.connect(pg)
+    try:
+        return await corpus_ingest.ingest(conn, governed, corpus_tenants())
+    finally:
+        await conn.close()
+
+
+def ingest() -> int:
+    """Ingest data/corpus as role `worker` into the database the environment names (`OPS_PG_DB`, default `ops`; the
+    live suite's `ops_test`), T17 / Plan L ruling 5. Exit 1 with every problem, and nothing written, when the corpus or
+    the store refuses the run; a repeated run writes nothing. The dev database waits for the owner (after `migrate`)."""
+    export_environment(load_dotenv(ROOT / ".env"))
+    try:
+        governed = corpus.load(CORPUS)
+        pg = settings.app_postgres(Role.WORKER)
+        if sys.platform == "win32":  # psycopg async refuses the Proactor loop (as in serve_app)
+            reports = asyncio.run(_ingest(pg, governed), loop_factory=asyncio.SelectorEventLoop)
+        else:
+            reports = asyncio.run(_ingest(pg, governed))
+    except (corpus.CorpusError, corpus_ingest.IngestRefused) as error:
+        written = getattr(error, "written", ())
+        print(f"INGEST: refused after writing {', '.join(written)}" if written else "INGEST: refused, nothing written")
+        for problem in error.problems:
+            print(f"  {problem}")
+        return 1
+    for report in reports:
+        wrote = "" if report.recorded else " (nothing to write)"
+        print(
+            f"INGEST: {report.tenant} {report.corpus_version}: {report.documents_added} new, "
+            f"{report.states_added} restated, {report.unchanged} unchanged{wrote}"
+        )
+    return 0
+
+
 def clock_guard(superuser: settings.Postgres, profile: Profile) -> None:
     """Refuse to run the dev or demo skeleton against a database that carries app.test_clock (SA:529)."""
     if profile is Profile.TEST:
@@ -424,7 +469,7 @@ def status() -> int:
 
 
 def main(argv: list[str]) -> int:
-    commands = {"migrate": migrate, "up": up, "down": down, "status": status, "keys": keys}
+    commands = {"migrate": migrate, "ingest": ingest, "up": up, "down": down, "status": status, "keys": keys}
     if len(argv) == 2 and argv[1] in commands:
         return commands[argv[1]]()
     print(__doc__)
