@@ -1,0 +1,21 @@
+{
+  "integrations/README.md": "reference/integrations/README.md",
+  "integrations/__init__.py": "reference/integrations/__init__.py",
+  "integrations/langgraph_workflow.py": "reference/integrations/langgraph_workflow.py",
+  "integrations/mcp_tools.py": "reference/integrations/mcp_tools.py",
+  "src/operations_copilot/__init__.py": "reference/src/operations_copilot/__init__.py",
+  "src/operations_copilot/api.py": "reference/src/operations_copilot/api.py",
+  "src/operations_copilot/cli.py": "reference/src/operations_copilot/cli.py",
+  "src/operations_copilot/domain.py": "reference/src/operations_copilot/domain.py",
+  "src/operations_copilot/models.py": "reference/src/operations_copilot/models.py",
+  "src/operations_copilot/service.py": "reference/src/operations_copilot/service.py",
+  "src/operations_copilot/store.py": "reference/src/operations_copilot/store.py",
+  "src/operations_copilot/synthetic.py": "reference/src/operations_copilot/synthetic.py",
+  "src/operations_copilot/web/app.js": "reference/src/operations_copilot/web/app.js",
+  "src/operations_copilot/web/index.html": "reference/src/operations_copilot/web/index.html",
+  "src/operations_copilot/web/style.css": "reference/src/operations_copilot/web/style.css",
+  "tests/conftest.py": "reference/tests/conftest.py",
+  "tests/integration/test_sdk_contracts.py": "reference/tests/integration/test_sdk_contracts.py",
+  "tests/test_api.py": "reference/tests/test_api.py",
+  "tests/test_control.py": "reference/tests/test_control.py"
+}

@@ -1,0 +1,43 @@
+{
+  "tenants": {
+    "alpha": "3ea79c95-914c-52cb-9d10-c4e19dda8ff7",
+    "beta": "5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201"
+  },
+  "personas": {
+    "alex": {
+      "user_id": "2fc05986-c7ec-544c-b628-fdb112bbf18a",
+      "tenant": "alpha",
+      "roles": [
+        "requester"
+      ]
+    },
+    "sam": {
+      "user_id": "03f7eb09-e18d-5f33-bf75-12c57d5aaa54",
+      "tenant": "alpha",
+      "roles": [
+        "reviewer"
+      ]
+    },
+    "lee": {
+      "user_id": "abcc1200-6791-57ab-87b5-9392d356b512",
+      "tenant": "alpha",
+      "roles": [
+        "reader"
+      ]
+    },
+    "riley": {
+      "user_id": "2f73af91-4906-5b79-9144-22c0df4e2316",
+      "tenant": "beta",
+      "roles": [
+        "requester"
+      ]
+    },
+    "jordan": {
+      "user_id": "cb551e64-83ec-582b-9047-8dadf20e151a",
+      "tenant": "beta",
+      "roles": [
+        "reviewer"
+      ]
+    }
+  }
+}

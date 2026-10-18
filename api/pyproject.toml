@@ -1,0 +1,16 @@
+[project]
+name = "ops-api"
+version = "0.0.1"
+description = "FastAPI: sessions, admission router, decisions, SSE, health"
+requires-python = ">=3.13"
+dependencies = ["ops-core"]
+
+[tool.uv.sources]
+ops-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ops_api"]

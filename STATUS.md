@@ -74,3 +74,23 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 - Round-8 regressions fixed; Plan A (T01, T03, T02, T42, T04, T06) rewritten after a builder dry-run found it unexecutable.
 - Still **no target capability implemented**. All of R001–R131 are `NOT_RUN`.
+
+## Update — Plan A executed (2026-10-07, branch `plan-a`)
+
+- Plan A (T01, T03, T02, T42, T04, T06) executed on branch `plan-a` (commits a638801..HEAD), followed by a final-review fix wave (five Important findings fixed).
+- `uv run python scripts/check.py` is `CHECK: GREEN`: ruff, ruff format, mypy on the seven members, and pytest `54 passed, 1 skipped`. The one skip is `tests/plan_a/test_seal.py` (owner has not sealed the holdout yet).
+- `python -I scripts/verify_handoff.py --reference-code --manifest` passes, including the whole-tree check of `reference/` against `provenance/handoff-1.0.zip`.
+- **Pending owner inputs:**
+  - T03 step 9: author the holdout off-machine, seal it into `evals/holdout.sha256`, and record the hash outside this repo;
+  - T02: the live `qwen3:8b` probe run, after the seal (the probe refuses to run without it);
+  - T06 step 7: the remote `jschnepel/MLOps` exists and `main`/`plan-a` were pushed on 2026-10-07; the first CI run's URL is R103's evidence.
+- Still **no target capability implemented**. R001–R131 remain `NOT_RUN` in the acceptance matrix. Partially evidenced by Plan A (per the plan's coverage notes): R001 (reference baseline reproduced), R071 (holdout schema and seal procedure; the seal itself is pending), R081 partial (probe built; live run pending), R101 partial (seed IDs only), R103 up to the owner's push, R121.
+
+## Update — Plan B executed (2026-10-08, branch `plan-b`)
+
+- Plan B (T05, T43, T44) executed on branch `plan-b` (`b98140f..HEAD` as of 2026-10-08, including the final-review fix wave) on top of `plan-a`, each task by a fresh implementer and gated by a fresh reviewer (one fix round each); the plan itself went through three adversarial rounds, two with real-Docker dry runs (`docs/reviews/plan-review-b-2026-10-08.md`).
+- `uv sync --locked` then `uv run python scripts/check.py` is `CHECK: GREEN`: pytest `92 passed, 11 skipped`. Skips: the owner-pending holdout seal (1), one POSIX-only permissions test (Windows), and nine live tests that run only with `OPS_LIVE=1` against the dev profile (they passed: 2 stack, 4 + 2 Keycloak, 1 Ollama bridge; redacted evidence under `reports/bootstrap/`).
+- `uv run python scripts/bootstrap_dev.py up` brings up PostgreSQL+pgvector and Keycloak 26.8.0 (realm `ops-dev`, five personas with seeded IDs, four workload clients with exact audiences, a `view-users` service account) with every port on `127.0.0.1` and secrets as files outside git; the bootstrap admin is removed after import.
+- Plan A's scripts, tests and workflow were re-commented against `docs/CODE_COMMENTS.md` (commits c25ee89, 32bf85d).
+- **Pending owner inputs:** T03 holdout seal → T02 live probe; push `plan-b` and open the PR → first CI run URL (the remote exists; `main` and `plan-a` were pushed on 2026-10-07); **T44 step 10:** apply `docs/runbooks/ollama-network.md` step A (bind Ollama to loopback at User scope), verify, fill the attestation table, decide on the proposed AM-31 errata.
+- Still **no target capability implemented**. R001–R131 remain `NOT_RUN`. Newly evidenced in part: R101 (dev environment and network boundaries: loopback bindings, file secrets, host/container routes; the Ollama exposure half awaits the owner), R102 (Keycloak topology: `aud`/`azp`/`sub`/`iss` asserted live).

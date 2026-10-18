@@ -2,8 +2,9 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** execute Plan A (`docs/superpowers/plans/2026-10-07-first-slice-a-baseline-workspace.md`): T01 (agent) and T03 (owner, off-machine) in parallel, then T02 (after the seal), T42, T04, T06.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `main`. Remote `github.com/jschnepel/MLOps` (public, MIT) **not created yet**: the GitHub CLI is installed but the owner hasn't logged in (`gh auth login`). Nothing has been pushed.
+**Next task:** Plan B (T05, T43, T44) is executed on branch `plan-b` (`b98140f..HEAD` of `plan-b` as of 2026-10-08, including the whole-branch review's fix wave). Owner inputs pending: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) push `plan-b` and open/merge the PR, record the first CI run URL (T06 step 7); (3) T44 step 10: apply `docs/runbooks/ollama-network.md` step A (loopback bind at User scope), attest, decide on the AM-31 errata. Then write Plan C (T07, T45, T46, T08) from the real `compose.yaml`, realm and secrets layout, and dry-run it on scratch copies before executing.
+**Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-b` (Plan B work on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` is local only and awaits the owner's push and PR.
 
 ## Done in the planning session (2026-10-06)
 
@@ -116,6 +117,13 @@
 - `docs/ARCHITECTURE.md` maps the four concepts to components, requirement IDs and demos; the README has a "What this demonstrates" table.
 - 47 tasks, 131 requirements.
 
+## Plan B executed (2026-10-08, branch `plan-b`)
+
+- Plan written from the real Plan A artifacts; three adversarial rounds before execution (static + builder dry-run twice; `docs/reviews/plan-review-b-2026-10-08.md`). Findings that changed the plan: the model-pins loader rejected the digest format the probe writes; the readiness probe grepped a body that is `UP` even when DOWN; audience assertions were "contains" not exact; a wildcard redirect; Keycloak answers a deleted admin's password grant with 400; the ruff formatter rejected the plan's code; **container traffic reaches the host from 127.0.0.1** (so a loopback bind, not a WSL-subnet firewall rule, is the control); `OLLAMA_HOST` is set at User scope, not Machine.
+- Execution: T05 (f864197, a23f602, b7b5266, e530082), T43 (051c828, 628c638), T44 (06bcec0, 8841305). Task reviews found plan-mandated defects fixed in the fix rounds: a rotation recipe that put the secret in argv while claiming otherwise, a placeholder test whose failure message would echo a leaked literal (the first fix, a custom assert message, did not work because pytest's assertion rewriting still prints the operands; the final review caught it, and the tests now assert on a precomputed list of client and user identifiers, with proof tests that tamper a copy and check the literal is absent), a runbook fallback that duplicated its rule on re-run and referenced plan-internal steps.
+- Evidence: `reports/bootstrap/keycloak-claims.txt` (9 redacted claim lines), `bootstrap-admin.txt`, `compose-ps.txt`, `ollama-bridge.txt`; `tests/plan_b/test_evidence.py` rejects any token or secret value there.
+- Plan A code re-commented per `docs/CODE_COMMENTS.md` (c25ee89, 32bf85d); commit history carries no tool attribution.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -157,19 +165,29 @@ Not debt (must be real in T08): client-credentials tokens from T05; aud/azp/iss 
 
 ## Open owner inputs
 
-- `gh auth login`, then approval to push.
-- Review of OPS-BUILD-1.2, then the implementation plan for M00–M01.
+- Approval to push `plan-b` and open the PR (the remote exists; `main` and `plan-a` are already pushed).
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
-- T06: decide whether to publish early (public repo at M01) or start private and make it public at T34.
+- T06: decide whether to publish early (public repo at M01) or start private and make it public at T34. (The repo `jschnepel/MLOps` exists and `main`/`plan-a` were pushed on 2026-10-07; `plan-b` is local.)
+- T44 step 10: run `docs/runbooks/ollama-network.md` step A (`OLLAMA_HOST=127.0.0.1:11434` at User scope, restart Ollama), verify with the three checks, fill the attestation table, and decide whether to adopt the proposed AM-31 errata (loopback bind primary, firewall fallback).
 
 ## Exact next step
 
-Execute Plan A, starting with T01:
+On a fresh clone or after any `uv sync`:
 
-```powershell
-uv venv "$env:LOCALAPPDATA\ops-ref-venv" --python 3.13
-uv pip install --python "$env:LOCALAPPDATA\ops-ref-venv" ".[web,test]"   # not -e: T04 moves the code (re-create the venv from reference/ afterwards)
-& "$env:LOCALAPPDATA\ops-ref-venv\Scripts\python" -m pytest -q
+```bash
+uv sync --locked
+uv run python scripts/check.py
+python -I scripts/verify_handoff.py --reference-code --manifest
 ```
+
+Reference test suite (T01 procedure, as re-run from `reference/` in T42; Git Bash; venv outside the repo, installed without `-e`; delete the in-tree `build/` and `*.egg-info` afterwards):
+
+```bash
+uv venv "$LOCALAPPDATA/ops-ref-venv" --python 3.13
+uv pip install --python "$LOCALAPPDATA/ops-ref-venv" "./reference[web,test]"
+(cd reference && "$LOCALAPPDATA/ops-ref-venv/Scripts/python" -m pytest -q)
+```
+
+Then wait for the owner inputs above (holdout seal, then live probe; push and PR; the Ollama runbook step A) and write Plan C as described in the Next task line.
 
 Do not store secrets or private reasoning in this file.

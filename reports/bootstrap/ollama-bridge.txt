@@ -1,0 +1,2 @@
+host http://127.0.0.1:11434/api/version -> 0.33.3
+container http://host.docker.internal:11434/api/version -> 0.33.3
