@@ -1,4 +1,4 @@
-T13 heartbeat — 2026-10-16T06:26:44Z
+T13 heartbeat — 2026-10-16T11:28:29Z
 R088 loop blocked 25 s: 2 renewals, longest loop silence 24.3 s of 28 s, fence kept, run drafted
 R088 35 s drafter: 3 renewals, fence kept, run drafted
 R088 forced renewal failure: call cancelled 10.1 s after the takeover, handle revoked; the re-run failed the interrupted run

@@ -133,7 +133,9 @@ async def test_the_round_trip_restores_0006(app_conn: persistence.Conn) -> None:
     finally:
         assert migrate(Profile.TEST) == 0  # every later test needs the head
     assert await snapshot(app_conn) == head  # the upgrade brings back exactly what the downgrade took
-    assert await exists(app_conn, "app.mark_sent(text, uuid)") and not await exists(app_conn, "app.mark_sent(uuid)")
+    # The head's signature: revision 0010 replaced 0007's with one that takes the token's azp (T47).
+    assert await exists(app_conn, "app.mark_sent(text, text, uuid)")
+    assert not await exists(app_conn, "app.mark_sent(uuid)") and not await exists(app_conn, "app.mark_sent(text, uuid)")
 
 
 async def test_model_permit_is_seeded_and_only_the_worker_takes_it(role_conn: RoleConn) -> None:

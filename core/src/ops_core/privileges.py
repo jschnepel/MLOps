@@ -193,10 +193,12 @@ DEFINER_FUNCTIONS: Final[dict[str, tuple[str, tuple[str, ...]]]] = {
     "freeze_proposal": ("uuid, uuid, bytea, timestamptz", ("worker",)),
     "record_decision": ("uuid, uuid, uuid, text, text, text, text", ("api",)),
     "resolve_invocation": ("text, text", ("mcp_read", "mcp_exec")),
-    "grant_execution": ("text, uuid", ("mcp_exec",)),
-    "mark_sent": ("text, uuid", ("mcp_exec",)),  # T13: the raw handle first, so the fence is checked (erratum 48)
-    "record_outcome": ("text, uuid, text, jsonb", ("mcp_exec",)),  # likewise
-    "lookup_action": ("text", ("mcp_exec",)),
+    # T13: the raw handle first, so the fence is checked (erratum 48); T47: the token's azp second (Plan K ruling 12).
+    "grant_execution": ("text, text, uuid", ("mcp_exec",)),
+    "mark_sent": ("text, text, uuid", ("mcp_exec",)),
+    "record_outcome": ("text, text, uuid, text, jsonb", ("mcp_exec",)),
+    "lookup_action": ("text, text", ("mcp_exec",)),
+    "request_abort": ("text, text, uuid", ("mcp_exec",)),  # T47 (Plan K rulings 2, 3)
     "mark_unknown": ("uuid, bigint", ("worker",)),
     "queued_runs_total": ("", ("api",)),  # T13 (Plan H ruling 13): BS:550's global count, one number
 }
@@ -210,6 +212,7 @@ HELPER_FUNCTIONS: Final[dict[str, str]] = {
     "_grant_row": "uuid",
     "_append_event": "uuid, uuid, text, text, jsonb",
     "_transition": "uuid, text, text, text, integer, text, jsonb",
+    "_dispatch_seconds": "",  # T47: the dispatch deadline, 300 s (Plan K ruling 17)
 }
 
 

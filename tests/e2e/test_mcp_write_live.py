@@ -124,8 +124,8 @@ async def test_write_path_twice(app_conn: persistence.Conn, role_conn, secret, m
         session = persistence.Session(await role_conn(Role.MCP_EXEC))
         async with httpx2.AsyncClient() as http:
             deps = make_deps(session, http, secret)
-            first = await execution.create_incident(deps, handle=handle, proposal_id=proposal)
-            second = await execution.create_incident(deps, handle=handle, proposal_id=proposal)
+            first = await execution.create_incident(deps, handle=handle, azp="ops-worker", proposal_id=proposal)
+            second = await execution.create_incident(deps, handle=handle, azp="ops-worker", proposal_id=proposal)
         assert first.status is ToolOutcome.SUCCEEDED and second == first
         assert observed == ["SENT"]  # exactly one POST, and SENT was committed before it
         row = await persistence.run_row(app_conn, run)
@@ -198,8 +198,8 @@ async def test_concurrent_calls_share_one_attempt(
             async with httpx2.AsyncClient() as http:
                 deps = make_deps(session, http, secret)
                 first, second = await asyncio.gather(
-                    execution.create_incident(deps, handle=handle, proposal_id=proposal),
-                    execution.create_incident(deps, handle=handle, proposal_id=proposal),
+                    execution.create_incident(deps, handle=handle, azp="ops-worker", proposal_id=proposal),
+                    execution.create_incident(deps, handle=handle, azp="ops-worker", proposal_id=proposal),
                 )
         assert first.status is ToolOutcome.SUCCEEDED and first == second
         assert len(posts) <= 2
@@ -247,7 +247,7 @@ async def test_exception_after_sent_returns_unknown_and_records_nothing(
         session = persistence.Session(await role_conn(Role.MCP_EXEC))
         async with httpx2.AsyncClient() as http:
             outcome = await execution.create_incident(
-                make_deps(session, http, secret), handle=handle, proposal_id=proposal
+                make_deps(session, http, secret), handle=handle, azp="ops-worker", proposal_id=proposal
             )
         assert outcome.status is ToolOutcome.UNKNOWN
         assert (await persistence.run_row(app_conn, run))["state"] == "EXECUTING"
@@ -293,7 +293,7 @@ async def test_refusal_after_a_real_post_is_unknown_not_an_error(
             session = persistence.Session(await role_conn(Role.MCP_EXEC))
             async with httpx2.AsyncClient() as http:
                 outcome = await execution.create_incident(
-                    make_deps(session, http, secret), handle=handle, proposal_id=proposal
+                    make_deps(session, http, secret), handle=handle, azp="ops-worker", proposal_id=proposal
                 )
         doc = outcome_envelope(outcome)
         assert doc["status"] == "outcome" and doc["error"] is None

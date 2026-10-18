@@ -1,6 +1,11 @@
 """mcp-write: the authenticated write server (ADR-0003; AM-13 attempt protocol; SA:557 token checks).
 
-One tool, `create_incident`; the grant, the dispatch and the outcome happen here, never in the worker.
+Three tools, and the grant, every destination call and every outcome happen here, never in the worker:
+`create_incident` for execute jobs (and a recover job's redispatch of an unsent attempt), and the recovery tools
+`get_incident_receipt` and `abort_incident` for recover jobs only (T47). Every call resolves its `X-Ops-Invocation`
+handle first: the server, the token's `azp`, expiry, the lease fence, the handle's open job, and the job type's
+tools, run states and attempt states (`persistence.allowed_tool`). Only the worker's workload token is accepted here,
+so the recovery tools are listed to that caller alone and refused for every handle but a recover job's (BS:393).
 """
 
 from __future__ import annotations
@@ -8,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol, TypedDict
@@ -64,9 +69,16 @@ def tool_error(code: str, message: str, *, retryable: bool = False) -> dict[str,
 
 
 def refusal_error(code: str) -> dict[str, Any]:
-    """The tool error for a grant refusal: MEMBERSHIP_STALE is the one the worker retries (Plan F ruling 14)."""
+    """The tool error for a definer's refusal: MEMBERSHIP_STALE is the one grant refusal the worker retries (Plan F
+    ruling 14); ABORT_NOT_DUE (an abort before a cancel or the dispatch deadline) is retryable once either arrives
+    (Plan K ruling 3); NOT_REDISPATCHABLE (a recover job asking to re-send a SENT attempt, SA:345) is final. Like every
+    refusal before a destination call, none names an action (SA:355)."""
     if code == "MEMBERSHIP_STALE":
         return tool_error("GRANT_DEFERRED", f"grant deferred: {code}", retryable=True)
+    if code == "ABORT_NOT_DUE":
+        return tool_error(code, "abort not due: not cancelled and before the dispatch deadline", retryable=True)
+    if code == "NOT_REDISPATCHABLE":
+        return tool_error(code, "a recover job redispatches only an attempt that was never sent")
     return tool_error("GRANT_REFUSED", f"grant refused: {code}")
 
 
@@ -101,10 +113,16 @@ class Verifier(Protocol):  # the subset of ops_core.tokens.TokenVerifier the ser
 
 
 class McpVerifier:
-    """The SDK's TokenVerifier protocol: None means 401. The SDK re-checks `expires_at`, consistently with PyJWT."""
+    """The SDK's TokenVerifier protocol: None means 401. The SDK re-checks `expires_at`, consistently with PyJWT.
+
+    A token whose `aud` lacks this server's resource URL is refused here, whatever audience the wrapped verifier was
+    configured with, and only then is `resource` stamped with that URL (mcp-read's rule, Plan J ruling 2; Plan K
+    ruling 11). The SDK's own resource check (`validate_token_resource`) stays on as a second layer; it cannot refuse
+    anything while the stamp is this server's own URL, and would decide only if the stamp ever came from the token.
+    """
 
     def __init__(self, verifier: Verifier, resource_url: str) -> None:
-        """Adapt a token verifier to the SDK's bearer-auth hook; `resource_url` is stamped on the access token."""
+        """Adapt a token verifier to the SDK's bearer-auth hook; `resource_url` is this server's audience."""
         self._verifier = verifier
         self._resource = resource_url
 
@@ -113,6 +131,8 @@ class McpVerifier:
         try:
             principal = await self._verifier.verify_async(token)
         except TokenRejected:
+            return None
+        if self._resource not in principal.audiences:
             return None
         return AccessToken(
             token=token,
@@ -152,10 +172,27 @@ def serve_app(app: ASGIApp, port: int) -> None:
         asyncio.run(server.serve())
 
 
-def outcome_envelope(outcome: ActionOutcome) -> ToolResult:
-    """`ok` only wraps SUCCEEDED (R083); every other outcome is `status=outcome` with `data.action_id` (SA:352)."""
+def outcome_envelope(outcome: ActionOutcome, tool_name: str = ToolName.CREATE_INCIDENT.value) -> ToolResult:
+    """`ok` only wraps SUCCEEDED (R083); every other outcome is `status=outcome` with `data.action_id` (SA:352). The
+    data is the ActionOutcome shape `create_incident` and `get_incident_receipt` share (BS:393's minimal outcome)."""
     data = outcome.model_dump(mode="json")
-    doc = envelope("create_incident", data=data)
+    doc = envelope(tool_name, data=data)
+    if outcome.status is not ToolOutcome.SUCCEEDED:
+        doc["status"] = "outcome"
+    return doc
+
+
+def abort_envelope(outcome: ActionOutcome) -> ToolResult:
+    """`abort_incident`'s data (SA:356): the action, the outcome and the destination's receipt or tombstone, nothing
+    else (the tombstone carries the destination's reason). `ok` only for SUCCEEDED, an abort that met the receipt
+    already there; UNKNOWN and CONFLICT carry neither (Plan K, the abort data's added outcomes)."""
+    data = {
+        "action_id": str(outcome.action_id),
+        "outcome": outcome.status.value,
+        "receipt": None if outcome.receipt is None else outcome.receipt.model_dump(mode="json"),
+        "tombstone": None if outcome.tombstone is None else outcome.tombstone.model_dump(mode="json"),
+    }
+    doc = envelope(ToolName.ABORT_INCIDENT.value, data=data)
     if outcome.status is not ToolOutcome.SUCCEEDED:
         doc["status"] = "outcome"
     return doc
@@ -169,45 +206,82 @@ class State:
     verifier: Verifier
 
 
-def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
-    """Assemble the MCP server with bearer auth and the one strict tool, bound to `state`."""
+# A tool's work once its handle resolved: (deps, the raw handle, the token's azp) -> the outcome.
+Work = Callable[[execution.Deps, str, str], Awaitable[ActionOutcome]]
+# strict=False on this one field: the model is strict, and strict UUID validation refuses the string a client sends.
+ProposalId = Annotated[UUID, Field(strict=False)]
 
-    # strict=False on this one field: the model is strict, and strict UUID validation refuses the string a client sends
-    async def create_incident(proposal_id: Annotated[UUID, Field(strict=False)], ctx: Context) -> ToolResult:
-        """Grant, dispatch and record the approved proposal's incident (AM-13 §2, AM-20.3 grant_execution)."""
+
+def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
+    """Assemble the MCP server with bearer auth and the three strict write tools, bound to `state`."""
+
+    async def answer(tool: ToolName, ctx: Context, work: Work) -> ActionOutcome | ToolResult:
+        """Resolve the handle for `tool` before any work (SA:459; Plan K ruling 26), then do it. A refusal before
+        anything reached the destination is a plain error envelope without an action id (SA:355)."""
         token = get_access_token()
         handle = (ctx.headers or {}).get("x-ops-invocation")
         if token is None or not handle or state.deps is None:
-            return envelope("create_incident", error=tool_error("INVALID_HANDLE", "missing invocation handle"))
+            return envelope(tool.value, error=tool_error("INVALID_HANDLE", "missing invocation handle"))
         try:
             async with state.deps.session.unit() as conn:
-                await persistence.resolve_invocation(
-                    conn, handle=handle, azp=token.client_id, tool=ToolName.CREATE_INCIDENT
-                )  # binds server, azp, expiry and the tool allowlist before any work (SA:459)
-            outcome = await execution.create_incident(state.deps, handle=handle, proposal_id=proposal_id)
+                await persistence.resolve_invocation(conn, handle=handle, azp=token.client_id, tool=tool)
+            return await work(state.deps, handle, token.client_id)
         except persistence.HandleRejected as exc:
-            return envelope("create_incident", error=tool_error("INVALID_HANDLE", str(exc)))
+            return envelope(tool.value, error=tool_error("INVALID_HANDLE", str(exc)))
         except persistence.Refused as exc:
-            return envelope("create_incident", error=refusal_error(exc.code))
+            return envelope(tool.value, error=refusal_error(exc.code))
         except persistence.NotFound:
-            return envelope("create_incident", error=tool_error("NOT_FOUND", "run not found"))
+            return envelope(tool.value, error=tool_error("NOT_FOUND", "run not found"))
         except persistence.VersionConflict:
-            # Only grant_execution and mark_sent can raise this here, both before this call sends anything, so the
-            # worker closes the job without a retry cycle. After SENT execution.py answers UNKNOWN instead (AM-13).
-            return envelope("create_incident", error=tool_error("STALE_RUN", "run is no longer executing"))
-        except persistence.HashMismatch:
-            return envelope("create_incident", error=tool_error("HASH_MISMATCH", "stored bytes do not match"))
+            # Only mark_sent raises this here, before anything is sent: a recover job redispatching an unsent attempt
+            # while its run is not EXECUTING (redispatch from OUTCOME_UNKNOWN is T22's). After a destination call
+            # execution.py answers UNKNOWN instead (AM-13).
+            return envelope(tool.value, error=tool_error("STALE_RUN", "run is no longer executing"))
+        # HashMismatch is not mapped: only record_outcome raises it, after the destination answered, where execution.py
+        # answers UNKNOWN (tests/plan_k/test_migration_0010.py pins that no earlier definer can; Plan K ruling 20).
         # AuthorityViolation stays unmapped on purpose: it is a deployment error (the role lacks a grant), so the raw
         # tool error and the worker's re-queue are the right outcome.
-        return outcome_envelope(outcome)
+
+    async def create_incident(proposal_id: ProposalId, ctx: Context) -> ToolResult:
+        """Grant, dispatch and record the approved proposal's incident (AM-13 §2, AM-20.3 grant_execution)."""
+
+        async def work(deps: execution.Deps, handle: str, azp: str) -> ActionOutcome:
+            return await execution.create_incident(deps, handle=handle, azp=azp, proposal_id=proposal_id)
+
+        result = await answer(ToolName.CREATE_INCIDENT, ctx, work)
+        return outcome_envelope(result) if isinstance(result, ActionOutcome) else result
+
+    async def get_incident_receipt(proposal_id: ProposalId, ctx: Context) -> ToolResult:
+        """Recover jobs only: the outcome of the action already granted for this proposal, from the destination's
+        restricted lookup (BS:393). Creates nothing."""
+
+        async def work(deps: execution.Deps, handle: str, azp: str) -> ActionOutcome:
+            return await execution.get_incident_receipt(deps, handle=handle, azp=azp, proposal_id=proposal_id)
+
+        result = await answer(ToolName.GET_INCIDENT_RECEIPT, ctx, work)
+        return (
+            outcome_envelope(result, ToolName.GET_INCIDENT_RECEIPT.value)
+            if isinstance(result, ActionOutcome)
+            else result
+        )
+
+    async def abort_incident(proposal_id: ProposalId, ctx: Context) -> ToolResult:
+        """Recover jobs only: abort the action already granted for this proposal once it is cancelled or past its
+        dispatch deadline; the destination answers with a tombstone or the receipt that already stands (SA:241-242)."""
+
+        async def work(deps: execution.Deps, handle: str, azp: str) -> ActionOutcome:
+            return await execution.abort_incident(deps, handle=handle, azp=azp, proposal_id=proposal_id)
+
+        result = await answer(ToolName.ABORT_INCIDENT, ctx, work)
+        return abort_envelope(result) if isinstance(result, ActionOutcome) else result
 
     return MCPServer(
         name="mcp-write",
         auth=AuthSettings(
-            issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url), validate_token_resource=False
+            issuer_url=AnyHttpUrl(issuer), resource_server_url=AnyHttpUrl(resource_url), validate_token_resource=True
         ),
         token_verifier=McpVerifier(state.verifier, resource_url),
-        tools=[strict_tool(create_incident)],
+        tools=[strict_tool(create_incident), strict_tool(get_incident_receipt), strict_tool(abort_incident)],
     )
 
 
@@ -228,6 +302,8 @@ def build_app(server: MCPServer, state: State) -> Starlette:
                 # Revision 0009: without the handle's job binding this server would resolve execute handles whose job
                 # is another run's or finished, as 0007 did, so it refuses to start, as mcp-read does (T15).
                 await persistence.assert_function_text(conn, *persistence.HANDLE_BINDING)
+                # Revision 0010: the definers this server calls take the token's azp, and request_abort exists (T47).
+                await persistence.assert_function_text(conn, *persistence.WRITE_PATH)
             except BaseException:  # a failed start must leak no connection
                 await conn.close()
                 raise
@@ -276,14 +352,25 @@ def build_app(server: MCPServer, state: State) -> Starlette:
     )
 
 
+def write_verifier(kc: settings.Keycloak, urls: settings.Urls) -> TokenVerifier:
+    """mcp-write's token checks (SA:557; mcp-read's since Plan J, Plan K ruling 11): the realm's issuer and keys, this
+    server's resource URL as the audience, the worker's client (`settings.workload_client_id`, ruling 12) as the only
+    `azp`, and an access token's `typ` claim. `production_app` builds its verifier here, and the unit tests build
+    theirs here too, so they pin the wiring that runs."""
+    return TokenVerifier(
+        issuer=kc.issuer,
+        audience=urls.mcp_write_resource,
+        allowed_azp=frozenset({settings.workload_client_id()}),
+        jwks_url=kc.jwks_url,
+        token_type="Bearer",  # an access token: Keycloak's ID and refresh tokens carry another `typ`
+    )
+
+
 def production_app() -> Starlette:
     """The app wired from the environment and secret files, as `python -m ops_mcp_write` runs it."""
     kc = settings.keycloak()
     urls = settings.urls()
-    verifier = TokenVerifier(
-        issuer=kc.issuer, audience=urls.mcp_write_resource, allowed_azp=frozenset({"ops-worker"}), jwks_url=kc.jwks_url
-    )
-    state = State(deps=None, verifier=verifier)
+    state = State(deps=None, verifier=write_verifier(kc, urls))
     return build_app(build_server(state, issuer=kc.issuer, resource_url=urls.mcp_write_resource), state)
 
 

@@ -108,7 +108,9 @@ async def test_a_stale_fence_before_sent_is_a_handle_refusal_and_sends_nothing(
         session = persistence.Session(await role_conn(Role.MCP_EXEC))
         async with httpx2.AsyncClient() as http:
             with pytest.raises(persistence.HandleRejected):
-                await execution.create_incident(make_deps(session, http, secret), handle=handle, proposal_id=proposal)
+                await execution.create_incident(
+                    make_deps(session, http, secret), handle=handle, azp="ops-worker", proposal_id=proposal
+                )
         assert posts == [] and await attempt_states(app_conn, run) == ["INTENT"]
         assert (await persistence.run_row(app_conn, run))["state"] == "EXECUTING"
     finally:
@@ -138,7 +140,7 @@ async def test_a_stale_fence_after_sent_is_unknown_never_an_error(
             session = persistence.Session(await role_conn(Role.MCP_EXEC))
             async with httpx2.AsyncClient() as http:
                 outcome = await execution.create_incident(
-                    make_deps(session, http, secret), handle=handle, proposal_id=proposal
+                    make_deps(session, http, secret), handle=handle, azp="ops-worker", proposal_id=proposal
                 )
         doc = outcome_envelope(outcome)
         assert doc["status"] == "outcome" and doc["error"] is None
@@ -184,14 +186,17 @@ async def test_mark_unknown_bumps_the_fence_and_returns_it(app_conn: persistence
         cur = await app_conn.execute("SELECT fence FROM app.run_lease WHERE run_id = %s", (run,))
         fence = int((await cur.fetchone())["fence"])
         async with mcp_exec.transaction():
-            grant = await persistence.grant_execution(mcp_exec, handle=handle, proposal_id=proposal)
-            assert await persistence.mark_sent(mcp_exec, handle=handle, action_id=grant.action_id) == "sent"
+            grant = await persistence.grant_execution(mcp_exec, handle=handle, azp="ops-worker", proposal_id=proposal)
+            assert (
+                await persistence.mark_sent(mcp_exec, handle=handle, azp="ops-worker", action_id=grant.action_id)
+                == "sent"
+            )
         async with worker.transaction():
             unknown = await persistence.mark_unknown(worker, run, fence)
         assert unknown == persistence.Unknown(RunState.OUTCOME_UNKNOWN, fence + 1)
         with pytest.raises(persistence.HandleRejected):  # minted under the old fence: dead and revoked
             async with mcp_exec.transaction():
-                await persistence.lookup_action(mcp_exec, handle=handle)
+                await persistence.lookup_action(mcp_exec, handle=handle, azp="ops-worker")
         with pytest.raises(persistence.VersionConflict):  # the old fence is stale now
             async with worker.transaction():
                 await persistence.mark_unknown(worker, run, fence)

@@ -4,8 +4,8 @@ hands a handle to the model (R027: "handle absent from model").
 Catches: an `azp` written into `invocation_context` that is not the client id of the token source the worker presents
 (`_resolve_handle` compares the two), and a field added to the model's request that could carry a handle. It proves
 only that the mint follows the token source. The mint is one of four places a rename of the worker client touches; the
-other three still name `"ops-worker"`: `main.py`'s token source, `read_verifier`'s `allowed_azp` and the write-path
-definers' literal (T47 debt, Plan J final review).
+other three follow `settings.workload_client_id()` since T47 (the token source and both verifiers,
+tests/plan_k/test_workload_client.py) or compare the presented token's `azp` (the write-path definers, revision 0010).
 """
 
 import asyncio

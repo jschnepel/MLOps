@@ -127,17 +127,23 @@ def health_app(
     return Starlette(routes=[Route("/health/live", live), Route("/health/ready", ready)])
 
 
+def token_source(kc: settings.Keycloak) -> WorkloadTokenSource:
+    """The worker's workload tokens, issued to the client the settings name (Plan K ruling 12); its client id is also
+    the `azp` every handle is minted with (`handlers.Deps.workload_azp`, Plan J ruling 17)."""
+    return WorkloadTokenSource(
+        token_url=kc.token_url,
+        client_id=settings.workload_client_id(),
+        client_secret=settings.read_secret("kc_client_secret_ops_worker"),
+    )
+
+
 async def _main() -> None:
     # The redaction filter must sit on the root handler before the first log line (T11 note 4).
     redaction.install()
     generator = make_generator(settings.env("MODEL_MODE"))  # unset or any other route: refuse to start (R130)
     leases = settings.leases()  # an unsafe lease, heartbeat, stall or budget combination refuses to start
     kc = settings.keycloak()
-    tokens = WorkloadTokenSource(
-        token_url=kc.token_url,
-        client_id="ops-worker",
-        client_secret=settings.read_secret("kc_client_secret_ops_worker"),
-    )
+    tokens = token_source(kc)
     conn = await persistence.connect(settings.app_postgres(Role.WORKER))
     # No unit is ever cancelled, so a unit stuck behind another transaction's lock ends after 10 s with 55P03, which
     # run_forever logs as transient; its job keeps the claim until the lease lapses and the sweeper reclaims it.

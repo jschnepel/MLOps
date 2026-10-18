@@ -42,7 +42,7 @@ MODELS: dict[str, type[BaseModel]] = {
 }
 NO_MODEL = {
     "schemas/tool-result.schema.json": (
-        "envelopes are built by the MCP servers (T16/T47); the data shapes are ActionOutcome"
+        "envelopes are built by the MCP servers (mcp-write's in tests/plan_k, T47; the read tools' with T16)"
     ),
     "schemas/evidence.schema.json": "retrieval rows are produced by mcp-read (T17)",
     "schemas/route.schema.json": "enums only; the table is pinned in test_jobs_routes_outcomes",

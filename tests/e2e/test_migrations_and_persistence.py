@@ -409,9 +409,9 @@ async def test_r006_populated_revision_1_database_upgrades_in_place(
         # Revision 0009 (Plan J ruling 6): a handle naming a finished job is refused, migrated rows included; the same
         # handle resolves once its job is open again, so the refusal is the binding's.
         with pytest.raises(persistence.HandleRejected):
-            await persistence.lookup_action(mcp_exec, handle=handle)
+            await persistence.lookup_action(mcp_exec, handle=handle, azp="ops-worker")
         await app_conn.execute("UPDATE app.jobs SET done_at = NULL WHERE id = %s", (execute_job,))
-        grant = await persistence.lookup_action(mcp_exec, handle=handle)
+        grant = await persistence.lookup_action(mcp_exec, handle=handle, azp="ops-worker")
         assert grant.action_id == action and grant.attempt_state == "RESOLVED"
     finally:
         # A failure between the downgrade and the migrate would leave ops_test at revision 1 for the rest of the

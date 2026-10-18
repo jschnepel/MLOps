@@ -1068,7 +1068,9 @@
               "outcome": {
                 "enum": [
                   "SUCCEEDED",
-                  "FAILED_NO_COMMIT"
+                  "FAILED_NO_COMMIT",
+                  "UNKNOWN",
+                  "CONFLICT"
                 ]
               },
               "receipt": {
@@ -1196,8 +1198,17 @@
                       "type": "null"
                     }
                   }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "outcome": {
+                      "const": "FAILED_NO_COMMIT"
+                    }
+                  }
                 },
-                "else": {
+                "then": {
                   "properties": {
                     "tombstone": {
                       "type": "object",
@@ -1239,6 +1250,28 @@
                       ]
                     },
                     "receipt": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "outcome": {
+                      "enum": [
+                        "UNKNOWN",
+                        "CONFLICT"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "receipt": {
+                      "type": "null"
+                    },
+                    "tombstone": {
                       "type": "null"
                     }
                   }
@@ -1405,7 +1438,11 @@
           "data": {
             "properties": {
               "outcome": {
-                "const": "FAILED_NO_COMMIT"
+                "enum": [
+                  "FAILED_NO_COMMIT",
+                  "UNKNOWN",
+                  "CONFLICT"
+                ]
               }
             }
           }

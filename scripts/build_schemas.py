@@ -224,21 +224,26 @@ def action_outcome() -> Doc:
 
 
 def abort_outcome() -> Doc:
-    """`abort_incident` data: the destination answers an abort with a receipt (already committed) or a tombstone."""
+    """`abort_incident` data: the destination answers an abort with a receipt (already committed) or a tombstone; an
+    abort it did not answer (a lost reply, a 503) is UNKNOWN, and one that met another hash's receipt is CONFLICT,
+    both with neither (T47, Plan K: SA:356's two outcomes cannot say either)."""
     return closed(
         {
             "action_id": UUID,
-            "outcome": {"enum": [ToolOutcome.SUCCEEDED.value, ToolOutcome.FAILED_NO_COMMIT.value]},
+            "outcome": {"enum": [o.value for o in ToolOutcome]},
             "receipt": nullable(RECEIPT),
             "tombstone": nullable(TOMBSTONE),
         },
         ["action_id", "outcome", "receipt", "tombstone"],
         allOf=[
+            when(props(outcome={"const": ToolOutcome.SUCCEEDED.value}), props(receipt=RECEIPT, tombstone=NULL)),
             when(
-                props(outcome={"const": ToolOutcome.SUCCEEDED.value}),
-                props(receipt=RECEIPT, tombstone=NULL),
-                props(tombstone=TOMBSTONE, receipt=NULL),
-            )
+                props(outcome={"const": ToolOutcome.FAILED_NO_COMMIT.value}), props(tombstone=TOMBSTONE, receipt=NULL)
+            ),
+            when(
+                props(outcome={"enum": [ToolOutcome.UNKNOWN.value, ToolOutcome.CONFLICT.value]}),
+                props(receipt=NULL, tombstone=NULL),
+            ),
         ],
     )
 
@@ -639,7 +644,7 @@ def tool_result() -> Doc:
                 **props(status={"const": "outcome"}, tool_name={"const": Tool.ABORT_INCIDENT.value}),
                 "required": ["tool_name"],
             },
-            props(data=props(outcome={"const": "FAILED_NO_COMMIT"})),
+            props(data=props(outcome={"enum": ["FAILED_NO_COMMIT", "UNKNOWN", "CONFLICT"]})),
         ),
     ]
     return contract(
@@ -1004,7 +1009,7 @@ def examples(root: Path = ROOT) -> list[tuple[Doc, Doc]]:
         "action_id": ACTION,
         "state": DestinationState.ABORTED.value,
         "payload_sha256": PAYLOAD_SHA,
-        "reason": "cancelled before send",
+        "reason": "cancelled_before_send",  # the destination's own token (keys.ABORT_REASONS), as it answers
         "decided_at": COMMITTED_AT,
     }
     message_valid = {

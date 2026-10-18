@@ -25,7 +25,7 @@ from ops_core.states import RunState
 )
 def test_rejections(job_type: JobType, state: RunState, tool: Tool) -> None:
     with pytest.raises(HandleRejected):
-        allowed_tool(job_type, state, tool)
+        allowed_tool(job_type, state, None, tool)  # refused on the tool, before any attempt rule
 
 
 def test_handle_refusal_never_echoes_the_server_text() -> None:

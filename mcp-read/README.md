@@ -16,7 +16,8 @@ Any write-path function; incident-sim
 
 `python -m ops_mcp_read` on 127.0.0.1:8081 (`OPS_MCP_READ_PORT`), Streamable HTTP at `/mcp`, protocol 2026-07-28,
 stateless. A POST without exactly `MCP-Protocol-Version: 2026-07-28` is 400 before authentication. Verifies
-`aud ∋ MCP_READ_RESOURCE_URL`, `azp == ops-worker` and the access token's `typ`; resolves `X-Ops-Invocation` for read
+`aud ∋ MCP_READ_RESOURCE_URL`, `azp` = the worker's client (`OPS_WORKLOAD_CLIENT_ID`, default `ops-worker`) and the
+access token's `typ`; resolves `X-Ops-Invocation` for read
 jobs whose run is in one of the job type's states, and only for the handle's own run's open job (revision 0009, which
 it checks at start). One tool, `search_procedures` (lexical, fixture-backed until T17). See
 `docs/runbooks/mcp-read.md`.

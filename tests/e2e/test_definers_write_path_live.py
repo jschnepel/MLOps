@@ -313,14 +313,17 @@ async def test_write_path_grant_sent_outcome_once_and_only_once(
         await approve(api, proposal, digest)
         handle = await handle_for(app_conn, run, "execute")
         # Gate refusals leave no grant: another proposal id, then the real one.
-        assert await refused(mcp_exec, "SELECT * FROM app.grant_execution(%s, %s)", (handle, uuid4())) == "OC005"
+        assert (
+            await refused(mcp_exec, "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", (handle, uuid4()))
+            == "OC005"
+        )
         assert (
             await (
                 await app_conn.execute("SELECT count(*) AS n FROM app.execution_grant WHERE run_id = %s", (run,))
             ).fetchone()
         )["n"] == 0
         async with as_role(mcp_exec, preset=BETA):
-            cur = await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal))
+            cur = await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", (handle, proposal))
             grant = dict(await cur.fetchone())
             assert (
                 grant["tenant_id"] == ALPHA
@@ -329,29 +332,37 @@ async def test_write_path_grant_sent_outcome_once_and_only_once(
             )
             assert grant["payload_sha256"] == digest and grant["detail"] is None
             cur = await mcp_exec.execute(
-                "SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal)
+                "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", (handle, proposal)
             )  # replay: the same grant
             assert dict(await cur.fetchone())["action_id"] == grant["action_id"]
             assert (await (await mcp_exec.execute("SELECT current_setting('app.tenant_id', true) AS t")).fetchone())[
                 "t"
             ] == str(BETA)
         assert (
-            await refused(mcp_exec, "SELECT * FROM app.grant_execution(%s, %s)", (handle, uuid4())) == "OC005"
+            await refused(mcp_exec, "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", (handle, uuid4()))
+            == "OC005"
         )  # OTHER_PROPOSAL
-        assert await refused(worker, "SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal)) == "42501"
+        assert (
+            await refused(worker, "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", (handle, proposal))
+            == "42501"
+        )
         row = await (
             await app_conn.execute("SELECT state, state_version FROM app.runs WHERE run_id = %s", (run,))
         ).fetchone()
         assert dict(row) == {"state": "EXECUTING", "state_version": 6}
         action = grant["action_id"]
         async with as_role(mcp_exec, preset=BETA):  # a hostile preset: ignored by mark_sent/lookup_action and restored
-            assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s, %s) AS r", (handle, action))).fetchone())[
-                "r"
-            ] == "sent"
-            assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s, %s) AS r", (handle, action))).fetchone())[
-                "r"
-            ] == "already_sent"
-            cur = await mcp_exec.execute("SELECT * FROM app.lookup_action(%s)", (handle,))
+            assert (
+                await (
+                    await mcp_exec.execute("SELECT app.mark_sent(%s, 'ops-worker', %s) AS r", (handle, action))
+                ).fetchone()
+            )["r"] == "sent"
+            assert (
+                await (
+                    await mcp_exec.execute("SELECT app.mark_sent(%s, 'ops-worker', %s) AS r", (handle, action))
+                ).fetchone()
+            )["r"] == "already_sent"
+            cur = await mcp_exec.execute("SELECT * FROM app.lookup_action(%s, 'ops-worker')", (handle,))
             assert dict(await cur.fetchone())["attempt_state"] == "SENT"
             assert (await (await mcp_exec.execute("SELECT current_setting('app.tenant_id', true) AS t")).fetchone())[
                 "t"
@@ -365,7 +376,7 @@ async def test_write_path_grant_sent_outcome_once_and_only_once(
         assert (
             await refused(
                 mcp_exec,
-                "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s)",
+                "SELECT app.record_outcome(%s, 'ops-worker', %s, 'SUCCEEDED', %s)",
                 (
                     handle,
                     action,
@@ -398,7 +409,8 @@ async def test_write_path_grant_sent_outcome_once_and_only_once(
             assert (
                 await (
                     await mcp_exec.execute(
-                        "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s) AS r", (handle, action, Jsonb(document))
+                        "SELECT app.record_outcome(%s, 'ops-worker', %s, 'SUCCEEDED', %s) AS r",
+                        (handle, action, Jsonb(document)),
                     )
                 ).fetchone()
             )["r"] == "SUCCEEDED"
@@ -409,7 +421,7 @@ async def test_write_path_grant_sent_outcome_once_and_only_once(
             assert (
                 await (
                     await mcp_exec.execute(
-                        "SELECT app.record_outcome(%s, %s, 'CONFLICT', %s) AS r",
+                        "SELECT app.record_outcome(%s, 'ops-worker', %s, 'CONFLICT', %s) AS r",
                         (
                             handle,
                             action,
@@ -418,10 +430,12 @@ async def test_write_path_grant_sent_outcome_once_and_only_once(
                     )
                 ).fetchone()
             )["r"] == "SUCCEEDED"
-            assert (await (await mcp_exec.execute("SELECT app.mark_sent(%s, %s) AS r", (handle, action))).fetchone())[
-                "r"
-            ] == "resolved"
-            cur = await mcp_exec.execute("SELECT * FROM app.lookup_action(%s)", (handle,))
+            assert (
+                await (
+                    await mcp_exec.execute("SELECT app.mark_sent(%s, 'ops-worker', %s) AS r", (handle, action))
+                ).fetchone()
+            )["r"] == "resolved"
+            cur = await mcp_exec.execute("SELECT * FROM app.lookup_action(%s, 'ops-worker')", (handle,))
             final = dict(await cur.fetchone())
             assert final["attempt_state"] == "RESOLVED" and final["detail"]["receipt"] == receipt
         row = await (
@@ -465,10 +479,12 @@ async def test_mark_unknown_is_worker_only_revokes_handles_and_enqueues_recover(
         async with as_role(mcp_exec):
             grant = dict(
                 await (
-                    await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal))
+                    await mcp_exec.execute(
+                        "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", (handle, proposal)
+                    )
                 ).fetchone()
             )
-            await mcp_exec.execute("SELECT app.mark_sent(%s, %s)", (handle, grant["action_id"]))
+            await mcp_exec.execute("SELECT app.mark_sent(%s, 'ops-worker', %s)", (handle, grant["action_id"]))
         assert await refused(mcp_exec, "SELECT * FROM app.mark_unknown(%s, 1)", (run,)) == "42501"  # SA:467: worker's
         async with as_role(worker, preset=BETA):
             cur = await worker.execute("SELECT * FROM app.mark_unknown(%s, 1)", (run,))
@@ -482,7 +498,7 @@ async def test_mark_unknown_is_worker_only_revokes_handles_and_enqueues_recover(
                 "t"
             ] == str(BETA)
         assert (
-            await refused(mcp_exec, "SELECT * FROM app.lookup_action(%s)", (handle,)) == "OC008"
+            await refused(mcp_exec, "SELECT * FROM app.lookup_action(%s, 'ops-worker')", (handle,)) == "OC008"
         )  # the handle was revoked
         jobs = await (
             await app_conn.execute("SELECT type, dedup_key FROM app.jobs WHERE run_id = %s ORDER BY created_at", (run,))
@@ -495,7 +511,7 @@ async def test_mark_unknown_is_worker_only_revokes_handles_and_enqueues_recover(
         # A late outcome still resolves the attempt and the run (SA:464): OUTCOME_UNKNOWN → SUCCEEDED.
         new_handle = await handle_for(app_conn, run, "recover")
         async with as_role(mcp_exec):
-            cur = await mcp_exec.execute("SELECT * FROM app.lookup_action(%s)", (new_handle,))
+            cur = await mcp_exec.execute("SELECT * FROM app.lookup_action(%s, 'ops-worker')", (new_handle,))
             assert dict(await cur.fetchone())["attempt_state"] == "SENT"
             document = {
                 "status": "SUCCEEDED",
@@ -512,7 +528,7 @@ async def test_mark_unknown_is_worker_only_revokes_handles_and_enqueues_recover(
             assert (
                 await (
                     await mcp_exec.execute(
-                        "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s) AS r",
+                        "SELECT app.record_outcome(%s, 'ops-worker', %s, 'SUCCEEDED', %s) AS r",
                         (new_handle, grant["action_id"], Jsonb(document)),
                     )
                 ).fetchone()
@@ -539,10 +555,12 @@ async def test_late_evidence_on_a_terminal_run_records_without_a_transition(
         async with as_role(mcp_exec):
             grant = dict(
                 await (
-                    await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal))
+                    await mcp_exec.execute(
+                        "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", (handle, proposal)
+                    )
                 ).fetchone()
             )
-            await mcp_exec.execute("SELECT app.mark_sent(%s, %s)", (handle, grant["action_id"]))
+            await mcp_exec.execute("SELECT app.mark_sent(%s, 'ops-worker', %s)", (handle, grant["action_id"]))
         await app_conn.execute("UPDATE app.runs SET state = 'FAILED', slot_held = false WHERE run_id = %s", (run,))
         document = {
             "status": "SUCCEEDED",
@@ -557,13 +575,13 @@ async def test_late_evidence_on_a_terminal_run_records_without_a_transition(
             "reason": None,
         }
         empty = {**document, "receipt": {}}  # a receipt without its three keys is no proof (AM-14)
-        record = "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s)"
+        record = "SELECT app.record_outcome(%s, 'ops-worker', %s, 'SUCCEEDED', %s)"
         assert await refused(mcp_exec, record, (handle, grant["action_id"], Jsonb(empty))) == "OC006"
         async with as_role(mcp_exec):
             assert (
                 await (
                     await mcp_exec.execute(
-                        "SELECT app.record_outcome(%s, %s, 'SUCCEEDED', %s) AS r",
+                        "SELECT app.record_outcome(%s, 'ops-worker', %s, 'SUCCEEDED', %s) AS r",
                         (handle, grant["action_id"], Jsonb(document)),
                     )
                 ).fetchone()
@@ -595,7 +613,9 @@ async def test_r106_the_definer_path_cannot_cross_tenants(app_conn: persistence.
         await approve(api, beta_proposal, beta_digest, reviewer=JORDAN, tenant=BETA)
         beta_handle = await handle_for(app_conn, beta_run, "execute")
         assert (
-            await refused(mcp_exec, "SELECT * FROM app.grant_execution(%s, %s)", (beta_handle, alpha_proposal))
+            await refused(
+                mcp_exec, "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", (beta_handle, alpha_proposal)
+            )
             == "OC005"
         )  # PROPOSAL_NOT_IN_RUN
         assert (
@@ -643,14 +663,16 @@ async def test_stale_mark_sent_and_early_outcome_are_refused(app_conn: persisten
             await approve(api, proposal, digest)
             handle = await handle_for(app_conn, run, "execute")
             async with as_role(mcp_exec):
-                cur = await mcp_exec.execute("SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal))
+                cur = await mcp_exec.execute(
+                    "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", (handle, proposal)
+                )
                 grants.append((dict(await cur.fetchone())["action_id"], digest, handle))
         (stale, stale_digest, stale_handle), (cancelled, cancelled_digest, cancelled_handle) = grants
         # The superuser moves the run as mark_unknown would (the fence untouched), leaving the attempt at INTENT.
         await app_conn.execute("UPDATE app.runs SET state = 'OUTCOME_UNKNOWN' WHERE run_id = %s", (runs[0],))
-        assert await refused(mcp_exec, "SELECT app.mark_sent(%s, %s)", (stale_handle, stale)) == "OC003"
+        assert await refused(mcp_exec, "SELECT app.mark_sent(%s, 'ops-worker', %s)", (stale_handle, stale)) == "OC003"
         early = {"status": "SUCCEEDED", "action_id": str(stale), "payload_sha256": stale_digest}
-        record = "SELECT app.record_outcome(%s, %s, %s, %s)"
+        record = "SELECT app.record_outcome(%s, 'ops-worker', %s, %s, %s)"
         # An outcome before SENT is a protocol violation whatever the fence says.
         assert await refused(mcp_exec, record, (stale_handle, stale, "SUCCEEDED", Jsonb(early))) == "OC003"
         # Cancelled before send: FAILED_NO_COMMIT from INTENT on an EXECUTING run is allowed.
@@ -706,7 +728,7 @@ async def test_grant_execution_refuses_a_stale_sync(app_conn: persistence.Conn, 
         )
         with pytest.raises(persistence.Refused) as refusal:
             async with mcp_exec.transaction():
-                await persistence.grant_execution(mcp_exec, handle=handle, proposal_id=proposal)
+                await persistence.grant_execution(mcp_exec, handle=handle, azp="ops-worker", proposal_id=proposal)
         assert refusal.value.code == "MEMBERSHIP_STALE"
         cur = await app_conn.execute("SELECT count(*) AS n FROM app.execution_grant WHERE run_id = %s", (run,))
         assert (await cur.fetchone())["n"] == 0  # nothing was granted
@@ -714,7 +736,7 @@ async def test_grant_execution_refuses_a_stale_sync(app_conn: persistence.Conn, 
             "UPDATE app.memberships SET synced_at = app.current_time() WHERE tenant_id = %s", (tenant,)
         )
         async with mcp_exec.transaction():
-            grant = await persistence.grant_execution(mcp_exec, handle=handle, proposal_id=proposal)
+            grant = await persistence.grant_execution(mcp_exec, handle=handle, azp="ops-worker", proposal_id=proposal)
         assert grant.run_id == run
     finally:
         await purge_run(app_conn, run)

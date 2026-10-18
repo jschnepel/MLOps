@@ -13,7 +13,7 @@ from ops_core import persistence as p
 from ops_core.canonical import sha256_hex
 from ops_core.jobs import JobType, Tool
 from ops_core.outcomes import EventRuleViolation
-from ops_core.states import IllegalTransition, RunState
+from ops_core.states import AttemptState, IllegalTransition, RunState
 
 
 def error(sqlstate: str, detail: str | None = None) -> psycopg.Error:
@@ -52,21 +52,21 @@ def test_refused_carries_the_detail_code_and_other_errors_pass_through() -> None
 
 
 @pytest.mark.parametrize(
-    ("job_type", "state", "tool", "ok"),
+    ("job_type", "state", "attempt", "tool", "ok"),
     [
-        (JobType.INVESTIGATE, RunState.RETRIEVING, Tool.SEARCH_PROCEDURES, True),
-        (JobType.INVESTIGATE, RunState.RETRIEVING, Tool.CREATE_INCIDENT, False),
-        (JobType.EXECUTE, RunState.APPROVED, Tool.CREATE_INCIDENT, True),
-        (JobType.EXECUTE, RunState.APPROVED, Tool.SEARCH_PROCEDURES, False),
-        (JobType.RECOVER, RunState.OUTCOME_UNKNOWN, Tool.ABORT_INCIDENT, True),
+        (JobType.INVESTIGATE, RunState.RETRIEVING, None, Tool.SEARCH_PROCEDURES, True),
+        (JobType.INVESTIGATE, RunState.RETRIEVING, None, Tool.CREATE_INCIDENT, False),
+        (JobType.EXECUTE, RunState.APPROVED, None, Tool.CREATE_INCIDENT, True),
+        (JobType.EXECUTE, RunState.APPROVED, None, Tool.SEARCH_PROCEDURES, False),
+        (JobType.RECOVER, RunState.OUTCOME_UNKNOWN, AttemptState.SENT, Tool.ABORT_INCIDENT, True),
     ],
 )
-def test_allowed_tool(job_type: JobType, state: RunState, tool: Tool, ok: bool) -> None:
+def test_allowed_tool(job_type: JobType, state: RunState, attempt: AttemptState | None, tool: Tool, ok: bool) -> None:
     if ok:
-        p.allowed_tool(job_type, state, tool)
+        p.allowed_tool(job_type, state, attempt, tool)
     else:
         with pytest.raises(p.HandleRejected):
-            p.allowed_tool(job_type, state, tool)
+            p.allowed_tool(job_type, state, attempt, tool)
 
 
 def test_handle_hash_is_the_canonical_sha256_of_the_utf8_bytes() -> None:

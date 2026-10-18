@@ -2,20 +2,17 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan J (T15) is executed on branch `plan-j` (on top of `plan-i`: `00c76e4..f0c8ca8` holds the debt list and
-the four tasks, the close-out is `8424ed7`, and the final-review fix wave follows it). T15 is DONE subject to the
-owner's decisions on errata 72 and 76 (R131's three-function set and the attempt-state allowlist are met only through
-them). Owner inputs: (1) the holdout seal (T03 step 9), then the live probe (T02); (2) merge the stacked PRs #1-#8 in
-order (plan-b -> main through plan-i -> plan-h, all open); the plan-j -> plan-i PR is opened after the Plan J
-final-review fix wave; (3) T44 step 10 (`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of
-Plans C, E, F, G, H, I and J (J: 72-81 below); (5) migrate the dev database to revision 0009 (`uv run python
-scripts/skeleton.py migrate`, dev profile: from 0005 it applies 0006, 0007, 0008 and 0009 together; 0009 re-creates
-`_resolve_handle` with the handle's job binding and changes no row; mcp-read and mcp-write now also refuse to start
-without it). Next is Plan K = T47
-(mcp-write, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T15, unblocked by T15 and T10;
-T17 is also unblocked).
+**Next task:** Plan K (T47) is executed on branch `plan-k` (on top of `plan-j`: `dd9f7b1..ea0bf54` holds the debt list and
+the five building tasks, the close-out is `a335e1b..6ec740f`, the final-review fix wave `b2ba317..5c96f0d`, the final review record `30f47d4`). T47 is DONE subject to the owner's decisions on errata
+72, 84 and 91 (R131's function sets and the attempt-state allowlist). Owner inputs: (1) the holdout seal (T03 step 9),
+then the live probe (T02); (2) merge the stacked PRs #1-#10 in order (plan-b -> main through plan-k -> plan-j; #10 is
+https://github.com/jschnepel/MLOps/pull/10); (3) T44 step 10 (step A applied 2026-10-16; the other-device LAN check and the firewall rules remain)
+(`docs/runbooks/ollama-network.md` step A); (4) decide the proposed errata of Plans C, E, F, G, H, I, J and K (K: 82-92
+below). The dev database is at revision 0010 (the owner migrated it on 2026-10-16). Next
+is Plan L = T17 (the governed corpus, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after
+T47, unblocked by T09).
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-j` (Plan J work on top of `plan-i`, on top of `plan-h`, on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#8 (plan-b -> main through plan-i -> plan-h) are open now. The plan-j -> plan-i PR is opened after the Plan J final-review fix wave. Merging them in order is the owner's call.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-k` (Plan K work on top of `plan-j`, on top of `plan-i`, on top of `plan-h`, on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#10 (plan-b -> main through plan-k -> plan-j) are open now; `plan-j` and `plan-k` are pushed (2026-10-16). Merging them in order is the owner's call.
 
 ## Done in the planning session (2026-10-06)
 
@@ -644,6 +641,120 @@ T17 is also unblocked).
   PR records say #1-#8. Two debt lines went to T47 (the Plan J debt list). T15's DONE depends on the owner's
   decisions on errata 72 and 76. Deferred minors stay as listed above (T1-b, T2-b, T3-e, T3-f, T4-e, T5-c; of T3-f, the R027 docstring was fixed).
 
+## Plan K executed (2026-10-16, branch `plan-k`)
+
+- T47 = `dd9f7b1..ea0bf54` (the debt list first, then the five building tasks; the close-out is the commit after `ea0bf54`). The
+  plan (`docs/superpowers/plans/2026-10-16-first-slice-k-mcp-write-recovery-tools.md`) holds the 27 rulings of the
+  controller's brief as implemented; the input is `docs/superpowers/research/2026-10-16-plan-k-inputs.md`. Evidence:
+  `tests/e2e/test_migration_0010_live.py` (the round trip and mcp-write's startup check against 0009, the dispatch
+  deadline, the abort request's reasons, a receipt recorded after an abort request, the token's `azp` at all five
+  write-path definers), `test_mcp_write_t47_live.py` (R030; R131's write half: the `mcp_exec` ACL, read handles at
+  mcp-write, incident-sim refusing mcp-read's token; the EXECUTING re-send over HTTP; `lose_after_commit`,
+  `delay_receipt`, `receipt_hash_mismatch` and `rate_limit` at the recovery tools; a cancel before send; a send past
+  the deadline; a recover redispatch outside EXECUTING), `test_mcp_write_process_live.py` (R025's write half and
+  R031's network half at mcp-write) and `reports/mcp-write/`; the unit half is in `tests/plan_k/`, and the
+  outcome-truth statement is `docs/threat-model.md`.
+- Gates: `check.py` 1152 passed / 180 skipped; `check.py --profile test` 1311 passed / 21 skipped; `verify_handoff.py`
+  exit 0 (STATUS.md, "Update — Plan K executed"). After the final-review fix wave: 1161 passed / 182 skipped and
+  1322 passed / 21 skipped (measured), `verify_handoff.py` exit 0.
+- Final whole-branch review: ready with fixes (0 Critical, 1 Important, 1 Minor), fixed in one wave after `6ec740f`.
+  The Important (I1): a re-queued execute job that met ABORT_REQUESTED (an abort requested, then mcp-write failed
+  before the record) was refused, so the worker closed the job and the run stayed EXECUTING with no job; the execute
+  row now admits ABORT_REQUESTED, the call answers UNKNOWN with no destination call, and the worker's `mark_unknown`
+  parks the run in OUTCOME_UNKNOWN with a recover job (erratum 84 amended). The Minor (M1): four sentences in the
+  threat model, mcp-write's README and PROJECT_HISTORY said more than the code. Nine deferred task minors were fixed
+  in the same wave (PROJECT_HISTORY §28); five stay open (below).
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan J's
+  eighty-one:
+  82. SA:465 (`request_abort`): `request_abort(raw_handle, client_azp, action_id)` takes no reason; under the runs lock
+      it chooses one from the latest attempt state, the cancel flag and the clock (`cancelled_before_send`: INTENT and
+      cancelled; `expired`: INTENT past the dispatch deadline; `deadline`: SENT and cancelled or past the deadline, so
+      a cancel after SENT aborts at once, SA:248), appends `ABORT_REQUESTED` carrying it and returns it; a repeat
+      returns the first reason and appends nothing, a resolved attempt answers `resolved`, and otherwise it refuses
+      `ABORT_NOT_DUE`. mcp-write cannot choose the reason itself: it sees neither the cancel flag nor `granted_at`.
+  83. SA:462-466 with erratum 48 (the caller's `azp`): `grant_execution(raw_handle, client_azp, proposal_id)`,
+      `lookup_action(raw_handle, client_azp)`, `mark_sent(raw_handle, client_azp, action_id)`,
+      `record_outcome(raw_handle, client_azp, action_id, outcome, document)` and `request_abort` compare the presented
+      token's `azp` with the handle's, as `resolve_invocation` does; the worker's client is named once
+      (`OPS_WORKLOAD_CLIENT_ID`, default `ops-worker`).
+  84. SA:338, SA:344-345 and SA:334 (the attempt-state allowlist): checked in Python with the job type's tools and run
+      states (errata 19 and 76); `execute`/`create_incident`: no attempt, INTENT, SENT or ABORT_REQUESTED (SA:344
+      gains SENT: the re-queued job re-sends the same action id after a lost reply, still not cancelled and before the
+      deadline, re-checked by `mark_sent`; and ABORT_REQUESTED: a job re-queued after mcp-write failed between the
+      abort request and its record is answered UNKNOWN with no destination call, so the worker's `mark_unknown` parks
+      the run in OUTCOME_UNKNOWN with a recover job instead of the refusal closing the job, final review I1);
+      `recover`/`create_incident`: INTENT only (SA:345 over SA:334; `mark_sent` also refuses a recover job's re-send
+      under the lock, `not_redispatchable`); `recover`/`get_incident_receipt`: SENT,
+      ABORT_REQUESTED or RESOLVED (a resolved attempt answers its stored outcome); `recover`/`abort_incident`: INTENT,
+      SENT or ABORT_REQUESTED. "Not cancelled, before the deadline" is `mark_sent`'s check under the runs lock, for a
+      first send and a re-send alike, not the allowlist's.
+  85. SA:229-231 and SA:463 (`mark_sent`): it answers `expired`, writing nothing, when `app.current_time()` is past
+      `granted_at` plus `app._dispatch_seconds()` (300 s, SA:295), compared after the runs lock and after the cancel
+      check, for a first send and a re-send of a SENT attempt alike; it answers `abort_requested`, writing nothing,
+      once the latest state is ABORT_REQUESTED (SA:334), and `not_redispatchable`, writing nothing, to a recover job's
+      re-send of a SENT attempt.
+  86. SA:464 (`record_outcome`): SUCCEEDED and CONFLICT are accepted when the latest state is SENT, or ABORT_REQUESTED
+      with the reason `deadline` (an abort after SENT answered by the receipt that already exists, SA:242); after an
+      abort of an attempt never sent they stay refused.
+  87. SA:280 with SA:241-242 (the FAILED reason after an abort): from INTENT `cancelled_before_send` or `expired`,
+      after SENT `aborted_no_commit`; `deadline` is a destination abort reason only. mcp-write reads which case it was
+      from the ABORTED tombstone's reason, the one `request_abort` chose.
+  88. SA:356 (`abort_incident`'s data): the outcome may also be UNKNOWN (the abort was not answered) or CONFLICT (it met
+      another hash's receipt), with neither a receipt nor a tombstone; `status=outcome` for every outcome but
+      SUCCEEDED (`schemas/tool-result.schema.json`, regenerated). The example tombstone's reason is the destination's
+      token, `cancelled_before_send`.
+  89. SA:354-355 (errors after a grant): an abort before it is due is the plain, retryable `ABORT_NOT_DUE`; a recover
+      job's redispatch of an unsent attempt whose run left EXECUTING is the plain `STALE_RUN` (redispatch from
+      OUTCOME_UNKNOWN is T22's); a recover job's re-send of a SENT attempt is the plain `NOT_REDISPATCHABLE`; a
+      recovery call naming another proposal is `GRANT_REFUSED` `OTHER_PROPOSAL` (SA:538); each comes before any
+      destination call and names no action.
+  90. BS:393 (discovery): "register it only for the reconciliation workload" is met by registering the recovery tools
+      on mcp-write alone, where only the worker's workload can authenticate, and refusing every handle but a recover
+      job's; the tools are listed to that caller.
+  91. R131 and SA:401 (`mcp_exec`'s functions): `mcp_exec` holds EXECUTE on `current_time` (erratum 15) as well as the
+      six; "cannot execute any read function" is shown as no EXECUTE on any other `app` function, since `asset_scope`
+      and `search_procedures_scoped` do not exist yet (T16, T17/T16; erratum 72's pattern).
+  92. SA:242 and BS:502 (the lookup backoff): each recovery tool call makes one destination request with a 10 s
+      timeout; the 1, 2, 4, 8 s backoff with jitter and the scheduled recover jobs are the worker's recover handler's
+      (T22).
+- Earlier debt lines that named T47 and what became of them: Plan J's six are done (mcp-write's verifier, the literal
+  `azp` in the definers, the attempt-state allowlist, mcp-write's halves of R025 and R131, the EXECUTING re-send over
+  HTTP, the worker's client named once); Plan E's "the abort client and the `abort_incident` tool -> T47/T22": the
+  tool and its client are done, the worker's call of it is T22's; Plan E's and Plan H's "the pre-SENT
+  `STALE_RUN`/`HASH_MISMATCH` envelopes": `STALE_RUN` is tested live (a recover redispatch outside EXECUTING) and the
+  `HASH_MISMATCH` mapping is removed as unreachable (a unit test shows that only `record_outcome` raises `OC007`,
+  after the destination answered); Plan H's "mcp-write handles the five new faults only through `classify`": four are
+  driven at the recovery tools live, the rest stay T22's; Plan I's "incident-sim's fault route accepts any
+  `FaultKind`" moves to T22 (the Plan K debt list).
+- Rulings made during execution:
+  - Task 2's two substantive evidence diffs under `reports/` (R131's "14 others" and an Ollama version line) were
+    reverted at once, so no later task could commit them by accident; this close-out's live run regenerates the
+    evidence.
+  - Task 4 had one fix round (`28d3f0b`, test-only): the R030 test also pins that refusals make no destination call and
+    that a lookup writes no destination key, the deadline test asserts the clock reset, and the evidence lines name
+    `mark_unknown` 42501 and state that around a rate-limited abort the counts are unchanged and only the tombstone is
+    added. The clock is read through `app_conn` because the test harness cannot SELECT `test_clock` (AM-20.2).
+  - Task 4's fix round was re-reviewed by the controller reading its 25-line, test-only diff, not by a second review
+    task: every item was addressed and the change touched no production code. If that was too light, the final
+    review is where it shows.
+  - The live gate counts of Tasks 2 to 5 were measured, not computed: 1251, 1300, 1310 and 1311 passed, each with 21
+    skipped.
+  - `reports/mcp-read/t15-mcp-read.txt` is committed with its new R131 line (14 other functions refused, not 13:
+    `request_abort` is a new definer `mcp_read` must not execute); every other rewritten `reports/` file under
+    `bootstrap`, `auth` and `mcp-read` is reverted.
+  - `docs/runbooks/mcp-write.md` says never to downgrade past 0010 while an `ABORT_REQUESTED` row exists (0009's
+    `mark_sent` would not honour it); `docs/threat-model.md` says the worker has no client code and no credential for
+    incident-sim (network isolation is T30's) and that only `sent` or `already_sent` from `mark_sent` lead to the
+    incident POST (`cancelled` and `expired` lead to the abort POST; final review M1).
+- **Open items for later:** minors the final review left deferred (the final-review fix wave took the other nine):
+  no end-to-end environment test of `production_app`'s `azp` (each construction point is tested); `OTHER_PROPOSAL`
+  surfaces as `GRANT_REFUSED` text (cosmetic; erratum 89 and the runbook say so); the T47 live module's setup before
+  `try` can leak runs on a Keycloak hiccup (the counts are diffed; Plan J's precedent); the inherited `free_port` race
+  and the start loop without a timeout; the process test's evidence path is relative to the working directory (the
+  gates run from the root). Not deferred but owned elsewhere: the network half of T47 DoD 3 and per-service tests
+  (T30), the worker's recover handler and everything after it (T22), the deadline as a setting (T29), signed receipts
+  (v1.1).
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -855,6 +966,33 @@ Allowed shortcuts in T15, each with its owning task:
   `allowed_azp` and the write-path definers' literal `'ops-worker'` still name it; settings should name the worker
   client once → T47.
 
+## Plan K debt list (T47; committed before coding) [R6-B7]
+
+Allowed shortcuts in T47, each with its owning task:
+- the worker's side of recovery: a `recover` job handler that calls `get_incident_receipt` and `abort_incident`, the
+  1, 2, 4, 8 s backoff with jitter between lookups, scheduled recover jobs, the worker's own recover job after a
+  `cancelled`/`expired` answer, the redispatch of an unsent attempt from OUTCOME_UNKNOWN (attempt row 2,
+  `action.redispatched`), the escalation deadline (`escalate_run`) and the operator's `resolve_escalation` → T22 (Plan
+  K rulings 1, 6, 18 and 23); until then the worker finishes every `recover` job unhandled, the live tests stage
+  recover jobs and handles directly, and a recover job's `create_incident` on an unsent attempt of a run that left
+  EXECUTING is refused `STALE_RUN` by `mark_sent`'s EXECUTING guard;
+- late destination evidence once the attempt is RESOLVED (an abort on an ABANDONED_UNVERIFIED run recorded as
+  `action.late_evidence`) → T22 (ruling 7);
+- a SUCCEEDED answer to an abort after a cancel carries no "cancellation arrived after dispatch" note (SA:248;
+  `ActionOutcome` has no field for it), and a `create_incident` that meets an abort request in flight answers UNKNOWN
+  (the abort's own record decides) → T22;
+- the dispatch deadline is a constant in SQL (`app._dispatch_seconds()`, 300 s), not a setting → T29 (ruling 17);
+- the destination's faults reach the recovery tools only through the send's consequences: `rate_limit` and
+  `receipt_hash_mismatch` act on `POST /internal/incidents` alone and the abort route has no fault hook, so a 429 at
+  the lookup or at the abort is proved with a scripted reply; incident-sim's fault route still accepts any
+  `FaultKind` (`outbox_sink_fail` can be armed there and is never consumed) → T22 (ruling 19);
+- receipts and tombstones signed by incident-sim with a key only `app_definer` can read (T47 review note 2's option)
+  → v1.1, no task (`docs/threat-model.md`, ruling 22);
+- the network half of T47 DoD 3 and R131 (mcp-read cannot reach incident-sim at all) → T30 (ruling 15);
+- mcp-write has no `tests/` directory and no Dockerfile of its own (AM-01) → T30;
+- the dev database stays at revision 0005 until the owner migrates it (0006 to 0010 pending); until then the API, the
+  sweeper, the worker, mcp-read and mcp-write refuse to start on it, mcp-write now also without 0010 → owner input.
+
 ## Environment (observed)
 
 | Item | Observed |
@@ -909,16 +1047,28 @@ mcp-read also refuses to start (it checks that `_resolve_handle` carries 0009's 
 check since the final-review fix wave). 0009 re-creates
 `app._resolve_handle` only; every handle in the dev database is long expired, and it changes no row.
 
+**Update (2026-10-16):** Plan K adds revision 0010. The dev `ops` database stays at 0005 until the owner runs
+`uv run python scripts/skeleton.py migrate` (dev profile), which applies 0006 to 0010 together; until then mcp-write
+also refuses to start without 0010 (it checks `app.request_abort(text, text, uuid)`). 0010 drops and re-creates
+`grant_execution`, `lookup_action`, `mark_sent` and `record_outcome` with the token's `azp` as a second argument,
+creates `request_abort` and the helper `_dispatch_seconds()`, and changes no row.
+
+**Update (2026-10-16, later):** the owner ran `uv run python scripts/skeleton.py migrate` (dev profile: `app at
+app@head, incident at head`), so the dev `ops` database is at `0010_write_path`. `skeleton.py up` then brought all six
+processes to ready (mcp-write's startup check needs 0010) and `down` stopped them.
+
 ## Open owner inputs
 
-- Migrate the dev database to revision 0009 (`uv run python scripts/skeleton.py migrate`, dev profile; it applies
-  0006, 0007, 0008 and 0009 together), then decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H
-  executed"), 60-71 (see "Plan I executed") and 72-81 (see "Plan J executed").
-- Merge the stacked PRs #1-#8 in order (plan-b -> main through plan-i -> plan-h, all open; #1-#5 opened 2026-10-09 and green on CI; the first merge also exercises the push-to-main trigger). The plan-j -> plan-i PR is opened after the Plan J final-review fix wave.
+- Decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed"), 60-71 (see
+  "Plan I executed"), 72-81 (see "Plan J executed") and 82-92 (see "Plan K executed").
+- R025 and R031 have every half evidenced (mcp-read by T15, mcp-write by T47, the import half by T04) but keep
+  `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`, because no open task owns them: flipping their status is the owner's call
+  (or T15's re-close).
+- Merge the stacked PRs #1-#10 in order (plan-b -> main through plan-k -> plan-j, all open; #1-#5 opened 2026-10-09 and green on CI; the first merge also exercises the push-to-main trigger).
 - Decide on the nine proposed contract errata (see "Plan C executed").
 - T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
 - T06 is closed (public repo, PRs green). The first CI runs were red on ruff EXE001 (a shebang on a non-executable file, a rule ruff skips on Windows) with every test green; fixed by a file-mode commit on each branch.
-- T44 step 10: run `docs/runbooks/ollama-network.md` step A (`OLLAMA_HOST=127.0.0.1:11434` at User scope, restart Ollama), verify with the three checks, fill the attestation table, and decide whether to adopt the proposed AM-31 errata (loopback bind primary, firewall fallback).
+- T44 step 10: step A was applied on 2026-10-16 (see the runbook's attestation row: listener on 127.0.0.1 only, the container test passes, port closed on this host's own non-loopback addresses). Still the owner's: the LAN check from another device, disabling the allow-any `ollama.exe` firewall rules (elevated), and whether to adopt the proposed AM-31 errata (loopback bind primary, firewall fallback).
 
 ## Exact next step
 
@@ -946,6 +1096,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; push and PRs; the Ollama runbook step A; the dev database migration to 0009; the proposed errata of Plans C-J, up to 81) and write Plan K for T47 (mcp-write, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T15; T17 is also unblocked).
+Then wait for the owner inputs above (holdout seal, then live probe; merging the PRs; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-K, up to 92) and write Plan L for T17 (the governed corpus and lexical baseline, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T47, unblocked by T09).
 
 Do not store secrets or private reasoning in this file.

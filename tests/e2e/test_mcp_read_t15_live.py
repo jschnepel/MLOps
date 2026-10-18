@@ -278,7 +278,10 @@ async def test_r131_mcp_read_can_execute_no_write_path_function(
     others = set(privileges.DEFINER_FUNCTIONS) - {"current_time", "resolve_invocation"}
     assert others <= {row["name"] for row in rows}  # every other definer exists, so the line above is not vacuous
     mcp_read = await role_conn(Role.MCP_READ)
-    assert await refused(mcp_read, "SELECT * FROM app.grant_execution(%s, %s)", ("not-a-handle", uuid4())) == "42501"
+    assert (
+        await refused(mcp_read, "SELECT * FROM app.grant_execution(%s, 'ops-worker', %s)", ("not-a-handle", uuid4()))
+        == "42501"
+    )
     lines.append(f"R131 read half: mcp_read EXECUTE = current_time, resolve_invocation; {len(others)} others refused")
 
 

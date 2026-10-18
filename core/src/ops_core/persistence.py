@@ -26,11 +26,11 @@ from psycopg.rows import DictRow, dict_row
 from psycopg.types.json import Jsonb
 
 from ops_core.canonical import sha256_hex
-from ops_core.jobs import JOB_RULES, JobType, Server, Tool, dedup_key
+from ops_core.jobs import ATTEMPT_STATES, JOB_RULES, JobType, Server, Tool, dedup_key
 from ops_core.lease import LOCK_FOR_SHARE, LOCK_FOR_UPDATE, LOCK_FOR_UPDATE_NOWAIT, RELEASED, Busy, Lease, LeaseLost
 from ops_core.outcomes import ActionOutcome, EventRuleViolation, EventSource, EventType, ToolOutcome
 from ops_core.settings import Postgres, Profile
-from ops_core.states import IllegalTransition, Intent, Reason, RunState
+from ops_core.states import AttemptState, IllegalTransition, Intent, Reason, RunState
 
 Conn = psycopg.AsyncConnection[DictRow]
 log = logging.getLogger("ops_core.persistence")
@@ -181,6 +181,10 @@ async def assert_relation(conn: Conn, name: str) -> None:
 # revision that re-creates `_resolve_handle` must keep this text or change it here in the same commit; a unit test
 # checks the newest body carries it.
 HANDLE_BINDING: Final = ("app._resolve_handle(text, text, text)", "j.run_id = v_ctx.run_id AND j.done_at IS NULL")
+# Revision 0010 (T47): the write-path definers take the token's azp and `request_abort` exists; mcp-write calls them
+# with the new signatures, so it refuses to start without them (Plan K ruling 25). The same rule as above: a later
+# revision that re-creates `request_abort` keeps this text or changes it here in the same commit.
+WRITE_PATH: Final = ("app.request_abort(text, text, uuid)", "ABORT_NOT_DUE")
 
 
 async def assert_function_text(conn: Conn, signature: str, marker: str) -> None:
@@ -392,17 +396,24 @@ class Invocation:
     attempt_state: str | None
 
 
-def allowed_tool(job_type: JobType, run_state: RunState, tool: Tool) -> None:
-    """The AM-15 allowlist stays in Python (Plan E ruling 21, erratum 19): the tool must be one of the job type's and
-    the run must be in one of the job type's states (Plan J ruling 6); the function has already bound server, azp,
+def allowed_tool(job_type: JobType, run_state: RunState, attempt_state: AttemptState | None, tool: Tool) -> None:
+    """The AM-15 allowlist stays in Python (Plan E ruling 21, erratum 19): the tool must be one of the job type's, the
+    run must be in one of the job type's states (Plan J ruling 6), and a write tool's latest attempt state must be one
+    `jobs.ATTEMPT_STATES` admits for the job type (Plan K ruling 4); the function has already bound server, azp,
     expiry, fence and the handle's job. A run that moved on (a read handle once the run awaits approval, an execute
-    handle once the run succeeded) is refused like any other handle."""
+    handle once the run succeeded, a recover handle asking to redispatch a sent attempt) is refused like any other
+    handle."""
     rule = JOB_RULES[job_type]
     if tool not in rule.allowed_tools:
         log.info("tool %s is not allowed for job type %s", tool.value, job_type.value)  # never the handle
         raise HandleRejected("invocation handle rejected")  # the one fixed message (SA:357)
     if run_state not in rule.run_states:
         log.info("job type %s does not run in state %s", job_type.value, run_state.value)  # never the handle
+        raise HandleRejected("invocation handle rejected")
+    attempts = ATTEMPT_STATES.get((job_type, tool))
+    if attempts is not None and attempt_state not in attempts:
+        shown = "none" if attempt_state is None else attempt_state.value
+        log.info("tool %s is not allowed for job type %s with attempt %s", tool.value, job_type.value, shown)
         raise HandleRejected("invocation handle rejected")
 
 
@@ -418,7 +429,8 @@ async def resolve_invocation(conn: Conn, *, handle: str, azp: str, tool: Tool) -
         raise HandleRejected("invocation handle rejected")
     job_type = JobType(str(row["job_type"]))
     run_state = RunState(str(row["run_state"]))
-    allowed_tool(job_type, run_state, tool)
+    attempt_state = None if row["attempt_state"] is None else AttemptState(str(row["attempt_state"]))
+    allowed_tool(job_type, run_state, attempt_state, tool)
     return Invocation(
         UUID(str(row["run_id"])),
         UUID(str(row["job_id"])),
@@ -426,7 +438,7 @@ async def resolve_invocation(conn: Conn, *, handle: str, azp: str, tool: Tool) -
         UUID(str(row["tenant_id"])),
         UUID(str(row["conversation_id"])),
         run_state,
-        None if row["attempt_state"] is None else str(row["attempt_state"]),
+        None if attempt_state is None else attempt_state.value,
     )
 
 
@@ -460,40 +472,59 @@ def _grant(row: DictRow) -> Grant:
     )
 
 
-async def grant_execution(conn: Conn, *, handle: str, proposal_id: UUID) -> Grant:
-    """The §13 gate inside the function; a replay returns the grant the run already has (SA:462)."""
-    row = await _call(conn, "SELECT * FROM app.grant_execution(%s, %s)", (handle, proposal_id))
+async def grant_execution(conn: Conn, *, handle: str, azp: str, proposal_id: UUID) -> Grant:
+    """The §13 gate inside the function; a replay returns the grant the run already has (SA:462).
+
+    `azp` is the presented token's. This definer and the four after it (`lookup_action`, `mark_sent`, `request_abort`,
+    `record_outcome`) pass it to `_resolve_handle`, which compares it with the one the handle was minted for, as
+    `resolve_invocation` always did (revision 0010, Plan K ruling 12).
+    """
+    row = await _call(conn, "SELECT * FROM app.grant_execution(%s, %s, %s)", (handle, azp, proposal_id))
     if row is None:
         raise PersistenceError("grant_execution returned nothing")
     return _grant(row)
 
 
-async def lookup_action(conn: Conn, *, handle: str) -> Grant:
+async def lookup_action(conn: Conn, *, handle: str, azp: str) -> Grant:
     """The run's grant for a same-key redispatch or a final read-back (SA:466); NotFound before any grant."""
-    row = await _call(conn, "SELECT * FROM app.lookup_action(%s)", (handle,))
+    row = await _call(conn, "SELECT * FROM app.lookup_action(%s, %s)", (handle, azp))
     if row is None:
         raise NotFound("no grant for this run")
     return _grant(row)
 
 
-async def mark_sent(conn: Conn, *, handle: str, action_id: UUID) -> str:
-    """`sent`, `already_sent`, `resolved` or `cancelled` (SA:463); committed by the caller before any I/O. The handle
-    binds the call to the run's lease fence (Plan H ruling 5): a moved fence or a lapsed lease is HandleRejected."""
-    row = await _call(conn, "SELECT app.mark_sent(%s, %s) AS outcome", (handle, action_id))
+async def mark_sent(conn: Conn, *, handle: str, azp: str, action_id: UUID) -> str:
+    """`sent`, `already_sent`, `resolved`, `cancelled`, `expired` (the dispatch deadline passed), `abort_requested` or
+    `not_redispatchable` (a recover job and a SENT attempt) (SA:463, revision 0010); committed by the caller before any
+    I/O, and only `sent` and `already_sent` permit a POST.
+    The handle binds the call to the run's lease fence (Plan H ruling 5): a moved fence or a lapsed lease is
+    HandleRejected."""
+    row = await _call(conn, "SELECT app.mark_sent(%s, %s, %s) AS outcome", (handle, azp, action_id))
     if row is None:
         raise PersistenceError("mark_sent returned nothing")  # a missing row must never read as "go ahead"
     return str(row["outcome"])
 
 
-async def record_outcome(conn: Conn, *, handle: str, action_id: UUID, outcome: ActionOutcome) -> ToolOutcome:
+async def request_abort(conn: Conn, *, handle: str, azp: str, action_id: UUID) -> str:
+    """The abort reason the function chose and recorded as `ABORT_REQUESTED` (`cancelled_before_send`, `expired` or
+    `deadline`; a repeat returns the first reason), or `resolved` when the outcome already stands (SA:465, Plan K
+    ruling 3). Refused `ABORT_NOT_DUE` while the run is not cancelled and the dispatch deadline has not passed. The
+    caller commits it before POSTing the abort."""
+    row = await _call(conn, "SELECT app.request_abort(%s, %s, %s) AS reason", (handle, azp, action_id))
+    if row is None or row["reason"] is None:  # never POST an abort whose reason reads "None"
+        raise PersistenceError("request_abort returned no reason")
+    return str(row["reason"])
+
+
+async def record_outcome(conn: Conn, *, handle: str, azp: str, action_id: UUID, outcome: ActionOutcome) -> ToolOutcome:
     """RESOLVED plus the implied transition and the destination-sourced event (SA:464); returns what stands. The handle
     binds the record to the run's lease fence (ruling 5); after SENT its refusal is the caller's UNKNOWN (ruling 6)."""
     if outcome.status is ToolOutcome.UNKNOWN:
         raise ValueError("UNKNOWN is recorded by the worker through mark_unknown, never as an outcome")
     row = await _call(
         conn,
-        "SELECT app.record_outcome(%s, %s, %s, %s) AS outcome",
-        (handle, action_id, outcome.status.value, Jsonb(outcome.model_dump(mode="json"))),
+        "SELECT app.record_outcome(%s, %s, %s, %s, %s) AS outcome",
+        (handle, azp, action_id, outcome.status.value, Jsonb(outcome.model_dump(mode="json"))),
     )
     if row is None:
         raise PersistenceError("record_outcome returned nothing")

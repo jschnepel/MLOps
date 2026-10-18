@@ -250,9 +250,9 @@ class GrantThenDownMcp(ScriptedMcp):
         self.calls.append((url, tool, arguments))
         async with self.write.transaction():
             grant = await persistence.grant_execution(
-                self.write, handle=handle, proposal_id=UUID(arguments["proposal_id"])
+                self.write, handle=handle, azp="ops-worker", proposal_id=UUID(arguments["proposal_id"])
             )
-            await persistence.mark_sent(self.write, handle=handle, action_id=grant.action_id)
+            await persistence.mark_sent(self.write, handle=handle, azp="ops-worker", action_id=grant.action_id)
         raise McpCallFailed("create_incident: connection lost after SENT")
 
 
@@ -266,9 +266,9 @@ class UnknownMcp(ScriptedMcp):
         self.calls.append((url, tool, arguments))
         async with self.write.transaction():
             grant = await persistence.grant_execution(
-                self.write, handle=handle, proposal_id=UUID(arguments["proposal_id"])
+                self.write, handle=handle, azp="ops-worker", proposal_id=UUID(arguments["proposal_id"])
             )
-            await persistence.mark_sent(self.write, handle=handle, action_id=grant.action_id)
+            await persistence.mark_sent(self.write, handle=handle, azp="ops-worker", action_id=grant.action_id)
         return {
             "status": "outcome",
             "data": {
