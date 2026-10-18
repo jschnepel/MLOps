@@ -28,8 +28,9 @@ worker's `HttpMcpCaller` lists the tools in the same session, refuses an unexpec
 validates every read result (size, error flag, contract, status).
 
 **Tech Stack:** as Plan L, plus `jsonschema` 4.26 (already locked as a dev dependency) as a runtime dependency of
-`ops-core`, and FastAPI and uvicorn (already locked for incident-sim) for `ops-asset-sim`; `uv lock --offline`
-records both without a version change. PostgreSQL 17 with pgvector, psycopg 3.3, Alembic, `mcp` 2.3.0, Starlette,
+`ops-core` with `rfc3339-validator` 0.1.4 (likewise locked; jsonschema's `date-time` check needs it), and FastAPI and
+uvicorn (already locked for incident-sim) for `ops-asset-sim`; `uv lock --offline` records all of them without a
+version change. PostgreSQL 17 with pgvector, psycopg 3.3, Alembic, `mcp` 2.3.0, Starlette,
 FastAPI, `httpx2`, Python 3.13, pytest and pytest-asyncio.
 
 **Spec:** `SPEC_AMENDMENTS.md` (OPS-BUILD-1.3.6) over `BUILD_SPEC.md`: AM-15 (SA:327-358: the read row SA:333,
@@ -75,7 +76,10 @@ departs.
    used. Nothing larger can reach a handler.
 6. **The worker's R029 checks apply to read calls only (ruling 13's "read handle").** `create_incident` at
    mcp-write keeps T47's check: mcp-write advertises its pydantic-generated schemas, not the committed files, so a
-   discovery check there would refuse every send. Debt line → T20 (`TODO(T20)` at the line).
+   discovery check there would refuse every send. Debt line → T20, not T21: SA:207 (AM-12's graph) puts
+   `execute_approved_proposal (mcp-write)` among the nodes T20 builds ("Nodes per AM-12"), and T20's R129 enumerates
+   every route, `execute` included, so T20 is the first task to drive mcp-write from the graph (`TODO(T20)` at the
+   line; today's `handlers.execute` already calls `create_incident` outside any graph).
 7. **`ops-view-users`'s refusal is 401 or 403 (ruling 6).** Its token's audience is the realm's choice (no mapper
    names one), so the live DoD-2 test asserts it is refused (401 or 403, no data) where the other three foreign
    tokens must be exactly 403.
@@ -85,15 +89,40 @@ departs.
    checks all four at start.
 9. **`new_run` gains `requester`, `asset_id` and `interval` keywords, and random test tenants get a requester
    membership (`conftest.add_requester`).** The definers' membership re-check (ruling 7) refuses a run whose
-   requester has no active requester row in its tenant; ALEX has one only in alpha. `test_migration_0011_live.py`'s
-   random tenants get ALEX as requester, and the retrieval baseline's beta run is requested by beta's requester,
-   riley. Every other live test that calls a read definer uses alpha and ALEX already (checked: FS §3.9 and every
-   `new_run(` call site).
+   requester has no active requester row in its tenant; ALEX has one only in alpha. The random tenants of
+   `test_migration_0011_live.py` and `test_ingest_live.py` get ALEX as requester, and the retrieval baseline's beta
+   run is requested by beta's requester, riley. The sweep behind this (every live call of
+   `persistence.search_procedures`, `persistence.asset_scope`, the two definers in SQL, or an mcp-read tool, with the
+   tenant it runs in) is printed in Task 1 Step 5.
 10. **Tests that run mcp-read's search need asset-sim (ruling 12's fail-closed rule).** A new function-scoped
     `asset_sim` fixture serves asset-sim's production app in the test's loop and exports `OPS_ASSET_SIM_URL`;
     `test_mcp_read_t15_live.py`, `test_mcp_read_live.py` and `test_mcp_read_process_live.py` use it from Task 4 on.
     `test_mcp_read_live.py`'s "no asset type reaches other assets" control moves to a run whose asset asset-sim does
     not know (Z99), because an A17 run now searches pump and any-asset documents whatever the caller names.
+
+## Round 1 changes
+
+The static review's 11 findings (`.superpowers/planm/round1-static.md`), all fixed, per the controller's rulings:
+
+- **C1** `tests/e2e/test_ingest_live.py`'s random alpha tenant gets ALEX as requester (`add_requester`, Task 1 Step 5),
+  and Task 1 Step 5 now prints the full sweep of live read-definer and mcp-read calls with each tenant's membership.
+- **C2** the slow-answer case of `test_asset_sim_failures_reach_the_caller_as_their_envelopes` gets its own client
+  with a 30-second read timeout (httpx2's 5-second default would end it before mcp-read's 10-second answer); every
+  other call keeps `test_mcp_read_t15_live.call` unchanged (Task 3).
+- **I1** the debt list gains the transport-level 256 KiB bound → T30 (departure 5), and the T16 note and R029's note
+  say it.
+- **I2** `rfc3339-validator` becomes a runtime dependency of `ops-core` (one more `uv lock --offline` line), so
+  `format: date-time` is checked outside the dev group; `test_date_time_is_checked_at_run_time` (Task 3).
+- **M1** the write-call discovery debt stays with T20, cited: SA:207's `execute_approved_proposal (mcp-write)` and T20's
+  R129 (departure 6, the debt list).
+- **M2** the close-out script updates R025's note to the three read tools and the asset read.
+- **M3** `test_no_fault_route_exists_outside_the_test_profile` runs for every non-test profile (dev, demo), arming
+  every kind asset-sim consumes; the test-profile half is its own test (Task 2: 4 → 6 app tests).
+- **M4** `docs/runbooks/walking-skeleton.md`'s third "six processes" becomes seven (Task 6).
+- **M5** the `asset_sim` fixture passes `log_config=None` (Task 2).
+- **M6** R029's evidence status is `RECORDED_LOCALLY`: its refusals are proven in-process; the note names the one live
+  case (the real server passes) (Task 7).
+- **M7** Task 7 keeps and commits the R105 evidence the final live run regenerates.
 
 ## Global Constraints
 
@@ -156,7 +185,8 @@ additions below win where the two differ:
 - **Counts.** Today (`cd6a5b3`) the dev gate is `1270 passed, 191 skipped` and the live gate `1440 passed, 21 skipped`
   (170 live-gated tests). Task 1 Step 1a records both before any change; if either differs, every expected count
   below shifts by the same difference. Every dev count below was measured by applying this plan task by task to a
-  scratch copy of `cd6a5b3` (`git archive`) with the repository's locked environment, the scratch sources first on
+  scratch copy of `cd6a5b3` (`git archive`; round 1 re-applied every step to a fresh copy of `c5ccbc2`'s tree) with the
+  repository's locked environment, the scratch sources first on
   `PYTHONPATH` (13 tests that need a git checkout, `test_verify_handoff.py` and `test_text_hygiene.py`, fail in a
   scratch copy and pass in the repository; the counts below are the repository's). Every live count is arithmetic (the
   dev count plus the live-gated tests: the dev run's skips minus the 21 that skip in both gates): no live test, DDL
@@ -223,7 +253,8 @@ ruling; the departures above are the only places where it does something else.
     called tool (canonical JSON), and validates the result (size, error flag, `schemas/tool-result.schema.json`,
     `status == "ok"`); mcp-read advertises exactly the committed files and a unit test proves the files and the
     argument models agree on every bound; jsonschema becomes a runtime dependency of `ops-core`
-    (`ops_core.tool_contracts`); failure stays FAILED "retrieval failed" (Tasks 3 and 5; departures 5 and 6).
+    (`ops_core.tool_contracts`), with `rfc3339-validator` so `format: date-time` is checked at run time; failure
+    stays FAILED "retrieval failed" (Tasks 3 and 5; departures 5 and 6).
 14. **`UNSUPPORTED_MODE` order and corpus version** — the handle first, then the mode (kept, Task 4); the fallback
     `corpus_version` is closed by T17 (recorded in T16's review note, Task 7).
 15. **Units per call** — asset tools: unit 1 `resolve_invocation` with the allowlist, unit 2 `asset_scope`, both
@@ -305,7 +336,7 @@ Task 7 Step 2's "Plan M executed" block; in short:
   `tests/plan_k/test_mcp_write_startup.py`, `test_verifier_t47.py`, `tests/plan_l/test_mcp_read_corpus.py` (whole file
   in Task 4), and the live `test_migrations_and_persistence.py`, `test_migration_0011_live.py`,
   `test_retrieval_baseline_live.py`, `test_mcp_read_t15_live.py`, `test_mcp_write_t47_live.py`,
-  `test_migration_0008_live.py`, `test_mcp_read_live.py`, `test_mcp_read_process_live.py`.
+  `test_migration_0008_live.py`, `test_ingest_live.py`, `test_mcp_read_live.py`, `test_mcp_read_process_live.py`.
 - Documentation: `docs/runbooks/asset-sim.md` (new), `docs/runbooks/mcp-read.md`, `dev-topology.md`,
   `walking-skeleton.md`, `docs/retrieval.md` (Task 6); Task 7: `handoff/*`, `SESSION_STATE.md`, `STATUS.md`,
   `docs/ARCHITECTURE.md`, `docs/PROJECT_HISTORY.md`.
@@ -317,25 +348,25 @@ Task 7 Step 2's "Plan M executed" block; in short:
   transitions module +1 (parametrised), `test_locking.py` +1 (parametrised); live `test_migration_0012_live.py` 5. Dev
   `1282 passed, 196 skipped`; live `1457 passed, 21 skipped` (arithmetic).
 - **Task 2:** asset-sim: data rules, app, process, settings, the skeleton's seventh process. Tests:
-  `test_asset_sim_data.py` 14, `test_asset_sim_app.py` 4; live `test_asset_sim_live.py` 3. Dev `1300 passed, 199
-  skipped`; live `1478 passed, 21 skipped` (arithmetic).
+  `test_asset_sim_data.py` 14, `test_asset_sim_app.py` 6; live `test_asset_sim_live.py` 3. Dev `1302 passed, 199
+  skipped`; live `1480 passed, 21 skipped` (arithmetic).
 - **Task 3:** `ops_core.tool_contracts`; mcp-read's asset tools, its asset-sim client and the committed input schemas.
-  Tests: `test_tool_contracts.py` 5, `test_mcp_read_assets.py` 19; live `test_mcp_read_t16_live.py` 4. Dev `1324
-  passed, 203 skipped`; live `1506 passed, 21 skipped` (arithmetic).
+  Tests: `test_tool_contracts.py` 6, `test_mcp_read_assets.py` 19; live `test_mcp_read_t16_live.py` 4. Dev `1327
+  passed, 203 skipped`; live `1509 passed, 21 skipped` (arithmetic).
 - **Task 4:** the search on the run's asset type; `TODO(T18)`; asset-sim in every live test that searches. Tests:
   `test_mcp_read_search.py` 4, `tests/plan_l/test_mcp_read_corpus.py` +1 (parametrised); live
-  `test_mcp_read_t16_live.py` +1. Dev `1329 passed, 204 skipped`; live `1512 passed, 21 skipped` (arithmetic).
+  `test_mcp_read_t16_live.py` +1. Dev `1332 passed, 204 skipped`; live `1515 passed, 21 skipped` (arithmetic).
 - **Task 5:** R029 in the worker's client. Tests: `test_worker_r029.py` 12; live `test_mcp_read_t16_live.py` +1. Dev
-  `1341 passed, 205 skipped`; live `1525 passed, 21 skipped` (arithmetic).
+  `1344 passed, 205 skipped`; live `1528 passed, 21 skipped` (arithmetic).
 - **Task 6:** the independent-process client reads an asset; the runbooks, READMEs and `docs/retrieval.md`. No new
-  test. Dev `1341 passed, 205 skipped`; live `1525 passed, 21 skipped` (arithmetic).
+  test. Dev `1344 passed, 205 skipped`; live `1528 passed, 21 skipped` (arithmetic).
 - **Task 7:** handoff records, acceptance rows, errata 103-106, status, history, architecture, final gates. No tests.
 
-The arithmetic, once: dev passed 1270 + 12 (Task 1: 10 + 1 + 1) = 1282, + 18 (Task 2: 14 + 4) = 1300, + 24 (Task 3:
-5 + 19) = 1324, + 5 (Task 4: 4 + 1) = 1329, + 12 (Task 5) = 1341, + 0 = 1341; dev skipped 191, + 5 = 196, + 3 = 199,
+The arithmetic, once: dev passed 1270 + 12 (Task 1: 10 + 1 + 1) = 1282, + 20 (Task 2: 14 + 6) = 1302, + 25 (Task 3:
+6 + 19) = 1327, + 5 (Task 4: 4 + 1) = 1332, + 12 (Task 5) = 1344, + 0 = 1344; dev skipped 191, + 5 = 196, + 3 = 199,
 + 4 = 203, + 1 = 204, + 1 = 205, + 0 = 205. The live gate's passed count is the dev count plus the live-gated tests
 (the dev skips minus the 21 that skip in both gates: 170 today; 175, 178, 182, 183, 184, 184 after Tasks 1-6), so
-1457, 1478, 1506, 1512, 1525, 1525, always with 21 skipped. The dev numbers were measured on the scratch copy (see
+1457, 1480, 1509, 1515, 1528, 1528, always with 21 skipped. The dev numbers were measured on the scratch copy (see
 "Counts"); the live ones are not measured.
 
 ---
@@ -355,7 +386,8 @@ The arithmetic, once: dev passed 1270 + 12 (Task 1: 10 + 1 + 1) = 1282, + 18 (Ta
   (`Procedures`), `tests/e2e/conftest.py` (`SEEDED_ALPHA`, `add_requester`), `tests/e2e/test_migrations_and_persistence.py`
   (`new_run`), `tests/e2e/test_migration_0011_live.py` (`handle_for`, the round trip), `tests/e2e/test_retrieval_baseline_live.py`
   (the requesters), `tests/e2e/test_mcp_read_t15_live.py` (R131's read half), `tests/e2e/test_mcp_write_t47_live.py`
-  (R131's write half), `tests/e2e/test_migration_0008_live.py` (the entry set)
+  (R131's write half), `tests/e2e/test_migration_0008_live.py` (the entry set), `tests/e2e/test_ingest_live.py` (a
+  requester for its random alpha tenant)
 
 **Requirements:** SA:460 (erratum 104), SA:461 (errata 93, 106), SA:446, R028's definer half (ruling 7, erratum 105),
 R131's read half complete (ruling 18), the Plan M debt list (SA:698).
@@ -415,7 +447,10 @@ Allowed shortcuts in T16, each with its owning task:
 - recording the status observation (`observed_at`, `revision`) where the grant can check its 5-minute freshness
   (R116, BS:476) → T21 (ruling 16);
 - the worker's write calls (`create_incident` at mcp-write) keep T47's result check: no tool discovery and no
-  result-schema check (mcp-write advertises its generated schemas, not the committed files) → T20;
+  result-schema check (mcp-write advertises its generated schemas, not the committed files) → T20, which builds
+  AM-12's `execute_approved_proposal (mcp-write)` node (SA:207) and every route of R129;
+- the worker's 256 KiB result bound is applied after the MCP SDK has read and parsed the body (no hook stops it
+  earlier); a transport-level bound → T30, with the container network work (departure 5);
 - a run's asset is not tied to its tenant at admission (an alpha run may name beta's B22; asset-sim's own tenant filter
   answers NOT_FOUND, and the search then has no run type) → T21 (the asset guard; its review note names alpha-for-B22);
 - a handle that dies between `asset_scope` and the asset-sim call still yields one read of the run's own asset (no
@@ -1587,6 +1622,66 @@ with:
     assert {"search_procedures_scoped", "asset_scope"} <= entry  # mcp-read's read functions (T17, T16)
 ```
 
+Edit 11 (`tests/e2e/test_ingest_live.py`, the imports), replace:
+
+```python
+from tests.e2e.conftest import lease_for, purge_corpus, purge_run, purge_tenant
+```
+
+with:
+
+```python
+from tests.e2e.conftest import add_requester, lease_for, purge_corpus, purge_run, purge_tenant
+```
+
+then replace:
+
+```python
+from tests.e2e.test_migrations_and_persistence import new_run
+```
+
+with:
+
+```python
+from tests.e2e.test_migrations_and_persistence import ALEX, new_run
+```
+
+Edit 12 (`tests/e2e/test_ingest_live.py`, `test_r032_repeat_change_revoke_and_supersede`: its run is alex's in a fresh
+tenant, and its `search` calls `search_procedures_scoped`), replace:
+
+```python
+    tenants = {"alpha": alpha, "beta": beta}
+```
+
+with:
+
+```python
+    # The run below is alex's in the fresh alpha: the definer re-checks the run's requester since revision 0012
+    # (T16), and purge_tenant removes the membership with the tenant.
+    await add_requester(app_conn, alpha, ALEX)
+    tenants = {"alpha": alpha, "beta": beta}
+```
+
+The sweep (round 1, C1): every live call of `persistence.search_procedures`, `persistence.asset_scope`,
+`app.search_procedures_scoped`, `app.asset_scope` or an mcp-read tool, with the tenant its run lives in and whether
+the run's requester holds an active requester row there (line numbers of the tree at `cd6a5b3`; the new T16 files
+are listed by name):
+
+| Call site | Tenant of the run | Requester's membership |
+|---|---|---|
+| `test_ingest_live.py:69` (`search`, called at :118, :133, :161, :181) | random alpha made at :77-79 | no → yes by Edit 12 |
+| `test_migration_0011_live.py:122`, :221, :225, :261, :269 (through `handle_for(…, None)` at :142, :193-195, :232, :283) | random | no → yes by Edit 5 |
+| `test_migration_0011_live.py:338-340` (five roles refused with "not-a-handle": the ACL refuses before the body runs) | none | not reached |
+| `test_retrieval_baseline_live.py:84` | seeded alpha and beta | yes: alex and, by Edit 7, riley |
+| `test_mcp_read_t15_live.py:183-202`, :236-260, :366-369 (runs of :174-175, :215-216, :355; `approved_run` is alpha) | seeded alpha | yes (alex) |
+| `test_mcp_read_live.py:62-73` (run of :44) | seeded alpha | yes (alex) |
+| `test_mcp_read_process_live.py:116`, the R026 call (runs of :103, :159) | seeded alpha | yes (alex) |
+| `test_r105_walking_skeleton.py` (the worker's search for alex's admitted run) | seeded alpha | yes (alex, admitted by the API) |
+| `test_migration_0012_live.py`, `test_mcp_read_t16_live.py` (new) | seeded alpha, or `handle_for(…, None)` | yes, except the LEE run, refused on purpose |
+
+Not affected: `test_worker_live.py`'s `ScriptedMcp` (it calls `resolve_invocation` only), `test_r105_walking_skeleton.py:72`
+(`mcp_call` reaches mcp-write only), and every test that calls neither read definer.
+
 Create `tests/e2e/test_migration_0012_live.py`:
 
 ```python
@@ -1833,7 +1928,8 @@ git add migrations/app/versions/0012_asset_scope.py core/src/ops_core/privileges
   tests/plan_e/test_transitions_table.py tests/plan_k/test_mcp_write_startup.py tests/plan_d/test_mcp_read.py \
   tests/plan_l/test_mcp_read_corpus.py tests/e2e/conftest.py tests/e2e/test_migrations_and_persistence.py \
   tests/e2e/test_migration_0011_live.py tests/e2e/test_retrieval_baseline_live.py tests/e2e/test_mcp_read_t15_live.py \
-  tests/e2e/test_mcp_write_t47_live.py tests/e2e/test_migration_0008_live.py tests/e2e/test_migration_0012_live.py
+  tests/e2e/test_mcp_write_t47_live.py tests/e2e/test_migration_0008_live.py tests/e2e/test_migration_0012_live.py \
+  tests/e2e/test_ingest_live.py
 git commit -m "feat(db): revision 0012 - asset_scope, the requester re-check and the search's instant (T16)"
 ```
 
@@ -2075,6 +2171,7 @@ tokens, is tests/e2e/test_asset_sim_live.py.
 from typing import Any
 from uuid import UUID
 
+import pytest
 from ops_asset_sim import app as asset_app
 from ops_asset_sim import data
 from ops_core.settings import Keycloak, Profile
@@ -2174,10 +2271,17 @@ def test_the_routes_answer_the_data_rules() -> None:
             assert answer.status_code == 400, bad
 
 
-def test_fault_routes_exist_only_under_the_test_profile() -> None:
+@pytest.mark.parametrize("profile", [p for p in Profile if p is not Profile.TEST])
+def test_no_fault_route_exists_outside_the_test_profile(profile: Profile) -> None:
+    """R098 for every profile but test: no kind can be armed, and no read ever answers a fault."""
+    with client(profile) as http:
+        for kind in asset_app.FAULTS:
+            assert http.post(f"/internal/faults/{kind.value}", headers=headers(), json={"count": 1}).status_code == 404
+        assert http.get("/assets/A17/status", headers=headers()).json()["state"] == "warning"  # never `unavailable`
+
+
+def test_fault_routes_answer_under_the_test_profile() -> None:
     arm = {"count": 1}
-    with client(Profile.DEV) as http:
-        assert http.post("/internal/faults/drop_before_commit", headers=headers(), json=arm).status_code == 404
     with client(Profile.TEST) as http:
         assert http.post("/internal/faults/asset_unavailable", headers=headers(), json=arm).status_code == 200
         assert http.get("/assets/A17/status", headers=headers()).json()["state"] == "unavailable"
@@ -3032,7 +3136,8 @@ def test_seven_processes_on_distinct_loopback_ports() -> None:
 Run: `uv run ruff format asset-sim core scripts tests && uv run ruff check --fix asset-sim core scripts tests`, then
 `uv run python -m pytest tests/plan_m tests/plan_d/test_settings.py tests/plan_e/test_skeleton_cli.py
 tests/plan_h/test_faults_t13.py tests/plan_j/test_verifier_t15.py tests/plan_k/test_verifier_t47.py -q`
-Expected: every test passes (`test_asset_sim_data.py` 14, `test_asset_sim_app.py` 4).
+Expected: every test passes (`test_asset_sim_data.py` 14, `test_asset_sim_app.py` 6: the non-test-profile case runs
+for dev and demo).
 
 - [ ] **Step 5: The live half**
 
@@ -3096,7 +3201,9 @@ async def asset_sim(env: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> Asy
     from ops_asset_sim.app import production_app
 
     port = free_port()
-    server = uvicorn.Server(uvicorn.Config(production_app(), host="127.0.0.1", port=port, log_level="warning"))
+    # log_config=None, as test_mcp_read_t15_live's `serving`: uvicorn must not reconfigure the process's loggers.
+    config = uvicorn.Config(production_app(), host="127.0.0.1", port=port, log_level="warning", log_config=None)
+    server = uvicorn.Server(config)
 
     async def guarded() -> None:
         # uvicorn answers a failed lifespan (keys it cannot load) with sys.exit; a SystemExit escaping a task would
@@ -3244,9 +3351,9 @@ async def test_the_fault_hooks_answer_under_the_test_profile(
 ```
 
 Run: `uv run ruff format tests/e2e && uv run ruff check --fix tests/e2e`, then `PYTHONUTF8=1 uv run python
-scripts/check.py` → `CHECK: GREEN`, pytest `1300 passed, 199 skipped`; `uv run python -I scripts/verify_handoff.py
+scripts/check.py` → `CHECK: GREEN`, pytest `1302 passed, 199 skipped`; `uv run python -I scripts/verify_handoff.py
 --reference-code --manifest --contracts` → exit 0; `uv run python scripts/skeleton.py status` → seven processes, all
-down; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → `CHECK: GREEN`, pytest `1478 passed, 21 skipped`
+down; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → `CHECK: GREEN`, pytest `1480 passed, 21 skipped`
 (arithmetic), then the `git checkout -- reports/...` of the Global Constraints (keep `reports/asset-sim/`). The R105
 module now starts seven processes; its mcp-read reaches the skeleton's asset-sim at the default URL.
 
@@ -3298,10 +3405,12 @@ Create `tests/plan_m/test_tool_contracts.py`:
 Catches: an input schema that is not the committed file, or a cached one a caller can change for everyone after it;
 a comparison that is fooled by key order or accepts a changed bound or a float where the file has an integer; a
 result validator that checks only the envelope (BS:399: nested data too), accepts another tool's envelope, or puts a
-value from the document into its message.
+value from the document into its message; and an instant that is not RFC 3339 accepted because jsonschema's
+`date-time` check is silently off without rfc3339-validator (a runtime dependency of ops-core since T16).
 """
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -3350,6 +3459,17 @@ def test_check_result_validates_the_nested_data_of_the_named_tool() -> None:
     outcome = {**status, "status": "outcome"}  # a read tool answers ok or error only (AM-80)
     with pytest.raises(tool_contracts.ContractViolation):
         tool_contracts.check_result(Tool.GET_ASSET_STATUS, outcome)
+
+
+def test_date_time_is_checked_at_run_time() -> None:
+    """The patterns alone would accept a day that does not exist; the format check refuses it, and the package that
+    performs it is a runtime dependency of ops-core, not only of the dev group."""
+    core = tomllib.loads(Path("core/pyproject.toml").read_text(encoding="utf-8"))
+    assert any(d.startswith("rfc3339-validator") for d in core["project"]["dependencies"])
+    status = json.loads((EXAMPLES / "tool-get_asset_status-valid.json").read_text(encoding="utf-8"))
+    for impossible in ("2026-02-30T00:00:00Z", "2026-10-06T25:00:00Z"):
+        with pytest.raises(tool_contracts.ContractViolation, match="at observed_at"):
+            tool_contracts.check_result(Tool.GET_ASSET_STATUS, {**status, "observed_at": impossible})
 ```
 
 Create `tests/plan_m/test_mcp_read_assets.py`:
@@ -3685,10 +3805,11 @@ dependencies = ["pydantic>=2.13,<3", "psycopg[binary]>=3.3,<4", "sqlalchemy>=2.1
 with:
 
 ```toml
-dependencies = ["pydantic>=2.13,<3", "psycopg[binary]>=3.3,<4", "sqlalchemy>=2.1,<3", "alembic>=1.20,<2", "pyjwt[crypto]>=2.10,<3", "httpx2>=2.13,<3", "jsonschema>=4.26,<5"]
+dependencies = ["pydantic>=2.13,<3", "psycopg[binary]>=3.3,<4", "sqlalchemy>=2.1,<3", "alembic>=1.20,<2", "pyjwt[crypto]>=2.10,<3", "httpx2>=2.13,<3", "jsonschema>=4.26,<5", "rfc3339-validator>=0.1.4,<1"]
 ```
 
-(the line was over 120 characters before; TOML is not counted by `$COUNT`'s Python files, and splitting the array is
+(`rfc3339-validator` is what jsonschema's `date-time` format check imports; without it the check is silently off, and
+until now only the dev group installed it (round 1, I2). The line was over 120 characters before; TOML is not counted by `$COUNT`'s Python files, and splitting the array is
 a reformat this task does not need).
 
 Edit 2 (`pyproject.toml`, after the authlib override), replace:
@@ -3715,8 +3836,9 @@ module = ["jsonschema", "jsonschema.*"]
 ignore_missing_imports = true
 ```
 
-Run: `uv lock --offline` → `Resolved 67 packages`; `git diff --stat uv.lock` → 2 lines added: `ops-core`'s
-`dependencies` and `requires-dist` gain `jsonschema` (already locked at 4.26.0 for the dev group).
+Run: `uv lock --offline` → `Resolved 67 packages`; `git diff --stat uv.lock` → 4 lines added: `ops-core`'s
+`dependencies` gain `{ name = "jsonschema" }` and `{ name = "rfc3339-validator" }`, and its `requires-dist` the two
+specifiers (both already locked, at 4.26.0 and 0.1.4, for the dev group; no version moves).
 
 Create `core/src/ops_core/tool_contracts.py`:
 
@@ -3795,7 +3917,7 @@ def check_result(tool: Tool, document: object) -> dict[str, Any]:
     return document
 ```
 
-Run: `uv run python -m pytest tests/plan_m/test_tool_contracts.py -q` → `5 passed`.
+Run: `uv run python -m pytest tests/plan_m/test_tool_contracts.py -q` → `6 passed`.
 
 - [ ] **Step 3: mcp-read's asset-sim client and the two asset tools**
 
@@ -4737,7 +4859,7 @@ with:
 
 Run: `uv run ruff format core mcp-read tests && uv run ruff check --fix core mcp-read tests`, then
 `uv run python -m pytest tests/plan_m tests/plan_d tests/plan_j tests/plan_k tests/plan_l -q`
-Expected: every test passes (`test_tool_contracts.py` 5, `test_mcp_read_assets.py` 19, of which 12 are the
+Expected: every test passes (`test_tool_contracts.py` 6, `test_mcp_read_assets.py` 19, of which 12 are the
 parametrised failure mappings).
 
 - [ ] **Step 4: The live asset tools**
@@ -4767,8 +4889,11 @@ from uuid import UUID
 
 import httpx2
 import pytest
+from mcp import Client
+from mcp.client.streamable_http import streamable_http_client
 from ops_core import persistence, settings, tool_contracts
 from ops_core.jobs import Tool
+from ops_core.mcp_protocol import PROTOCOL_VERSION
 from ops_core.settings import Role
 from ops_core.tokens import WorkloadTokenSource
 
@@ -4806,9 +4931,22 @@ async def handle_for(app_conn: persistence.Conn, role_conn: RoleConn, run: UUID,
     return await read_handle(worker, run, await investigate_job(app_conn, run), lease)
 
 
-async def tool(url: str, token: str, handle: str, name: Tool, arguments: dict[str, Any]) -> dict[str, Any]:
-    """One call's envelope, checked against the committed contract whatever it says."""
-    result = await call(url, token, handle, tool=name.value, arguments=arguments)
+async def tool(
+    url: str, token: str, handle: str, name: Tool, arguments: dict[str, Any], *, read_timeout: float | None = None
+) -> dict[str, Any]:
+    """One call's envelope, checked against the committed contract whatever it says. Every call goes through
+    test_mcp_read_t15_live's `call`, whose client keeps httpx2's default 5-second timeout, except one that is slow on
+    purpose: mcp-read answers it only after its own 10 seconds toward asset-sim, so that call gets its own client
+    with `read_timeout` above both (the default would end it first, as a transport error, not the envelope)."""
+    if read_timeout is None:
+        result = await call(url, token, handle, tool=name.value, arguments=arguments)
+    else:
+        headers = {"Authorization": f"Bearer {token}", "X-Ops-Invocation": handle}
+        async with (
+            httpx2.AsyncClient(headers=headers, timeout=httpx2.Timeout(10.0, read=read_timeout)) as http,
+            Client(streamable_http_client(url, http_client=http), mode=PROTOCOL_VERSION) as client,
+        ):
+            result = await client.call_tool(name.value, arguments)
     assert not result.is_error and isinstance(result.structured_content, dict)
     return tool_contracts.check_result(name, result.structured_content)
 
@@ -4934,14 +5072,16 @@ async def test_asset_sim_failures_reach_the_caller_as_their_envelopes(
         async with serving() as url:
             handle = await handle_for(app_conn, role_conn, run, "t16-faults")
             seen = {}
-            for kind, body in (
-                ("asset_unavailable", {}),
-                ("drop_before_commit", {}),
-                ("malformed_response", {}),
-                ("timeout_before_accept", {"seconds": 11}),  # mcp-read gives up after 10 s (ruling 15)
+            for kind, body, read_timeout in (
+                ("asset_unavailable", {}, None),
+                ("drop_before_commit", {}, None),
+                ("malformed_response", {}, None),
+                # asset-sim holds 11 s; mcp-read gives up after 10 s (ruling 15); this client waits up to 30 s.
+                ("timeout_before_accept", {"seconds": 11}, 30.0),
             ):
                 await arm(kind, **body)
-                doc = await tool(url, token, handle, Tool.GET_ASSET_STATUS, {"asset_id": "A17"})
+                status = {"asset_id": "A17"}
+                doc = await tool(url, token, handle, Tool.GET_ASSET_STATUS, status, read_timeout=read_timeout)
                 seen[kind] = (doc["data"] or {}).get("state") or (doc["error"]["code"], doc["error"]["retryable"])
         assert seen == {
             "asset_unavailable": "unavailable",  # the contract's third state, an ok answer
@@ -4955,12 +5095,12 @@ async def test_asset_sim_failures_reach_the_caller_as_their_envelopes(
 ```
 
 Run: `uv run ruff format tests/e2e && uv run ruff check --fix tests/e2e`, then `PYTHONUTF8=1 uv run python
-scripts/check.py` → `CHECK: GREEN`, pytest `1324 passed, 203 skipped`; `uv run python -I scripts/verify_handoff.py
+scripts/check.py` → `CHECK: GREEN`, pytest `1327 passed, 203 skipped`; `uv run python -I scripts/verify_handoff.py
 --reference-code --manifest --contracts` → exit 0; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` →
-`CHECK: GREEN`, pytest `1506 passed, 21 skipped` (arithmetic), then the `git checkout -- reports/...` of the Global
+`CHECK: GREEN`, pytest `1509 passed, 21 skipped` (arithmetic), then the `git checkout -- reports/...` of the Global
 Constraints (keep `reports/mcp-read/t16-read-tools.txt` and `reports/asset-sim/`). The slow-answer case of
-`test_asset_sim_failures_reach_the_caller_as_their_envelopes` takes about 11 seconds by design (mcp-read's 10-second
-timeout).
+`test_asset_sim_failures_reach_the_caller_as_their_envelopes` takes about 11 seconds by design: asset-sim holds 11 s,
+mcp-read gives up at 10 s, and that one call's client waits up to 30 s (round 1, C2).
 
 - [ ] **Step 5: Commit**
 
@@ -5659,9 +5799,9 @@ async def test_asset_sim_failures_reach_the_caller_as_their_envelopes(
 ```
 
 Run: `uv run ruff format tests && uv run ruff check --fix tests`, then `PYTHONUTF8=1 uv run python scripts/check.py`
-→ `CHECK: GREEN`, pytest `1329 passed, 204 skipped`; `uv run python -I scripts/verify_handoff.py --reference-code
+→ `CHECK: GREEN`, pytest `1332 passed, 204 skipped`; `uv run python -I scripts/verify_handoff.py --reference-code
 --manifest --contracts` → exit 0; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → `CHECK: GREEN`,
-pytest `1512 passed, 21 skipped` (arithmetic), then the `git checkout -- reports/...` of the Global Constraints.
+pytest `1515 passed, 21 skipped` (arithmetic), then the `git checkout -- reports/...` of the Global Constraints.
 The R105 module's run asks about A17, a pump: its search is filtered to pump and any-asset documents; if its
 proposal has no evidence, read Review Focus 3 before touching the test.
 
@@ -6094,9 +6234,9 @@ async def test_r029_the_workers_client_accepts_the_real_server_and_every_real_re
 ```
 
 Run: `uv run ruff format tests/e2e && uv run ruff check --fix tests/e2e`, then `PYTHONUTF8=1 uv run python
-scripts/check.py` → `CHECK: GREEN`, pytest `1341 passed, 205 skipped`; `uv run python -I scripts/verify_handoff.py
+scripts/check.py` → `CHECK: GREEN`, pytest `1344 passed, 205 skipped`; `uv run python -I scripts/verify_handoff.py
 --reference-code --manifest --contracts` → exit 0; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` →
-`CHECK: GREEN`, pytest `1525 passed, 21 skipped` (arithmetic), then the `git checkout -- reports/...` of the Global
+`CHECK: GREEN`, pytest `1528 passed, 21 skipped` (arithmetic), then the `git checkout -- reports/...` of the Global
 Constraints. The R105 module's worker now lists mcp-read's tools before its search and validates the answer: a
 failure there is R029 refusing the real server, which Review Focus 4 explains how to read.
 
@@ -6455,7 +6595,19 @@ with:
    processes
 ```
 
-Edit 11 (`docs/retrieval.md`, the settings table), replace:
+Edit 11 (`docs/runbooks/walking-skeleton.md`, the mass-offboarding override), replace:
+
+```markdown
+`OPS_SYNC_ALLOW_MASS_DEACTIVATION=1 uv run python scripts/skeleton.py up`, which restarts all six processes, and the
+```
+
+with:
+
+```markdown
+`OPS_SYNC_ALLOW_MASS_DEACTIVATION=1 uv run python scripts/skeleton.py up`, which restarts all seven processes, and the
+```
+
+Edit 12 (`docs/retrieval.md`, the settings table), replace:
 
 ```markdown
 | Results | `limit` 1 to 8 (the worker asks for 3; the measurement uses 5); excerpt the first 500 characters |
@@ -6472,9 +6624,9 @@ with:
 Run: `uv run ruff format tests/e2e && uv run ruff check tests/e2e`, `uv run python "$COUNT" mcp-read/README.md
 asset-sim/README.md docs/runbooks/mcp-read.md` → no output (Markdown table rows in `asset-sim.md`, `dev-topology.md`
 and `docs/retrieval.md` stay one row per line, as their existing rows do), then `PYTHONUTF8=1 uv run python
-scripts/check.py` → `CHECK: GREEN`, pytest `1341 passed, 205 skipped`; `uv run python -I scripts/verify_handoff.py
+scripts/check.py` → `CHECK: GREEN`, pytest `1344 passed, 205 skipped`; `uv run python -I scripts/verify_handoff.py
 --reference-code --manifest --contracts` → exit 0; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` →
-`CHECK: GREEN`, pytest `1525 passed, 21 skipped` (arithmetic), then the `git checkout -- reports/...` of the Global
+`CHECK: GREEN`, pytest `1528 passed, 21 skipped` (arithmetic), then the `git checkout -- reports/...` of the Global
 Constraints.
 
 - [ ] **Step 3: Commit**
@@ -6489,7 +6641,7 @@ git commit -m "docs: asset-sim's runbook, mcp-read's three tools, an independent
 
 **Files:**
 - Modify: `handoff/tasks.json` (T16 → `DONE` with two review notes; T18 gains a review note),
-  `handoff/acceptance-matrix.json` (R028, R029, R131), `handoff/BUILD_BACKLOG.md` (T16 checked; one note each under
+  `handoff/acceptance-matrix.json` (R025's note, R028, R029, R131), `handoff/BUILD_BACKLOG.md` (T16 checked; one note each under
   T16 and T18), `SESSION_STATE.md` (the "Next task" lines, a "Plan M executed" section, the dev database state, the
   owner inputs), `STATUS.md` (an update section), `docs/ARCHITECTURE.md` (R131's read-half row, a new section 10),
   `docs/PROJECT_HISTORY.md` (section 30; the last section becomes 31), this plan (its checkboxes); the evidence under
@@ -6547,9 +6699,10 @@ note = (
     "half, docs/runbooks/asset-sim.md for the rules. Deferred: vector mode and the search_query embedding -> T18 "
     "(erratum 103); the worker's asset reads, the evidence bundle, SA:377 and the write calls' discovery -> T20; "
     "the status observation for the grant's freshness and a run's asset tied to its tenant -> T21; packaging, "
-    "Dockerfile, tests/ and the network test -> T30. Errata 103-106 are proposed in SESSION_STATE.md; the dev "
-    "database waits for the owner's migrate to 0012. R028 and R029 are met; R131's read half is complete subject "
-    "to the owner's decisions on errata 96 and 104."
+    "Dockerfile, tests/, the network test and a transport-level 256 KiB result bound (the worker's applies after "
+    "the SDK has parsed) -> T30. Errata 103-106 are proposed in SESSION_STATE.md; the dev database waits for the "
+    "owner's migrate to 0012. R028 and R029 are met (R029's refusals proven in-process, its positive case live); "
+    "R131's read half is complete subject to the owner's decisions on errata 96 and 104."
 )
 ruling_14 = (
     "Plan M ruled on debts b and c: vector mode (b) moved to T18 with its embeddings (erratum 103; T18's review note); "
@@ -6603,20 +6756,35 @@ rows = {
             "tests/plan_m/test_mcp_read_assets.py",
             "tests/plan_m/test_tool_contracts.py",
         ],
-        "Plan M (T16): the worker's client lists the read tools in the same session before it calls one and refuses "
-        "(McpCallFailed, the run FAILED as retrieval failed) a tool added or removed or an altered input schema of the "
-        "called tool, compared with the committed file as canonical JSON, without calling it; it refuses an "
-        "error-flagged, malformed (nested data checked against schemas/tool-result.schema.json), another tool's, "
-        "non-object, non-ok or larger-than-256-KiB result; live, the real server passes and all three reads "
-        "validate. mcp-read itself validates asset-sim's answers as whole tool results and against the run's scope "
-        "before returning them (UPSTREAM_INVALID). The write calls keep T47's check (T20).",
+        "Plan M (T16): in-process (tests/plan_m/test_worker_r029.py: the worker's real client against mcp-read's real "
+        "app over an ASGI transport, and its checks on scripted results), the client lists the read tools in the same "
+        "session before it calls one and refuses (McpCallFailed, the run FAILED as retrieval failed) a tool added or "
+        "removed or an altered input schema of the called tool, compared with the committed file as canonical JSON, "
+        "without calling it; it refuses an error-flagged, malformed (nested data checked against "
+        "schemas/tool-result.schema.json, date-time formats included), another tool's, non-object, non-ok or "
+        "larger-than-256-KiB result (the bound applies after the SDK has parsed the body; a transport-level bound is "
+        "T30's). Live, only the positive case: tests/e2e/test_mcp_read_t16_live.py's "
+        "test_r029_the_workers_client_accepts_the_real_server_and_every_real_read, where the real server passes and "
+        "all three reads validate. mcp-read itself validates asset-sim's answers as whole tool results and against the "
+        "run's scope before returning them (UPSTREAM_INVALID). The write calls keep T47's check (T20).",
     ),
 }
+# R028's evidence is live; R029's refusals are in-process only, so it takes the weaker true status (round 1, M6).
+statuses = {"R028": "RECORDED_LOCALLY_LIVE", "R029": "RECORDED_LOCALLY"}
 for row in matrix["requirements"]:
     if row["id"] in rows:
         row["evidence_paths"], row["note"] = rows[row["id"]]
         row["implementation_status"] = "IMPLEMENTED_LOCALLY_VERIFIED"
-        row["evidence_status"] = "RECORDED_LOCALLY_LIVE"
+        row["evidence_status"] = statuses[row["id"]]
+    elif row["id"] == "R025":
+        old_read = "lists exactly search_procedures and calls it with a valid handle over the network"
+        new_read = (
+            "lists exactly the three read tools (get_asset_status, get_recent_alerts, search_procedures; since Plan M, "
+            "T16) and calls search_procedures and get_asset_status, the latter answered through asset-sim, with a valid "
+            "handle over the network"
+        )
+        assert row["note"].count(old_read) == 1
+        row["note"] = row["note"].replace(old_read, new_read)
     elif row["id"] == "R131":
         old = (
             "mcp_read can EXECUTE current_time (erratum 15), resolve_invocation and, since Plan L (T17), "
@@ -6668,7 +6836,7 @@ print(span)
 ```
 
 Expected: it prints the span (for example `1a2b3c4..5d6e7f8`). `git diff --stat handoff` shows three files changed;
-`git diff handoff/acceptance-matrix.json` shows three rows: R028, R029 and R131.
+`git diff handoff/acceptance-matrix.json` shows four rows: R025, R028, R029 and R131.
 
 - [ ] **Step 2: Project state**
 
@@ -6815,11 +6983,12 @@ with:
 - `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `<dev>`.
   `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `<live>`.
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
-- **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`, `RECORDED_LOCALLY_LIVE`): R028 (alpha never reads B22, by mcp-read's
-  scope check and by asset-sim's own tenant filter; a requester who lost the membership gets nothing from any of the
-  three tools; the search keeps to the run's asset type and never returns a revoked procedure) and R029 (the
-  worker refuses an altered tool list or schema before calling, and an error-flagged, malformed or oversized result;
-  the run fails as "retrieval failed"). R131's read half is complete (`asset_scope` joins; subject to errata 96 and
+- **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`): R028, `RECORDED_LOCALLY_LIVE` (alpha never reads B22, by
+  mcp-read's scope check and by asset-sim's own tenant filter; a requester who lost the membership gets nothing from
+  any of the three tools; the search keeps to the run's asset type and never returns a revoked procedure), and R029,
+  `RECORDED_LOCALLY` (in-process, the worker refuses an altered tool list or schema before calling, and an
+  error-flagged, malformed or oversized result, and the run fails as "retrieval failed"; live, the real server
+  passes). R131's read half is complete (`asset_scope` joins; subject to errata 96 and
   104).
 - Also built: revision 0012; asset-sim, the seventh process (port 8091); `ops_core.tool_contracts`; mcp-read's asset
   tools and its asset-sim client; the search's instant and whole-section excerpt; `docs/runbooks/asset-sim.md`.
@@ -6870,7 +7039,7 @@ it is the committed contract's.
 | Requirement | What its test shows |
 |---|---|
 | R028 | Alpha never reads B22 (refused before asset-sim, or asset-sim's own 404); a requester who lost the membership gets nothing from any of the three tools; the search keeps to the run's asset type and never returns a revoked procedure |
-| R029 | An added or removed tool, an altered schema, an error-flagged, malformed or oversized result each fail the worker's call closed; the real server passes |
+| R029 | An added or removed tool, an altered schema, an error-flagged, malformed or oversized result each fail the worker's call closed (in-process); the real server passes (live) |
 
 ---
 
@@ -6917,10 +7086,12 @@ With the dev stack up and every skeleton process down: `PYTHONUTF8=1 uv run pyth
 pytest `1341 passed, 205 skipped`; `PYTHONUTF8=1 uv run python scripts/check.py --profile test` → `CHECK: GREEN`,
 pytest `1525 passed, 21 skipped` (or the measured counts; Step 4 writes what was measured); `uv run python -I
 scripts/verify_handoff.py --reference-code --manifest --contracts` → exit 0. Then `git checkout -- reports/bootstrap
-reports/skeleton reports/auth reports/admission reports/leases reports/events reports/outbox reports/mcp-write
-reports/retrieval`, and keep, from this run, `reports/asset-sim/t16-asset-sim.txt`, `reports/mcp-read/t16-read-tools.txt`
-and the two rewritten T15 files under `reports/mcp-read/` (their lines now name the three tools and the
-`asset_scope` grant).
+reports/auth reports/admission reports/leases reports/events reports/outbox reports/mcp-write reports/retrieval`, and
+keep, from this run, `reports/asset-sim/t16-asset-sim.txt`, `reports/mcp-read/t16-read-tools.txt`, the two rewritten
+T15 files under `reports/mcp-read/` (their lines now name the three tools and the `asset_scope` grant) and
+`reports/skeleton/r105-walking-skeleton.txt` (round 1, M7: R105 now runs seven processes, the run-type filter and the
+worker's R029 checks, so the evidence of this run replaces the one that predates Plan M; it is redacted). Read the
+R105 file's evidence line: it must still name a section (Review Focus 3).
 
 - [ ] **Step 4: Fill in the placeholders and commit**
 
@@ -6931,7 +7102,7 @@ docs/PROJECT_HISTORY.md` → no output. Tick this plan's checkboxes.
 
 ```bash
 git add handoff/tasks.json handoff/acceptance-matrix.json handoff/BUILD_BACKLOG.md SESSION_STATE.md STATUS.md \
-  docs/ARCHITECTURE.md docs/PROJECT_HISTORY.md reports/asset-sim reports/mcp-read \
+  docs/ARCHITECTURE.md docs/PROJECT_HISTORY.md reports/asset-sim reports/mcp-read reports/skeleton \
   docs/superpowers/plans/2026-10-18-first-slice-m-read-tools-asset-sim.md
 git commit -m "docs: close T16 - handoff records, acceptance rows, errata 103-106, the asset-sim runbook (Plan M)"
 ```
@@ -6949,10 +7120,10 @@ git commit -m "docs: close T16 - handoff records, acceptance rows, errata 103-10
    live run of `test_migration_0012_live.py` is the proof. The search body differs from 0011's by the five
    `CHANGES_0012` only (a unit test reverses them).
 2. **The membership re-check changes who may read.** Any live test that calls a read definer for a run whose
-   requester has no active requester row in the run's tenant now gets `INVALID_HANDLE`. Every such call site was
-   checked (Writer departure 9): the random tenants of `test_migration_0011_live.py` get ALEX through
-   `add_requester`, the baseline's beta run is riley's, and every other site uses alpha and ALEX. A live failure with
-   "invocation handle rejected" in a test this plan did not touch is the first place to look.
+   requester has no active requester row in the run's tenant now gets `INVALID_HANDLE`. The call sites swept are
+   tabled in Task 1 Step 5: the random tenants of `test_migration_0011_live.py` and `test_ingest_live.py` get ALEX
+   through `add_requester`, the baseline's beta run is riley's, and every other site runs in seeded alpha as ALEX. A
+   live failure with "invocation handle rejected" in a test this plan did not touch is the first place to look.
 3. **The run's asset type now filters every search through mcp-read.** A17 is a pump, so the R105 walking skeleton's
    search ("Investigate the alerts on Asset A17 …") returns pump and any-asset sections only. Its proposal needs at
    least one evidence reference; `ALPHA-ALERT-REVIEW` (any asset) is the section the T15 tests already find first
@@ -6988,7 +7159,9 @@ git commit -m "docs: close T16 - handoff records, acceptance rows, errata 103-10
   `test_both_functions_are_granted_to_mcp_read_alone_with_the_matrix_signatures` pins both against the matrix.
 - **Measured, not assumed.** On the scratch copy: every new unit test failed first for the stated reason and passed
   after its step; ruff, ruff format and mypy strict were clean; the dev gate's counts are the ones above;
-  `uv lock --offline` resolved 67 packages both times. Not measured: anything live (no database, Keycloak or service
+  `uv lock --offline` resolved 67 packages both times. Round 1 re-applied every step of the revised plan to a fresh
+  copy of `c5ccbc2`'s tree; the replayed sources are identical to the scratch build, and the counts above are that
+  replay's. Not measured: anything live (no database, Keycloak or service
   was reachable for the writer, by instruction).
 - **Placeholders.** None in Tasks 1-6; Task 7's `<base>`, `<last>`, `<date>`, `<dev>`, `<live>` and `<review>` are
   filled by its Step 4, which greps for them.
