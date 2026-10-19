@@ -1314,6 +1314,36 @@ Allowed shortcuts in T18, each with its owning task:
 - the dev database: migrated to 0013 and embedded on 2026-10-19 (the agent ran `skeleton.py migrate` and `embed` at
   the owner's request) → closed.
 
+## Plan O debt list (T23; committed before coding) [R6-B7]
+
+Allowed shortcuts in T23, each with its owning task:
+- the development cases are checked against corpus-1 by unit test and never run: no model trial, no condition A, B
+  or C run and no groundedness label exists yet → T19 (the first real drafts) and T25 (trials, conditions, labels)
+  (Plan O rulings 4 and 8);
+- "calibrated graders" (R111) is met by deterministic graders unit-tested on hand-written drafts; comparing them with
+  the owner's reviewed labels → T25 (R073; erratum 112);
+- the statistics: case-level Wilson intervals, the case-cluster bootstrap, exact McNemar, intra-rater kappa, and
+  unifying the two Wilson functions (`scripts/retrieval_baseline.wilson`, `scripts/probe_stats.wilson`) → T25 (Plan O
+  ruling 4);
+- `evals/quality-gates.json` (the thresholds) → the owner, committed before the first holdout run (SA:672); the label
+  files → T25 (Plan O rulings 6 and 9);
+- the citation graders see what a draft cites, not whether its claims follow from it: that is the owner's
+  groundedness label (BS:452), and any semantic judge is T25's to calibrate (BS:609, R073);
+- operational-fault and control-path cases (lost response, stale approval, cancellation) and the 32 cards → T24 (the
+  scenario suite, R097); `evals/handoff-development/README.md`'s stale 80/40 text → T24 (its review note);
+- every development case sits at one instant (`as_of` 2026-10-06T12:00Z, the cards' fixture clock); cases at other
+  instants, across a version's effective date, → a later dev-set version, no task (Plan O ruling 1);
+- the numeric-token measurement is recorded, not acted on: a change to the lexical query normalisation (revision
+  0011's `regexp_replace`) needs a total loss on every decimal pair (the only tokens it splits), and even then it is
+  a later revision under T20 (the retrieve node and its relevance rule), never T23 (Plan O ruling 7; BS:71);
+- condition A cannot abstain: a manual proposal is always a proposal with at least one reference
+  (`schemas/manual-proposal.schema.json`), so `check_abstention` fails A on every abstain-expected case by
+  construction; how A is scored there (for example, "no manual proposal written" counting as the abstention) → T25
+  (SA:660; round 1, minor 8);
+- `load_cases` reads development rows only (`DV-` ids, `split`, `as_of`, `notes`); a loader for the holdout's rows,
+  with T41's labels under their own schema, and the holdout's `as_of` policy (the instant its labels and the safety
+  index use) → T25 with T41 (round 1, minor 9).
+
 ## Environment (observed)
 
 | Item | Observed |
