@@ -28,6 +28,7 @@ URLS = Urls(
     mcp_write="http://127.0.0.1:8082/mcp",
     incident_sim="http://127.0.0.1:8090",
     asset_sim="http://127.0.0.1:8091",
+    ollama="http://127.0.0.1:11434",
 )
 
 

@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 from ops_core import contracts as c
-from ops_core.model_pins import ModelPins
+from ops_core.model_pins import EmbeddingPins, ModelPins
 from ops_core.outcomes import ActionOutcome, Event
 from ops_core.routing import RunManifest
 from pydantic import BaseModel, ValidationError
@@ -37,6 +37,7 @@ MODELS: dict[str, type[BaseModel]] = {
     "schemas/revision.schema.json": c.RevisionRequest,
     "schemas/cancel-response.schema.json": c.CancelResponse,
     "schemas/model-pins.schema.json": ModelPins,
+    "schemas/embedding-pins.schema.json": EmbeddingPins,  # T18 (Plan N ruling 3)
     "schemas/run-manifest.schema.json": RunManifest,
     "schemas/event.schema.json": Event,
 }

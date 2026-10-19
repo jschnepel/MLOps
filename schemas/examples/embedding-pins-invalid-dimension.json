@@ -1,0 +1,7 @@
+{
+  "model": "nomic-embed-text",
+  "digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "dimension": 384,
+  "ollama_version": "0.12.3",
+  "probed_at": "2026-10-19T00:00:00Z"
+}
