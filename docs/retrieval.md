@@ -138,7 +138,8 @@ scripts/pin_embedding_model.py` writes the file from the running Ollama (`/api/v
 failure but one has one shape: a single `PIN: <rule>, nothing written` line and exit status 1 (Ollama unreachable, the
 model missing, an answer that is not one usable vector, another dimension than 768, a pin that would not validate).
 The exception is the refusal to replace a pin, which prints its own line (`PIN: refused, nothing written: …`) that
-explains itself after the colon, with the same exit status. It refuses, writing nothing, to replace a pin of another model, digest or dimension: the stored embeddings were made
+explains itself after the colon, with the same exit status. It refuses, writing nothing, to replace a pin of another
+model, digest or dimension: the stored embeddings were made
 with the pinned model, and a new pin alone would let mcp-read compare a new model's query vectors with the old
 model's document vectors. A model change is a new revision that removes the stored embeddings (or moves them aside);
 after that the pin is replaced (the script refuses while the old pin exists, so the revision's commit deletes or
@@ -159,9 +160,9 @@ a repeat writes nothing, and two runs at the same moment neither fail nor write 
 NOTHING`). It exits 1 and writes nothing when the pin is missing or does not match the installed model, or a tenant
 already holds embeddings of another digest. It asks for the pin again before the write of each tenant that has
 something to write, after that tenant's vectors have come back, so a model re-pulled while the run was going stores
-nothing under the pinned digest. A failure while writing (Ollama gone, an answer that is not the pinned vectors, or that second check finding another
-model) exits 1 and names the tenants already written (`EMBED: failed (…) after writing alpha`); a re-run completes
-the rest. Every stored chunk is embedded, whatever its status: lifecycle is decided at query time. Chunks ingested
+nothing under the pinned digest. A failure while writing (Ollama gone, an answer that is not the pinned vectors,
+or that second check finding another model) exits 1 and names the tenants already written (`EMBED: failed (…)
+after writing alpha`); a re-run completes the rest. Every stored chunk is embedded, whatever its status: lifecycle is decided at query time. Chunks ingested
 later need another `embed` run; until then vector mode refuses (below) and lexical mode is unaffected.
 
 | Setting | Value |

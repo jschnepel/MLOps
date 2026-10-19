@@ -166,7 +166,7 @@ async def test_a_malformed_answer_is_refused(vectors: Any) -> None:
         await client.embed(["search_query: x"], PINS)
 
 
-def test_the_magnitude_bound_keeps_unit_vectors_and_the_edges_of_the_rule() -> None:
+async def test_the_magnitude_bound_keeps_unit_vectors_and_the_edges_of_the_rule() -> None:
     """Plan N final review, m1: components up to 1e6 and a norm of at least 1e-6 are answers; the model's own unit
     vectors are far inside both."""
     ordinary = unit_vector("ordinary")

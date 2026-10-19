@@ -111,7 +111,8 @@ def test_an_unreadable_pin_is_refused_in_the_one_shape(
     quiet: list[Any],
     how: str,
 ) -> None:
-    """Plan N final review, m2: a pin file that cannot be decoded or read is refused as a missing one, not a traceback."""
+    """Plan N final review, m2: a pin file that cannot be decoded or read is refused as a missing one, no
+    traceback."""
     pins = tmp_path / "embedding-pins.json"
     pins.write_bytes(b'{"model": "' + bytes([0xFF, 0xFE]) + b'"}')
     monkeypatch.setattr(embeddings, "PINS", pins)
