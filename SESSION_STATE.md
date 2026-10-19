@@ -6,8 +6,9 @@
 building tasks; the close-out is the commit after `799beda`). T18 is DONE: R034 is evidenced
 (`reports/retrieval-comparison.md`); errata 107-111 are proposed. Owner inputs added by Plan N: migrate the dev
 database to revision 0013 (after 0012), then `uv run python scripts/skeleton.py embed`; decide the proposed errata
-(now 1-111); the installed Ollama 0.40.4 against SA:587's 0.33.3 (the pin records 0.40.4); push `plan-n` and open its
-PR after the final review. Still pending from Plan M: merging PR #12 (`plan-m` -> `main`). Next is T23 (unblocked);
+(now 1-111); the installed Ollama 0.40.4 against SA:587's 0.33.3 (the pin records 0.40.4); merge PR #13 (`plan-n` ->
+`plan-m`, https://github.com/jschnepel/MLOps/pull/13; final review record
+`docs/reviews/plan-n-final-review-2026-10-19.md`, fix wave 1d71485), after #12. Still pending from Plan M: merging PR #12 (`plan-m` -> `main`). Next is T23 (unblocked);
 T19 and T41 wait on owner steps, T20 on T19, T25 on T22, T23 and T41. The Plan M record follows.
 **Plan M record:** Plan M (T16) is executed on branch `plan-m` (from `main`: `9e7d716..bbaba40` holds the debt list and the
 six building tasks, and the close-out is the commit after `bbaba40`). T16 is DONE: R028 and R029 are evidenced; R131's
@@ -22,7 +23,7 @@ fix wave 71753ab). Next is T18 (vector retrieval; it now also owns mcp-read's ve
 or T23, both unblocked; T19 and T41 wait on owner steps, and T20 waits on T19. A proposed erratum awaiting the
 owner's decision does not change a task's status; a task met "subject to" an erratum stays DONE.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-n` off `plan-m` (Plan N executed, not pushed; `plan-m`: Plan M executed, pushed 2026-10-18, PR #12 into `main`; `main` 66d6833 has the same tree as `plan-l`, which sat on `plan-k`, on `plan-j`, on `plan-i`, on `plan-h`, on `plan-g`, on `plan-f`, on `plan-e`, on `plan-d`, on `plan-c`, on `plan-b`, on `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) were merged into `main` by the owner on 2026-10-18 (merge commits; the plan branches are kept); `plan-j` and `plan-k` were pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11).
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-n` off `plan-m` (Plan N executed, pushed 2026-10-19, PR #13 into `plan-m`; `plan-m`: Plan M executed, pushed 2026-10-18, PR #12 into `main`; `main` 66d6833 has the same tree as `plan-l`, which sat on `plan-k`, on `plan-j`, on `plan-i`, on `plan-h`, on `plan-g`, on `plan-f`, on `plan-e`, on `plan-d`, on `plan-c`, on `plan-b`, on `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) were merged into `main` by the owner on 2026-10-18 (merge commits; the plan branches are kept); `plan-j` and `plan-k` were pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11).
 
 ## Done in the planning session (2026-10-06)
 
@@ -1413,7 +1414,8 @@ and lexical ones work. No agent connected to the dev database in Plan N.
 - Migrate the dev database to revision 0013 (`uv run python scripts/skeleton.py migrate`), then embed it (`uv run
   python scripts/skeleton.py embed`); mcp-read refuses to start below 0013.
 - Decide on the installed Ollama 0.40.4 against SA:587's 0.33.3 (the embedding pin records 0.40.4).
-- Merge PR #12 (`plan-m` -> `main`), still open; `plan-n` is stacked on `plan-m` and is not pushed yet.
+- Merge PR #12 (`plan-m` -> `main`), still open; then PR #13 (`plan-n`, stacked on `plan-m`; retarget it to `main`
+  once #12 merges).
 - R025 and R031 have every half evidenced (mcp-read by T15, mcp-write by T47, the import half by T04) but keep
   `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`, because no open task owns them: flipping their status is the owner's call
   (or T15's re-close).
