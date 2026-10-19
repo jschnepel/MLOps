@@ -267,7 +267,8 @@ async def test_ties_limits_and_refusals(app_conn: persistence.Conn, role_conn: R
         assert [h.evidence_id for h in hits] == ["TIE-A:v1:body", "TIE-B:v1:body"]
         assert hits[0].rank == hits[1].rank > 0.25 and hits[0].excerpt == same
         call = "SELECT * FROM app.search_procedures_scoped(%s, %s, %s, NULL, NULL, %s, %s)"
-        with pytest.raises(persistence.Refused, match="VECTOR_MODE_UNAVAILABLE"):
+        # T18 (revision 0013): vector mode exists, and without its embedding it is the one argument refusal.
+        with pytest.raises(persistence.Refused, match="BAD_ARGUMENT"):
             await persistence._call(mcp_read, call, (handle, AZP, "turbine", 5, "vector"))
         with pytest.raises(persistence.Refused, match="BAD_ARGUMENT"):
             await persistence._call(mcp_read, call, (handle, AZP, "turbine", 9, "lexical"))
@@ -379,7 +380,8 @@ def revision_0011() -> Any:
 
 REVISION = revision_0011()
 OWN_FUNCTIONS = tuple(f"app.{name}(" for name, _, _, _ in REVISION.FUNCTIONS)
-LATER_FUNCTIONS = ("app.asset_scope(",)  # revision 0012's own function (T16): a downgrade to 0010 drops it too
+# Later revisions' own functions, which a downgrade to 0010 drops too: 0012's (T16) and 0013's helper (T18).
+LATER_FUNCTIONS = ("app.asset_scope(", "app._min_similarity(")
 OWN_RELATIONS = tuple(f"app.{table}" for table in REVISION.TABLES_0011) + tuple(
     f"app.{m.group(1)}" for s in REVISION.SCHEMA_CHANGES if (m := re.match(r"CREATE INDEX (\w+) ON", s))
 )

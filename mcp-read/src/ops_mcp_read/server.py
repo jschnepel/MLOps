@@ -424,6 +424,7 @@ def build_app(server: MCPServer, state: State) -> Starlette:
                 await persistence.assert_function_text(conn, *persistence.GOVERNED_CORPUS)  # 0011 (T17)
                 await persistence.assert_function_text(conn, *persistence.ASSET_SCOPE)  # 0012 (T16)
                 await persistence.assert_function_text(conn, *persistence.SEARCH_INSTANT)  # 0012 (T16)
+                await persistence.assert_function_text(conn, *persistence.VECTOR_SEARCH)  # 0013 (T18)
             except BaseException:  # a failed start must leak no connection, and a re-entered lifespan re-asserts
                 await conn.close()
                 raise

@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Final
+from typing import Any, Final, Literal
 from uuid import UUID, uuid4
 
 import psycopg
@@ -26,6 +26,7 @@ from psycopg.rows import DictRow, dict_row
 from psycopg.types.json import Jsonb
 
 from ops_core.canonical import sha256_hex
+from ops_core.embeddings import vector_literal
 from ops_core.jobs import ATTEMPT_STATES, JOB_RULES, JobType, Server, Tool, dedup_key
 from ops_core.lease import LOCK_FOR_SHARE, LOCK_FOR_UPDATE, LOCK_FOR_UPDATE_NOWAIT, RELEASED, Busy, Lease, LeaseLost
 from ops_core.outcomes import ActionOutcome, EventRuleViolation, EventSource, EventType, ToolOutcome
@@ -187,7 +188,8 @@ HANDLE_BINDING: Final = ("app._resolve_handle(text, text, text)", "j.run_id = v_
 WRITE_PATH: Final = ("app.request_abort(text, text, uuid)", "ABORT_NOT_DUE")
 # Revision 0011 (T17): mcp-read answers `search_procedures` from the governed corpus through `search_procedures_scoped`,
 # so it refuses to start without it (Plan L rulings 21 and 24). The same rule: a later revision that re-creates the
-# function keeps this text or changes it here in the same commit (revision 0012 keeps it: the ranking is unchanged).
+# function keeps this text or changes it here in the same commit (revisions 0012 and 0013 keep it: the lexical
+# ranking is unchanged).
 GOVERNED_CORPUS: Final = (
     "app.search_procedures_scoped(text, text, text, public.vector, text, integer, text)",
     "ts_rank_cd(c.search, v_query)",
@@ -199,6 +201,13 @@ ASSET_SCOPE: Final = ("app.asset_scope(text, text)", "as_of := app.current_time(
 SEARCH_INSTANT: Final = (
     "app.search_procedures_scoped(text, text, text, public.vector, text, integer, text)",
     "retrieved_at := v_now",
+)
+# Revision 0013 (T18): `search_procedures_scoped` ranks by cosine similarity over `app.embeddings` in vector mode.
+# mcp-read sends `mode='vector'` with a query embedding, so it refuses to start without it (Plan N ruling 1). The same
+# rule: a later revision that re-creates the function keeps this text or changes it here in the same commit.
+VECTOR_SEARCH: Final = (
+    "app.search_procedures_scoped(text, text, text, public.vector, text, integer, text)",
+    "e.embedding OPERATOR(public.<=>) p_query_embedding",
 )
 
 
@@ -459,8 +468,9 @@ async def resolve_invocation(conn: Conn, *, handle: str, azp: str, tool: Tool) -
 
 @dataclass(frozen=True)
 class Procedure:
-    """One permitted section, as `search_procedures_scoped` ranked it. `rank` is `ts_rank_cd`'s score: it orders the
-    results of one query and means nothing across queries or methods (docs/retrieval.md); no tool result carries it."""
+    """One permitted section, as `search_procedures_scoped` ranked it. `rank` is `ts_rank_cd`'s score in lexical mode
+    and the cosine similarity in vector mode (T18): it orders the results of one query and means nothing across queries
+    or methods (docs/retrieval.md, BS:417); no tool result carries it."""
 
     evidence_id: str
     document_id: str
@@ -485,20 +495,31 @@ class Procedures:
 
 
 async def search_procedures(
-    conn: Conn, *, handle: str, azp: str, query: str, asset_type: str | None, limit: int
+    conn: Conn,
+    *,
+    handle: str,
+    azp: str,
+    query: str,
+    asset_type: str | None,
+    limit: int,
+    mode: Literal["lexical", "vector"] = "lexical",
+    embedding: Sequence[float] | None = None,
 ) -> Procedures:
-    """Lexical search over the handle's tenant's approved, effective chunks (SA:461, T17); the embedding stays NULL
-    and the mode `lexical` until T18. The handle never reaches a log.
+    """Search over the handle's tenant's approved, effective chunks (SA:461): lexical (T17) without an embedding, or
+    exact vector search (T18) with the query's `search_query:` embedding, which travels as pgvector's text form cast
+    in SQL (erratum 109). The handle never reaches a log.
 
     Raises:
         HandleRejected: the handle does not resolve for mcp-read (the definer's `_resolve_handle`), or the run's
             requester no longer holds an active requester membership (R028, revision 0012).
-        Refused: an argument outside the tool's bounds (`BAD_ARGUMENT`).
+        Refused: an argument outside the tool's bounds or the mode's rule (`BAD_ARGUMENT`), or, in vector mode, a
+            permitted chunk without an embedding (`EMBEDDINGS_INCOMPLETE`, revision 0013).
     """
+    literal = None if embedding is None else vector_literal(embedding)
     row = await _call(
         conn,
-        "SELECT * FROM app.search_procedures_scoped(%s, %s, %s, NULL, %s, %s, 'lexical')",
-        (handle, azp, query, asset_type, limit),
+        "SELECT * FROM app.search_procedures_scoped(%s, %s, %s, %s::public.vector, %s, %s, %s)",
+        (handle, azp, query, literal, asset_type, limit, mode),
     )
     if row is None:
         raise PersistenceError("search_procedures_scoped returned nothing")

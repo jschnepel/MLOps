@@ -56,9 +56,10 @@ OWN_UNIT: Final = frozenset(
 # explicitly. An insert does take FOR KEY SHARE on the existing parent row its foreign key names (a new
 # `document_states` or `chunks` row on its `documents` row, a version's `supersedes` on the earlier `documents` row);
 # that cannot deadlock, because nothing UPDATEs or DELETEs `documents` outside the live suite's test purge
-# (conftest `purge_corpus`).
+# (conftest `purge_corpus`). T18 (revision 0013): `embeddings` likewise; its insert takes FOR KEY SHARE on the
+# existing `chunks` row it names, which nothing updates or deletes either.
 NEVER_LOCKED: Final = frozenset(
-    {"conversations", "transitions", "corpus_ingestions", "documents", "document_states", "chunks"}
+    {"conversations", "transitions", "corpus_ingestions", "documents", "document_states", "chunks", "embeddings"}
 )
 NOT_YET_CREATED: Final = frozenset({"operator_resolutions"})
 
@@ -114,6 +115,8 @@ OWN_UNITS: Final[dict[str, tuple[str, ...]]] = {
     # take the same share lock on their existing `documents` or `corpus_ingestions` parent rows through their foreign
     # keys (see NEVER_LOCKED); no unit updates or deletes those parents, so these shares never wait.
     "worker corpus ingestion (ingest.ingest)": ("tenants",),
+    # T18: the embedding rows' only lock is the foreign key's share on their never-locked `chunks` parent.
+    "worker corpus embedding (embed.embed)": (),
 }
 
 

@@ -268,6 +268,8 @@ async def test_no_function_an_mcp_server_may_call_inserts_a_job(app_conn: persis
     assert {"_authority", "_resolve_handle", "_transition", "_append_event", "_latest_attempt", "_grant_row"} <= {
         names[oid] for oid in reachable
     }
+    # The search's two thresholds (T17, T18): reached, scanned, and as free of job inserts as the rest.
+    assert {"_min_rank", "_min_similarity"} <= {names[oid] for oid in reachable}
     assert sorted(names[oid] for oid in reachable if INSERTS_A_JOB.search(bodies[oid])) == []
     cur = await app_conn.execute(
         "SELECT count(*) AS n FROM information_schema.role_table_grants"
