@@ -805,10 +805,11 @@ return in full, that `truncated` never fires on corpus-1 and that no rank moved,
 code; the clearest was that a lost audience makes asset-sim answer 403, which mcp-read reports as `UPSTREAM_INVALID`,
 not as the retryable `UNAVAILABLE` the brief wrote.
 
-**Process.** Three slips with an interpreter and no script. The agent that made the records commit (4be745a) ran an
+**Process.** Four slips with an interpreter and no script. The agent that made the records commit (4be745a) ran an
 empty `python -` and then ended every `python.exe` on the machine with `taskkill` by image name; no file was touched.
 Task 1's fix-round implementer ran an empty `python3 -` heredoc, which hangs, and the controller stopped it. The
-round-1 plan critic launched `uv run python -I -` with empty input. No code ran in any of them, and the standing rule
+round-1 plan critic launched `uv run python -I -` with empty input. The final review's fix wave typed a bare
+`python -`, which hung until the agent stopped it by its task ID. No code ran in any of them, and the standing rule
 against reading a script from standard input, and against killing by image name, now appears in every dispatch.
 
 **Final review.** The whole-branch review of Plan M found no Critical issue, three Important and eight Minor. The
