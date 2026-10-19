@@ -117,7 +117,8 @@ controller's rulings:
   windows, and the live comparison asserts it (Tasks 2, 6, 7).
 - **I2** `scripts/pin_embedding_model.py` refuses, writing nothing, to replace a pin of another model, digest or
   dimension (`test_the_pin_script_writes_a_pin_and_never_replaces_another_models`, a fake transport); the documents say
-  a model change is a revision that re-embeds and then updates the pin; `docs/ARCHITECTURE.md` names only what is
+  a model change is a revision that removes the stored embeddings, then replaces the pin as a reviewed change and
+  runs `embed` again (wording corrected in round 2); `docs/ARCHITECTURE.md` names only what is
   guaranteed; the debt list gains the read-path check of the stored digest (the first re-embedding revision) (Tasks
   1, 7).
 - **Minors** 1: Task 7's check greps the old phrases exactly. 2: Task 5's `TODO(T18)` grep lists its three lines.
@@ -134,6 +135,29 @@ controller's rulings:
   the JSON holds all 100.
 - The counts move: `tests/plan_n` 57 (52), dev `1434 passed, 214 skipped` (1429), live `1627 passed, 21 skipped`
   (1622). The plan was re-applied to a fresh `git archive` of the round-1 base and re-gated (see "Counts").
+
+## Round 2 changes
+
+The second static review (`.superpowers/plann/round2-static.md`: 0 Critical, 1 Important, 4 Minor) verified every
+round-1 fix; its findings are fixed per the controller's rulings:
+
+- **I1** the window experiment's order figures are measured on the ranking alone: hit@1 and MRR@5 are computed at
+  threshold 0 (`hit_at_1_threshold_0`, `mrr_at_k_threshold_0`) and labelled so; the threshold-0 recall is dropped
+  (1.0 by construction when k covers every window); hit@5, recall@5 and answered-empty stay, labelled "at the
+  section-tuned threshold"; the unit fixture asserts hit@1 1/2 and MRR@5 0.75 (Task 2).
+- **Minor 1** `skeleton.embed`'s docstring says what `EmbedInterrupted` does (Task 4).
+- **Minor 2** a live test drives `embed.embed`'s own wrap: an embedder failing on the second tenant gives
+  `EmbedInterrupted(("a",))` with the outage as its cause and the second tenant rolled back, and a re-run completes it
+  writing nothing for the first (`test_a_failure_while_writing_names_the_tenant_written_and_a_rerun_completes`,
+  Task 4; live +1).
+- **Minor 3** the model-change order is stated truly everywhere (the pin script, `docs/retrieval.md`,
+  `docs/ARCHITECTURE.md`, the debt list, the history): a revision removes the stored embeddings, then the pin is
+  replaced as a reviewed change, then `embed` runs; the refusal guards against a silent re-pin by the script, not a
+  hand edit of the committed file.
+- **Minor 4** `docs/runbooks/dev-topology.md` names `/api/tags` and `/api/embed` only (the pin script alone asks
+  `/api/version`).
+- The counts move: live-gated tests 194 (193); dev `1434 passed, 215 skipped`; live `1628 passed, 21 skipped`. The
+  plan was re-applied to a fresh `git archive` of the round-2 base and re-gated.
 
 ## Global Constraints
 
@@ -281,8 +305,8 @@ where the plan does something else.
 - The 300-word window rule makes each of the 8 versions returnable at `AS_OF` exactly one window (alpha 5, beta 3;
   327-343 words), and k = 5 covers every window of either tenant, so the window experiment's hit@5 and recall@5 measure
   only the threshold: the report reads it as whole-version embeddings against section embeddings, with hit@1 and MRR@5
-  as its ranking figures (round 1, I1). The critic's simulation gave hit@5 23/27, recall@5 0.85 and 19/20 answered
-  empty at 0.68.
+  at threshold 0 (the ranking alone) as its ranking figures (rounds 1 and 2, I1). The critics' simulations gave, at
+  0.68, hit@5 23/27, recall@5 0.85 and 19/20 answered empty, and at threshold 0 hit@1 27/27 and MRR@5 1.0.
 - The committed T17 report's per-case answers hash to `7a059a196d083a80da88be611d8ca4dbaad43660922fd977450ee7c600eb04a3`
   (`retrieval_comparison.answers_digest`).
 - The committed contracts T18 must not change: `schemas/tools/search_procedures.input.schema.json` SHA-256
@@ -355,19 +379,19 @@ Task 8 Step 2's "Plan N executed" block; in short:
   lock-order module +1; live `test_migration_0013_live.py` 4. Dev `1422 passed, 209 skipped`; live `1610 passed, 21
   skipped`.
 - **Task 4:** `ops_core.embed`, `skeleton.py embed`, the `embedded` fixture; the live prefix, idempotency and
-  exactness tests. Tests: `test_embed_command.py` 2; live `test_vector_retrieval_live.py` 4. Dev `1424 passed, 213
-  skipped`; live `1616 passed, 21 skipped`.
+  exactness tests. Tests: `test_embed_command.py` 2; live `test_vector_retrieval_live.py` 5. Dev `1424 passed, 214
+  skipped`; live `1617 passed, 21 skipped`.
 - **Task 5:** mcp-read's `vector_exact`. Tests: `test_mcp_read_vector.py` 10; `tests/plan_l/test_mcp_read_corpus.py`
-  one test rewritten (no count change); live `test_mcp_read_live.py` changed (no count change). Dev `1434 passed, 213
-  skipped`; live `1626 passed, 21 skipped`.
-- **Task 6:** the live comparison and the report. Live `test_retrieval_comparison_live.py` 1. Dev `1434 passed, 214
+  one test rewritten (no count change); live `test_mcp_read_live.py` changed (no count change). Dev `1434 passed, 214
   skipped`; live `1627 passed, 21 skipped`.
+- **Task 6:** the live comparison and the report. Live `test_retrieval_comparison_live.py` 1. Dev `1434 passed, 215
+  skipped`; live `1628 passed, 21 skipped`.
 - **Task 7:** documentation and erratum 108's architecture record. No tests.
 - **Task 8:** close-out: handoff records, acceptance rows, errata 107-111, state, history, final gates. No tests.
 
 The arithmetic, once: dev passed 1372 + 28 = 1400, + 11 = 1411, + 11 = 1422, + 2 = 1424, + 10 = 1434, + 0;
-dev skipped 205, 205, + 4 = 209, + 4 = 213, 213, + 1 = 214. Live passed = dev passed + (dev skipped − 21): 1584,
-1595, 1610, 1616, 1626, 1627, always with 21 skipped. The final dev figures (1434 passed, 214 skipped) were
+dev skipped 205, 205, + 4 = 209, + 5 = 214, 214, + 1 = 215. Live passed = dev passed + (dev skipped − 21): 1584,
+1595, 1610, 1617, 1627, 1628, always with 21 skipped. The final dev figures (1434 passed, 215 skipped) were
 measured on the scratch copy with every task applied; the per-task dev figures follow from the per-file counts
 measured there; the live ones are not measured.
 
@@ -447,10 +471,11 @@ Allowed shortcuts in T18, each with its owning task:
   ruling 10);
 - the stored unit stays one chunk per `## ` section; the 300-word window is an experiment in the comparison report
   only, because another stored unit changes evidence IDs and T41's labels → no task (Plan N ruling 8);
-- one embedding per chunk: a model change is a later revision's re-embedding, which also updates the pin
-  (`app.embeddings`'s key and its CHECKs pin the model and the dimension; `scripts/pin_embedding_model.py` refuses to
-  replace another model's pin), and a read-path check that the stored rows' digest is the pin's belongs to that first
-  re-embedding revision → no task until a model change (Plan N ruling 1; round 1, I2);
+- one embedding per chunk: a model change is a later revision that removes the stored embeddings (or moves them
+  aside), after which the pin is replaced as a reviewed change and `embed` runs again (`app.embeddings`'s key and its
+  CHECKs pin the model and the dimension; `scripts/pin_embedding_model.py` refuses to replace another model's pin),
+  and a read-path check that the stored rows' digest is the pin's belongs to that first re-embedding revision → no
+  task until a model change (Plan N ruling 1; rounds 1 and 2, I2);
 - chunks ingested after an `embed` run stay without an embedding until `embed` runs again; vector mode answers
   `REFUSED`/`EMBEDDINGS_INCOMPLETE` meanwhile, lexical mode is unaffected → operator step (runbook), no task (Plan N
   rulings 2 and 5);
@@ -589,7 +614,7 @@ def test_the_pin_script_writes_a_pin_and_never_replaces_another_models(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Plan N round 1, I2: replacing the pin alone would let mcp-read compare a new model's query vectors with the
-    stored vectors of the old one, so only a revision that re-embeds may change it."""
+    stored vectors of the old one, so only a revision that removes the stored embeddings replaces it."""
     out = tmp_path / "embedding-pins.json"
     assert pin_embedding_model.main(out, ollama_answering(MEASURED)) == 0
     assert load_embedding_pins(out).digest == MEASURED
@@ -1300,8 +1325,10 @@ it writes and by mcp-read on every vector call.
 It refuses, writing nothing, when the model is missing or answers another dimension, and when a pin already exists
 for another model, digest or dimension: the stored embeddings were made with the pinned model, so replacing the pin
 alone would let mcp-read compare a new model's query vectors with the old model's document vectors. A model change is
-a new revision that re-embeds every chunk and updates the pin in that same revision (Plan N round 1, I2). Re-running it
-for the same model only refreshes `ollama_version` and `probed_at`.
+a new revision that removes the stored embeddings (or moves them aside); its commit deletes or replaces this file as a
+reviewed change, and `skeleton.py embed` runs again (Plan N rounds 1 and 2, I2). The refusal guards against a silent
+re-pin by this script; it cannot stop a hand edit of the committed file, which is a reviewed repository change.
+Re-running it for the same model only refreshes `ollama_version` and `probed_at`.
 """
 
 from __future__ import annotations
@@ -1364,7 +1391,8 @@ def main(out: Path = embeddings.PINS, transport: httpx2.AsyncBaseTransport | Non
     if replaces_another_model(out, pin):
         print(
             "PIN: refused, nothing written: data/embedding-pins.json pins another model build; a model change is a new "
-            "revision that re-embeds every chunk and updates the pin in that revision"
+            "revision that removes the stored embeddings and replaces this file as a reviewed change, then embed runs "
+            "again"
         )
         return 1
     out.write_text(json.dumps(pin, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -1565,8 +1593,10 @@ def test_window_metrics_report_what_the_windows_can_measure() -> None:
     row = rc.window_metrics(cases, candidates, {"alpha": {"x", "q", "y"}}, [first, second], 0.65)
     assert row["windows_per_tenant"] == {"alpha": 2} and row["sections_per_window"] == {"min": 1, "max": 2}
     assert row["every_window_a_whole_version"] and row["k_covers_every_window"]
-    assert row["hit_at_k"]["successes"] == 1 and row["hit_at_1"]["successes"] == 1  # A2's window is under 0.65
-    assert row["recall_at_k"] == 0.5 and row["recall_at_k_threshold_0"] == 1.0 and row["mrr_at_k"] == 0.5
+    assert row["hit_at_k"]["successes"] == 1 and row["recall_at_k"] == 0.5  # A2's window is under 0.65
+    # The ranking alone (round 2, I1): A2's top window at threshold 0 is W1, which lacks y; y's window is second.
+    assert row["hit_at_1_threshold_0"]["successes"] == 1 and row["mrr_at_k_threshold_0"] == 0.75
+    assert "recall_at_k_threshold_0" not in row  # 1.0 by construction when k covers every window
     assert row["none_answered_empty"]["successes"] == 1 and row["forbidden_sections"] == 0
 
 
@@ -2008,12 +2038,13 @@ def window_metrics(
     all_windows: Sequence[Window],
     threshold: float,
 ) -> dict[str, Any]:
-    """The window experiment at k = 5, with what it can and cannot measure (round 1, I1): the windows per tenant,
-    sections and words per window, and whether each is a whole version; recall@5 at the threshold and at 0, hit@5,
-    hit@1 and MRR@5 over the labelled cases (a window hits when it holds a labelled section); the no-source cases
-    answered with nothing; and windows holding a section the case may not see (zero by construction, counted anyway).
-    When every window is a whole version and k covers every window of a tenant, hit@5 and recall@5 depend on the
-    threshold only; hit@1 and MRR@5 are the figures that still see an order."""
+    """The window experiment at k = 5, with what it can and cannot measure (rounds 1 and 2, I1): the windows per
+    tenant, sections and words per window, and whether each is a whole version; at the section-tuned threshold,
+    recall@5 and hit@5 over the labelled cases (a window hits when it holds a labelled section) and the no-source cases
+    answered with nothing; at threshold 0, the ranking alone, hit@1 and MRR@5; and windows holding a section the case
+    may not see (zero by construction, counted anyway). When every window is a whole version and k covers every window
+    of a tenant, the thresholded figures depend on the threshold only, so the order is read from the threshold-0
+    figures (a threshold-0 recall@5 would be 1.0 by construction there, so none is reported)."""
     answerable = [c for c in cases if c.expected]
     nones = [c for c in cases if c.expect_none]
     found = {c.id: window_ranking(candidates[c.id], threshold, rb.K) for c in cases}
@@ -2030,7 +2061,7 @@ def window_metrics(
         return round(sum(values) / len(values), 4) if values else None
 
     def reciprocal(c: rb.Case) -> float:
-        ranks = [i for i, w in enumerate(found[c.id], start=1) if holds(w, c)]
+        ranks = [i for i, w in enumerate(open_[c.id], start=1) if holds(w, c)]
         return 1 / ranks[0] if ranks else 0.0
 
     per_tenant: dict[str, int] = {}
@@ -2048,10 +2079,13 @@ def window_metrics(
         "every_window_a_whole_version": all(w.whole_version for w in all_windows),
         "k_covers_every_window": max(per_tenant.values()) <= rb.K,
         "recall_at_k": recall(found),
-        "recall_at_k_threshold_0": recall(open_),
         "hit_at_k": rb.proportion(sum(any(holds(w, c) for w in found[c.id]) for c in answerable), len(answerable)),
-        "hit_at_1": rb.proportion(sum(any(holds(w, c) for w in found[c.id][:1]) for c in answerable), len(answerable)),
-        "mrr_at_k": round(sum(reciprocal(c) for c in answerable) / len(answerable), 4) if answerable else None,
+        "hit_at_1_threshold_0": rb.proportion(
+            sum(any(holds(w, c) for w in open_[c.id][:1]) for c in answerable), len(answerable)
+        ),
+        "mrr_at_k_threshold_0": (
+            round(sum(reciprocal(c) for c in answerable) / len(answerable), 4) if answerable else None
+        ),
         "none_answered_empty": rb.proportion(sum(not found[c.id] for c in nones), len(nones)),
         "forbidden_sections": forbidden,
     }
@@ -2252,18 +2286,19 @@ def markdown(doc: Mapping[str, Any]) -> str:
         f"Adjacent sections of one version joined until at least {WINDOW_WORDS} `[a-z0-9]+` words: {w['windows']} "
         f"windows ({tenants}), {w['sections_per_window']['min']}-{w['sections_per_window']['max']} sections and "
         f"{w['words_per_window']['min']}-{w['words_per_window']['max']} words each, embedded with the same prefix, "
-        "ranked by cosine over the same permitted versions, kept above the same threshold. A window hits when it "
-        f"holds a labelled section. recall@5 {w['recall_at_k']} (at threshold 0: {w['recall_at_k_threshold_0']}); "
-        f"hit@5 {rb._rate(w['hit_at_k'])}; hit@1 {rb._rate(w['hit_at_1'])}; MRR@5 {w['mrr_at_k']}; no-source cases "
-        f"answered with nothing {rb._rate(w['none_answered_empty'])}; windows holding a section the case may not see: "
-        f"{w['forbidden_sections']}."
+        "ranked by cosine over the same permitted versions. A window hits when it holds a labelled section. At the "
+        f"section-tuned threshold {s['vector_minimum_similarity']}: recall@5 {w['recall_at_k']}, hit@5 "
+        f"{rb._rate(w['hit_at_k'])}, no-source cases answered with nothing {rb._rate(w['none_answered_empty'])}. At "
+        f"threshold 0 (the ranking alone): hit@1 {rb._rate(w['hit_at_1_threshold_0'])}, MRR@5 "
+        f"{w['mrr_at_k_threshold_0']}. Windows holding a section the case may not see: {w['forbidden_sections']}."
     )
     if w["every_window_a_whole_version"] and w["k_covers_every_window"]:
         window += (
             " On this corpus every returnable version is one window and k = 5 covers every window of either tenant, so "
             "hit@5 and recall@5 measure only the threshold (tuned on section embeddings), not a ranking: read this as "
-            "whole-version embeddings against section embeddings, with hit@1 and MRR@5 as the figures that see an "
-            "order. It does not measure a 300-word window."
+            "whole-version embeddings against section embeddings, with the threshold-0 hit@1 and MRR@5 as the figures "
+            "that see an order (a threshold-0 recall@5 would be 1.0 by construction). It does not measure a 300-word "
+            "window."
         )
     window += " The stored unit stays one chunk per section (evidence IDs, citations and T41's labels unchanged)."
 
@@ -3945,9 +3980,10 @@ def embed() -> int:
     """Embed every stored chunk without an embedding as role `worker` (T18, Plan N ruling 2), into the database the
     environment names (`OPS_PG_DB`, default `ops`; the live suite's `ops_test`), with the model that
     `data/embedding-pins.json` pins, checked against Ollama (`OPS_OLLAMA_URL`) before anything is written. Exit 1 with
-    the reason, and nothing written, when the pin is missing or does not match, Ollama cannot be reached, or a tenant
-    holds another digest's embeddings; a repeated run writes nothing. The dev database waits for the owner (after
-    `ingest`)."""
+    the reason, and nothing written, when the pin is missing or does not match or a tenant holds another digest's
+    embeddings; a failure while writing (Ollama gone, an answer that is not the pinned vectors) exits 1 too, and the
+    tenants already written stay written and are named (`EmbedInterrupted`); a re-run completes the rest. A repeated
+    run writes nothing. The dev database waits for the owner (after `ingest`)."""
     export_environment(load_dotenv(ROOT / ".env"))
     try:
         pins = model_pins.load_embedding_pins(embeddings.PINS)
@@ -4078,12 +4114,13 @@ Catches: a stored row whose text was not the prefixed section (its `input_sha256
 `search_document: ` + heading + blank line + body), made with another model, digest or dimension than the pin, or
 missing for a stored chunk; a stored vector that is not the embedding of that prefixed text (a fresh embedding must be
 the same vector within the repeat bound, and the unprefixed text's embedding must not be); an `embed` repeat that
-writes again; a store with another digest's embeddings written into instead of refused; and a definer whose vector
-answer is not exactly the brute-force cosine ranking of the stored vectors over the permitted set (same threshold,
-same byte-order tie-break) for every development query: no index, nothing approximate.
+writes again; a store with another digest's embeddings written into instead of refused; a failure while writing
+reported as "nothing written" after a tenant committed, or a re-run that does not complete the rest; and a definer
+whose vector answer is not exactly the brute-force cosine ranking of the stored vectors over the permitted set (same
+threshold, same byte-order tie-break) for every development query: no index, nothing approximate.
 """
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from uuid import UUID
 
 import pytest
@@ -4187,6 +4224,56 @@ async def test_embed_writes_nothing_twice_and_refuses_a_foreign_digest(
         await cleanup(app_conn, [run], [tenant])
 
 
+class FailingSecond:
+    """The real embedder, except that its second `embed` call fails as an Ollama outage would (round 2, Minor 2)."""
+
+    def __init__(self, real: embeddings.OllamaEmbedder) -> None:
+        self.real = real
+        self.calls = 0
+
+    async def verify(self, pins: model_pins.EmbeddingPins) -> None:
+        await self.real.verify(pins)
+
+    async def embed(self, texts: Sequence[str], pins: model_pins.EmbeddingPins) -> list[embeddings.Vector]:
+        self.calls += 1
+        if self.calls == 2:
+            raise embeddings.Unavailable("the embedding model could not be reached")
+        return await self.real.embed(texts, pins)
+
+    async def aclose(self) -> None:
+        await self.real.aclose()
+
+
+async def test_a_failure_while_writing_names_the_tenant_written_and_a_rerun_completes(
+    app_conn: persistence.Conn, role_conn: RoleConn
+) -> None:
+    """`embed.embed`'s own wrap: the first tenant commits, the second's model call fails, the error names the first
+    and carries the outage as its cause; a re-run writes the second and nothing for the first."""
+    worker = await role_conn(Role.WORKER)
+    first, first_run, _ = await handle_for(app_conn, role_conn, None)
+    second, second_run, _ = await handle_for(app_conn, role_conn, None)
+    embedder = embeddings.OllamaEmbedder.from_settings()
+    try:
+        now = await clock(app_conn)
+        for tenant, document in ((first, "FIRST-DOC"), (second, "SECOND-DOC")):
+            await stage(app_conn, tenant, [{"id": document, "version": "1", "states": [("approved", now - DAY, None)]}])
+        tenants = {"a": first, "b": second}  # embedded in slug order: a, then b
+        with pytest.raises(embed.EmbedInterrupted) as caught:
+            await embed.embed(worker, FailingSecond(embedder), pins(), tenants)
+        assert caught.value.written == ("a",)
+        assert isinstance(caught.value.__cause__, embeddings.Unavailable)
+        cur = await app_conn.execute(
+            "SELECT tenant_id, count(*) AS n FROM app.embeddings WHERE tenant_id = ANY(%s) GROUP BY tenant_id",
+            ([first, second],),
+        )
+        assert {UUID(str(r["tenant_id"])): r["n"] for r in await cur.fetchall()} == {first: 1}  # b rolled back
+        again = await embed.embed(worker, embedder, pins(), tenants)
+        assert [(r.tenant, r.added, r.present) for r in again] == [("a", 0, 1), ("b", 1, 0)]
+    finally:
+        await embedder.aclose()
+        await cleanup(app_conn, [first_run, second_run], [first, second])
+
+
 async def test_the_definer_is_exact_against_a_brute_force_ranking(
     app_conn: persistence.Conn, role_conn: RoleConn
 ) -> None:
@@ -4251,7 +4338,7 @@ async def test_the_definer_is_exact_against_a_brute_force_ranking(
 
 - [ ] **Step 4: Gates and commit**
 
-`check.py` → `1424 passed, 213 skipped`; `verify_handoff.py` exit 0; the live gate → `1616 passed, 21 skipped`. The
+`check.py` → `1424 passed, 214 skipped`; `verify_handoff.py` exit 0; the live gate → `1617 passed, 21 skipped`. The
 first `embedded` use embeds corpus-1's 69 sections through local Ollama (five requests of at most 16 inputs); later
 uses find nothing missing.
 
@@ -4866,7 +4953,7 @@ with:
 
 - [ ] **Step 4: Gates and commit**
 
-`check.py` → `1434 passed, 213 skipped`; `verify_handoff.py` exit 0; the live gate → `1626 passed, 21 skipped`.
+`check.py` → `1434 passed, 214 skipped`; `verify_handoff.py` exit 0; the live gate → `1627 passed, 21 skipped`.
 `grep -rn "TODO(T18)" --include=*.py . | grep -v "^./reference/"` prints exactly these three lines, in some order (departure 10): revision
 0011's frozen body, 0013's quotation of it, and the unit test that asserts the re-created body no longer carries it:
 
@@ -5082,21 +5169,22 @@ async def test_r034_exact_vector_search_against_the_lexical_baseline(
 
 - [ ] **Step 2: Run it and read the report**
 
-Run the live gate (`PYTHONUTF8=1 uv run python scripts/check.py --profile test`) → `1627 passed, 21 skipped`; or, to
+Run the live gate (`PYTHONUTF8=1 uv run python scripts/check.py --profile test`) → `1628 passed, 21 skipped`; or, to
 iterate, `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_retrieval_comparison_live.py -q` (it brings
 up its own per-session databases) → `1 passed`. Then read `reports/retrieval-comparison.md`. Expected from the
 pre-measurement (not gates): lexical hit@5 27/27 and answered-empty 15/20 exactly as T17's report; vector hit@5 26/27
 (A08 regressed) and answered-empty 18/20 (B10, B13, B17 and B18 improved, A13 regressed); McNemar p 1.0 on hit@5 and
 0.375 on answered-empty, so "no ranking claim"; a vector threshold of 0.68 re-chosen on the stored vectors; zero
 forbidden rows; the lexical note saying the same rule would put lexical at 0.79 with 17/20 answered empty; and the
-window paragraph saying that each of the 8 windows is a whole version, so its hit@5 and recall@5 measure only the
-threshold. Record in the report the md's Results tables and both McNemar lines. Then `git checkout --
+window paragraph saying that each of the 8 windows is a whole version, so its hit@5 and recall@5 at the
+section-tuned 0.68 measure only the threshold, and giving hit@1 and MRR@5 at threshold 0 (27/27 and 1.0 in the
+critics' simulation) as the figures that see an order. Record in the report the md's Results tables and both McNemar lines. Then `git checkout --
 reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases reports/events reports/outbox
 reports/mcp-read reports/mcp-write reports/asset-sim reports/retrieval`, leaving the two new report files untracked.
 
 - [ ] **Step 3: Gates and commit**
 
-`check.py` → `1434 passed, 214 skipped`; `verify_handoff.py` exit 0.
+`check.py` → `1434 passed, 215 skipped`; `verify_handoff.py` exit 0.
 
 ```bash
 git add tests/e2e/test_retrieval_comparison_live.py
@@ -5205,8 +5293,11 @@ scripts/pin_embedding_model.py` writes the file from the running Ollama (`/api/v
 `/api/embed` for the dimension) and invents nothing. It refuses, writing nothing, to replace a pin of another model,
 digest or dimension: the stored embeddings were made with the pinned model, and a new pin alone would let mcp-read
 compare a new model's query vectors with the old model's document vectors. A model change is a new revision that
-re-embeds every chunk and then updates the pin in that same revision; re-running the script for the same model only
-refreshes `ollama_version` and `probed_at`.
+removes the stored embeddings (or moves them aside); after that the pin is replaced (the script refuses while the old
+pin exists, so the revision's commit deletes or replaces `data/embedding-pins.json` as a reviewed change) and
+`skeleton.py embed` runs again. The refusal guards against a silent re-pin by the script; a hand edit of the committed
+pin file is a reviewed repository change, which the refusal does not prevent. Re-running the script for the same
+model only refreshes `ollama_version` and `probed_at`.
 
 **Embedding the corpus.** After `ingest`, `uv run python scripts/skeleton.py embed` embeds every stored chunk that has
 none, as the role `worker`, into the database `OPS_PG_DB` names (default `ops`): it checks the pin against Ollama
@@ -5419,7 +5510,8 @@ with:
 | mcp-read and `scripts/skeleton.py embed` (T18) | `OPS_OLLAMA_URL`, default `http://127.0.0.1:11434` (an `OPS_*` setting, not a `.env` key) |
 
 mcp-read (the query embedding) and `skeleton.py embed` (the document embeddings) read `OPS_OLLAMA_URL`
-(`ops_core.settings.Urls.ollama`), asking only `/api/tags`, `/api/version` and `/api/embed` with `nomic-embed-text`;
+(`ops_core.settings.Urls.ollama`), asking only `/api/tags` and `/api/embed` with `nomic-embed-text` (the pin script
+alone also asks `/api/version`);
 the two `.env` keys above stay the bridge test's, and the worker's generation path (T19) chooses its own.
 ```
 
@@ -5482,9 +5574,11 @@ the model that ranks it cannot act: mcp-read asks Ollama for one query embedding
 - **A pinned model.** `data/embedding-pins.json` names the model, its digest and its 768 dimensions. What is
   guaranteed: mcp-read refuses a query model that differs from the pin (`UNSUPPORTED_MODE`); the pin cannot be
   replaced by `scripts/pin_embedding_model.py` with another model's; every stored row carries its digest and the
-  SHA-256 of the prefixed text it was made from, and `skeleton.py embed` refuses to mix digests. A model change is a
-  revision that re-embeds and then updates the pin; a read-path check of the stored rows' digest belongs to that
-  revision (debt list).
+  SHA-256 of the prefixed text it was made from, and `skeleton.py embed` refuses to mix digests. The script's
+  refusal guards against a silent re-pin; replacing the committed pin file by hand is a reviewed repository change,
+  not something the guarantee prevents. A model change is a revision that removes the stored embeddings (or moves
+  them aside), then replaces the pin and runs `embed` again; a read-path check of the stored rows' digest belongs to
+  that revision (debt list).
 - **mcp-read → Ollama (erratum 108).** SA:348 and SA:461 make mcp-read compute the query embedding, so mcp-read
   reaches Ollama for `/api/tags` and `/api/embed` with the embedding model only; BS:646's MCP row, BS:144's diagram
   and ADR-0001's boundary list did not name that edge. It is not a generation, so it holds no `model_permit` (SA:203).
@@ -5899,10 +5993,10 @@ threshold tuned for sections. And the pin script overwrote the pin unconditional
 change, as the documents told the owner to, would have let mcp-read compare a new model's query vectors with the old
 model's stored ones, with nothing to refuse it.
 
-**Change.** The report now gives the windows per tenant, their sizes, hit@1, MRR@5 and recall at threshold 0, and says
+**Change.** The report now gives the windows per tenant, their sizes, and hit@1 and MRR@5 of the ranking alone, and says
 plainly that on corpus-1 the experiment compares whole-version embeddings with section embeddings. The pin script
-refuses to replace another model's pin; a model change is a revision that re-embeds and then updates the pin, and the
-architecture document claims only what holds. The minors tightened the rest: forbidden rows counted within the top k,
+refuses to replace another model's pin; a model change is a revision that removes the stored embeddings, then
+replaces the pin as a reviewed change and embeds again, and the architecture document claims only what holds. The minors tightened the rest: forbidden rows counted within the top k,
 a CHECK against a stored zero vector, `embed` naming the tenants it wrote and tolerating a concurrent run, a test that
 the model is asked only after asset-sim answers, and the report saying that the vector threshold was tuned while the
 lexical one was not (the same rule would move lexical from 15 to 17 of 20 no-source cases answered empty).
@@ -5913,8 +6007,8 @@ lexical one was not (the same rule would move lexical from 15 to 17 of 20 no-sou
 - [ ] **Step 3: Final gates and the evidence**
 
 With the dev stack up, local Ollama answering and every skeleton process down: `PYTHONUTF8=1 uv run python
-scripts/check.py` → `CHECK: GREEN`, pytest `1434 passed, 214 skipped`; `PYTHONUTF8=1 uv run python scripts/check.py
---profile test` → `CHECK: GREEN`, pytest `1627 passed, 21 skipped` (or the measured counts; Step 4 writes what was
+scripts/check.py` → `CHECK: GREEN`, pytest `1434 passed, 215 skipped`; `PYTHONUTF8=1 uv run python scripts/check.py
+--profile test` → `CHECK: GREEN`, pytest `1628 passed, 21 skipped` (or the measured counts; Step 4 writes what was
 measured); `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` → exit 0. Then `git
 checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases reports/events
 reports/outbox reports/mcp-read reports/mcp-write reports/asset-sim reports/retrieval`, and keep, from this run,
@@ -5984,7 +6078,7 @@ git commit -m "docs: close T18 - handoff records, R034, errata 107-111, the comp
   in the revision (`text, text, text, public.vector, text, integer, text`); the helper's signature is `app._min_similarity()`.
 - **Measured, not assumed.** On the scratch copy of `6d00d06`: every hunk above applies to the repository's text
   exactly once (the edits were generated from that copy and re-applied to the repository's files by a script that
-  checks uniqueness); `tests/plan_n` 57 passed; the dev suite 1434 passed, 214 skipped (13 git-dependent failures that
+  checks uniqueness); `tests/plan_n` 57 passed; the dev suite 1434 passed, 215 skipped (13 git-dependent failures that
   pass in a checkout); ruff, ruff format and mypy strict clean on every member; `verify_handoff.py --contracts` PASS
   with 27 schemas, 36 accepted and 55 negative examples; `scripts/pin_embedding_model.py` and `python -m scripts.retrieval_comparison
   threshold` ran against local Ollama (the pin above; `CHOSEN: 0.68`). Not measured: the per-step red states (stated
