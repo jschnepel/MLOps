@@ -99,13 +99,15 @@ async def embedded(ingested: None) -> None:
     (tests/plan_b/live/test_ollama_bridge.py)."""
     from scripts.skeleton import corpus_tenants
 
-    conn = await persistence.connect(settings.app_postgres(Role.WORKER))
     embedder = embeddings.OllamaEmbedder.from_settings()
-    try:
-        await embed.embed(conn, embedder, model_pins.load_embedding_pins(embeddings.PINS), corpus_tenants())
+    try:  # the client first, so a failing connect leaks nothing
+        conn = await persistence.connect(settings.app_postgres(Role.WORKER))
+        try:
+            await embed.embed(conn, embedder, model_pins.load_embedding_pins(embeddings.PINS), corpus_tenants())
+        finally:
+            await conn.close()
     finally:
         await embedder.aclose()
-        await conn.close()
 
 
 def free_port() -> int:

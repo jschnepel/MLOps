@@ -295,13 +295,15 @@ def ingest() -> int:
 
 
 async def _embed(pg: settings.Postgres, pins: model_pins.EmbeddingPins) -> list[corpus_embed.Report]:
-    conn = await persistence.connect(pg)
     embedder = embeddings.OllamaEmbedder.from_settings()
-    try:
-        return await corpus_embed.embed(conn, embedder, pins, corpus_tenants())
+    try:  # the client first: a failing connect then leaks nothing, and a failing client has no connection to leak
+        conn = await persistence.connect(pg)
+        try:
+            return await corpus_embed.embed(conn, embedder, pins, corpus_tenants())
+        finally:
+            await conn.close()
     finally:
         await embedder.aclose()
-        await conn.close()
 
 
 def embed() -> int:

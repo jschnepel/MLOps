@@ -14,6 +14,10 @@ then each tenant is written in one transaction that re-reads what is missing and
 report counts only the rows its own run inserted. A failure while writing (Ollama gone, an answer that is not the
 pinned vectors) leaves the tenants already committed as they are and names them (`EmbedInterrupted`, as ingestion's
 `IngestInterrupted`); a re-run embeds only what is still missing. A repeat with nothing missing writes nothing.
+
+The pin is asked again for every tenant that has vectors to write, after they are fetched and before its transaction,
+so a model re-pulled while the run was going stores nothing under the pinned digest; that mismatch is mapped as any other
+failure of the writing phase (the tenants already committed are named).
 """
 
 from __future__ import annotations
@@ -101,7 +105,8 @@ async def embed(
     Raises:
         PersistenceError: revision 0013 is missing (`persistence.assert_relation`).
         embeddings.EmbeddingError: the model is not the pinned one (PinMismatch), cannot be reached (Unavailable) or
-            answered something else than the pinned vectors (Malformed), before any tenant committed. This and any
+            answered something else than the pinned vectors (Malformed), before any tenant committed; the pin is also
+            asked again before each tenant's write transaction. This and any
             `psycopg.Error` or `PersistenceError` propagate unchanged when nothing was written.
         EmbedInterrupted: one of those failures after earlier tenants had committed; `written` names them.
         EmbedRefused: a tenant holds embeddings of another digest (`written` empty: nothing was written), or another
@@ -142,7 +147,12 @@ async def _write(
     async with conn.transaction():
         await persistence.set_tenant(conn, tenant_id)
         missing, _, _ = await _read(conn, pins.digest)
-    vectors = await embedder.embed([m.text for m in missing], pins) if missing else []
+    vectors: list[embeddings.Vector] = []
+    if missing:
+        vectors = await embedder.embed([m.text for m in missing], pins)
+        # Asked again after the vectors came back and before anything is written: a model re-pulled since the run began
+        # must not leave vectors of another digest labelled with the pinned one.
+        await embedder.verify(pins)
     made = {m.evidence_id: (m, v) for m, v in zip(missing, vectors, strict=True)}
     async with conn.transaction():
         await persistence.set_tenant(conn, tenant_id)

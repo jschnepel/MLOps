@@ -39,7 +39,8 @@ def pins() -> model_pins.EmbeddingPins:
 
 
 async def stored(app_conn: persistence.Conn) -> dict[tuple[UUID, str], dict[str, object]]:
-    """Every embedding row of the seeded tenants with its chunk's text, read as the superuser."""
+    """Every chunk row of the seeded tenants left-joined to its embedding, read as the superuser: the embedding columns
+    are NULL for a chunk without one, which is what lets a test catch a missing embedding (never an inner join)."""
     cur = await app_conn.execute(
         "SELECT c.tenant_id, c.evidence_id, c.section, c.body, e.model, e.model_digest, e.dimension, e.input_sha256,"
         " e.embedding::text AS vector FROM app.chunks c LEFT JOIN app.embeddings e USING (tenant_id, evidence_id)"
@@ -78,20 +79,70 @@ async def test_a_stored_vector_is_the_prefixed_texts_embedding_and_not_the_bare_
     assert embeddings.cosine(vector, bare) < rc.REPEAT_COSINE  # and the prefix changed it: about 0.96 when measured
 
 
-async def test_embed_writes_nothing_twice_and_refuses_a_foreign_digest(
-    app_conn: persistence.Conn, role_conn: RoleConn
-) -> None:
+class Watched:
+    """The real embedder, counting its calls and failing the chosen ones as an Ollama outage or a re-pulled model would
+    (round 2, Minor 2; Task 4 review, Minors 1 and 4). Calls are numbered from 1."""
+
+    def __init__(
+        self, real: embeddings.OllamaEmbedder, fail_embed_on: int | None = None, fail_verify_on: int | None = None
+    ) -> None:
+        self.real = real
+        self.fail_embed_on = fail_embed_on
+        self.fail_verify_on = fail_verify_on
+        self.embed_calls = 0
+        self.verify_calls = 0
+
+    async def verify(self, pins: model_pins.EmbeddingPins) -> None:
+        self.verify_calls += 1
+        if self.verify_calls == self.fail_verify_on:
+            raise embeddings.PinMismatch("the installed embedding model is not the pinned one")
+        await self.real.verify(pins)
+
+    async def embed(self, texts: Sequence[str], pins: model_pins.EmbeddingPins) -> list[embeddings.Vector]:
+        self.embed_calls += 1
+        if self.embed_calls == self.fail_embed_on:
+            raise embeddings.Unavailable("the embedding model could not be reached")
+        return await self.real.embed(texts, pins)
+
+    async def aclose(self) -> None:
+        await self.real.aclose()
+
+
+async def count_embeddings(app_conn: persistence.Conn, tenants: list[UUID]) -> dict[UUID, int]:
+    """How many embedding rows each of these tenants holds (tenants without one are left out)."""
+    cur = await app_conn.execute(
+        "SELECT tenant_id, count(*) AS n FROM app.embeddings WHERE tenant_id = ANY(%s) GROUP BY tenant_id", (tenants,)
+    )
+    return {UUID(str(r["tenant_id"])): int(r["n"]) for r in await cur.fetchall()}
+
+
+async def test_embed_writes_nothing_twice(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
     worker = await role_conn(Role.WORKER)
     embedder = embeddings.OllamaEmbedder.from_settings()
-    tenant, run, _ = await handle_for(app_conn, role_conn, None)
     try:
         again = await embed.embed(worker, embedder, pins(), corpus_tenants())
-        assert [(r.tenant, r.added) for r in again] == [("alpha", 0), ("beta", 0)]
-        assert sum(r.present for r in again) == 69
+    finally:
+        await embedder.aclose()
+    assert [(r.tenant, r.added) for r in again] == [("alpha", 0), ("beta", 0)]
+    assert sum(r.present for r in again) == 69
+    assert sum((await count_embeddings(app_conn, list(corpus_tenants().values()))).values()) == 69
+
+
+async def test_a_foreign_digest_refuses_the_whole_run_before_any_tenant_is_written(
+    app_conn: persistence.Conn, role_conn: RoleConn
+) -> None:
+    """The planning phase: a clean tenant that sorts BEFORE the foreign one must stay empty and the model must never be
+    asked for a vector. Without phase 1 the clean tenant would be written first and only the later tenant refused."""
+    worker = await role_conn(Role.WORKER)
+    clean, clean_run, _ = await handle_for(app_conn, role_conn, None)
+    foreign, foreign_run, _ = await handle_for(app_conn, role_conn, None)
+    watched = Watched(embeddings.OllamaEmbedder.from_settings())
+    try:
         now = await clock(app_conn)
+        await stage(app_conn, clean, [{"id": "CLEAN-DOC", "version": "1", "states": [("approved", now - DAY, None)]}])
         await stage(
             app_conn,
-            tenant,
+            foreign,
             [
                 {"id": "OLD-MODEL", "version": "1", "states": [("approved", now - DAY, None)]},
                 {"id": "NOT-YET", "version": "1", "states": [("approved", now - DAY, None)]},
@@ -101,38 +152,18 @@ async def test_embed_writes_nothing_twice_and_refuses_a_foreign_digest(
             "INSERT INTO app.embeddings (tenant_id, evidence_id, model, model_digest, dimension, input_sha256,"
             " embedding) SELECT %s, 'OLD-MODEL:v1:turbine', 'nomic-embed-text', %s, 768, %s, embedding"
             " FROM app.embeddings LIMIT 1",
-            (tenant, "f" * 64, "1" * 64),
+            (foreign, "f" * 64, "1" * 64),
         )
-        with pytest.raises(embed.EmbedRefused, match="another model digest"):
-            await embed.embed(worker, embedder, pins(), {"probe": tenant})
-        cur = await app_conn.execute(
-            "SELECT count(*) AS n FROM app.embeddings WHERE tenant_id = %s AND evidence_id = 'NOT-YET:v1:turbine'",
-            (tenant,),
-        )
-        assert (await cur.fetchone() or {})["n"] == 0  # refused: nothing written
+        tenants = {"a-clean": clean, "probe": foreign}  # planned in slug order: the clean tenant first
+        with pytest.raises(embed.EmbedRefused, match="were made with another model digest") as caught:
+            await embed.embed(worker, watched, pins(), tenants)
+        assert caught.value.written == ()  # the planning phase wrote nothing
+        assert watched.embed_calls == 0  # and never asked the model for a vector
+        # the foreign tenant keeps only its planted row; the clean tenant, ahead of it in the order, has none
+        assert await count_embeddings(app_conn, [clean, foreign]) == {foreign: 1}
     finally:
-        await embedder.aclose()
-        await cleanup(app_conn, [run], [tenant])
-
-
-class FailingSecond:
-    """The real embedder, except that its second `embed` call fails as an Ollama outage would (round 2, Minor 2)."""
-
-    def __init__(self, real: embeddings.OllamaEmbedder) -> None:
-        self.real = real
-        self.calls = 0
-
-    async def verify(self, pins: model_pins.EmbeddingPins) -> None:
-        await self.real.verify(pins)
-
-    async def embed(self, texts: Sequence[str], pins: model_pins.EmbeddingPins) -> list[embeddings.Vector]:
-        self.calls += 1
-        if self.calls == 2:
-            raise embeddings.Unavailable("the embedding model could not be reached")
-        return await self.real.embed(texts, pins)
-
-    async def aclose(self) -> None:
-        await self.real.aclose()
+        await watched.aclose()
+        await cleanup(app_conn, [clean_run, foreign_run], [clean, foreign])
 
 
 async def test_a_failure_while_writing_names_the_tenant_written_and_a_rerun_completes(
@@ -150,16 +181,38 @@ async def test_a_failure_while_writing_names_the_tenant_written_and_a_rerun_comp
             await stage(app_conn, tenant, [{"id": document, "version": "1", "states": [("approved", now - DAY, None)]}])
         tenants = {"a": first, "b": second}  # embedded in slug order: a, then b
         with pytest.raises(embed.EmbedInterrupted) as caught:
-            await embed.embed(worker, FailingSecond(embedder), pins(), tenants)
+            await embed.embed(worker, Watched(embedder, fail_embed_on=2), pins(), tenants)
         assert caught.value.written == ("a",)
         assert isinstance(caught.value.__cause__, embeddings.Unavailable)
-        cur = await app_conn.execute(
-            "SELECT tenant_id, count(*) AS n FROM app.embeddings WHERE tenant_id = ANY(%s) GROUP BY tenant_id",
-            ([first, second],),
-        )
-        assert {UUID(str(r["tenant_id"])): r["n"] for r in await cur.fetchall()} == {first: 1}  # b rolled back
+        assert await count_embeddings(app_conn, [first, second]) == {first: 1}  # b rolled back
         again = await embed.embed(worker, embedder, pins(), tenants)
         assert [(r.tenant, r.added, r.present) for r in again] == [("a", 0, 1), ("b", 1, 0)]
+    finally:
+        await embedder.aclose()
+        await cleanup(app_conn, [first_run, second_run], [first, second])
+
+
+async def test_a_model_replaced_mid_run_stores_nothing_under_the_pinned_digest(
+    app_conn: persistence.Conn, role_conn: RoleConn
+) -> None:
+    """The pin is asked again before each tenant's write: the third `verify` (the first is the run's, the second is
+    tenant a's) reports another model, so tenant b's fetched vectors are discarded and a is named as written."""
+    worker = await role_conn(Role.WORKER)
+    first, first_run, _ = await handle_for(app_conn, role_conn, None)
+    second, second_run, _ = await handle_for(app_conn, role_conn, None)
+    embedder = embeddings.OllamaEmbedder.from_settings()
+    try:
+        now = await clock(app_conn)
+        for tenant, document in ((first, "FIRST-DOC"), (second, "SECOND-DOC")):
+            await stage(app_conn, tenant, [{"id": document, "version": "1", "states": [("approved", now - DAY, None)]}])
+        tenants = {"a": first, "b": second}
+        watched = Watched(embedder, fail_verify_on=3)
+        with pytest.raises(embed.EmbedInterrupted) as caught:
+            await embed.embed(worker, watched, pins(), tenants)
+        assert caught.value.written == ("a",)
+        assert isinstance(caught.value.__cause__, embeddings.PinMismatch)
+        assert (watched.verify_calls, watched.embed_calls) == (3, 2)  # b was fetched, then refused before its write
+        assert await count_embeddings(app_conn, [first, second]) == {first: 1}
     finally:
         await embedder.aclose()
         await cleanup(app_conn, [first_run, second_run], [first, second])

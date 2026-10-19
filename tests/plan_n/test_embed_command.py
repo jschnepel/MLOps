@@ -44,26 +44,38 @@ def test_the_command_reports_each_outcome_and_connects_as_the_worker(
     assert skeleton.embed() == 0 and quiet == [skeleton.Role.WORKER]
     assert capsys.readouterr().out.splitlines() == ["EMBED: alpha: 39 new, 0 present", "EMBED: beta: 0 new, 30 present"]
 
-    for failure, line in (
+    for failure, expected in (
         (
             embeddings.PinMismatch("the installed embedding model is not the pinned one"),
-            "EMBED: failed (UNSUPPORTED_MODE: the installed embedding model is not the pinned one), nothing written",
+            ["EMBED: failed (UNSUPPORTED_MODE: the installed embedding model is not the pinned one), nothing written"],
         ),
         (
             embeddings.Unavailable("the embedding model could not be reached"),
-            "EMBED: failed (UNAVAILABLE: the embedding model could not be reached), nothing written",
+            ["EMBED: failed (UNAVAILABLE: the embedding model could not be reached), nothing written"],
         ),
         (
             after_alpha(embeddings.Unavailable("the embedding model could not be reached")),
-            "EMBED: failed (UNAVAILABLE: the embedding model could not be reached) after writing alpha",
+            ["EMBED: failed (UNAVAILABLE: the embedding model could not be reached) after writing alpha"],
+        ),
+        (
+            after_alpha(embeddings.PinMismatch("the installed embedding model is not the pinned one")),
+            [
+                (
+                    "EMBED: failed (UNSUPPORTED_MODE: the installed embedding model is not the pinned one)"
+                    " after writing alpha"
+                )
+            ],
         ),
         (
             embed.EmbedRefused(["beta: 3 stored embeddings were made with another model digest than the pin"]),
-            "EMBED: refused, nothing written",
+            [
+                "EMBED: refused, nothing written",
+                "  beta: 3 stored embeddings were made with another model digest than the pin",
+            ],
         ),
         (
             embed.EmbedRefused(["beta: another model digest appeared while embedding"], ("alpha",)),
-            "EMBED: refused after writing alpha",
+            ["EMBED: refused after writing alpha", "  beta: another model digest appeared while embedding"],
         ),
     ):
 
@@ -72,7 +84,7 @@ def test_the_command_reports_each_outcome_and_connects_as_the_worker(
 
         monkeypatch.setattr(skeleton, "_embed", failing)
         assert skeleton.embed() == 1
-        assert capsys.readouterr().out.splitlines()[0] == line
+        assert capsys.readouterr().out.splitlines() == expected  # the problem lines too, each indented
     assert skeleton.main(["skeleton.py", "embed"]) == 1  # registered (the last failure still answers)
 
 
