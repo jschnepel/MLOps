@@ -1203,6 +1203,35 @@ Allowed shortcuts in T16, each with its owning task:
 - the dev database stays at revision 0011 until the owner runs `scripts/skeleton.py migrate`; until then mcp-read
   refuses to start on it (it checks 0012) → owner input (ruling 3).
 
+## Plan N debt list (T18; committed before coding) [R6-B7]
+
+Allowed shortcuts in T18, each with its owning task:
+- the worker still searches in lexical mode only; choosing the mode per run and recording it in the run manifest →
+  T20 (the graph's retrieve node) and T25 (SA:660's identical retrieval settings for conditions B and C) (Plan N
+  ruling 16; `routing.py` carries `TODO(T25)`);
+- the vector threshold (`app._min_similarity()`, 0.68) and the lexical minimum rank (0.25) are development figures
+  chosen on the 47 development queries; a relevance or abstention rule beyond them → T20 (erratum 102), and a held-out
+  measurement of both modes → T25 (Plan N rulings 6 and 9);
+- numeric tokens (`4.5`, `M8x1.25`) cannot match as one lexeme (the query is normalised to `[a-z0-9]+` words while the
+  chunk text is parsed raw): the development set gains numeric-token cases and measures the loss first → T23 (Plan N
+  ruling 10);
+- the stored unit stays one chunk per `## ` section; the 300-word window is an experiment in the comparison report
+  only, because another stored unit changes evidence IDs and T41's labels → no task (Plan N ruling 8);
+- one embedding per chunk: a model change is a later revision that removes the stored embeddings (or moves them
+  aside), after which the pin is replaced as a reviewed change and `embed` runs again (`app.embeddings`'s key and its
+  CHECKs pin the model and the dimension; `scripts/pin_embedding_model.py` refuses to replace another model's pin),
+  and a read-path check that the stored rows' digest is the pin's belongs to that first re-embedding revision → no
+  task until a model change (Plan N ruling 1; rounds 1 and 2, I2);
+- chunks ingested after an `embed` run stay without an embedding until `embed` runs again; vector mode answers
+  `REFUSED`/`EMBEDDINGS_INCOMPLETE` meanwhile, lexical mode is unaffected → operator step (runbook), no task (Plan N
+  rulings 2 and 5);
+- mcp-read's route to Ollama in containers (host name, the egress test that mcp-read reaches Ollama's embedding
+  endpoints only) and packaging `data/embedding-pins.json` with mcp-read → T30 (erratum 108);
+- the installed Ollama is 0.40.4 where SA:587 records 0.33.3; the pin records the version actually used and nothing
+  here upgrades or downgrades it → owner decision (SA:587);
+- the dev database stays below revision 0013 until the owner migrates it and runs `scripts/skeleton.py embed`; until
+  the migration mcp-read refuses to start on it (it checks 0013) → owner input (Plan N ruling 15).
+
 ## Environment (observed)
 
 | Item | Observed |
