@@ -859,7 +859,7 @@ owner's decision does not change a task's status; a task met "subject to" an err
   `retrieved_at` and whole-section excerpt; exact downgrade to 0011); asset-sim on port 8091, the skeleton's seventh
   process; mcp-read's `get_asset_status` and `get_recent_alerts` and the search on the run's asset type; the committed
   input schemas advertised and checked (`ops_core.tool_contracts`); the worker's R029 checks.
-- Gates: `check.py` `1371 passed, 205 skipped`; `check.py --profile test` `1555 passed, 21 skipped`; `verify_handoff.py` exit 0. (The plan's own
+- Gates: `check.py` `1372 passed, 205 skipped`; `check.py --profile test` `1556 passed, 21 skipped`; `verify_handoff.py` exit 0. (The plan's own
   arithmetic, 1344 and 1528, is superseded: the review rounds added tests.)
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan L's
   hundred and two:
@@ -878,8 +878,9 @@ owner's decision does not change a task's status; a task met "subject to" an err
        realm's one configured issuer); without it the call is refused exactly as a dead handle is (`OC008`, one
        message, SA:355). `resolve_invocation` is unchanged (erratum 77). Note for the owner: the read-path check
        requires only an active row, with no `synced_at` freshness bound like the write gate's `MEMBERSHIP_STALE`
-       (0005:129-139), so a deprovisioned requester keeps read access until the sweeper's next sync (60 seconds at
-       most, SA:547).
+       (0005:129-139). While the sweeper syncs, a deprovisioned requester keeps read access until the next sync (a
+       60-second cadence, SA:547); if the sync stops, that access lasts until it resumes. A read-path freshness bound
+       is T20's, subject to the owner's decision on this erratum.
   106. SA:461 with erratum 93 (`search_procedures_scoped`'s answer): one row `(corpus_version, retrieved_at,
        results)`, `retrieved_at` the instant its effectiveness rule ran at; each result's excerpt is the whole section
        up to the contract's 8000 characters and carries `excerpt_cut`, which mcp-read turns into the envelope's
@@ -1192,8 +1193,12 @@ Allowed shortcuts in T16, each with its owning task:
   the images of mcp-read and the worker must ship `schemas/` at that path (or the path becomes a setting) → T30;
 - the requester's membership is matched without an issuer (the run keeps none) → owner decision (erratum 105);
 - the read path's membership re-check requires only an active row, with no `synced_at` freshness bound like the write
-  gate's `MEMBERSHIP_STALE` (0005:129-139): a deprovisioned requester keeps read access until the sweeper's next sync
-  (<= 60 s, SA:547) → recorded for erratum 105's note in the close-out;
+  gate's `MEMBERSHIP_STALE` (0005:129-139): while the sweeper syncs, a deprovisioned requester keeps read access until
+  the next sync (60 s cadence, SA:547); if the sync stops, the access lasts until it resumes → a read-path freshness
+  bound → T20 (the next read-path task), subject to the owner's decision on erratum 105;
+- a retryable read failure ends the run: the worker's investigate handler turns any failed read, including a retryable
+  `UNAVAILABLE` from asset-sim behind the search, into FAILED "retrieval failed" and never reads `retryable` → T20
+  (honour `retryable` from a read with a bounded re-queue of the investigate job);
 - the dev database stays at revision 0011 until the owner runs `scripts/skeleton.py migrate`; until then mcp-read
   refuses to start on it (it checks 0012) → owner input (ruling 3).
 

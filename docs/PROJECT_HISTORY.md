@@ -749,7 +749,7 @@ counted six processes.
 evidence paths, the scan's roots and the two docstrings were corrected. No count moved.
 
 **Execution.** Plan M was executed on branch `plan-m` (`9e7d716..bbaba40`) in six tasks, and every task had a review
-and one fix round. The gates afterwards were `check.py` `1371 passed, 205 skipped`, `check.py --profile test` `1555 passed, 21 skipped` and
+and one fix round. The gates afterwards were `check.py` `1372 passed, 205 skipped`, `check.py --profile test` `1556 passed, 21 skipped` and
 `verify_handoff.py` exit 0. The plan's own arithmetic (1344 and 1528) was out of date by then, because the review
 rounds added tests. The live suite was the first to run 0012's SQL and asset-sim against Keycloak's tokens, and the SQL
 needed no change, including the round trip down to 0011 and back.
@@ -759,7 +759,7 @@ has every marker but the last one, so the startup check for the search's new ret
 The membership check had no freshness bound and said so nowhere, and `add_requester` did not check that it wrote a
 row. An envelope docstring left out where an error envelope's instant comes from. **Change.** The startup test asks
 for every marker and refuses a database missing only the last. The debt list now says a deprovisioned requester keeps
-read access until the sweeper's next sync, at most 60 seconds, which became the note on erratum 105.
+read access until the sweeper's next sync (a 60-second cadence, and no limit at all if the sync stops), which became the note on erratum 105.
 `add_requester` asserts one row and the docstring says an error envelope takes the wall clock. **Problem.** Task 2
 (asset-sim) had a real bug. A forged cursor with a valid binding but a number too large for a date raised an
 `OverflowError` and asset-sim answered 500, and the plan's own decoding had no guard. The four minors were lenient
@@ -798,16 +798,37 @@ measures the structured result, the dropped-tool limit is a comment and a debt l
 `docs/retrieval.md` said no excerpt changed, but 15 of corpus-1's 69 sections are 504 to 669 characters long and now
 come back whole instead of cut at 500; the reviewer found it and the sections were measured to prove it. The
 walking-skeleton runbook still said six processes. The minors were a missing port in the guard that knows the
-skeleton's ports (8091), two imprecise sentences and a docstring. **Change.** The retrieval row says the 15 sections
+skeleton's ports (8091), two imprecise sentences, a docstring, and the live evidence it had produced, which sat
+untracked and was left for Task 7 to commit. **Change.** The retrieval row says the 15 sections
 return in full, that `truncated` never fires on corpus-1 and that no rank moved, the runbook says seven, and
 `SKELETON_PORTS` has asset-sim's port. Task 6 had also corrected thirteen sentences of the brief to match the built
 code; the clearest was that a lost audience makes asset-sim answer 403, which mcp-read reports as `UPSTREAM_INVALID`,
 not as the retryable `UNAVAILABLE` the brief wrote.
 
-**Process.** Implementers twice started a `python3 -` command with an empty heredoc, which hangs; the controller stopped
-each, and no code ran. During a records commit an agent ended every `python.exe` on the machine with
-`taskkill` by image name; no file was touched, and the standing rule against it now appears in every dispatch. The
-whole-branch review of Plan M is still to come.
+**Process.** Three slips with an interpreter and no script. The agent that made the records commit (4be745a) ran an
+empty `python -` and then ended every `python.exe` on the machine with `taskkill` by image name; no file was touched.
+Task 1's fix-round implementer ran an empty `python3 -` heredoc, which hangs, and the controller stopped it. The
+round-1 plan critic launched `uv run python -I -` with empty input. No code ran in any of them, and the standing rule
+against reading a script from standard input, and against killing by image name, now appears in every dispatch.
+
+**Final review.** The whole-branch review of Plan M found no Critical issue, three Important and eight Minor. The
+Importants were all about what the records said, not what the code did. `handoff/tasks.json` still named M05 as the
+current milestone with M05 open, although all four of its tasks were done, so it contradicted SESSION_STATE; both
+fields were corrected. The records said a deprovisioned requester keeps read access "60 seconds at most", but the
+read path checks only that the membership row is active and has no freshness bound, unlike the write gate's
+`MEMBERSHIP_STALE`; the sweeper's 60-second cadence is a limit only while it is syncing, and if the sync stops the
+access lasts until it resumes. Every record now says that, and a read-path freshness bound is on the debt list for
+T20, subject to the owner's decision on erratum 105. The third was that any read failure, even a retryable
+`UNAVAILABLE` from asset-sim behind the search, ends the run as "retrieval failed", because the worker never reads
+`retryable`, while a docstring in mcp-read said "the job retries". The docstring and both runbooks now say what
+happens, and honouring `retryable` with a bounded re-queue went to T20. Of the minors, seven were fixed: a comment
+where asset-sim relies on asset ids being unique across tenants, the walking-skeleton runbook's required revision
+(0012 for mcp-read), this section's account of the interpreter slips and Task 6's fifth minor, the `Unavailable`
+docstring (only a 401 maps there), a test name that did not say what it tested, the search's refusals after the scope
+is known now carrying the scope's database instant instead of the wall clock, and R028's evidence note saying the
+model-facing path for asset data arrives with T20. The eighth, the same RFC 3339, asset-id and instant patterns
+written in mcp-read, asset-sim and core, was parked: moving them crosses three packages for no change in behaviour,
+each copy is pinned by a test, and the cost of being wrong is a future pattern change made in three places.
 
 ## 31. What the process taught
 

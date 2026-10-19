@@ -521,7 +521,7 @@
       "blocking_for_v1": true,
       "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r028_read_tools_enforce_current_source_and_asset_acce.py",
-      "expected_evidence": "Alpha requests B22 or revoked procedure; no forbidden data reaches the model.",
+      "expected_evidence": "Alpha requests B22 or revoked procedure; no forbidden data reaches the model. (Locally verified at the tool boundary, where nothing forbidden reaches the caller; the model-facing path for asset data arrives with T20, because the worker does not yet pass asset reads to the model.)",
       "evidence_status": "RECORDED_LOCALLY_LIVE",
       "evidence_paths": [
         "tests/e2e/test_mcp_read_t16_live.py",
@@ -535,7 +535,7 @@
       "owning_tasks": [
         "T16"
       ],
-      "note": "Plan M (T16): alpha never reads B22: an A17 run naming B22 is ASSET_OUT_OF_SCOPE before asset-sim is asked, an alpha run whose own asset is B22 gets NOT_FOUND from asset-sim's own tenant filter (the same 404 as an unknown asset), and asset-sim answers alpha's tenant 404 for B22 directly; another interval is INTERVAL_OUT_OF_SCOPE; the search keeps to the run's asset type (ASSET_TYPE_OUT_OF_SCOPE otherwise) and never returns the revoked ALPHA-ALARM-BYPASS. Current access: asset_scope and search_procedures_scoped re-check that the run's requester still holds an active requester membership in its tenant (matched without an issuer, erratum 105); with alex's switched off, all three tools answer the one plain INVALID_HANDLE while resolve_invocation still resolves the handle, and answer again once it is back; a run requested by a reader never answers. The re-check needs an active row only, with no synced_at freshness bound, so a deprovisioned requester keeps read access until the sweeper's next sync (60 s at most). No forbidden data reaches the caller in any of these."
+      "note": "Plan M (T16): alpha never reads B22: an A17 run naming B22 is ASSET_OUT_OF_SCOPE before asset-sim is asked, an alpha run whose own asset is B22 gets NOT_FOUND from asset-sim's own tenant filter (the same 404 as an unknown asset), and asset-sim answers alpha's tenant 404 for B22 directly; another interval is INTERVAL_OUT_OF_SCOPE; the search keeps to the run's asset type (ASSET_TYPE_OUT_OF_SCOPE otherwise) and never returns the revoked ALPHA-ALARM-BYPASS. Current access: asset_scope and search_procedures_scoped re-check that the run's requester still holds an active requester membership in its tenant (matched without an issuer, erratum 105); with alex's switched off, all three tools answer the one plain INVALID_HANDLE while resolve_invocation still resolves the handle, and answer again once it is back; a run requested by a reader never answers. The re-check needs an active row only, with no synced_at freshness bound, so while the sweeper syncs a deprovisioned requester keeps read access until the next sync (60 s cadence, SA:547), and if the sync stops the access lasts until it resumes; a read-path freshness bound is T20's, subject to the owner's decision on erratum 105. No forbidden data reaches the caller in any of these."
     },
     {
       "id": "R029",

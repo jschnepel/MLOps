@@ -82,7 +82,9 @@ route does not exist (`Faults` refuses to be built there).
   tie a run's asset to its tenant yet, T21; an alpha run naming B22 gets exactly this). `search_procedures` does not fail on it: it proceeds with the caller's
   `asset_type`, or none.
 - **mcp-read answers `UNAVAILABLE`**: asset-sim is down, slower than mcp-read's 10 seconds (one budget for fetching
-  its token and asking), answering 5xx, or refusing mcp-read's token with a 401 (its log shows it).
+  its token and asking), answering 5xx, or refusing mcp-read's token with a 401 (its log shows it). The answer is
+  marked `retryable`, but the worker does not retry a failed read today: while asset-sim is down, every investigation
+  that reaches retrieval ends FAILED ("retrieval failed"). Honouring `retryable` is T20's.
 - **mcp-read answers `UPSTREAM_INVALID`**: asset-sim's answer failed the tool-result contract or named another asset or
   interval, a status carried an instant other than the one asked, an alerts page held more alerts than asked for, or
   asset-sim answered an HTTP status mcp-read has no meaning for (403 when its token lacks the `asset-sim` audience, or

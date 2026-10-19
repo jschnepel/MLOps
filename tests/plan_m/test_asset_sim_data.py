@@ -228,6 +228,6 @@ def test_an_instant_must_be_rfc_3339_utc(text: str) -> None:
     assert data.instant("2026-10-06T00:00:00.5+00:00") == datetime(2026, 10, 6, 0, 0, 0, 500000, tzinfo=UTC)
 
 
-def test_a_page_of_no_alerts_is_refused() -> None:
+def test_a_limit_below_one_is_refused() -> None:
     with pytest.raises(ValueError):
         page(asset(ALPHA, "A17"), "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z", limit=0)

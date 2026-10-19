@@ -326,8 +326,8 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 - Plan M (T16: the read tools, `asset_scope` and asset-sim) executed on branch `plan-m` (`9e7d716..bbaba40`, from
   `main`). The plan is `docs/superpowers/plans/2026-10-18-first-slice-m-read-tools-asset-sim.md`.
-- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1371 passed, 205 skipped`.
-  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1555 passed, 21 skipped`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1372 passed, 205 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1556 passed, 21 skipped`.
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
 - **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`): R028, `RECORDED_LOCALLY_LIVE` (alpha never reads B22, by
   mcp-read's scope check and by asset-sim's own tenant filter; a requester who lost the membership gets nothing from

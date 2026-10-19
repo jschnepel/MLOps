@@ -71,6 +71,17 @@ async def test_an_invalid_type_lookup_or_no_client_never_reaches_the_definer(
     assert doc["error"]["code"] == "UNAVAILABLE" and doc["error"]["retryable"] is True
 
 
+async def test_a_refusal_in_the_third_unit_carries_the_scopes_instant(monkeypatch: pytest.MonkeyPatch) -> None:
+    for refusal, code in (
+        (persistence.HandleRejected("invocation handle rejected"), "INVALID_HANDLE"),
+        (persistence.Refused("BAD_ARGUMENT"), "REFUSED"),
+    ):
+        result = await call(monkeypatch, Database(UnitConn(), search=refusal), QUERY)
+        doc = result.structured_content
+        assert doc is not None and doc["error"]["code"] == code and doc["data"] is None
+        assert doc["observed_at"] == "2026-10-16T12:00:00Z"  # the scope's as_of, not the wall clock
+
+
 async def test_the_answer_is_stamped_with_the_definers_instant(monkeypatch: pytest.MonkeyPatch) -> None:
     result = await call(monkeypatch, Database(UnitConn()), QUERY)
     doc = result.structured_content

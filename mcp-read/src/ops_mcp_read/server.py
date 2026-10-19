@@ -392,9 +392,10 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
                     limit=limit,
                 )
         except persistence.HandleRejected as exc:
-            return envelope(name.value, error=tool_error("INVALID_HANDLE", str(exc)))
+            # The scope is known by now, so these refusals carry its database instant like the asset tools' do.
+            return envelope(name.value, error=tool_error("INVALID_HANDLE", str(exc)), observed_at=scope.as_of)
         except persistence.Refused as exc:
-            return envelope(name.value, error=tool_error("REFUSED", exc.code))
+            return envelope(name.value, error=tool_error("REFUSED", exc.code), observed_at=scope.as_of)
         return search_response(found)
 
     return MCPServer(

@@ -141,6 +141,9 @@ def load(root: Path = DATA) -> Catalog:
             raise DataError("an asset's tenant has no UUID in meta.json")
         asset = Asset(entry["asset_id"], tenants[entry["tenant"]], entry["asset_type"], entry["name"])
         assets[(asset.tenant_id, asset.asset_id)] = asset
+    # Names and alerts are keyed by asset_id alone. That is safe only because `corpus.load_assets` requires asset ids
+    # to be unique across all tenants; if a corpus ever allowed one id in two tenants, both would need the tenant in
+    # their key, or one tenant's alerts would reach the other's status after the tenant filter had already passed.
     names = {asset.asset_id: asset.name for asset in assets.values()}
     by_asset: dict[str, list[Alert]] = {}
     for entry in data["alerts"]:

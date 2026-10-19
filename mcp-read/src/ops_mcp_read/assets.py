@@ -4,7 +4,8 @@ mcp-read calls asset-sim with its own workload token (client `ops-mcp-read`, aud
 worker's token and never with the invocation handle; the only context it forwards is what `asset_scope` returned for
 the handle: the run's tenant (`X-Ops-Tenant-Id`) and the database instant to answer at (`X-Ops-As-Of`), with the
 run's asset in the path and, for alerts, the run's interval. Each call happens outside any database transaction, with
-a 10-second timeout and no retry (the job retries). Failures map to one exception each, which the tools turn into
+a 10-second timeout and no retry here (the worker does not retry either today: it fails the run on any failed read,
+and honouring `retryable` is T20's). Failures map to one exception each, which the tools turn into
 envelope codes (ruling 15): a transport error, a timeout or a 5xx is `Unavailable` (retryable), a 404 is `AssetMissing`
 (an unknown asset and another tenant's alike), a 400 to a request that carried a cursor is `CursorRejected`, and
 anything else, or a body that is not a JSON object, is `UpstreamInvalid`. A 401 also drops the cached token, so the
@@ -37,7 +38,7 @@ class AssetSimError(Exception):
 
 
 class Unavailable(AssetSimError):
-    """A transport error, a timeout, a 5xx or a refused token: try again later."""
+    """A transport error, a timeout, a 5xx or a 401 to mcp-read's token: try again later."""
 
     code = "UNAVAILABLE"
     retryable = True
