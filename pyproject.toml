@@ -48,7 +48,7 @@ dev = [
 testpaths = [
   "tests/plan_a", "tests/plan_b", "tests/plan_c", "tests/plan_d", "tests/plan_e", "tests/plan_f", "tests/plan_g",
   "tests/plan_h", "tests/plan_i", "tests/plan_j", "tests/plan_k", "tests/plan_l", "tests/plan_m", "tests/plan_n",
-  "tests/e2e",
+  "tests/plan_o", "tests/e2e",
 ]
 asyncio_default_fixture_loop_scope = "function"
 # Setting this replaces pytest's defaults (which include ".*"), so ".*" is restated: otherwise pytest walks .hypothesis/.
