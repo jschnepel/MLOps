@@ -4,8 +4,8 @@
 **Current milestone:** M06 (vector retrieval; T18 is DONE in Plan N, and T41, the owner's holdout labels, is its open task. M05 closed with T16 in Plan M. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
 **Next task:** Plan N (T18) is executed on branch `plan-n` (`4c99f14..799beda` holds the debt list and the seven
 building tasks; the close-out is the commit after `799beda`). T18 is DONE: R034 is evidenced
-(`reports/retrieval-comparison.md`); errata 107-111 are proposed. Owner inputs added by Plan N: migrate the dev
-database to revision 0013 (after 0012), then `uv run python scripts/skeleton.py embed`; decide the proposed errata
+(`reports/retrieval-comparison.md`); errata 107-111 are proposed. The dev database was migrated to 0013 and
+embedded on 2026-10-19 (run by the agent at the owner's request). Owner inputs added by Plan N: decide the proposed errata
 (now 1-111); the installed Ollama 0.40.4 against SA:587's 0.33.3 (the pin records 0.40.4); merge PR #13 (`plan-n` ->
 `plan-m`, https://github.com/jschnepel/MLOps/pull/13; final review record
 `docs/reviews/plan-n-final-review-2026-10-19.md`, fix wave 1d71485), after #12. Still pending from Plan M: merging PR #12 (`plan-m` -> `main`). Next is T23 (unblocked);
@@ -1311,8 +1311,8 @@ Allowed shortcuts in T18, each with its owning task:
   endpoints only) and packaging `data/embedding-pins.json` with mcp-read → T30 (erratum 108);
 - the installed Ollama is 0.40.4 where SA:587 records 0.33.3; the pin records the version actually used and nothing
   here upgrades or downgrades it → owner decision (SA:587);
-- the dev database stays below revision 0013 until the owner migrates it and runs `scripts/skeleton.py embed`; until
-  the migration mcp-read refuses to start on it (it checks 0013) → owner input (Plan N ruling 15).
+- the dev database: migrated to 0013 and embedded on 2026-10-19 (the agent ran `skeleton.py migrate` and `embed` at
+  the owner's request) → closed.
 
 ## Environment (observed)
 
@@ -1404,15 +1404,16 @@ where it is until the owner runs `uv run python scripts/skeleton.py migrate` (de
 is still missing) and then `uv run python scripts/skeleton.py embed` (as the worker, through local Ollama; it prints
 `EMBED: alpha: 39 new, 0 present` and `EMBED: beta: 30 new, 0 present` on corpus-1, the first time). Until the
 migration mcp-read refuses to start on it; until `embed`, vector searches are refused (`EMBEDDINGS_INCOMPLETE`)
-and lexical ones work. No agent connected to the dev database in Plan N.
+and lexical ones work. No agent connected to the dev database during Plan N. Afterwards, on 2026-10-19 and at the
+owner's explicit request, the agent ran `skeleton.py migrate` (`MIGRATE: app at app@head, incident at head (profile
+dev)`) and `skeleton.py embed` (`EMBED: alpha: 39 new, 0 present`, `EMBED: beta: 30 new, 0 present`): the dev
+database is at 0013 with corpus-1 embedded.
 
 ## Open owner inputs
 
 - Decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed"), 60-71 (see
   "Plan I executed"), 72-81 (see "Plan J executed"), 82-92 (see "Plan K executed"), 93-102 (see "Plan L
   executed"), 103-106 (see "Plan M executed") and 107-111 (see "Plan N executed").
-- Migrate the dev database to revision 0013 (`uv run python scripts/skeleton.py migrate`), then embed it (`uv run
-  python scripts/skeleton.py embed`); mcp-read refuses to start below 0013.
 - Decide on the installed Ollama 0.40.4 against SA:587's 0.33.3 (the embedding pin records 0.40.4).
 - Merge PR #12 (`plan-m` -> `main`), still open; then PR #13 (`plan-n`, stacked on `plan-m`; retarget it to `main`
   once #12 merges).
