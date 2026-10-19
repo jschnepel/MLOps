@@ -429,7 +429,7 @@ BS:670 (no invented digest), the Plan N debt list (SA:698).
   `installed_digest(model)`, `verify(pins)`, `embed(texts, pins)`, `aclose()`; `settings.Urls.ollama`
   (`OPS_OLLAMA_URL`, default `http://127.0.0.1:11434`); `tests.plan_n.test_embeddings.FakeEmbedder`, `unit_vector`.
 
-- [ ] **Step 1a: Record both baselines**
+- [x] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN` with pytest `1372 passed, 205 skipped`; with the
 dev stack up, local Ollama answering (`curl -s http://127.0.0.1:11434/api/version` → `{"version":"0.40.4"}`) and
@@ -440,13 +440,13 @@ reports/mcp-write reports/asset-sim reports/retrieval`. Run `uv run python -I sc
 --reference-code --manifest --contracts` → exit 0. Record the three lines in the report. A gate that is not GREEN
 stops the plan here, before anything is committed.
 
-- [ ] **Step 1b: Record the base**
+- [x] **Step 1b: Record the base**
 
 Run `git rev-parse --short HEAD` and write the hash as `BASE=<hash>` in the report and in the SDD ledger
 (`.superpowers/sdd/2026-10-19-first-slice-n-vector-retrieval/progress.md`). Task 8's commit span is `<base>..<last>`.
 `git status --short` must print nothing.
 
-- [ ] **Step 1c: Commit the debt list (before any code)**
+- [x] **Step 1c: Commit the debt list (before any code)**
 
 Edit 1 (`SESSION_STATE.md`, at the end of "Plan M debt list (T16; committed before coding) [R6-B7]"), replace:
 
@@ -494,7 +494,7 @@ git add SESSION_STATE.md
 git commit -m "docs: declare Plan N's shortcuts before coding (T18 debt list)"
 ```
 
-- [ ] **Step 2: Put `tests/plan_n` on the test path**
+- [x] **Step 2: Put `tests/plan_n` on the test path**
 
 Edit 2 (`pyproject.toml`), replace:
 
@@ -515,7 +515,7 @@ Create `tests/plan_n/__init__.py`:
 """Plan N (T18): exact vector retrieval, the embedding pin and the comparison, without a database or Ollama."""
 ```
 
-- [ ] **Step 3: Write the failing tests**
+- [x] **Step 3: Write the failing tests**
 
 Create `tests/plan_n/test_embedding_pins.py`:
 
@@ -815,7 +815,7 @@ Run: `uv run python -m pytest tests/plan_n -q`
 Expected: two collection errors, `ImportError: cannot import name 'embeddings' from 'ops_core'` (and, once that
 exists, `load_embedding_pins` is still missing).
 
-- [ ] **Step 4: The pin's loader and schema**
+- [x] **Step 4: The pin's loader and schema**
 
 Edit 3 (`core/src/ops_core/model_pins.py`), replace:
 
@@ -1020,7 +1020,7 @@ now against 304: two examples and one mutant more), and
 `uv run python -I scripts/verify_handoff.py --contracts` → `PASS: 27 JSON Schema documents; 36 accepted examples; 55
 negative examples failed for their stated reason; governed files LF-only` (26 and 35 and 54 before).
 
-- [ ] **Step 5: The setting and the client**
+- [x] **Step 5: The setting and the client**
 
 Edit 13 (`core/src/ops_core/settings.py`), replace:
 
@@ -1307,7 +1307,7 @@ Run: `uv run python -m pytest tests/plan_n/test_embeddings.py tests/plan_d/test_
 Expected: `tests/plan_n/test_embeddings.py` `15 passed`; `tests/plan_d/test_settings.py` all passing, unchanged in
 count.
 
-- [ ] **Step 6: Pin the model (local Ollama, read-only)**
+- [x] **Step 6: Pin the model (local Ollama, read-only)**
 
 Create `scripts/pin_embedding_model.py`:
 
@@ -1423,7 +1423,7 @@ script ran:
 If the digest or the version differs, stop and report: the brief's measurement and the machine disagree, and the pin
 records only what the machine reports (BS:670). Then `uv run python -m pytest tests/plan_n -q` → `25 passed`.
 
-- [ ] **Step 7: Gates and commit**
+- [x] **Step 7: Gates and commit**
 
 `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN`, pytest `1400 passed, 205 skipped`;
 `verify_handoff.py` exit 0; the live gate → `1584 passed, 21 skipped` (then the `git checkout -- reports/…` line of
@@ -1459,7 +1459,7 @@ git commit -m "feat: the embedding model's pin and ops_core.embeddings, the nomi
   `Candidates`, `window_ranking`, `window_metrics`, `lexical_rule`, `repeat_check`, `comparison`, `markdown`, and the
   `threshold` command; `summarize` counts forbidden rows within the top k.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_n/test_retrieval_comparison.py`:
 
@@ -1649,7 +1649,7 @@ def test_the_report_names_both_modes_every_change_and_the_settings() -> None:
 Run: `uv run python -m pytest tests/plan_n/test_retrieval_comparison.py -q`
 Expected: a collection error, `ImportError: cannot import name 'retrieval_comparison' from 'scripts'`.
 
-- [ ] **Step 2: k as a parameter of the baseline's metrics**
+- [x] **Step 2: k as a parameter of the baseline's metrics**
 
 Edit 1 (`scripts/retrieval_baseline.py`), replace:
 
@@ -1824,7 +1824,7 @@ none of its figures). The edit also rewords three T17 lines that deferred to T18
 run, which the `git checkout -- reports/retrieval` after each live run restores; its answers, and so
 `T17_ANSWERS_SHA256`, do not change.
 
-- [ ] **Step 3: The module**
+- [x] **Step 3: The module**
 
 Create `scripts/retrieval_comparison.py`:
 
@@ -2361,7 +2361,7 @@ if __name__ == "__main__":
 
 Run: `uv run python -m pytest tests/plan_n/test_retrieval_comparison.py -q` → `11 passed`.
 
-- [ ] **Step 4: Measure the threshold (local Ollama, read-only; before Task 3 freezes it)**
+- [x] **Step 4: Measure the threshold (local Ollama, read-only; before Task 3 freezes it)**
 
 Run: `uv run python -m scripts.retrieval_comparison threshold`
 Expected (measured on the scratch copy, 2026-10-19): 100 `THRESHOLD` lines, among them
@@ -2371,7 +2371,7 @@ into `MIN_SIMILARITY_0013`; if it is not `0.68`, Task 3 uses the printed value, 
 reads as that value (the live tests read it from the database, not from this plan). If it prints `CHOSEN: 0.00`, the
 rule yields 0 and the helper returns 0 (ruling 6); the report says so.
 
-- [ ] **Step 5: Gates and commit**
+- [x] **Step 5: Gates and commit**
 
 `check.py` → `1411 passed, 205 skipped`; `verify_handoff.py` exit 0; live gate → `1595 passed, 21 skipped`.
 
@@ -2409,7 +2409,7 @@ git commit -m "feat: the retrieval comparison's statistics and the vector thresh
   timestamptz, results jsonb)`, unchanged since 0012); `persistence.VECTOR_SEARCH`;
   `persistence.search_procedures(conn, *, handle, azp, query, asset_type, limit, mode="lexical", embedding=None)`.
 
-- [ ] **Step 1: Write the failing revision tests**
+- [x] **Step 1: Write the failing revision tests**
 
 Create `tests/plan_n/test_migration_0013.py`:
 
@@ -2605,7 +2605,7 @@ Run: `uv run python -m pytest tests/plan_n/test_migration_0013.py -q`
 Expected: a collection error from `tests/plan_e/test_transitions_table.py`'s module-level check
 (`AssertionError` naming `REVISIONS`: `0013_embeddings.py` does not exist yet).
 
-- [ ] **Step 2: The revision**
+- [x] **Step 2: The revision**
 
 The search body is derived from 0012's frozen text by the three `CHANGES_0013` replacements (0012's pattern); the
 complete resulting bodies are printed after the file for review. `MIN_SIMILARITY_0013` is the value Task 2 Step 4
@@ -3002,7 +3002,7 @@ $fn$;
 ALTER FUNCTION app._min_similarity() OWNER TO app_definer;
 ```
 
-- [ ] **Step 3: The matrix, the lock order, persistence and mcp-read's startup check**
+- [x] **Step 3: The matrix, the lock order, persistence and mcp-read's startup check**
 
 Edit 2 (`core/src/ops_core/privileges.py`), replace:
 
@@ -3249,7 +3249,7 @@ Run: `uv run python -m pytest tests/plan_n/test_migration_0013.py tests/plan_e t
 tests/plan_k/test_mcp_write_startup.py tests/plan_m tests/plan_l tests/plan_j -q`
 Expected: all passing; `tests/plan_n/test_migration_0013.py` `9 passed`.
 
-- [ ] **Step 4: The live definer tests and the live edits**
+- [x] **Step 4: The live definer tests and the live edits**
 
 Create `tests/e2e/test_migration_0013_live.py`:
 
@@ -3614,7 +3614,7 @@ The two round trips (0011's to 0010, 0012's to 0011) now pass through 0013's dow
 `app._min_similarity()` and `app.embeddings`; their snapshots leave the helper out, and the `migrate` in their
 `finally` brings the head back (the `embedded` fixture of Task 4 re-embeds after them).
 
-- [ ] **Step 5: Gates and commit**
+- [x] **Step 5: Gates and commit**
 
 `check.py` → `1422 passed, 209 skipped`; `verify_handoff.py` exit 0; the live gate → `1610 passed, 21 skipped`. This
 live run is the first execution of 0013's SQL: read Review Focus 1-3 before it, and on a failure in
@@ -3648,7 +3648,7 @@ git commit -m "feat: revision 0013 - app.embeddings and exact vector search in s
   `embed.EmbedRefused(problems)`, `embed.Missing`; `skeleton.embed() -> int` (`EMBED: <tenant>: n new, n present`);
   the live fixture `embedded`.
 
-- [ ] **Step 1: Write the failing command tests**
+- [x] **Step 1: Write the failing command tests**
 
 Create `tests/plan_n/test_embed_command.py`:
 
@@ -3749,7 +3749,7 @@ def test_a_missing_pin_writes_nothing(
 Run: `uv run python -m pytest tests/plan_n/test_embed_command.py -q`
 Expected: a collection error, `ImportError: cannot import name 'embed' from 'ops_core'`.
 
-- [ ] **Step 2: The embedding step and the command**
+- [x] **Step 2: The embedding step and the command**
 
 Create `core/src/ops_core/embed.py`:
 
@@ -4057,7 +4057,7 @@ with:
 Run: `uv run python -m pytest tests/plan_n/test_embed_command.py tests/plan_l/test_ingest_plan.py -q` → all passing,
 the new file `2 passed`.
 
-- [ ] **Step 3: The `embedded` fixture and the live tests**
+- [x] **Step 3: The `embedded` fixture and the live tests**
 
 Edit 5 (`tests/e2e/conftest.py`), replace:
 
@@ -4336,7 +4336,7 @@ async def test_the_definer_is_exact_against_a_brute_force_ranking(
     assert compared == len(cases) >= 40
 ```
 
-- [ ] **Step 4: Gates and commit**
+- [x] **Step 4: Gates and commit**
 
 `check.py` → `1424 passed, 214 skipped`; `verify_handoff.py` exit 0; the live gate → `1617 passed, 21 skipped`. The
 first `embedded` use embeds corpus-1's 69 sections through local Ollama (five requests of at most 16 inputs); later
@@ -4370,7 +4370,7 @@ git commit -m "feat: skeleton.py embed - the corpus embedded from its prefixed t
 - Produces: `server.State.embedder`; `server.search_response(found, retrieval_mode="lexical")`;
   `tests.plan_l.test_mcp_read_corpus.call(…, embedder=None)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_n/test_mcp_read_vector.py`:
 
@@ -4605,7 +4605,7 @@ misses `mode` and `embedding` in the recorded arguments. Three pass already and 
 `test_the_committed_tool_contracts_are_unchanged`, `test_an_invalid_handle_never_reaches_the_embedding_model` and
 `test_a_missing_pin_is_unsupported_mode` (the old refusal is the same code).
 
-- [ ] **Step 2: Vector mode in mcp-read**
+- [x] **Step 2: Vector mode in mcp-read**
 
 Edit 7 (`mcp-read/src/ops_mcp_read/server.py`), replace:
 
@@ -4881,7 +4881,7 @@ with:
 Run: `uv run python -m pytest tests/plan_n tests/plan_l tests/plan_m tests/plan_j tests/plan_d -q` → all passing;
 `uv run python -m scripts.build_schemas` changes no file (`git status --short schemas` prints nothing).
 
-- [ ] **Step 3: The live call over HTTP**
+- [x] **Step 3: The live call over HTTP**
 
 Edit 23 (`tests/e2e/test_mcp_read_live.py`), replace:
 
@@ -4951,7 +4951,7 @@ with:
         )
 ```
 
-- [ ] **Step 4: Gates and commit**
+- [x] **Step 4: Gates and commit**
 
 `check.py` → `1434 passed, 214 skipped`; `verify_handoff.py` exit 0; the live gate → `1627 passed, 21 skipped`.
 `grep -rn "TODO(T18)" --include=*.py . | grep -v "^./reference/"` prints exactly these three lines, in some order (departure 10): revision
@@ -4984,7 +4984,7 @@ git commit -m "feat: mcp-read answers vector_exact with the search_query embeddi
   `investigate_job`, `purge_run`, `QUERIES`, `REQUESTERS`, `AS_OF`, `RETURNABLE_AT_AS_OF`).
 - Produces: the report pair at the DoD's path.
 
-- [ ] **Step 1: The live test**
+- [x] **Step 1: The live test**
 
 Create `tests/e2e/test_retrieval_comparison_live.py`:
 
@@ -5167,7 +5167,7 @@ async def test_r034_exact_vector_search_against_the_lexical_baseline(
     REPORT.with_suffix(".md").write_text(rc.markdown(doc), encoding="utf-8", newline="\n")
 ```
 
-- [ ] **Step 2: Run it and read the report**
+- [x] **Step 2: Run it and read the report**
 
 Run the live gate (`PYTHONUTF8=1 uv run python scripts/check.py --profile test`) → `1628 passed, 21 skipped`; or, to
 iterate, `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_retrieval_comparison_live.py -q` (it brings
@@ -5182,7 +5182,7 @@ critics' simulation) as the figures that see an order. Record in the report the 
 reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases reports/events reports/outbox
 reports/mcp-read reports/mcp-write reports/asset-sim reports/retrieval`, leaving the two new report files untracked.
 
-- [ ] **Step 3: Gates and commit**
+- [x] **Step 3: Gates and commit**
 
 `check.py` → `1434 passed, 215 skipped`; `verify_handoff.py` exit 0.
 
@@ -5202,7 +5202,7 @@ git commit -m "test: exact vector search measured against the lexical baseline (
 **Requirements:** BS:417 (settings and score interpretation stored), ruling 4's erratum 108, ruling 18's documents.
 This task writes no behaviour.
 
-- [ ] **Step 1: `docs/retrieval.md`**
+- [x] **Step 1: `docs/retrieval.md`**
 
 Edit 1 (`docs/retrieval.md`, the title), replace:
 
@@ -5339,7 +5339,7 @@ measures on corpus-1), a repeat-embedding check and the settings. It asserts tha
 answers are T17's, answer for answer.
 ```
 
-- [ ] **Step 2: `docs/runbooks/mcp-read.md`**
+- [x] **Step 2: `docs/runbooks/mcp-read.md`**
 
 Edit 7 (`docs/runbooks/mcp-read.md`, "Starting it"), replace:
 
@@ -5465,7 +5465,7 @@ recording the status observation for the grant's freshness check (T21), TLS, con
 from a containerised mcp-read to Ollama (T30). The
 ```
 
-- [ ] **Step 3: `docs/runbooks/walking-skeleton.md`**
+- [x] **Step 3: `docs/runbooks/walking-skeleton.md`**
 
 Edit 15 (`docs/runbooks/walking-skeleton.md`, step 2), replace:
 
@@ -5495,7 +5495,7 @@ with:
    The dev database must carry revision 0013 (`skeleton.py migrate`) before `up`: mcp-read's own startup check refuses anything older (the API needs 0007 and the sweeper 0008), so on a database still at 0012 or below `up` leaves mcp-read down until the owner migrates it. The browser login walk-through is in `dev-topology.md`.
 ```
 
-- [ ] **Step 4: `docs/runbooks/dev-topology.md`**
+- [x] **Step 4: `docs/runbooks/dev-topology.md`**
 
 Edit 17 (`docs/runbooks/dev-topology.md`, the Ollama table), replace:
 
@@ -5515,7 +5515,7 @@ alone also asks `/api/version`);
 the two `.env` keys above stay the bridge test's, and the worker's generation path (T19) chooses its own.
 ```
 
-- [ ] **Step 5: `docs/ARCHITECTURE.md` and the ADR note (erratum 108)**
+- [x] **Step 5: `docs/ARCHITECTURE.md` and the ADR note (erratum 108)**
 
 Edit 18 (`docs/ARCHITECTURE.md`, the diagram's model node), replace:
 
@@ -5613,7 +5613,7 @@ The decision above stands. One network edge is added to the boundary list: mcp-r
 not name. The owner decides the erratum; `docs/ARCHITECTURE.md` section 11 records the edge.
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Check: `grep -n "part of T18's comparison\|tuning it is T18's\|refused (\`VECTOR_MODE_UNAVAILABLE\`)\|arrives with
 T18" docs/retrieval.md docs/runbooks/mcp-read.md` prints nothing (the old phrases are gone; the new text names T18's
@@ -5643,7 +5643,7 @@ Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-
 Step 1b, excluded; `<last>` the newest commit before this task's own). `<date>` is `date -u +%F`. Step 4 replaces
 every placeholder.
 
-- [ ] **Step 1: Handoff records**
+- [x] **Step 1: Handoff records**
 
 Save this outside the repository as `t18_records.py` and run `BASE=<hash> uv run python <path>/t18_records.py` (a
 script file, never standard input). It stops if the report is missing (rerun the live gate first).
@@ -5754,7 +5754,7 @@ print(span)
 Expected: it prints the span. `git diff --stat handoff` shows three files changed; `git diff
 handoff/acceptance-matrix.json` shows two rows, R033 and R034.
 
-- [ ] **Step 2: Project state**
+- [x] **Step 2: Project state**
 
 Edit 1 (`SESSION_STATE.md`, the milestone line), replace:
 
@@ -6004,7 +6004,7 @@ lexical one was not (the same rule would move lexical from 15 to 17 of 20 no-sou
 ## 32. What the process taught
 ```
 
-- [ ] **Step 3: Final gates and the evidence**
+- [x] **Step 3: Final gates and the evidence**
 
 With the dev stack up, local Ollama answering and every skeleton process down: `PYTHONUTF8=1 uv run python
 scripts/check.py` → `CHECK: GREEN`, pytest `1434 passed, 215 skipped`; `PYTHONUTF8=1 uv run python scripts/check.py
@@ -6015,7 +6015,7 @@ reports/outbox reports/mcp-read reports/mcp-write reports/asset-sim reports/retr
 `reports/retrieval-comparison.md` and `.json`. Read the md: its lexical rows must equal T17's report (hit@5 27/27,
 answered-empty 15/20) and its forbidden rows must be 0 in both modes.
 
-- [ ] **Step 4: Fill in the placeholders and commit**
+- [x] **Step 4: Fill in the placeholders and commit**
 
 Replace `<base>`, `<last>`, `<date>`, `<dev>` and `<live>` everywhere this task wrote them, and `<execution>` in
 `docs/PROJECT_HISTORY.md` with two sentences: the measured vector and lexical hit@5 and answered-empty figures with

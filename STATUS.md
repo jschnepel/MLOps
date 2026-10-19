@@ -343,3 +343,27 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   bundle and the write calls' discovery -> T20; the status observation at the grant and the run's asset tied to its
   tenant -> T21; packaging and the network tests -> T30. Four errata (103-106) are proposed.
 - Next: T18 (vector retrieval, now with mcp-read's vector mode) or T23.
+
+## Update — Plan N executed (2026-10-19, branch `plan-n`)
+
+- Plan N (T18: exact pgvector retrieval and the comparison) executed on branch `plan-n` (`4c99f14..799beda`, on
+  `plan-m`). The plan is `docs/superpowers/plans/2026-10-19-first-slice-n-vector-retrieval.md`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1450 passed, 218 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1647 passed, 21 skipped`.
+  `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
+- **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`, `RECORDED_LOCALLY_LIVE`): R034 — exact vector search measured
+  against the lexical baseline on the 47 development queries (`reports/retrieval-comparison.md`: both modes at k = 5
+  and 3 with denominators and Wilson intervals, recall also counted per expected section, matched questions with
+  every change named, exact McNemar tests, no forbidden section in either mode, the lexical answers unchanged since
+  T17). At k = 5 hit@5 is 27/27 lexical and 26/27 vector, and 15/20 against 18/20 no-source cases answered with
+  nothing; p = 1.0 and 0.375, so the report makes no ranking claim. The vector threshold was tuned on the same
+  queries and the lexical one was not, so the second difference is partly the tuning. R033 gained a note: T18
+  re-measured the lexical path and its answers equal T17's.
+- Also built: the embedding pin (`data/embedding-pins.json`); `ops_core.embeddings`; revision 0013 (no NaN
+  similarity is kept); `skeleton.py embed` (the pin re-verified before each tenant's write); mcp-read's
+  `vector_exact` (an unreadable pin answers as a missing one).
+- The dev `ops` database waits for the owner's migrate to 0013 and `skeleton.py embed`. Nothing here connected to it.
+- Deferred, each with its owner in `SESSION_STATE.md`: the worker's mode choice -> T20/T25; a relevance rule -> T20;
+  numeric tokens -> T23; the container route to Ollama and packaging the pin -> T30. Parked: `embed`'s planning
+  phase reads full chunk bodies only to count them. Five errata (107-111) are proposed.
+- Next: T23 (the development eval set).

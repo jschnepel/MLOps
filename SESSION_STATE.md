@@ -1,8 +1,15 @@
 # Session state
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
-**Current milestone:** M06 (vector retrieval; T18 is its open task. M05, the MCP servers and the governed corpus, closed with T16 in Plan M. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
-**Next task:** Plan M (T16) is executed on branch `plan-m` (from `main`: `9e7d716..bbaba40` holds the debt list and the
+**Current milestone:** M06 (vector retrieval; T18 is DONE in Plan N, and T41, the owner's holdout labels, is its open task. M05 closed with T16 in Plan M. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
+**Next task:** Plan N (T18) is executed on branch `plan-n` (`4c99f14..799beda` holds the debt list and the seven
+building tasks; the close-out is the commit after `799beda`). T18 is DONE: R034 is evidenced
+(`reports/retrieval-comparison.md`); errata 107-111 are proposed. Owner inputs added by Plan N: migrate the dev
+database to revision 0013 (after 0012), then `uv run python scripts/skeleton.py embed`; decide the proposed errata
+(now 1-111); the installed Ollama 0.40.4 against SA:587's 0.33.3 (the pin records 0.40.4); push `plan-n` and open its
+PR after the final review. Still pending from Plan M: merging PR #12 (`plan-m` -> `main`). Next is T23 (unblocked);
+T19 and T41 wait on owner steps, T20 on T19, T25 on T22, T23 and T41. The Plan M record follows.
+**Plan M record:** Plan M (T16) is executed on branch `plan-m` (from `main`: `9e7d716..bbaba40` holds the debt list and the
 six building tasks, and the close-out is the commit after `bbaba40`). T16 is DONE: R028 and R029 are evidenced; R131's
 read half is complete subject to the owner's decisions on errata 96 and 104. Owner inputs: (1) the holdout seal (T03
 step 9), then the live probe (T02); (2) T44 step 10 (step A applied 2026-10-16; the other-device LAN check and the
@@ -15,7 +22,7 @@ fix wave 71753ab). Next is T18 (vector retrieval; it now also owns mcp-read's ve
 or T23, both unblocked; T19 and T41 wait on owner steps, and T20 waits on T19. A proposed erratum awaiting the
 owner's decision does not change a task's status; a task met "subject to" an erratum stays DONE.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-m` off `main` (Plan M executed, pushed 2026-10-18, PR #12 into `main`; `main` 66d6833 has the same tree as `plan-l`, which sat on `plan-k`, on `plan-j`, on `plan-i`, on `plan-h`, on `plan-g`, on `plan-f`, on `plan-e`, on `plan-d`, on `plan-c`, on `plan-b`, on `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) were merged into `main` by the owner on 2026-10-18 (merge commits; the plan branches are kept); `plan-j` and `plan-k` were pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11).
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-n` off `plan-m` (Plan N executed, not pushed; `plan-m`: Plan M executed, pushed 2026-10-18, PR #12 into `main`; `main` 66d6833 has the same tree as `plan-l`, which sat on `plan-k`, on `plan-j`, on `plan-i`, on `plan-h`, on `plan-g`, on `plan-f`, on `plan-e`, on `plan-d`, on `plan-c`, on `plan-b`, on `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) were merged into `main` by the owner on 2026-10-18 (merge commits; the plan branches are kept); `plan-j` and `plan-k` were pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11).
 
 ## Done in the planning session (2026-10-06)
 
@@ -897,6 +904,65 @@ owner's decision does not change a task's status; a task met "subject to" an err
   and the plan file keeps its text. (d) Task 6 rewrote thirteen sentences of the brief's documentation to match the
   built code, for example a lost audience gives `UPSTREAM_INVALID`, not `UNAVAILABLE`.
 
+## Plan N executed (2026-10-19, branch `plan-n`)
+
+- T18 = `4c99f14..799beda` (the debt list first, then the seven building tasks; the close-out is the commit after
+  `799beda`). The plan (`docs/superpowers/plans/2026-10-19-first-slice-n-vector-retrieval.md`) holds the 18 rulings of
+  the controller's brief as implemented, with eleven departures named at its top; the input is
+  `docs/superpowers/research/2026-10-19-plan-n-inputs.md`; the plan review is
+  `docs/reviews/plan-review-n-2026-10-19.md`. Evidence: `reports/retrieval-comparison.md` and `.json`,
+  `tests/e2e/test_retrieval_comparison_live.py`, `test_vector_retrieval_live.py`, `test_migration_0013_live.py`
+  (live); `tests/plan_n/` (unit); `data/embedding-pins.json`.
+- Shipped: the embedding pin and its schema (the script validates before it writes and will not replace another
+  model's pin); `ops_core.embeddings`; revision `0013_embeddings` (`app.embeddings` with a CHECK against a stored zero
+  vector, `app._min_similarity()` 0.68, the vector branch, which never keeps a NaN similarity; exact downgrade to
+  0012); `scripts/skeleton.py embed` (the pin re-verified before each tenant's write); mcp-read's `vector_exact` (an
+  unreadable pin answers as a missing one); the comparison report.
+- Result (development queries, k = 5; the report holds every figure and interval): hit@5 27/27 lexical and 26/27
+  vector (A08 is the miss); recall over expected sections 31/31 and 29/31; no-source cases answered with nothing
+  15/20 lexical and 18/20 vector (B10, B13, B17 and B18 improve, A13 regresses); no forbidden section in either
+  mode (0/122 and 0/87 rows). McNemar p is 1.0 and 0.375: no ranking claim. The vector threshold was tuned and the
+  lexical one was not; the same rule on lexical gives 0.79 and 17/20.
+- Gates: `check.py` `1450 passed, 218 skipped`; `check.py --profile test` `1647 passed, 21 skipped`; `verify_handoff.py` exit 0.
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan M's
+  hundred and six:
+  107. SA:598 and SA:768 (`data/model-pins.json`): the file stays the generation model's (T02, T19); the embedding
+       model's pin is `data/embedding-pins.json` (`{model, digest, dimension, ollama_version, probed_at}`, schema
+       `schemas/embedding-pins.schema.json`, `ops_core.model_pins.load_embedding_pins`), verified against the digest
+       `/api/tags` reports (AM-31 names `/api/show`, which carries none, as T19's note found for qwen3:8b), by
+       `scripts/skeleton.py embed` before it writes (and again before each tenant's write) and by mcp-read on every
+       vector call; a mismatch or a missing pin makes `embed` exit 1 writing nothing, and makes mcp-read answer
+       `UNSUPPORTED_MODE` (a pin that is unreadable or malformed answers the same way as a missing one).
+  108. BS:646 (the MCP row), BS:144 (the diagram), ADR-0001:31 and `docs/ARCHITECTURE.md`: mcp-read → Ollama,
+       `/api/tags` and `/api/embed` with the embedding model only, never generation, because SA:348 and SA:461 make
+       mcp-read compute the query embedding; recorded in `docs/ARCHITECTURE.md` section 11 and as a dated note under
+       ADR-0001. The call is not a `model_permit` holder: SA:203's global model concurrency governs generation.
+  109. SA:584 (`pgvector-python` 0.5.0): unused, not violated: vectors cross as pgvector's text form cast in SQL
+       (`%s::public.vector`, `repr` floats, `ops_core.embeddings.vector_literal`), so no dependency or adapter is
+       added; tests read vectors back by parsing the text form.
+  110. SA:461 (`search_procedures_scoped`): `mode` is `lexical` or `vector`; `query` is required and bounded 1-500 in
+       both modes; `vector` requires one non-zero embedding of exactly 768 dimensions and `lexical` none, else `OC005`
+       `BAD_ARGUMENT`; in vector mode a permitted chunk without an embedding refuses the call (`OC005`
+       `EMBEDDINGS_INCOMPLETE`) instead of being left out; the stop-word early return is lexical only;
+       `VECTOR_MODE_UNAVAILABLE` (erratum 99) is gone.
+  111. BS:242 and BS:417: in vector mode `rank` is the cosine similarity `1 - (embedding <=> query)`, ordered with the
+       lexical tie-break and kept above `app._min_similarity()` (0.68), a development figure chosen on the 47
+       development queries by a rule fixed before measuring (the largest value on a 0.01 grid at which vector hit@5
+       over the labelled cases equals its value at 0); it is not comparable with `ts_rank_cd`. A section whose
+       similarity is NaN is never kept: pgvector sums in single precision, so finite extreme components overflow to
+       NaN, which PostgreSQL sorts above every number. BS:242's "index version" is recorded as model + digest +
+       dimension + prefix + window: there is no vector index, and the search is exact by construction.
+- The installed Ollama is 0.40.4; SA:587 records 0.33.3 ("upgrade only with owner approval"). The upgrade predates
+  this plan; the pin records the version actually used, and nothing here changed it. The owner decides.
+- Rulings made during execution (the controller's, from the SDD ledger; none changes a spec line): (a) the pin
+  script's single failure shape, the NaN filter, the per-tenant pin check and the unreadable-pin answer came from
+  review rounds and are in the code, not debts. (b) `embed`'s planning phase reads every chunk's full body only to
+  count the chunks; it is parked (69 chunks on corpus-1, no behaviour change; cost: a slower plan pass on a large
+  corpus). (c) The window experiment degenerates on corpus-1 (every returnable version is one window); the report
+  says so, counts its forbidden windows at threshold 0 (JSON key `forbidden_windows`), and nothing else was built.
+  (d) The two comparison report files were committed in Task 6, not in the close-out; the final live run is
+  restored with `git checkout -- reports/`, keeping nothing new.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -1242,7 +1308,7 @@ Allowed shortcuts in T18, each with its owning task:
 | Python | 3.13.7 (`python`), 3.14.6 (`py`) |
 | uv | 0.11.8 |
 | Docker | Docker Desktop 29.6.2 |
-| Ollama | Observed at 0.40.4 on 2026-10-15 (recorded 0.33.3 before; Plan J did not change it, and per AM-30 an upgrade is the owner's decision, so this records the observation and claims nothing either way); `qwen3:8b` and `nomic-embed-text` installed as last recorded |
+| Ollama | Observed at 0.40.4 on 2026-10-15 (recorded 0.33.3 before; Plan J did not change it, and per AM-30 an upgrade is the owner's decision, so this records the observation and claims nothing either way); `qwen3:8b` and `nomic-embed-text` installed as last recorded. Plan N pinned `nomic-embed-text:latest` at digest `0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f`, 768 dimensions, on 0.40.4 (`data/embedding-pins.json`, 2026-10-19) |
 | Node | 24.15.0 |
 | git | 2.54 |
 | Not installed | psql, helm (kubectl present) |
@@ -1316,13 +1382,23 @@ a new return type). The dev `ops` database stays at 0011 until the owner runs `u
 migrate` (dev profile); the upgrade creates one function, re-creates one and changes no row; until then mcp-read
 refuses to start on it, and `skeleton.py up` starts seven processes (asset-sim first).
 
+**Update (2026-10-19):** Plan N adds revision 0013 (`app.embeddings`, `app._min_similarity()`, and
+`app.search_procedures_scoped` re-created with its vector branch; return type unchanged). The dev `ops` database stays
+where it is until the owner runs `uv run python scripts/skeleton.py migrate` (dev profile; it applies 0012 too if that
+is still missing) and then `uv run python scripts/skeleton.py embed` (as the worker, through local Ollama; it prints
+`EMBED: alpha: 39 new, 0 present` and `EMBED: beta: 30 new, 0 present` on corpus-1, the first time). Until the
+migration mcp-read refuses to start on it; until `embed`, vector searches are refused (`EMBEDDINGS_INCOMPLETE`)
+and lexical ones work. No agent connected to the dev database in Plan N.
+
 ## Open owner inputs
 
 - Decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed"), 60-71 (see
   "Plan I executed"), 72-81 (see "Plan J executed"), 82-92 (see "Plan K executed"), 93-102 (see "Plan L
-  executed") and 103-106 (see "Plan M executed").
-- Migrate the dev database to revision 0012 (`uv run python scripts/skeleton.py migrate`); mcp-read refuses to start
-  on 0011.
+  executed"), 103-106 (see "Plan M executed") and 107-111 (see "Plan N executed").
+- Migrate the dev database to revision 0013 (`uv run python scripts/skeleton.py migrate`), then embed it (`uv run
+  python scripts/skeleton.py embed`); mcp-read refuses to start below 0013.
+- Decide on the installed Ollama 0.40.4 against SA:587's 0.33.3 (the embedding pin records 0.40.4).
+- Merge PR #12 (`plan-m` -> `main`), still open; `plan-n` is stacked on `plan-m` and is not pushed yet.
 - R025 and R031 have every half evidenced (mcp-read by T15, mcp-write by T47, the import half by T04) but keep
   `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`, because no open task owns them: flipping their status is the owner's call
   (or T15's re-close).
@@ -1355,10 +1431,11 @@ To run the walking skeleton (dev stack up; see `docs/runbooks/walking-skeleton.m
 ```bash
 uv run python scripts/skeleton.py migrate
 uv run python scripts/skeleton.py ingest  # the governed corpus (T17); a repeat writes nothing
+uv run python scripts/skeleton.py embed  # after ingest (T18)
 uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-L, up to 102) and write Plan M for T16 (the read tools and asset-sim over the governed store, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T17, unblocked by T15, T10 and T17; T18 and T23 are unblocked too).
+Then wait for the owner inputs above (holdout seal, then live probe; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-N, up to 111; the dev database's migration to 0013 and its `embed`; the merge of PR #12) and write the plan for T23 (the development eval set, gold labels and rubric: the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T18, which depends on T17 only; T19 and T41 wait on owner steps, T20 on T19).
 
 Do not store secrets or private reasoning in this file.
