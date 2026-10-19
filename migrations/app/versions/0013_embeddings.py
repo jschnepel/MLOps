@@ -8,9 +8,10 @@ Revises: 0012_asset_scope
   the model, its digest, the dimension, the SHA-256 of the exact text that was embedded (the `search_document:` prefix
   included, so a stored row proves its prefix) and the `public.vector(768)` itself, never a zero vector. A model
   change is a later revision's re-embedding, so the model and the dimension are pinned by CHECK. The cells are
-  AM-20.2's corpus row (SA:431): `worker` inserts and reads (the operator command `scripts/skeleton.py embed`), `app_definer` reads, nobody
-  else; ENABLE + FORCE RLS with the `tenant_isolation` policy (SA:510). No vector index: a sequential scan over the
-  tenant's permitted chunks is exact by construction (ruling 7), and an index would make the search approximate.
+  AM-20.2's corpus row (SA:431): `worker` inserts and reads (the operator command `scripts/skeleton.py embed`),
+  `app_definer` reads, nobody else; ENABLE + FORCE RLS with the `tenant_isolation` policy (SA:510). No vector index:
+  a sequential scan over the tenant's permitted chunks is exact by construction (ruling 7), and an index would make
+  the search approximate.
 - `_min_similarity()`: the vector branch keeps only a cosine similarity above it; chosen on the development queries by
   a rule fixed before measuring (ruling 6), so it is a development figure. One helper, as `_min_rank()`.
 - `search_procedures_scoped` is re-created from revision 0012's own body with three textual changes and nothing else
@@ -152,7 +153,10 @@ VECTOR_BRANCH = (
     "    ), kept AS (\n"
     "        -- `rank` is the cosine similarity here (ruling 6): another meaning than ts_rank_cd's, never\n"
     "        -- compared with it (BS:417). At or below the minimum dropped; the lexical branch's tie-break.\n"
+    "        -- A NaN similarity (pgvector sums the norms in single precision, so finite but extreme components\n"
+    "        -- can overflow where vector_norm, in double, does not) is never kept: NaN > x is true and sorts first.\n"
     "        SELECT * FROM scored r WHERE NOT r.unembedded AND r.rank > app._min_similarity()\n"
+    "          AND r.rank <> 'NaN'::float8\n"
     '        ORDER BY r.rank DESC, r.evidence_id COLLATE "C" LIMIT p_limit\n'
     "    )\n" + ANSWER_0012.removesuffix("\n") + ",\n"
     "           EXISTS (SELECT 1 FROM scored s WHERE s.unembedded)\n"

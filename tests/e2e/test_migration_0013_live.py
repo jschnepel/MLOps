@@ -8,7 +8,8 @@ other-family section (the same filters as lexical); another tenant's embedding u
 embedding, with another dimension or a zero vector, or a lexical call with one, answered instead of refused
 BAD_ARGUMENT; a permitted chunk without an embedding silently left out instead of EMBEDDINGS_INCOMPLETE (while a draft
 chunk without one changes nothing); an empty corpus answered other than `[]`; any role but the worker able to write
-an embedding, the worker able to change or delete one or to write another tenant's, a zero vector stored; and a
+an embedding, the worker able to change or delete one or to write another tenant's, a zero vector stored, the worker
+unable to read its own row back; a NaN similarity (finite extreme components) kept and sorted first; and a
 downgrade that leaves the table or the helper behind, does not restore 0012's body with the same grant, or does not
 come back exactly.
 """
@@ -215,6 +216,8 @@ async def test_only_the_worker_writes_embeddings_and_only_its_tenants(
         async with worker.transaction():
             await persistence.set_tenant(worker, tenant)
             await worker.execute(insert, row)  # AM-20.2's ingestion cell (SA:431)
+            cur = await worker.execute("SELECT evidence_id FROM app.embeddings")  # its SELECT cell, through the policy
+            assert [r["evidence_id"] for r in await cur.fetchall()] == ["OWN:v1:turbine"]
         with pytest.raises(psycopg.errors.InsufficientPrivilege):  # RLS WITH CHECK: another tenant's row
             async with worker.transaction():
                 await persistence.set_tenant(worker, tenant)
@@ -225,6 +228,37 @@ async def test_only_the_worker_writes_embeddings_and_only_its_tenants(
             assert await refused(worker, statement, ()) == "42501", statement  # append-only
     finally:
         await cleanup(app_conn, [run, other_run], [tenant, other])
+
+
+async def test_a_nan_similarity_is_never_kept(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
+    """Finite but extreme components pass the zero-norm CHECK (computed in double precision), yet pgvector sums the
+    norms and the dot product in single precision, so their cosine against a unit query overflows to NaN, which
+    PostgreSQL orders above every number and compares greater than the minimum."""
+    mcp_read = await role_conn(Role.MCP_READ)
+    tenant, run, handle = await handle_for(app_conn, role_conn, None)
+    try:
+        now = await clock(app_conn)
+        old = [("approved", now - 30 * DAY, None)]
+        await stage(
+            app_conn,
+            tenant,
+            [{"id": "KEPT", "version": "1", "states": old}, {"id": "NAN", "version": "1", "states": old}],
+        )
+        diagonal = [0.0] * embeddings.DIMENSION
+        diagonal[0] = diagonal[1] = math.sqrt(0.5)  # a unit query
+        extreme = [0.0] * embeddings.DIMENSION
+        extreme[0] = extreme[1] = 3e38  # finite, norm > 0, but its dot product with the query overflows a float4
+        await embed_rows(app_conn, tenant, {"KEPT:v1:turbine": diagonal, "NAN:v1:turbine": extreme})
+        cur = await app_conn.execute(
+            "SELECT 1 - (embedding OPERATOR(public.<=>) %s::public.vector) AS similarity"
+            " FROM app.embeddings WHERE tenant_id = %s AND evidence_id = 'NAN:v1:turbine'",
+            (embeddings.vector_literal(diagonal), tenant),
+        )
+        assert math.isnan((await cur.fetchone() or {})["similarity"])  # the premise: pgvector really answers NaN
+        found = await vector_ids(mcp_read, handle, embedding=diagonal)
+        assert [e for e, _ in found] == ["KEPT:v1:turbine"]  # the NaN row is neither first nor present
+    finally:
+        await cleanup(app_conn, [run], [tenant])
 
 
 def revision_0013() -> Any:

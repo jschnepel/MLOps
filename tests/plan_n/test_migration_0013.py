@@ -94,6 +94,7 @@ def test_the_vector_branch_reuses_the_lexical_filters_verbatim_and_answers_the_s
     assert "left(c.body, 8000) AS excerpt," in vector and "char_length(c.body) > 8000 AS excerpt_cut" in vector
     assert "1 - (e.embedding OPERATOR(public.<=>) p_query_embedding) AS rank" in vector  # cosine similarity
     assert "WHERE NOT r.unembedded AND r.rank > app._min_similarity()" in vector
+    assert "AND r.rank <> 'NaN'::float8" in vector and "NaN" not in lexical  # a NaN similarity is never kept
     assert 'ORDER BY r.rank DESC, r.evidence_id COLLATE "C" LIMIT p_limit' in vector
     assert "LEFT JOIN embeddings e USING (tenant_id, evidence_id)" in vector
     assert (
