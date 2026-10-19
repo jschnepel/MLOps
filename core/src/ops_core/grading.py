@@ -89,7 +89,10 @@ def load_cases(path: Path) -> list[Case]:
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise CaseError(f"{path.name}:{number}: not valid JSON (column {exc.colno})") from None
         errors = sorted(_validator(CASE_SCHEMA).iter_errors(row), key=lambda e: [str(p) for p in e.absolute_path])
         if errors:
             where = "/".join(str(p) for p in errors[0].absolute_path) or "(root)"

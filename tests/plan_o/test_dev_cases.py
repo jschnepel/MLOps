@@ -1,15 +1,18 @@
 """The development cases and their gold labels as committed (T23 DoD 1, R111; Plan O rulings 1-3).
 
-Catches: a case the schema refuses or a schema the meta-schema refuses; a category mix other than ruling 2's (60
-cases, 30 per tenant, every category in both tenants except `conflicting`, which is alpha's); a label citing a section
-that is not returnable for the case's tenant at its `as_of`, outside the asset's family, or of an injected document
-outside an injected case's allowed references; a returnable set that is no longer the hand-written anchor (the oracle
-alone would restate the SQL's rule); an asset of the other tenant outside a cross-tenant case, or a cross-tenant case
-that does not abstain; a supported investigation whose interval holds no alert of its asset; a case outside the
-development split, without one, or a missing case file, that `scripts/verify_handoff.py` lets through or crashes on; a
-loader that accepts a row the schema refuses or a
-repeated id; and an edit to the file or its schema that was not made a reviewed new dev-set version (both hashes are
-pinned).
+Catches:
+- a case the schema refuses, a schema the meta-schema refuses, or a schema rule no test refuses;
+- a category mix other than ruling 2's (60 cases, 30 per tenant, every category in both tenants except `conflicting`,
+  which is alpha's);
+- a label citing a section that is not returnable for the case's tenant at its `as_of`, outside the asset's family, or
+  of an injected document outside an injected case's allowed references;
+- a returnable set that is no longer the hand-written anchor (the oracle alone would restate the SQL's rule);
+- an asset of the other tenant outside a cross-tenant case, or a cross-tenant case that does not abstain;
+- a proposal case whose interval holds no alert of its asset;
+- a case outside the development split, without one, a row that is not an object, or a missing case file, that
+  `scripts/verify_handoff.py` lets through or crashes on;
+- a loader that accepts a row the schema refuses or a repeated id, or crashes on a malformed line;
+- an edit to the file or its schema that was not made a reviewed new dev-set version (both hashes are pinned).
 """
 
 import hashlib
@@ -77,7 +80,8 @@ def test_the_mix_is_ruling_2s() -> None:
 
 def test_every_label_is_a_returnable_section_of_the_tenant_and_the_assets_family() -> None:
     governed = corpus.load(CORPUS)
-    assert corpus.returnable(governed, FIXTURE_CLOCK) == RETURNABLE_AT_AS_OF  # the independent anchor
+    # The anchor is written for 2026-10-16T12:00Z; this proves the returnable set is the same at the cases' instant.
+    assert corpus.returnable(governed, FIXTURE_CLOCK) == RETURNABLE_AT_AS_OF
     sections = {
         (d.tenant, d.evidence_id(s)): d
         for d in governed.documents
@@ -114,6 +118,11 @@ def test_the_handoff_checker_refuses_a_case_outside_the_development_split(tmp_pa
         result = _run_contracts(copy)
         out = result.stdout + result.stderr
         assert result.returncode == 1 and "FAIL: Do not fabricate a held-out fixture" in out, change
+    path.write_text("".join(json.dumps(r) + "\n" for r in [[1, 2], *rows[1:]]), encoding="utf-8", newline="\n")
+    result = _run_contracts(copy)  # a row that is not an object: a named refusal as well
+    assert result.returncode == 1 and "FAIL: Development eval case rows must be JSON objects" in (
+        result.stdout + result.stderr
+    )
     path.unlink()
     result = _run_contracts(copy)
     assert (
@@ -121,10 +130,10 @@ def test_the_handoff_checker_refuses_a_case_outside_the_development_split(tmp_pa
     )
 
 
-def test_every_supported_investigation_has_an_alert_of_its_asset_inside_its_interval() -> None:
+def test_every_proposal_case_has_an_alert_of_its_asset_inside_its_interval() -> None:
     alerts = json.loads((CORPUS / "assets.json").read_text(encoding="utf-8"))["alerts"]
     for case in grading.load_cases(CASES):
-        if case.category != "investigate_supported":
+        if case.expected_kind != "proposal":
             continue
         start = case.as_of - timedelta(hours=case.hours)
         raised = [
@@ -144,4 +153,39 @@ def test_the_case_loader_refuses_a_row_the_schema_refuses_and_a_repeated_id(tmp_
         grading.load_cases(path)
     path.write_text((json.dumps(row) + "\n") * 2, encoding="utf-8")
     with pytest.raises(grading.CaseError, match="unique"):
+        grading.load_cases(path)
+
+
+@pytest.mark.parametrize(
+    ("change", "rule"),
+    [
+        ({"surprise": 1}, "additionalProperties"),
+        ({"case_id": "HO-001"}, "pattern"),
+        ({"case_id": "DV-1"}, "pattern"),
+        ({"expected_kind": "abstain", "required_refs": ["ALPHA-PUMP-SEAL:v2:leak-response"]}, "maxItems"),
+        ({"intent": "answer_only", "expected_kind": "proposal"}, "enum"),
+        ({"as_of": "2026-13-45T12:00:00Z"}, "format"),
+        ({"as_of": "2026-10-06T12:00:00+00:00"}, "pattern"),
+    ],
+    ids=["unknown-key", "holdout-id", "short-id", "abstain-with-refs", "answer-only-proposal", "bad-as-of", "offset"],
+)
+def test_the_case_loader_refuses_a_row_breaking_each_schema_rule(
+    tmp_path: Path, change: dict[str, object], rule: str
+) -> None:
+    row = json.loads(CASES.read_text(encoding="utf-8").splitlines()[0])
+    path = tmp_path / "cases.jsonl"
+    path.write_text(json.dumps({**row, **change}) + "\n", encoding="utf-8")
+    with pytest.raises(grading.CaseError, match=rf"cases.jsonl:1: .* breaks the case schema \({rule}\)"):
+        grading.load_cases(path)
+
+
+def test_the_case_loader_names_a_malformed_line_and_a_row_that_is_not_an_object(tmp_path: Path) -> None:
+    good = CASES.read_text(encoding="utf-8").splitlines()[0]
+    path = tmp_path / "cases.jsonl"
+    path.write_text(good + "\n{not json\n", encoding="utf-8")
+    with pytest.raises(grading.CaseError, match=r"cases.jsonl:2: not valid JSON") as caught:
+        grading.load_cases(path)
+    assert "not json" not in str(caught.value)  # the line number, never the row's text
+    path.write_text("[1, 2]\n", encoding="utf-8")
+    with pytest.raises(grading.CaseError, match=r"cases.jsonl:1: \(root\) breaks the case schema"):
         grading.load_cases(path)

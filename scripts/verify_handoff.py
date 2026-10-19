@@ -305,6 +305,7 @@ def main() -> int:
     check(dev_path.is_file(), "Missing required file: evals/dev/cases.jsonl")
     dev_cases = [json.loads(line) for line in dev_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     for case in dev_cases:
+        check(isinstance(case, dict), "Development eval case rows must be JSON objects")
         check(case.get("split") == "development", "Do not fabricate a held-out fixture in development data")
 
     # Syntax inspection only; this deliberately does not execute optional SDKs.
