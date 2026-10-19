@@ -44,5 +44,5 @@ web/           React + TypeScript + Vite
 
 The decision above stands. One network edge is added to the boundary list: mcp-read → Ollama, for `/api/tags` and
 `/api/embed` with the embedding model only, never a generation. SA:348 and SA:461 make mcp-read compute the
-`search_query:` embedding of a vector search, which the boundary list (written before vector mode was designed) did
-not name. The owner decides the erratum; `docs/ARCHITECTURE.md` section 11 records the edge.
+`search_query:` embedding of a vector search, which the boundary list did
+not name. The proposed erratum 108 adds the edge, and the owner decides it; `docs/ARCHITECTURE.md` section 11 records the edge.

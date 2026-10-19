@@ -135,9 +135,10 @@ size) and, for a proportion with no cases, no interval. T18 compares exact vecto
 digest is the bare 64-hex value `/api/tags` reports (`/api/show` carries none). `uv run python
 scripts/pin_embedding_model.py` writes the file from the running Ollama (`/api/version`, `/api/tags`, one
 `/api/embed` for the dimension) and invents nothing. It validates the pin before it writes anything, and every
-failure has one shape: a single `PIN: <rule>, nothing written` line and exit status 1 (Ollama unreachable, the model
-missing, an answer that is not one usable vector, another dimension than 768, a pin that would not validate). It
-refuses, writing nothing, to replace a pin of another model, digest or dimension: the stored embeddings were made
+failure but one has one shape: a single `PIN: <rule>, nothing written` line and exit status 1 (Ollama unreachable, the
+model missing, an answer that is not one usable vector, another dimension than 768, a pin that would not validate).
+The exception is the refusal to replace a pin, which prints its own line (`PIN: refused, nothing written: …`) that
+explains itself after the colon, with the same exit status. It refuses, writing nothing, to replace a pin of another model, digest or dimension: the stored embeddings were made
 with the pinned model, and a new pin alone would let mcp-read compare a new model's query vectors with the old
 model's document vectors. A model change is a new revision that removes the stored embeddings (or moves them aside);
 after that the pin is replaced (the script refuses while the old pin exists, so the revision's commit deletes or
@@ -149,13 +150,13 @@ the refusal does not prevent. Re-running the script for the same model only refr
 **Embedding the corpus.** After `ingest`, `uv run python scripts/skeleton.py embed` embeds every stored chunk that has
 none, as the role `worker`, into the database `OPS_PG_DB` names (default `ops`): it checks the pin against Ollama
 (`OPS_OLLAMA_URL`, default `http://127.0.0.1:11434`) before writing, sends batches of 16 to `/api/embed`, accepts
-only 768 finite non-zero numbers per input, and writes one transaction per tenant. A chunk's text is exactly
+only 768 finite numbers, not all zero, per input, and writes one transaction per tenant. A chunk's text is exactly
 `search_document: ` + its heading + a blank line + its body (the prefix nomic-embed-text is trained with, SA:645), and
 the row keeps that text's SHA-256 (`input_sha256`) beside the vector. It prints `EMBED: <tenant>: n new, n present`;
 a repeat writes nothing, and two runs at the same moment neither fail nor write a row twice (`ON CONFLICT DO
 NOTHING`). It exits 1 and writes nothing when the pin is missing or does not match the installed model, or a tenant
-already holds embeddings of another digest. It asks for the pin again before each tenant's write, after that
-tenant's vectors have come back, so a model re-pulled while the run was going stores nothing under the pinned digest.
+already holds embeddings of another digest. It asks for the pin again before the write of each tenant that has
+something to write, after that tenant's vectors have come back, so a model re-pulled while the run was going stores nothing under the pinned digest.
 A failure while writing (Ollama gone, an answer that is not the pinned vectors, or that second check finding another
 model) exits 1 and names the tenants already written (`EMBED: failed (…) after writing alpha`); a re-run completes
 the rest. Every stored chunk is embedded, whatever its status: lifecycle is decided at query time. Chunks ingested
@@ -163,7 +164,7 @@ later need another `embed` run; until then vector mode refuses (below) and lexic
 
 | Setting | Value |
 |---|---|
-| Store | `app.embeddings`, one row per chunk (`tenant_id`, `evidence_id`), model, digest, dimension 768, `input_sha256`, `public.vector(768)`; written by `worker`, read only by the search (AM-20.2's corpus cells), ENABLE + FORCE RLS |
+| Store | `app.embeddings`, one row per chunk (`tenant_id`, `evidence_id`), model, digest, dimension 768, `input_sha256`, `public.vector(768)`; inserted and read by `worker` (the embed command), read by `app_definer` (the search) (AM-20.2's corpus cells), ENABLE + FORCE RLS |
 | Query text | `search_query: ` + the query (mcp-read computes it, SA:348) |
 | Filters | the lexical branch's tenant, lifecycle and asset filters, the same SQL text byte for byte |
 | Distance | cosine (`<=>`); `rank` = `1 - distance`, the cosine similarity |
@@ -181,8 +182,8 @@ the query with `/api/embed`, both within one 10-second budget and outside any tr
 call, so a model swapped under a running server is refused, not used. A pin that is missing, unreadable or malformed,
 or an installed model that is not the pinned one, is `UNSUPPORTED_MODE` ("no valid embedding pin" for the first
 three). No embedder (before the server's start-up has finished), Ollama unreachable, a 5xx or the shared 10 seconds
-running out is `UNAVAILABLE` (retryable). An answer that is not one vector of 768 finite non-zero numbers is
-`UPSTREAM_INVALID`. An invalid handle is refused before Ollama is asked anything, and lexical mode never contacts it.
+running out is `UNAVAILABLE` (retryable). An answer it cannot use (not one vector of 768 finite numbers, not all zero; a status other than 200 that is not a
+5xx; a body that is not a JSON object; a tags answer without a model list) is `UPSTREAM_INVALID`. An invalid handle is refused before Ollama is asked anything, and lexical mode never contacts it.
 
 **How to read a similarity.** Cosine similarity orders the sections of one query by the angle between their
 embeddings; it is not a probability, it is not comparable between queries in any calibrated way, and it is not

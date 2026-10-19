@@ -65,7 +65,7 @@ The model (bottom right) has no credential, no database access, no network reach
 | `mcp-write` | Keycloak client; DB role `mcp_exec` | **no tables**; `EXECUTE` on `resolve_invocation`, `grant_execution`, `mark_sent`, `record_outcome`, `request_abort`, `lookup_action` | PostgreSQL (functions), incident-sim | the search and asset functions; asset-sim; it sees only the frozen payload bytes, never corpus text |
 | `operator` CLI | DB role `operator` | `EXECUTE` on `resolve_escalation` only | PostgreSQL | everything else |
 | `app_definer` | no login | owns the functions, owns no tables; sees rows only through explicit RLS policies | — | be used by a process |
-| Model | **none** | none | nothing outbound; it answers requests from the worker only | call a tool, see a credential, assert an outcome, select a route |
+| Model | **none** | none | nothing outbound; the generation model answers requests from the worker only (mcp-read asks the embedding model for query embeddings, which is not a generation) | call a tool, see a credential, assert an outcome, select a route |
 
 The full grant table is AM-20.2; the function contracts (callers, inputs, locks, transitions, events) are AM-20.3; the policies are AM-20.5.
 
@@ -364,7 +364,7 @@ it is the committed contract's.
 ## 11. Exact vector retrieval (built in T18)
 
 **Claim.** A vector search returns exactly what a lexical search may return, ranked by the pinned embedding model, and
-the model that ranks it cannot act: mcp-read asks Ollama for one query embedding, never for text.
+the model that ranks it cannot act: mcp-read asks Ollama for one query embedding, never a generation.
 
 - **One filter text.** The vector branch of `search_procedures_scoped` repeats the lexical branch's tenant, lifecycle
   and asset filters byte for byte, and refuses (`EMBEDDINGS_INCOMPLETE`) rather than silently dropping a permitted
@@ -374,7 +374,7 @@ the model that ranks it cannot act: mcp-read asks Ollama for one query embedding
   guaranteed: mcp-read refuses a query model that differs from the pin, or a pin it cannot read
   (`UNSUPPORTED_MODE`), on every call; the pin cannot be replaced by `scripts/pin_embedding_model.py` with another
   model's; every stored row carries its digest and the SHA-256 of the prefixed text it was made from, and
-  `skeleton.py embed` refuses to mix digests and checks the pin again before each tenant's write (a mismatch there
+  `skeleton.py embed` refuses to mix digests and checks the pin again before the write of each tenant that has something to write (a mismatch there
   stops the run and names the tenants already written). The script's refusal guards against a silent re-pin;
   replacing the committed pin file by hand is a reviewed repository change, not something the guarantee prevents. A
   model change is a revision that removes the stored embeddings (or moves them aside), then replaces the pin and runs
