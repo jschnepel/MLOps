@@ -9,7 +9,7 @@ McNemar tests on the discordant cases (SA:667: no ranking claim without p < 0.05
 has little power, so a non-significant difference is not evidence of equality).
 
 The same module chooses the vector branch's minimum similarity by the rule Plan N ruling 6 fixed before anything was
-measured: the largest value on a 0.01 grid at which vector hit@5 over the answerable development cases equals its
+measured: the largest value on a 0.01 grid at which vector hit@5 over the labelled development cases equals its
 value at 0. The `threshold` command applies it to fresh embeddings of the corpus files before revision 0013 is
 frozen; the live comparison applies it again to the stored vectors and must find the same value. Run:
 
@@ -70,7 +70,7 @@ def mcnemar(b: int, c: int) -> float:
     n = b + c
     if n == 0:
         return 1.0
-    tail = sum(math.comb(n, i) for i in range(min(b, c) + 1)) / 2**n
+    tail = sum(math.comb(n, i) for i in range(min(b, c) + 1)) / (1 << n)
     return min(1.0, 2 * tail)
 
 
@@ -210,8 +210,9 @@ def window_metrics(
     """The window experiment at k = 5, with what it can and cannot measure (rounds 1 and 2, I1): the windows per
     tenant, sections and words per window, and whether each is a whole version; at the section-tuned threshold,
     recall@5 and hit@5 over the labelled cases (a window hits when it holds a labelled section) and the no-source cases
-    answered with nothing; at threshold 0, the ranking alone, hit@1 and MRR@5; and windows holding a section the case
-    may not see (zero by construction, counted anyway). When every window is a whole version and k covers every window
+    answered with nothing; at threshold 0, the ranking alone, hit@1 and MRR@5; and, among the windows returned at the
+    section-tuned threshold, those holding a section the case may not see (zero by construction, counted anyway). A
+    corpus with no window gives None for the size ranges and false for the whole-version flag. When every window is a whole version and k covers every window
     of a tenant, the thresholded figures depend on the threshold only, so the order is read from the threshold-0
     figures (a threshold-0 recall@5 would be 1.0 by construction there, so none is reported)."""
     answerable = [c for c in cases if c.expected]
@@ -238,15 +239,17 @@ def window_metrics(
         per_tenant[w.tenant] = per_tenant.get(w.tenant, 0) + 1
     sizes = [len(w.evidence_ids) for w in all_windows]
     words = [w.words for w in all_windows]
-    forbidden = sum(1 for c in cases for w in found[c.id] for e in w.evidence_ids if e not in permitted[c.tenant])
+    forbidden = sum(
+        any(e not in permitted[c.tenant] for e in w.evidence_ids) for c in cases for w in found[c.id]
+    )  # windows, at the section-tuned threshold: the unit the report's sentence names
     return {
         "k": rb.K,
         "windows": len(all_windows),
         "windows_per_tenant": dict(sorted(per_tenant.items())),
-        "sections_per_window": {"min": min(sizes), "max": max(sizes)},
-        "words_per_window": {"min": min(words), "max": max(words)},
-        "every_window_a_whole_version": all(w.whole_version for w in all_windows),
-        "k_covers_every_window": max(per_tenant.values()) <= rb.K,
+        "sections_per_window": {"min": min(sizes, default=None), "max": max(sizes, default=None)},
+        "words_per_window": {"min": min(words, default=None), "max": max(words, default=None)},
+        "every_window_a_whole_version": bool(all_windows) and all(w.whole_version for w in all_windows),
+        "k_covers_every_window": all(n <= rb.K for n in per_tenant.values()),
         "recall_at_k": recall(found),
         "hit_at_k": rb.proportion(sum(any(holds(w, c) for w in found[c.id]) for c in answerable), len(answerable)),
         "hit_at_1_threshold_0": rb.proportion(
@@ -256,7 +259,7 @@ def window_metrics(
             round(sum(reciprocal(c) for c in answerable) / len(answerable), 4) if answerable else None
         ),
         "none_answered_empty": rb.proportion(sum(not found[c.id] for c in nones), len(nones)),
-        "forbidden_sections": forbidden,
+        "forbidden_windows": forbidden,
     }
 
 
@@ -459,7 +462,7 @@ def markdown(doc: Mapping[str, Any]) -> str:
         f"section-tuned threshold {s['vector_minimum_similarity']}: recall@5 {w['recall_at_k']}, hit@5 "
         f"{rb._rate(w['hit_at_k'])}, no-source cases answered with nothing {rb._rate(w['none_answered_empty'])}. At "
         f"threshold 0 (the ranking alone): hit@1 {rb._rate(w['hit_at_1_threshold_0'])}, MRR@5 "
-        f"{w['mrr_at_k_threshold_0']}. Windows holding a section the case may not see: {w['forbidden_sections']}."
+        f"{w['mrr_at_k_threshold_0']}. Windows returned at that threshold holding a section the case may not see: {w['forbidden_windows']}."
     )
     if w["every_window_a_whole_version"] and w["k_covers_every_window"]:
         window += (
@@ -493,14 +496,14 @@ async def _measure(pins: model_pins.EmbeddingPins) -> list[dict[str, Any]]:
     embedder = embeddings.OllamaEmbedder.from_settings()
     try:
         await embedder.verify(pins)
-        stored = await embedder.embed([embeddings.document_text(s.name, s.body) for _, s in sections], pins)
+        section_vectors = await embedder.embed([embeddings.document_text(s.name, s.body) for _, s in sections], pins)
         queries = await embedder.embed([embeddings.query_text(c.query) for c in cases], pins)
     finally:
         await embedder.aclose()
     scored = {
         c.id: [
             (d.evidence_id(s), embeddings.cosine(q, v))
-            for (d, s), v in zip(sections, stored, strict=True)
+            for (d, s), v in zip(sections, section_vectors, strict=True)
             if d.tenant == c.tenant and (c.asset_type is None or d.asset_family in (None, c.asset_type))
         ]
         for c, q in zip(cases, queries, strict=True)

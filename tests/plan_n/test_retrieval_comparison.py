@@ -131,7 +131,26 @@ def test_window_metrics_report_what_the_windows_can_measure() -> None:
     # The ranking alone (round 2, I1): A2's top window at threshold 0 is W1, which lacks y; y's window is second.
     assert row["hit_at_1_threshold_0"]["successes"] == 1 and row["mrr_at_k_threshold_0"] == 0.75
     assert "recall_at_k_threshold_0" not in row  # 1.0 by construction when k covers every window
-    assert row["none_answered_empty"]["successes"] == 1 and row["forbidden_sections"] == 0
+    assert row["none_answered_empty"]["successes"] == 1 and row["forbidden_windows"] == 0
+
+
+def test_window_metrics_count_forbidden_windows_not_sections() -> None:
+    """Review Minor 2: a window holding two sections the case may not see is one forbidden window, at the tuned
+    threshold only (the one below it is not returned)."""
+    cases = [case("A1", ("x",))]
+    bad, low = window("W1", "alpha", "x", "p", "q"), window("W2", "alpha", "r")
+    candidates = {"A1": [(bad, 0.9), (low, 0.5)]}
+    row = rc.window_metrics(cases, candidates, {"alpha": {"x"}}, [bad, low], 0.65)
+    assert row["forbidden_windows"] == 1 and "forbidden_sections" not in row
+
+
+def test_window_metrics_without_any_window_report_nothing_instead_of_failing() -> None:
+    """Review Minor 3: no window at all is a corpus with nothing returnable, not a crash."""
+    row = rc.window_metrics([case("A1", ("x",))], {"A1": []}, {"alpha": set()}, [], 0.68)
+    assert row["windows"] == 0 and row["windows_per_tenant"] == {}
+    assert row["sections_per_window"] == {"min": None, "max": None} and row["words_per_window"]["min"] is None
+    assert row["every_window_a_whole_version"] is False and row["k_covers_every_window"] is True
+    assert row["hit_at_k"]["successes"] == 0 and row["forbidden_windows"] == 0
 
 
 def test_the_report_names_both_modes_every_change_and_the_settings() -> None:
