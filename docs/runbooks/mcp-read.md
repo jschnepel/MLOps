@@ -41,8 +41,8 @@ checked in this order; the first failure decides the answer.
 `app.test_clock` exists outside the test profile, when `app._resolve_handle` lacks 0009's job binding, when
 `app.search_procedures_scoped` (0011) is missing, when `app.asset_scope` or the search's `retrieved_at` (0012) is
 missing, and when the search has no vector branch (0013) ("… predates this service; run scripts/skeleton.py migrate
-for this profile"). It contacts no Ollama at start: the embedding pin is checked on each vector call. It also reads its own
-workload secret (`kc_client_secret_ops_mcp_read`) at start, for asset-sim. mcp-write makes the 0009 check at its own
+for this profile"). It contacts no Ollama at start: the embedding pin is checked on each vector call. It also reads
+its own workload secret (`kc_client_secret_ops_mcp_read`) at start, for asset-sim. mcp-write makes the 0009 check at its own
 start. The search answers from the governed corpus, so a database that was never ingested (`scripts/skeleton.py
 ingest`) answers every search with no results and `corpus_version` `none`. Readiness (`/health/ready`) needs the
 realm's signing keys and the database; asset-sim is a dependency of a call, not of readiness.
@@ -86,9 +86,9 @@ never from an argument.
   `mode='vector'` and that embedding; the answer says `retrieval_mode` `vector_exact`. It asks Ollama nothing else
   and never a generation. A missing, unreadable or malformed pin, or an installed model that is not the pinned one,
   is `UNSUPPORTED_MODE` (`retryable: false`); Ollama unreachable, slow (the 10 seconds spent), failing (5xx) or not
-  configured is `UNAVAILABLE` (`retryable: true`); an answer it cannot use (not 768 finite numbers, not all zero; a status other than 200 that is not a 5xx; a body that
-  is not a JSON object; a tags answer without a model list) is `UPSTREAM_INVALID`; a
-  permitted section without an embedding is `REFUSED` with `EMBEDDINGS_INCOMPLETE`. An invalid handle is refused
+  configured is `UNAVAILABLE` (`retryable: true`); an answer it cannot use (not 768 finite numbers, none above 1e6
+  in magnitude, with a norm of at least 1e-6; a status other than 200 that is not a 5xx; a body that is not a JSON
+  object; a tags answer without a model list) is `UPSTREAM_INVALID`; a permitted section without an embedding is `REFUSED` with `EMBEDDINGS_INCOMPLETE`. An invalid handle is refused
   before any of this, and a `lexical` search never contacts Ollama.
 
 ## Variables

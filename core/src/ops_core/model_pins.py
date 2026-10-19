@@ -75,11 +75,15 @@ def load_embedding_pins(path: Path) -> EmbeddingPins:
     """Read and validate the embedding pins file, with `load_model_pins`'s strictness and messages.
 
     Raises:
-        ModelPinsError: the file is missing, is not JSON, or does not match `EmbeddingPins`.
+        ModelPinsError: the file is missing, cannot be read or decoded, is not JSON, or does not match `EmbeddingPins`
+            (so every caller answers a file it cannot use in the one shape).
     """
     if not path.is_file():
         raise ModelPinsError(f"embedding pins file not found: {path}")
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:  # a refused read, or bytes that are not UTF-8 (UnicodeDecodeError)
+        raise ModelPinsError(f"embedding pins file cannot be read: {path}: {type(exc).__name__}") from exc
     try:
         json.loads(text)
     except json.JSONDecodeError as exc:

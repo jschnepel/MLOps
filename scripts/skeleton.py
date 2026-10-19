@@ -310,10 +310,11 @@ def embed() -> int:
     """Embed every stored chunk without an embedding as role `worker` (T18, Plan N ruling 2), into the database the
     environment names (`OPS_PG_DB`, default `ops`; the live suite's `ops_test`), with the model that
     `data/embedding-pins.json` pins, checked against Ollama (`OPS_OLLAMA_URL`) before anything is written. Exit 1 with
-    the reason, and nothing written, when the pin is missing or does not match or a tenant holds another digest's
-    embeddings; a failure while writing (Ollama gone, an answer that is not the pinned vectors) exits 1 too, and the
-    tenants already written stay written and are named (`EmbedInterrupted`); a re-run completes the rest. A repeated
-    run writes nothing. The dev database waits for the owner (after `ingest`)."""
+    the reason, and nothing written, when the pin is missing, unreadable or does not match or a tenant holds another
+    digest's embeddings; a failure while writing (Ollama gone, an answer that is not the pinned vectors, or the pin
+    re-check before a later tenant's write finding another model) exits 1 too, and the tenants already written stay
+    written and are named (`EmbedInterrupted`); a re-run completes the rest. A repeated run writes nothing. The dev
+    database waits for the owner (after `ingest`)."""
     export_environment(load_dotenv(ROOT / ".env"))
     try:
         pins = model_pins.load_embedding_pins(embeddings.PINS)

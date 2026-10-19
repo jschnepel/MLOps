@@ -135,9 +135,26 @@ async def test_the_pin_is_checked_against_the_tags_digest() -> None:
         [[0.1] * 767 + [10**400]],  # an integer too large for a double: math.isfinite raises OverflowError
         [[0.1] * 767 + [True]],
         [[0.0] * 768],
+        [[0.1] * 767 + [1e7]],  # finite in double precision, out of the single-precision range pgvector sums in
+        [[-1e7] + [0.1] * 767],
+        [[3e38] + [0.0] * 767],  # near float4's maximum: the stored row would turn every similarity into NaN
+        [[1e-7] + [0.0] * 767],  # a norm below 1e-6: single precision underflows its square to a zero norm
         "not a list",
     ],
-    ids=["no-vector", "767", "nan", "infinity", "overflow", "boolean", "zeros", "not-a-list"],
+    ids=[
+        "no-vector",
+        "767",
+        "nan",
+        "infinity",
+        "overflow",
+        "boolean",
+        "zeros",
+        "large-positive",
+        "large-negative",
+        "near-float4-maximum",
+        "tiny-norm",
+        "not-a-list",
+    ],
 )
 async def test_a_malformed_answer_is_refused(vectors: Any) -> None:
     def answer(request: httpx2.Request) -> httpx2.Response:
@@ -147,6 +164,17 @@ async def test_a_malformed_answer_is_refused(vectors: Any) -> None:
     client, _ = ollama(answer)
     with pytest.raises(embeddings.Malformed):
         await client.embed(["search_query: x"], PINS)
+
+
+def test_the_magnitude_bound_keeps_unit_vectors_and_the_edges_of_the_rule() -> None:
+    """Plan N final review, m1: components up to 1e6 and a norm of at least 1e-6 are answers; the model's own unit
+    vectors are far inside both."""
+    ordinary = unit_vector("ordinary")
+    edge_large = [1e6] + [0.0] * 767
+    edge_small = [1e-6] + [0.0] * 767
+    assert embeddings.checked([ordinary, edge_large, edge_small], 3) == [
+        tuple(v) for v in (ordinary, edge_large, edge_small)
+    ]
 
 
 @pytest.mark.parametrize("kind", ["connect", "timeout", "503"])

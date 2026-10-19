@@ -11,7 +11,8 @@ request and no retry (asset-sim's client pattern). It asks only `/api/version`, 
 `/api/show` carries none) and `/api/embed`, never a generation endpoint, so it is not a `model_permit` holder (SA:203
 governs generation). Failures map to one exception each, which the callers turn into their own answers: unreachable, a timeout
 or a 5xx is `Unavailable` (retryable); a digest or model other than the pin is `PinMismatch`; any answer that is not
-exactly one list of 768 finite floats per input, with a non-zero norm, is `Malformed`.
+exactly one list of 768 finite floats per input, each at most 1e6 in magnitude, with a norm of at least 1e-6, is
+`Malformed` (the bounds keep what is stored inside the single precision pgvector works in).
 
 Vectors cross into PostgreSQL as pgvector's text form cast in SQL (`%s::public.vector`), each float written with
 `repr` so it round-trips exactly; no `pgvector` package is used (erratum 109).
@@ -37,7 +38,12 @@ DOCUMENT_PREFIX: Final = "search_document: "
 QUERY_PREFIX: Final = "search_query: "
 BATCH: Final = 16  # inputs per /api/embed request: small enough for one 10-second request on the dev machine
 TIMEOUT_SECONDS: Final = 10.0  # Plan N ruling 4, as asset-sim's client
-PINS: Final = Path(__file__).resolve().parents[3] / "data" / "embedding-pins.json"  # read from the checkout (T30)
+# TODO(T30): package the pin; it is read from the checkout until then.
+PINS: Final = Path(__file__).resolve().parents[3] / "data" / "embedding-pins.json"
+# pgvector stores and sums in single precision (largest 3.4e38): a component above this can overflow a sum to NaN, and
+# a norm below MIN_NORM underflows to zero. nomic-embed-text answers unit vectors, far inside both.
+MAX_COMPONENT: Final = 1e6
+MIN_NORM: Final = 1e-6
 
 Vector = tuple[float, ...]
 
@@ -63,7 +69,7 @@ class PinMismatch(EmbeddingError):
 
 
 class Malformed(EmbeddingError):
-    """An answer that is not one finite, non-zero vector of the pinned dimension per input."""
+    """An answer that is not one bounded, finite vector of the pinned dimension per input (see `checked`)."""
 
 
 def document_text(section: str, body: str) -> str:
@@ -102,7 +108,9 @@ def cosine(a: Sequence[float], b: Sequence[float]) -> float:
 
 def checked(raw: object, expected: int, dimension: int = DIMENSION) -> list[Vector]:
     """`/api/embed`'s `embeddings` as vectors, or Malformed: exactly `expected` lists of `dimension` finite numbers
-    each (a JSON boolean is not a number), none of them all zeros."""
+    each (a JSON boolean is not a number), each of magnitude at most `MAX_COMPONENT`, and the vector's norm at least
+    `MIN_NORM` (which includes "not all zeros"). The bounds keep what is stored inside single precision, where
+    `app.embeddings` and the similarity are computed: a row that overflowed there would silently never be returned."""
     if not isinstance(raw, list) or len(raw) != expected:
         raise Malformed("the embedding answer has another number of vectors than inputs")
     out: list[Vector] = []
@@ -116,8 +124,10 @@ def checked(raw: object, expected: int, dimension: int = DIMENSION) -> list[Vect
         if not numbers:
             raise Malformed("an embedding holds a value that is not a finite number")
         vector = tuple(float(v) for v in item)
-        if not any(vector):
-            raise Malformed("an embedding is all zeros")
+        if any(abs(v) > MAX_COMPONENT for v in vector):
+            raise Malformed("an embedding holds a value too large for single-precision vectors")
+        if math.sqrt(math.fsum(v * v for v in vector)) < MIN_NORM:
+            raise Malformed("an embedding is all zeros or too small to compare")
         out.append(vector)
     return out
 
@@ -193,8 +203,8 @@ class OllamaEmbedder:
 
     async def dimension(self, model: str) -> int:
         """The dimension of one real `/api/embed` answer for `model`: what the pin script records. The answer must be
-        exactly one finite, non-zero vector (Malformed otherwise); whether the length is the pinned 768 is the
-        caller's rule, as no pin exists yet when this is asked."""
+        exactly one finite vector within `checked`'s bounds (Malformed otherwise); whether the length is the pinned
+        768 is the caller's rule, as no pin exists yet when this is asked."""
         body = await self._json("POST", "/api/embed", {"model": model, "input": ["dimension probe"]})
         raw = body.get("embeddings")
         if not isinstance(raw, list) or len(raw) != 1 or not isinstance(raw[0], list):

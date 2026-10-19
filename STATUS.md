@@ -348,8 +348,8 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 
 - Plan N (T18: exact pgvector retrieval and the comparison) executed on branch `plan-n` (`4c99f14..799beda`, on
   `plan-m`). The plan is `docs/superpowers/plans/2026-10-19-first-slice-n-vector-retrieval.md`.
-- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1450 passed, 218 skipped`.
-  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1647 passed, 21 skipped`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1461 passed, 218 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1658 passed, 21 skipped`.
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
 - **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`, `RECORDED_LOCALLY_LIVE`): R034 — exact vector search measured
   against the lexical baseline on the 47 development queries (`reports/retrieval-comparison.md`: both modes at k = 5

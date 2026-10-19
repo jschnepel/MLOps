@@ -172,7 +172,7 @@ Every node returns to `route_request`, and every labelled edge is one row of the
 | Handle types accepted | `investigate`, `resume_input` jobs | `execute`, `recover` jobs |
 | Token audience | `MCP_READ_RESOURCE_URL` | `MCP_WRITE_RESOURCE_URL` |
 | DB role | `mcp_read` (3 functions) | `mcp_exec` (6 functions) |
-| Downstream | asset-sim, governed corpus (through functions) | incident-sim |
+| Downstream | asset-sim, governed corpus (through functions), Ollama (query embeddings only, T18) | incident-sim |
 | Cannot | grant, dispatch, abort, see receipts | search, read asset data, see corpus text (it sees only frozen payload bytes) |
 
 - Protocol revision 2026-07-28 over Streamable HTTP; per-request protocol version validated (AM-30).
@@ -363,19 +363,21 @@ it is the committed contract's.
 
 ## 11. Exact vector retrieval (built in T18)
 
-**Claim.** A vector search returns exactly what a lexical search may return, ranked by the pinned embedding model, and
-the model that ranks it cannot act: mcp-read asks Ollama for one query embedding, never a generation.
+**Claim.** A vector search draws from exactly the sections a lexical search may return, ranked by the pinned embedding
+model, and the model that ranks it cannot act: mcp-read asks Ollama for one query embedding, never a generation.
 
 - **One filter text.** The vector branch of `search_procedures_scoped` repeats the lexical branch's tenant, lifecycle
   and asset filters byte for byte, and refuses (`EMBEDDINGS_INCOMPLETE`) rather than silently dropping a permitted
   section without an embedding. It never keeps a NaN similarity: pgvector computes the cosine in single precision, so
-  finite but extreme components can overflow into NaN, which would sort before every real score.
+  finite but extreme components can overflow into NaN, which would sort before every real score. The embedding client
+  refuses components above 1e6 and a norm below 1e-6, so only a row written around it can reach this.
 - **A pinned model.** `data/embedding-pins.json` names the model, its digest and its 768 dimensions. What is
   guaranteed: mcp-read refuses a query model that differs from the pin, or a pin it cannot read
   (`UNSUPPORTED_MODE`), on every call; the pin cannot be replaced by `scripts/pin_embedding_model.py` with another
   model's; every stored row carries its digest and the SHA-256 of the prefixed text it was made from, and
-  `skeleton.py embed` refuses to mix digests and checks the pin again before the write of each tenant that has something to write (a mismatch there
-  stops the run and names the tenants already written). The script's refusal guards against a silent re-pin;
+  `skeleton.py embed` refuses to mix digests and checks the pin again before the write of each tenant that has
+  something to write (a mismatch there stops the run and names the tenants already written). The script's refusal
+  guards against a silent re-pin;
   replacing the committed pin file by hand is a reviewed repository change, not something the guarantee prevents. A
   model change is a revision that removes the stored embeddings (or moves them aside), then replaces the pin and runs
   `embed` again; a read-path check of the stored rows' digest belongs to that revision (debt list).

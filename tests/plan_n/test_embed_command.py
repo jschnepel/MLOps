@@ -101,3 +101,32 @@ def test_a_missing_pin_writes_nothing(
     assert capsys.readouterr().out.splitlines() == [
         "EMBED: refused, nothing written (data/embedding-pins.json is missing or malformed)"
     ]
+
+
+@pytest.mark.parametrize("how", ["not-utf8", "refused"])
+def test_an_unreadable_pin_is_refused_in_the_one_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    quiet: list[Any],
+    how: str,
+) -> None:
+    """Plan N final review, m2: a pin file that cannot be decoded or read is refused as a missing one, not a traceback."""
+    pins = tmp_path / "embedding-pins.json"
+    pins.write_bytes(b'{"model": "' + bytes([0xFF, 0xFE]) + b'"}')
+    monkeypatch.setattr(embeddings, "PINS", pins)
+    if how == "refused":
+
+        def refuse(self: Path, *args: object, **kwargs: object) -> str:
+            raise PermissionError("access denied")
+
+        monkeypatch.setattr(Path, "read_text", refuse)
+
+    async def never(pg: Any, pins: EmbeddingPins) -> list[embed.Report]:
+        raise AssertionError("nothing may be embedded without a readable pin")
+
+    monkeypatch.setattr(skeleton, "_embed", never)
+    assert skeleton.embed() == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "EMBED: refused, nothing written (data/embedding-pins.json is missing or malformed)"
+    ]

@@ -74,6 +74,39 @@ def test_a_missing_or_broken_file_is_a_pins_error(tmp_path: Path) -> None:
         load_embedding_pins(broken)
 
 
+def unreadable(tmp_path: Path, how: str, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A pin file the loader cannot read as text: bytes that are not UTF-8, or a read the system refuses."""
+    path = tmp_path / "embedding-pins.json"
+    path.write_bytes(b'{"model": "' + bytes([0xFF, 0xFE]) + b'"}')
+    if how == "refused":
+
+        def refuse(self: Path, *args: object, **kwargs: object) -> str:
+            raise PermissionError("access denied")
+
+        monkeypatch.setattr(Path, "read_text", refuse)
+    return path
+
+
+@pytest.mark.parametrize("how", ["not-utf8", "refused"])
+def test_an_unreadable_file_is_a_pins_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str) -> None:
+    """Plan N final review, m2: the loader's callers catch `ModelPinsError` alone, so a file that cannot be read or
+    decoded must arrive as one (mcp-read's own wider catch stays as a belt)."""
+    with pytest.raises(ModelPinsError, match="cannot be read"):
+        load_embedding_pins(unreadable(tmp_path, how, monkeypatch))
+
+
+@pytest.mark.parametrize("how", ["not-utf8", "refused"])
+def test_the_pin_script_answers_an_unreadable_pin_in_its_one_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], how: str
+) -> None:
+    """The unreadable file counts as another model's: refused with the one line, nothing replaced, no traceback."""
+    out = unreadable(tmp_path, how, monkeypatch)
+    before = out.read_bytes()
+    assert pin_embedding_model.main(out, ollama_answering(MEASURED)) == 1
+    assert out.read_bytes() == before
+    assert capsys.readouterr().out.startswith("PIN: refused, nothing written")
+
+
 def ollama_answering(digest: str, dimension: int = 768) -> httpx2.MockTransport:
     """A scripted local Ollama for the pin script: its version, one installed build of the model, one embedding."""
 

@@ -82,8 +82,8 @@ def stamp(value: datetime) -> str:
 
 
 def tool_error(code: str, message: str, *, retryable: bool = False) -> dict[str, Any]:
-    """The `error` object of an envelope; only an unavailable upstream (asset-sim,
-    the embedding model) is worth a retry (ruling 15)."""
+    """The `error` object of an envelope; only an unavailable upstream (asset-sim, the embedding model) is worth a
+    retry (ruling 15)."""
     return {"code": code, "message": message, "retryable": retryable}
 
 

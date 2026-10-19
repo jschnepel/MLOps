@@ -102,8 +102,8 @@ reaches the model or the tool result; the measurement records it.
 **What it cannot do.** OR-matching returns any permitted section whose rank clears the minimum, so a question with
 no permitted source can still get sections; the measurement reports how often. SA:377 as written counts any returned
 effective chunk as sufficient, so it would not abstain on such a question; T20 must add a relevance criterion
-beyond it (for example a score or label-based sufficiency rule; erratum 102). The worker sends the user's whole message (up to
-500 characters) as the query.
+beyond it (for example a score or label-based sufficiency rule; erratum 102). The worker sends the user's whole
+message (up to 500 characters) as the query.
 
 ## The measurement
 
@@ -150,14 +150,16 @@ the refusal does not prevent. Re-running the script for the same model only refr
 **Embedding the corpus.** After `ingest`, `uv run python scripts/skeleton.py embed` embeds every stored chunk that has
 none, as the role `worker`, into the database `OPS_PG_DB` names (default `ops`): it checks the pin against Ollama
 (`OPS_OLLAMA_URL`, default `http://127.0.0.1:11434`) before writing, sends batches of 16 to `/api/embed`, accepts
-only 768 finite numbers, not all zero, per input, and writes one transaction per tenant. A chunk's text is exactly
+only 768 finite numbers per input, none above 1e6 in magnitude and a norm of at least 1e-6 (pgvector stores and
+sums in single precision, so larger or smaller values could overflow or vanish), and writes one transaction per
+tenant. A chunk's text is exactly
 `search_document: ` + its heading + a blank line + its body (the prefix nomic-embed-text is trained with, SA:645), and
 the row keeps that text's SHA-256 (`input_sha256`) beside the vector. It prints `EMBED: <tenant>: n new, n present`;
 a repeat writes nothing, and two runs at the same moment neither fail nor write a row twice (`ON CONFLICT DO
 NOTHING`). It exits 1 and writes nothing when the pin is missing or does not match the installed model, or a tenant
 already holds embeddings of another digest. It asks for the pin again before the write of each tenant that has
-something to write, after that tenant's vectors have come back, so a model re-pulled while the run was going stores nothing under the pinned digest.
-A failure while writing (Ollama gone, an answer that is not the pinned vectors, or that second check finding another
+something to write, after that tenant's vectors have come back, so a model re-pulled while the run was going stores
+nothing under the pinned digest. A failure while writing (Ollama gone, an answer that is not the pinned vectors, or that second check finding another
 model) exits 1 and names the tenants already written (`EMBED: failed (…) after writing alpha`); a re-run completes
 the rest. Every stored chunk is embedded, whatever its status: lifecycle is decided at query time. Chunks ingested
 later need another `embed` run; until then vector mode refuses (below) and lexical mode is unaffected.
@@ -171,7 +173,7 @@ later need another `embed` run; until then vector mode refuses (below) and lexic
 | Index | none: every permitted chunk is scored, so the order is exact (a live test compares it with a brute-force ranking); BS:242's "index version" is model + digest + dimension + prefix + window |
 | Threshold | similarity greater than 0.68 (`app._min_similarity()`, granted to nobody), the largest value on a 0.01 grid at which vector hit@5 over the labelled development cases equals its value at 0: a rule fixed before measuring, applied to the development queries, so a development figure |
 | Ties | `evidence_id` ascending in byte order (`COLLATE "C"`), as lexical |
-| NaN | a section whose similarity is NaN is never kept. pgvector computes the cosine in single precision, so finite but extreme components can overflow in it where a double-precision norm does not, and NaN compares greater than every number and would sort first |
+| NaN | a section whose similarity is NaN is never kept. pgvector computes the cosine in single precision, so finite but extreme components can overflow in it where a double-precision norm does not, and NaN compares greater than every number and would sort first. The embedding client refuses components above 1e6 and a norm below 1e-6, so only a row written around it (a superuser insert) can reach this; such a permitted row is dropped, not refused (debt list) |
 | Completeness | a permitted chunk with no embedding refuses the call (`EMBEDDINGS_INCOMPLETE`): nothing is left out silently |
 | Arguments | `lexical` takes no embedding; `vector` one non-zero embedding of exactly 768 dimensions; the text query is required and bounded in both; anything else is `BAD_ARGUMENT` |
 | Results | the same keys, excerpt bound, instant and corpus version as lexical; the tool reports `retrieval_mode` `vector_exact` |
@@ -182,8 +184,10 @@ the query with `/api/embed`, both within one 10-second budget and outside any tr
 call, so a model swapped under a running server is refused, not used. A pin that is missing, unreadable or malformed,
 or an installed model that is not the pinned one, is `UNSUPPORTED_MODE` ("no valid embedding pin" for the first
 three). No embedder (before the server's start-up has finished), Ollama unreachable, a 5xx or the shared 10 seconds
-running out is `UNAVAILABLE` (retryable). An answer it cannot use (not one vector of 768 finite numbers, not all zero; a status other than 200 that is not a
-5xx; a body that is not a JSON object; a tags answer without a model list) is `UPSTREAM_INVALID`. An invalid handle is refused before Ollama is asked anything, and lexical mode never contacts it.
+running out is `UNAVAILABLE` (retryable). An answer it cannot use (not one vector of 768 finite numbers within the
+bounds above; a status other than 200 that is not a 5xx; a body that is not a JSON object; a tags answer without a
+model list) is `UPSTREAM_INVALID`. An invalid handle is refused before Ollama is asked anything, and lexical mode
+never contacts it.
 
 **How to read a similarity.** Cosine similarity orders the sections of one query by the angle between their
 embeddings; it is not a probability, it is not comparable between queries in any calibrated way, and it is not

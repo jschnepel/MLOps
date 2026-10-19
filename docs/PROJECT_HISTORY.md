@@ -876,8 +876,9 @@ departed from the brief eleven times; they are written down at its top, and the 
 
 **Execution.** Plan N was executed on branch `plan-n` (`4c99f14..799beda`) in seven tasks after the debt list. Every
 task had a review, and every review that found something had one fix round. The gates afterwards were `check.py`
-`1450 passed, 218 skipped`, `check.py --profile test` `1647 passed, 21 skipped` and `verify_handoff.py` exit 0. The plan's own arithmetic (1434 and 1628)
-was out of date by then, because the review rounds added tests. The live suite was the first to run 0013's SQL, and
+`1450 passed, 218 skipped`, `check.py --profile test` `1647 passed, 21 skipped` and `verify_handoff.py` exit 0 (the
+final review's fix wave raised them to `1461` and `1658`). The plan's own arithmetic (1434 and 1628) was out of
+date by then, because the review rounds added tests. The live suite was the first to run 0013's SQL, and
 its four live tests passed on the first database run, the round trip down to 0012 and back included.
 
 **Problem.** Task 1 (the pin and the client) passed with seven minors. The pin script wrote the file before it
@@ -936,9 +937,29 @@ not; the same rule applied to lexical gives 0.79 and 17 of 20, so part of the di
 0.68 again in the live run. The 300-word experiment came out as 8 windows, each a whole version, with hit@1 27/27 and
 MRR@5 1.0 at threshold 0, and the repeat-embedding check found a smallest cosine of 1.0.
 
+**Final review.** The whole-branch review found 0 Critical, 1 Important and 7 Minor, and the verdict was ready with
+fixes. **Problem.** The Important one was in the records, not the code. Erratum 107 and the docstring of `embed` said
+that a pin mismatch ends the command with nothing written. That is true before the first write, and false for the
+check this plan added before each tenant's write: a model re-pulled between two tenants stops the run after the
+first one committed, and the command names it. The code, the live test and `docs/retrieval.md` were right; the
+erratum would have become spec text that told the owner a mismatch never leaves rows. The Minors: a vector was
+checked for finiteness in double precision but stored and compared in single precision, so a broken model's huge
+components could be stored and then silently never returned; an unreadable pin file was handled in mcp-read only, and
+`embed` and the pin script printed a traceback; the architecture document's Downstream row missed the Ollama edge;
+the T18 note named the wrong endpoints and left two deferred items out; some lines ran past 120 characters; and the
+close-out commit's subject names the comparison report, which was committed in Task 6. **Change.** The erratum and
+the docstring now say what the code does. `checked()` refuses a component above 1e6 and a norm below 1e-6, with
+tests for each; the NaN filter stays as a second guard. The loader turns an unreadable or undecodable file into the
+one error all three callers already handle. The rest is text. The subject of the close-out commit stays as it is,
+because the branch's history is not rewritten; this section says where the report was committed. One item stays as
+debt: nothing on the read path compares the stored rows' digest with the pin, so an owner who edits the pin by hand
+without a re-embedding revision would get mixed-model answers. The first change of embedding model owns that check,
+no task exists for it yet, and the owner opens one when the change is planned.
+
 **Process.** Two slips with an interpreter and no script, neither of which ran code: Task 3's implementer typed a
 bare `python -`, which hangs, and was stopped; the close-out agent typed one `uv run python -` with an empty heredoc,
-which printed the interpreter's banner and exited (the plan writer's `python3 -` is above). Two slips with the live
+which printed the interpreter's banner and exited, and the final fix wave's agent did the same once (the plan
+writer's `python3 -` is above). Two slips with the live
 gate: Task 1's dispatch told its implementer that no live tests were needed, so the controller ran them (1584 passed,
 21 skipped), and Task 2's implementer ran them only in the fix round. The standing rule against reading a script from
 standard input is in every dispatch.

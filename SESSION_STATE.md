@@ -923,7 +923,14 @@ owner's decision does not change a task's status; a task met "subject to" an err
   15/20 lexical and 18/20 vector (B10, B13, B17 and B18 improve, A13 regresses); no forbidden section in either
   mode (0/122 and 0/87 rows). McNemar p is 1.0 and 0.375: no ranking claim. The vector threshold was tuned and the
   lexical one was not; the same rule on lexical gives 0.79 and 17/20.
-- Gates: `check.py` `1450 passed, 218 skipped`; `check.py --profile test` `1647 passed, 21 skipped`; `verify_handoff.py` exit 0.
+- Final whole-branch review: ready with fixes, 0 Critical, 1 Important and 7 Minor; one fix wave after `3c69add`
+  (the commit after it): erratum 107 and `skeleton.embed`'s docstring now say that a pin mismatch found by the re-check
+  names the tenants already written (I1); `checked()` refuses a component above 1e6 or a norm below 1e-6 (m1); an
+  unreadable pin file is a `ModelPinsError` for every caller (m2); the Downstream row, the T18 note's endpoints and
+  deferred items, the over-long lines, `TODO(T30)` and the ambiguous Claim sentence (m3, m4, m7). The `3c69add`
+  subject names "the comparison report", which was committed in Task 6, not there (m5; history is not rewritten).
+  The stored-digest read-path check stays debt with its trigger, the first embedding-model change (m6).
+- Gates: `check.py` `1461 passed, 218 skipped`; `check.py --profile test` `1658 passed, 21 skipped`; `verify_handoff.py` exit 0.
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan M's
   hundred and six:
   107. SA:598 and SA:768 (`data/model-pins.json`): the file stays the generation model's (T02, T19); the embedding
@@ -931,8 +938,11 @@ owner's decision does not change a task's status; a task met "subject to" an err
        `schemas/embedding-pins.schema.json`, `ops_core.model_pins.load_embedding_pins`), verified against the digest
        `/api/tags` reports (AM-31 names `/api/show`, which carries none, as T19's note found for qwen3:8b), by
        `scripts/skeleton.py embed` before it writes (and again before each tenant's write) and by mcp-read on every
-       vector call; a mismatch or a missing pin makes `embed` exit 1 writing nothing, and makes mcp-read answer
-       `UNSUPPORTED_MODE` (a pin that is unreadable or malformed answers the same way as a missing one).
+       vector call. A mismatch or a missing pin found before `embed` writes makes it exit 1 writing nothing; one found
+       by the re-check before a later tenant's write exits 1 naming the tenants already written (their rows stay,
+       made while the pin still matched). A mismatch makes mcp-read answer `UNSUPPORTED_MODE`. A pin that is
+       unreadable or malformed answers the same way as a missing one in all three (`embed`, the pin script and
+       mcp-read).
   108. BS:646 (the MCP row), BS:144 (the diagram), ADR-0001:31 and `docs/ARCHITECTURE.md`: mcp-read → Ollama,
        `/api/tags` and `/api/embed` with the embedding model only, never generation, because SA:348 and SA:461 make
        mcp-read compute the query embedding; recorded in `docs/ARCHITECTURE.md` section 11 and as a dated note under
@@ -1286,8 +1296,13 @@ Allowed shortcuts in T18, each with its owning task:
 - one embedding per chunk: a model change is a later revision that removes the stored embeddings (or moves them
   aside), after which the pin is replaced as a reviewed change and `embed` runs again (`app.embeddings`'s key and its
   CHECKs pin the model and the dimension; `scripts/pin_embedding_model.py` refuses to replace another model's pin),
-  and a read-path check that the stored rows' digest is the pin's belongs to that first re-embedding revision → no
-  task until a model change (Plan N ruling 1; rounds 1 and 2, I2);
+  and a read-path check that the stored rows' digest is the pin's belongs to that first re-embedding revision → the
+  first embedding-model change (no task yet; the owner opens one). Until then an owner who edits the pin by hand
+  without that revision gets mixed-model answers; the edit is a reviewed repository change (Plan N ruling 1; rounds
+  1 and 2, I2; final review m6);
+- a NaN similarity on a permitted row is dropped, not refused. The embedding client now refuses components above 1e6
+  and a norm below 1e-6, so only a row written around the client (a superuser insert) can reach it → no task (final
+  review m1);
 - chunks ingested after an `embed` run stay without an embedding until `embed` runs again; vector mode answers
   `REFUSED`/`EMBEDDINGS_INCOMPLETE` meanwhile, lexical mode is unaffected → operator step (runbook), no task (Plan N
   rulings 2 and 5);
