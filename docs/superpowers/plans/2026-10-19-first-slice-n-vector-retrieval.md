@@ -53,7 +53,8 @@ Nothing else departs.
    catalog before writing (`core/src/ops_core/ingest.py:5-7`); writing the other tenants would leave the store half
    re-embedded with no way to tell which model a tenant's answers came from. A model or transport failure after an
    earlier tenant committed leaves that tenant written (each tenant is one transaction, as ruling 2 says); the command
-   says which failure stopped it, and a re-run embeds only what is missing.
+   names the failure and the tenants already written (`EmbedInterrupted`, as ingestion's `IngestInterrupted`), and a
+   re-run embeds only what is missing. Every tenant's digest is checked in the planning phase, before any write.
 2. **The vector argument rule also refuses a zero vector, and the client refuses an all-zero answer (rulings 4 and
    5).** pgvector's cosine distance of a zero vector is NaN, and PostgreSQL orders NaN above every number, so a zero
    query vector would put every permitted chunk above any threshold. `public.vector_norm(p_query_embedding) = 0` is one
@@ -100,6 +101,39 @@ Nothing else departs.
 11. **The worker's mode choice is marked `TODO(T25)` (ruling 16).** The brief re-homes mode selection to "T20/T25";
     the code marker needs one task, and SA:660's condition that B and C use identical retrieval settings is T25's, so
     `routing.py` names T25 and the debt line names both.
+
+## Round 1 changes
+
+The controller accepted the eleven departures (departure 1 on condition that every tenant's digest is checked before
+any write, and departure 5 on condition that the digest covers only the per-case answers: both hold). The first static
+review (`.superpowers/plann/round1-static.md`: 0 Critical, 2 Important, 13 Minor) is fixed in full, per the
+controller's rulings:
+
+- **I1** the window experiment says what it measures: `Window` carries its words and whether it is a whole version;
+  `window_metrics` adds the windows per tenant, sections and words per window, hit@1, MRR@5 and recall@5 at
+  threshold 0; the report and `docs/retrieval.md` say that on corpus-1 every returnable version (327-343 words) is one
+  window and k = 5 covers every window of either tenant, so hit@5 and recall@5 measure only the threshold (whole-version
+  against section embeddings); `test_corpus_1s_windows_are_its_whole_returnable_versions` pins the 8 whole-version
+  windows, and the live comparison asserts it (Tasks 2, 6, 7).
+- **I2** `scripts/pin_embedding_model.py` refuses, writing nothing, to replace a pin of another model, digest or
+  dimension (`test_the_pin_script_writes_a_pin_and_never_replaces_another_models`, a fake transport); the documents say
+  a model change is a revision that re-embeds and then updates the pin; `docs/ARCHITECTURE.md` names only what is
+  guaranteed; the debt list gains the read-path check of the stored digest (the first re-embedding revision) (Tasks
+  1, 7).
+- **Minors** 1: Task 7's check greps the old phrases exactly. 2: Task 5's `TODO(T18)` grep lists its three lines.
+  3: `tests/plan_c` → `288 passed, 19 skipped`; the self-review's example counts. 4: the three T17 lines that deferred
+  to T18 are reworded (Task 2 says what that does to the T17 report). 5: forbidden rows are counted within the top k
+  (the T17 figures at k = 5 do not move). 6: `app.embeddings` gets `CHECK (public.vector_norm(embedding) > 0)`, with a
+  unit line and a live refused insert. 7: `embed` names the tenants already written in its failures and late
+  refusals (`EmbedInterrupted`, `EmbedRefused.written`), inserts with `ON CONFLICT DO NOTHING` counting only its own
+  rows, and its docstring says so. 8: a parametrized test proves Ollama is untouched when asset-sim fails or another
+  asset type is asked. 9: `docs/runbooks/dev-topology.md` documents `OPS_OLLAMA_URL`. 10: Task 8 updates
+  SESSION_STATE's repository line, "Exact next step" and its command block. 11: the report states what lexical would
+  give under the vector's threshold rule (0.79: 17/20 answered empty, computed from the recorded ranks). 12:
+  docstrings on `OllamaEmbedder.verify`, `embed` and `aclose`. 13: the sweep table says which rows it prints and that
+  the JSON holds all 100.
+- The counts move: `tests/plan_n` 57 (52), dev `1434 passed, 214 skipped` (1429), live `1627 passed, 21 skipped`
+  (1622). The plan was re-applied to a fresh `git archive` of the round-1 base and re-gated (see "Counts").
 
 ## Global Constraints
 
@@ -160,7 +194,9 @@ additions below win where the two differ:
   exact current text ("Edit n (`path`), replace:" then "with:"); a step that creates a file gives the whole file.
 - **Counts.** Today (`6d00d06`) the dev gate is `1372 passed, 205 skipped` and the live gate `1556 passed, 21 skipped`
   (184 live-gated tests). Task 1 Step 1a records both before any change; if either differs, every expected count
-  below shifts by the same difference. The plan's code was applied to a scratch copy of `6d00d06` (`git archive`) and
+  below shifts by the same difference. The plan's code was applied to a scratch copy of `6d00d06` (`git archive`; in
+  round 1 the rendered plan itself, every Create and every Edit in order, was applied to a fresh copy of `6ba15e5` and
+  every gate below re-run there) and
   every dev count below was measured there with the repository's locked environment, the scratch sources first on
   `sys.path` (13 tests that need a git checkout, `tests/plan_a/test_verify_handoff.py` and
   `tests/plan_b/test_text_hygiene.py`, fail in a scratch copy and pass in the repository; the counts are the
@@ -203,7 +239,8 @@ where the plan does something else.
    brute-force ranking of the stored vectors for all 47 development queries (Task 4); "index version" recorded as
    model + digest + dimension + prefix + window, "no index" (Tasks 6 and 7).
 8. **Another window** — an experiment in the report only: adjacent sections of one version until ≥300 words, the
-   remainder joining the last window (`retrieval_comparison.windows`, Tasks 2 and 6).
+   remainder joining the last window (`retrieval_comparison.windows`, Tasks 2 and 6). On corpus-1 that is one window
+   per returnable version, which the report and `docs/retrieval.md` say plainly (round 1, I1).
 9. **Lexical minimum rank** — measured (the sweep), unchanged at 0.25; the lexical body byte-identical (Tasks 2, 3, 6).
 10. **Numeric tokens** — re-homed to T23 (debt list).
 11. **The report** — `reports/retrieval-comparison.md` + `.json` by `tests/e2e/test_retrieval_comparison_live.py`
@@ -238,6 +275,14 @@ where the plan does something else.
   hit@3 at 0.68 is 26/27. Two embeddings of each query were identical (largest component difference 0.0); a batch
   and a single request gave the same vector (cosine 1.0); a section's prefixed and unprefixed embeddings have cosine
   0.9599. These are expectations, not gates: Task 2 and Task 6 measure again.
+- The same rule (the largest 0.01 step that keeps every labelled hit) applied to the committed T17 report's recorded
+  lexical ranks chooses 0.79, with hit@5 27/27 and 15 → 17 of 20 no-source cases answered with nothing: part of
+  vector's 18/20 is the tuning, not the method (round 1, Minor 11; the report states it).
+- The 300-word window rule makes each of the 8 versions returnable at `AS_OF` exactly one window (alpha 5, beta 3;
+  327-343 words), and k = 5 covers every window of either tenant, so the window experiment's hit@5 and recall@5 measure
+  only the threshold: the report reads it as whole-version embeddings against section embeddings, with hit@1 and MRR@5
+  as its ranking figures (round 1, I1). The critic's simulation gave hit@5 23/27, recall@5 0.85 and 19/20 answered
+  empty at 0.68.
 - The committed T17 report's per-case answers hash to `7a059a196d083a80da88be611d8ca4dbaad43660922fd977450ee7c600eb04a3`
   (`retrieval_comparison.answers_digest`).
 - The committed contracts T18 must not change: `schemas/tools/search_procedures.input.schema.json` SHA-256
@@ -294,35 +339,35 @@ Task 8 Step 2's "Plan N executed" block; in short:
   `test_mcp_read_live.py`.
 - Reports: `reports/retrieval-comparison.md`, `.json` (Task 6, committed in Task 8).
 - Documentation: `docs/retrieval.md`, `docs/runbooks/mcp-read.md`, `docs/runbooks/walking-skeleton.md`,
-  `docs/ARCHITECTURE.md`, `docs/adr/ADR-0001-deployable-units-as-top-level-directories.md` (Task 7); Task 8:
+  `docs/runbooks/dev-topology.md`, `docs/ARCHITECTURE.md`, `docs/adr/ADR-0001-deployable-units-as-top-level-directories.md` (Task 7); Task 8:
   `handoff/*`, `SESSION_STATE.md`, `STATUS.md`, `docs/PROJECT_HISTORY.md`.
 
 ## Task overview
 
 - **Task 1:** the debt list; `tests/plan_n` on the path; the embedding pin (loader, schema, script, the measured
-  file); `ops_core.embeddings` and `OPS_OLLAMA_URL`. Tests: `test_embedding_pins.py` 9, `test_embeddings.py` 15 (DoD
-  2's unit half), `test_schema_conformance.py` +3 (two examples, one mutant). Dev `1399 passed, 205 skipped`; live
-  `1583 passed, 21 skipped` (arithmetic).
+  file, the script's refusal to replace another model's pin); `ops_core.embeddings` and `OPS_OLLAMA_URL`. Tests:
+  `test_embedding_pins.py` 10, `test_embeddings.py` 15 (DoD 2's unit half), `test_schema_conformance.py` +3 (two
+  examples, one mutant). Dev `1400 passed, 205 skipped`; live `1584 passed, 21 skipped` (arithmetic).
 - **Task 2:** the comparison's pure functions, k = 3 in the baseline's metrics, and the threshold measurement. Tests:
-  `test_retrieval_comparison.py` 9. Dev `1408 passed, 205 skipped`; live `1592 passed, 21 skipped`.
+  `test_retrieval_comparison.py` 11. Dev `1411 passed, 205 skipped`; live `1595 passed, 21 skipped`.
 - **Task 3:** revision 0013, its matrix rows, the lock-order entry, persistence's vector parameters and marker,
   mcp-read's startup check; the live definer tests. Tests: `test_migration_0013.py` 9, the transitions module +1, the
-  lock-order module +1; live `test_migration_0013_live.py` 4. Dev `1419 passed, 209 skipped`; live `1607 passed, 21
+  lock-order module +1; live `test_migration_0013_live.py` 4. Dev `1422 passed, 209 skipped`; live `1610 passed, 21
   skipped`.
 - **Task 4:** `ops_core.embed`, `skeleton.py embed`, the `embedded` fixture; the live prefix, idempotency and
-  exactness tests. Tests: `test_embed_command.py` 2; live `test_vector_retrieval_live.py` 4. Dev `1421 passed, 213
-  skipped`; live `1613 passed, 21 skipped`.
-- **Task 5:** mcp-read's `vector_exact`. Tests: `test_mcp_read_vector.py` 8; `tests/plan_l/test_mcp_read_corpus.py`
-  one test rewritten (no count change); live `test_mcp_read_live.py` changed (no count change). Dev `1429 passed, 213
-  skipped`; live `1621 passed, 21 skipped`.
-- **Task 6:** the live comparison and the report. Live `test_retrieval_comparison_live.py` 1. Dev `1429 passed, 214
-  skipped`; live `1622 passed, 21 skipped`.
+  exactness tests. Tests: `test_embed_command.py` 2; live `test_vector_retrieval_live.py` 4. Dev `1424 passed, 213
+  skipped`; live `1616 passed, 21 skipped`.
+- **Task 5:** mcp-read's `vector_exact`. Tests: `test_mcp_read_vector.py` 10; `tests/plan_l/test_mcp_read_corpus.py`
+  one test rewritten (no count change); live `test_mcp_read_live.py` changed (no count change). Dev `1434 passed, 213
+  skipped`; live `1626 passed, 21 skipped`.
+- **Task 6:** the live comparison and the report. Live `test_retrieval_comparison_live.py` 1. Dev `1434 passed, 214
+  skipped`; live `1627 passed, 21 skipped`.
 - **Task 7:** documentation and erratum 108's architecture record. No tests.
 - **Task 8:** close-out: handoff records, acceptance rows, errata 107-111, state, history, final gates. No tests.
 
-The arithmetic, once: dev passed 1372 + 27 = 1399, + 9 = 1408, + 11 = 1419, + 2 = 1421, + 8 = 1429, + 0;
-dev skipped 205, 205, + 4 = 209, + 4 = 213, 213, + 1 = 214. Live passed = dev passed + (dev skipped − 21): 1583,
-1592, 1607, 1613, 1621, 1622, always with 21 skipped. The final dev figures (1429 passed, 214 skipped) were
+The arithmetic, once: dev passed 1372 + 28 = 1400, + 11 = 1411, + 11 = 1422, + 2 = 1424, + 10 = 1434, + 0;
+dev skipped 205, 205, + 4 = 209, + 4 = 213, 213, + 1 = 214. Live passed = dev passed + (dev skipped − 21): 1584,
+1595, 1610, 1616, 1626, 1627, always with 21 skipped. The final dev figures (1434 passed, 214 skipped) were
 measured on the scratch copy with every task applied; the per-task dev figures follow from the per-file counts
 measured there; the live ones are not measured.
 
@@ -350,7 +395,9 @@ BS:670 (no invented digest), the Plan N debt list (SA:698).
   `httpx2.MockTransport` (tests).
 - Produces: `model_pins.EmbeddingPins(model, digest, dimension: Literal[768], ollama_version, probed_at)`,
   `model_pins.load_embedding_pins(path) -> EmbeddingPins`; `schemas/embedding-pins.schema.json`;
-  `data/embedding-pins.json`; `embeddings.MODEL`, `DIMENSION`, `DOCUMENT_PREFIX`, `QUERY_PREFIX`, `BATCH`,
+  `data/embedding-pins.json`; `scripts.pin_embedding_model.main(out=embeddings.PINS, transport=None) -> int`
+  (refuses, writing nothing, a pin of another model, digest or dimension), `probe`, `replaces_another_model`;
+  `embeddings.MODEL`, `DIMENSION`, `DOCUMENT_PREFIX`, `QUERY_PREFIX`, `BATCH`,
   `TIMEOUT_SECONDS`, `PINS`, `Vector`; `EmbeddingError`, `Unavailable`, `PinMismatch`, `Malformed` (each with `code`,
   `retryable`); `document_text(section, body)`, `query_text(query)`, `input_sha256(text)`, `vector_literal(vector)`,
   `parse_vector(text)`, `cosine(a, b)`, `checked(raw, expected, dimension=768)`; `Embedder` (protocol: `verify`,
@@ -400,8 +447,10 @@ Allowed shortcuts in T18, each with its owning task:
   ruling 10);
 - the stored unit stays one chunk per `## ` section; the 300-word window is an experiment in the comparison report
   only, because another stored unit changes evidence IDs and T41's labels → no task (Plan N ruling 8);
-- one embedding per chunk: a model change is a later revision's re-embedding (`app.embeddings`'s key and its CHECKs
-  pin the model and the dimension) → no task until a model change (Plan N ruling 1);
+- one embedding per chunk: a model change is a later revision's re-embedding, which also updates the pin
+  (`app.embeddings`'s key and its CHECKs pin the model and the dimension; `scripts/pin_embedding_model.py` refuses to
+  replace another model's pin), and a read-path check that the stored rows' digest is the pin's belongs to that first
+  re-embedding revision → no task until a model change (Plan N ruling 1; round 1, I2);
 - chunks ingested after an `embed` run stay without an embedding until `embed` runs again; vector mode answers
   `REFUSED`/`EMBEDDINGS_INCOMPLETE` meanwhile, lexical mode is unaffected → operator step (runbook), no task (Plan N
   rulings 2 and 5);
@@ -451,16 +500,20 @@ Create `tests/plan_n/test_embedding_pins.py`:
 Catches: a pin file that is missing, hand-edited into another shape, prefixed (`sha256:`), of another dimension than
 the 768 `app.embeddings` stores, or naive in time; a committed pin that the schema and the loader judge differently;
 and a pin that is not the measured one (the digest Ollama's `/api/tags` reported for `nomic-embed-text:latest` on the
-dev machine, 2026-10-19), which would mean the file was filled with an invented value (BS:670).
+dev machine, 2026-10-19), which would mean the file was filled with an invented value (BS:670); and a pin script that
+replaces the pin of another model build, which would let mcp-read compare two models' vectors (round 1, I2).
 """
 
 import json
 from pathlib import Path
 
+import httpx2
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 from ops_core import embeddings
 from ops_core.model_pins import ModelPinsError, load_embedding_pins
+
+from scripts import pin_embedding_model
 
 SCHEMA = Draft202012Validator(
     json.loads(Path("schemas/embedding-pins.schema.json").read_text(encoding="utf-8")), format_checker=FormatChecker()
@@ -516,6 +569,38 @@ def test_a_missing_or_broken_file_is_a_pins_error(tmp_path: Path) -> None:
     broken.write_text("{not json", encoding="utf-8")
     with pytest.raises(ModelPinsError, match="not valid JSON"):
         load_embedding_pins(broken)
+
+
+def ollama_answering(digest: str, dimension: int = 768) -> httpx2.MockTransport:
+    """A scripted local Ollama for the pin script: its version, one installed build of the model, one embedding."""
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == "/api/version":
+            return httpx2.Response(200, json={"version": "0.40.4"})
+        if request.url.path == "/api/tags":
+            return httpx2.Response(200, json={"models": [{"name": "nomic-embed-text:latest", "digest": digest}]})
+        assert request.url.path == "/api/embed", request.url.path  # never a pull, a delete or a generation
+        return httpx2.Response(200, json={"embeddings": [[0.1] * dimension]})
+
+    return httpx2.MockTransport(answer)
+
+
+def test_the_pin_script_writes_a_pin_and_never_replaces_another_models(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Plan N round 1, I2: replacing the pin alone would let mcp-read compare a new model's query vectors with the
+    stored vectors of the old one, so only a revision that re-embeds may change it."""
+    out = tmp_path / "embedding-pins.json"
+    assert pin_embedding_model.main(out, ollama_answering(MEASURED)) == 0
+    assert load_embedding_pins(out).digest == MEASURED
+    assert pin_embedding_model.main(out, ollama_answering(MEASURED)) == 0  # the same build: a refresh only
+    before = out.read_bytes()
+    capsys.readouterr()
+    assert pin_embedding_model.main(out, ollama_answering("ab" * 32)) == 1  # another build: refused
+    assert out.read_bytes() == before
+    assert "PIN: refused, nothing written" in capsys.readouterr().out
+    other = tmp_path / "other.json"
+    assert pin_embedding_model.main(other, ollama_answering(MEASURED, 384)) == 1 and not other.exists()
 ```
 
 Create `tests/plan_n/test_embeddings.py`:
@@ -905,7 +990,8 @@ Expected: `schemas/: 26 schema documents (20 contracts, 6 tool inputs); 91 examp
 index.json version 1.3.3`, and `git status --short schemas` shows the new schema, its two examples and
 `schemas/examples/index.json`, nothing else.
 
-Run: `uv run python -m pytest tests/plan_c -q` → `307 passed` (304 before: two examples and one mutant more), and
+Run: `uv run python -m pytest tests/plan_c -q` → `288 passed, 19 skipped` (285 passed before, 307 tests collected
+now against 304: two examples and one mutant more), and
 `uv run python -I scripts/verify_handoff.py --contracts` → `PASS: 27 JSON Schema documents; 36 accepted examples; 55
 negative examples failed for their stated reason; governed files LF-only` (26 and 35 and 54 before).
 
@@ -1170,12 +1256,16 @@ class OllamaEmbedder:
         return None
 
     async def verify(self, pins: EmbeddingPins) -> None:
+        """Refuse a pin for another model or dimension, and an installed model whose `/api/tags` digest is not the
+        pin's (PinMismatch); an Ollama that cannot be asked is Unavailable."""
         if pins.model != MODEL or pins.dimension != DIMENSION:
             raise PinMismatch("the pin names another embedding model")
         if await self.installed_digest(pins.model) != pins.digest:
             raise PinMismatch("the installed embedding model is not the pinned one")
 
     async def embed(self, texts: Sequence[str], pins: EmbeddingPins) -> list[Vector]:
+        """One checked vector per text, in order, asked in batches of `BATCH`; it does not verify the pin (the
+        caller does, once, before a run or a query)."""
         out: list[Vector] = []
         for start in range(0, len(texts), BATCH):
             batch = list(texts[start : start + BATCH])
@@ -1184,6 +1274,7 @@ class OllamaEmbedder:
         return out
 
     async def aclose(self) -> None:
+        """Close the pooled HTTP client."""
         await self._http.aclose()
 ```
 
@@ -1204,8 +1295,13 @@ It reads three things and invents none (BS:670): the Ollama version (`/api/versi
 for `nomic-embed-text:latest` (`/api/show` carries no digest, as T19's note found for qwen3:8b) and the dimension of
 one real `/api/embed` answer, which must be 768. It never pulls, deletes or generates. The file is the embedding
 model's pin beside the generation model's `data/model-pins.json` (T02, SA:598), checked by `skeleton.py embed` before
-it writes and by mcp-read on every vector call. Exit 1, writing nothing, when the model is missing or answers another
-dimension.
+it writes and by mcp-read on every vector call.
+
+It refuses, writing nothing, when the model is missing or answers another dimension, and when a pin already exists
+for another model, digest or dimension: the stored embeddings were made with the pinned model, so replacing the pin
+alone would let mcp-read compare a new model's query vectors with the old model's document vectors. A model change is
+a new revision that re-embeds every chunk and updates the pin in that same revision (Plan N round 1, I2). Re-running it
+for the same model only refreshes `ollama_version` and `probed_at`.
 """
 
 from __future__ import annotations
@@ -1214,16 +1310,16 @@ import asyncio
 import json
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
+import httpx2
 from ops_core import embeddings, settings
-from ops_core.model_pins import load_embedding_pins
-
-OUT = embeddings.PINS
+from ops_core.model_pins import ModelPinsError, load_embedding_pins
 
 
-async def probe(base: str) -> dict[str, object]:
-    """The pin's fields as Ollama reports them now."""
-    embedder = embeddings.OllamaEmbedder(base)
+async def probe(base: str, transport: httpx2.AsyncBaseTransport | None = None) -> dict[str, object]:
+    """The pin's fields as Ollama reports them now; `transport` lets the unit test answer without a socket."""
+    embedder = embeddings.OllamaEmbedder(base, transport=transport)
     try:
         version = await embedder.version()
         digest = await embedder.installed_digest(embeddings.MODEL)
@@ -1245,17 +1341,34 @@ async def probe(base: str) -> dict[str, object]:
     }
 
 
-def main() -> int:
-    """Probe, check the dimension, write the pin and read it back."""
-    pin = asyncio.run(probe(settings.urls().ollama))
+def replaces_another_model(out: Path, pin: dict[str, object]) -> bool:
+    """True when `out` already pins another model, digest or dimension (an unreadable file counts as another)."""
+    if not out.exists():
+        return False
+    try:
+        held = load_embedding_pins(out)
+    except ModelPinsError:
+        return True
+    return (held.model, held.digest, held.dimension) != (pin["model"], pin["digest"], pin["dimension"])
+
+
+def main(out: Path = embeddings.PINS, transport: httpx2.AsyncBaseTransport | None = None) -> int:
+    """Probe, refuse another dimension or a pin of another model, write the pin and read it back."""
+    pin = asyncio.run(probe(settings.urls().ollama, transport))
     if pin["dimension"] != embeddings.DIMENSION:
         print(
             f"PIN: {embeddings.MODEL} answered {pin['dimension']} dimensions, not {embeddings.DIMENSION}; "
             "nothing written"
         )
         return 1
-    OUT.write_text(json.dumps(pin, indent=2) + "\n", encoding="utf-8", newline="\n")
-    load_embedding_pins(OUT)  # the file just written must load as the services read it
+    if replaces_another_model(out, pin):
+        print(
+            "PIN: refused, nothing written: data/embedding-pins.json pins another model build; a model change is a new "
+            "revision that re-embeds every chunk and updates the pin in that revision"
+        )
+        return 1
+    out.write_text(json.dumps(pin, indent=2) + "\n", encoding="utf-8", newline="\n")
+    load_embedding_pins(out)  # the file just written must load as the services read it
     print(f"PIN: {pin['model']} {pin['digest']} dimension {pin['dimension']} on Ollama {pin['ollama_version']}")
     return 0
 
@@ -1280,12 +1393,12 @@ script ran:
 ```
 
 If the digest or the version differs, stop and report: the brief's measurement and the machine disagree, and the pin
-records only what the machine reports (BS:670). Then `uv run python -m pytest tests/plan_n -q` → `24 passed`.
+records only what the machine reports (BS:670). Then `uv run python -m pytest tests/plan_n -q` → `25 passed`.
 
 - [ ] **Step 7: Gates and commit**
 
-`PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN`, pytest `1399 passed, 205 skipped`;
-`verify_handoff.py` exit 0; the live gate → `1583 passed, 21 skipped` (then the `git checkout -- reports/…` line of
+`PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN`, pytest `1400 passed, 205 skipped`;
+`verify_handoff.py` exit 0; the live gate → `1584 passed, 21 skipped` (then the `git checkout -- reports/…` line of
 the Global Constraints).
 
 ```bash
@@ -1314,8 +1427,9 @@ git commit -m "feat: the embedding model's pin and ops_core.embeddings, the nomi
 - Produces: `retrieval_baseline.Outcome.relevant_at(k)`, `summarize(outcomes, k=K)` (T17's output unchanged at the
   default); `retrieval_comparison.T17_ANSWERS_SHA256`, `AS_OF`, `KS`, `GRID`, `LEXICAL_GRID`, `WINDOW_WORDS`,
   `REPEAT_COSINE`, `answers_digest`, `mcnemar`, `paired`, `ranked`, `sweep`, `choose_threshold`, `lexical_sweep`,
-  `windows`, `window_text`, `Window`, `corpus_windows`, `window_metrics`, `repeat_check`, `comparison`, `markdown`,
-  and the `threshold` command.
+  `LEXICAL_RULE_GRID`, `windows`, `window_text`, `Window` (with `words`, `whole_version`), `corpus_windows`,
+  `Candidates`, `window_ranking`, `window_metrics`, `lexical_rule`, `repeat_check`, `comparison`, `markdown`, and the
+  `threshold` command; `summarize` counts forbidden rows within the top k.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1414,6 +1528,11 @@ def test_k3_counts_only_the_top_three() -> None:
     assert rb.summarize([o], 5)["hit_at_k"]["successes"] == 1
     assert rb.summarize([o], 3)["hit_at_k"]["successes"] == 0 and rb.summarize([o], 3)["k"] == 3
     assert rb.summarize([o]) == rb.summarize([o], rb.K)  # the T17 report's default is unchanged
+    # Forbidden rows count within the top k too (round 1, Minor 5): a forbidden fourth row is outside k = 3.
+    bad = rb.evaluate(c, [("a", 0.9), ("b", 0.8), ("c", 0.7), ("z", 0.6)], {"a", "b", "c"})
+    assert rb.summarize([bad], 3)["forbidden_rows"] == {"forbidden": 0, "returned": 3}
+    assert rb.summarize([bad], 5)["forbidden_rows"] == {"forbidden": 1, "returned": 4}
+    assert rb.summarize([bad], 3)["cases_without_forbidden"]["successes"] == 1
 
 
 def test_the_committed_lexical_answers_and_the_inputs_are_t17s() -> None:
@@ -1423,6 +1542,32 @@ def test_the_committed_lexical_answers_and_the_inputs_are_t17s() -> None:
     assert queries == t17["queries_sha256"] == "d6d539bdd9a540f6e7a66dd641c05e5c1ee97c1561c59f5b67896fedb1596938"
     assert corpus.RELEASES == {"corpus-1": "81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862"}
     assert corpus.load(rc.CORPUS).lock_sha256 == corpus.RELEASES["corpus-1"]  # corpus-1 untouched (ruling 15)
+
+
+def test_corpus_1s_windows_are_its_whole_returnable_versions() -> None:
+    """Round 1, I1: every corpus-1 version returnable at the labelling instant has 327-343 words, so the 300-word rule
+    makes each one window; the report must say so instead of presenting a 300-word-window result."""
+    found = rc.corpus_windows(corpus.load(rc.CORPUS))
+    assert len(found) == 8 and all(w.whole_version for w in found)
+    assert sorted(w.tenant for w in found) == ["alpha"] * 5 + ["beta"] * 3
+    assert min(w.words for w in found) >= rc.WINDOW_WORDS
+
+
+def window(name: str, tenant: str = "alpha", *sections: str) -> rc.Window:
+    ids = sections or (name,)
+    return rc.Window(tenant, None, ids, f"search_document: {name}", 300, True)
+
+
+def test_window_metrics_report_what_the_windows_can_measure() -> None:
+    cases = [case("A1", ("x",)), case("A2", ("y",)), case("N1", none=True)]
+    first, second = window("W1", "alpha", "x", "q"), window("W2", "alpha", "y")
+    candidates = {"A1": [(first, 0.8), (second, 0.7)], "A2": [(first, 0.9), (second, 0.6)], "N1": [(second, 0.5)]}
+    row = rc.window_metrics(cases, candidates, {"alpha": {"x", "q", "y"}}, [first, second], 0.65)
+    assert row["windows_per_tenant"] == {"alpha": 2} and row["sections_per_window"] == {"min": 1, "max": 2}
+    assert row["every_window_a_whole_version"] and row["k_covers_every_window"]
+    assert row["hit_at_k"]["successes"] == 1 and row["hit_at_1"]["successes"] == 1  # A2's window is under 0.65
+    assert row["recall_at_k"] == 0.5 and row["recall_at_k_threshold_0"] == 1.0 and row["mrr_at_k"] == 0.5
+    assert row["none_answered_empty"]["successes"] == 1 and row["forbidden_sections"] == 0
 
 
 def test_the_report_names_both_modes_every_change_and_the_settings() -> None:
@@ -1437,13 +1582,13 @@ def test_the_report_names_both_modes_every_change_and_the_settings() -> None:
         settings={"model": "nomic-embed-text", "vector_minimum_similarity": 0.68},
         vector_sweep=rc.sweep(cases, scored, rc.GRID),
         lexical_sweep_rows=rc.lexical_sweep(lexical, rc.LEXICAL_GRID),
-        window={
-            "windows": 2,
-            "recall_at_k": 1.0,
-            "hit_at_k": rb.proportion(2, 2),
-            "none_answered_empty": rb.proportion(1, 1),
-            "forbidden_sections": 0,
-        },
+        window=rc.window_metrics(
+            cases,
+            {"A1": [(window("W1", "alpha", "x"), 0.9)], "A2": [], "N1": []},
+            {"alpha": {"x", "y", "n"}},
+            [window("W1", "alpha", "x")],
+            0.68,
+        ),
         repeat=rc.repeat_check([(1.0, 0.0)], [(1.0, 0.0)]),
         corpus_version="corpus-1",
         lock_sha256="a" * 64,
@@ -1464,6 +1609,9 @@ def test_the_report_names_both_modes_every_change_and_the_settings() -> None:
         "## Another chunk window",
         "## Determinism",
         "`vector_minimum_similarity`: 0.68",
+        "the JSON (`vector_threshold_sweep`) holds all 100 values",
+        "the same rule applied to the recorded lexical ranks chooses",
+        "whole-version embeddings against section embeddings",
     ):
         assert needle in text, needle
 ```
@@ -1474,6 +1622,36 @@ Expected: a collection error, `ImportError: cannot import name 'retrieval_compar
 - [ ] **Step 2: k as a parameter of the baseline's metrics**
 
 Edit 1 (`scripts/retrieval_baseline.py`), replace:
+
+```python
+reports/retrieval/t17-lexical-baseline.md and .json. T18 measures exact vector search on the same queries against the
+same JSON. A returned section that the oracle (`ops_core.corpus.returnable`) does not permit for the query's tenant
+at the measurement instant is "forbidden": another tenant's, superseded, expired, revoked or draft.
+```
+
+with:
+
+```python
+reports/retrieval/t17-lexical-baseline.md and .json. T18's comparison (scripts/retrieval_comparison.py) runs the same
+queries in both modes and pins a digest of this report's committed per-case answers. A returned section that the
+oracle (`ops_core.corpus.returnable`) does not permit for the query's tenant at the measurement instant is
+"forbidden": another tenant's, superseded, expired, revoked or draft.
+```
+
+Edit 2 (`scripts/retrieval_baseline.py`), replace:
+
+```python
+    "baseline is a development figure, not a held-out one; tuning it is T18's",
+```
+
+with:
+
+```python
+    "baseline is a development figure, not a held-out one; T18 swept it and kept it "
+    "(reports/retrieval-comparison.md)",
+```
+
+Edit 3 (`scripts/retrieval_baseline.py`), replace:
 
 ```python
         return len(set(self.ids[:K]) & set(self.case.expected))
@@ -1489,7 +1667,7 @@ with:
         return len(set(self.ids[:k]) & set(self.case.expected))
 ```
 
-Edit 2 (`scripts/retrieval_baseline.py`), replace:
+Edit 4 (`scripts/retrieval_baseline.py`), replace:
 
 ```python
 def summarize(outcomes: Sequence[Outcome]) -> dict[str, Any]:
@@ -1504,11 +1682,11 @@ with:
 def summarize(outcomes: Sequence[Outcome], k: int = K) -> dict[str, Any]:
     """Case-level metrics at `k` (default K) with denominators: recall, precision and reciprocal rank as means over
     the answerable cases; hit@k, every-expected@k, the expect_none cases answered with nothing in the top `k`, and the
-    cases free of forbidden sections as proportions with Wilson intervals; the forbidden rate over every returned
-    row."""
+    cases free of forbidden sections in the top `k` as proportions with Wilson intervals; the forbidden rate over the
+    rows in the top `k` (the T17 report asks for 5 rows, so at the default k these are every returned row)."""
 ```
 
-Edit 3 (`scripts/retrieval_baseline.py`), replace:
+Edit 5 (`scripts/retrieval_baseline.py`), replace:
 
 ```python
         ranks = [i for i, e in enumerate(o.ids[:K], start=1) if e in o.case.expected]
@@ -1520,7 +1698,24 @@ with:
         ranks = [i for i, e in enumerate(o.ids[:k], start=1) if e in o.case.expected]
 ```
 
-Edit 4 (`scripts/retrieval_baseline.py`), replace:
+Edit 6 (`scripts/retrieval_baseline.py`), replace:
+
+```python
+    rows = sum(len(o.returned) for o in outcomes)
+    forbidden_rows = sum(len(o.forbidden) for o in outcomes)
+```
+
+with:
+
+```python
+    def forbidden(o: Outcome) -> int:
+        return sum(e in o.forbidden for e in o.ids[:k])
+
+    rows = sum(len(o.ids[:k]) for o in outcomes)
+    forbidden_rows = sum(forbidden(o) for o in outcomes)
+```
+
+Edit 7 (`scripts/retrieval_baseline.py`), replace:
 
 ```python
                 sum(o.relevant > 0 for o in members if o.case.expected), sum(1 for o in members if o.case.expected)
@@ -1533,9 +1728,12 @@ with:
                 sum(1 for o in members if o.case.expected),
 ```
 
-Edit 5 (`scripts/retrieval_baseline.py`), replace:
+Edit 8 (`scripts/retrieval_baseline.py`), replace:
 
 ```python
+            "forbidden_rows": sum(len(o.forbidden) for o in members),
+        }
+    return {
         "k": K,
         "cases": len(outcomes),
         "answerable": len(answerable),
@@ -1548,11 +1746,16 @@ Edit 5 (`scripts/retrieval_baseline.py`), replace:
         "mrr_at_k": mean([reciprocal(o) for o in answerable]),
         "hit_at_k": proportion(sum(o.relevant > 0 for o in answerable), len(answerable)),
         "all_expected_at_k": proportion(sum(o.relevant == len(o.case.expected) for o in answerable), len(answerable)),
+        "none_answered_empty": proportion(sum(not o.returned for o in nones), len(nones)),
+        "cases_without_forbidden": proportion(sum(not o.forbidden for o in outcomes), len(outcomes)),
 ```
 
 with:
 
 ```python
+            "forbidden_rows": sum(forbidden(o) for o in members),
+        }
+    return {
         "k": k,
         "cases": len(outcomes),
         "answerable": len(answerable),
@@ -1567,10 +1770,29 @@ with:
         "all_expected_at_k": proportion(
             sum(o.relevant_at(k) == len(o.case.expected) for o in answerable), len(answerable)
         ),
+        "none_answered_empty": proportion(sum(not o.returned for o in nones), len(nones)),
+        "cases_without_forbidden": proportion(sum(not forbidden(o) for o in outcomes), len(outcomes)),
+```
+
+Edit 9 (`scripts/retrieval_baseline.py`), replace:
+
+```python
+        f"{words['median']}, max {words['max']}. Evaluating another chunk window is T18's comparison."
+```
+
+with:
+
+```python
+        f"{words['median']}, max {words['max']}. T18's comparison evaluated another window "
+        "(reports/retrieval-comparison.md)."
 ```
 
 Run: `uv run python -m pytest tests/plan_l/test_retrieval_baseline.py -q` → all passing, unchanged in count (T17's
-report is `summarize(outcomes)`, the default k).
+report is `summarize(outcomes)`, the default k; it asks for 5 rows, so counting forbidden rows within the top k changes
+none of its figures). The edit also rewords three T17 lines that deferred to T18 (the module docstring, the
+`minimum_rank` setting and the chunk-size sentence): the T17 report's settings and chunk prose change on its next live
+run, which the `git checkout -- reports/retrieval` after each live run restores; its answers, and so
+`T17_ANSWERS_SHA256`, do not change.
 
 - [ ] **Step 3: The module**
 
@@ -1628,6 +1850,9 @@ AS_OF = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)  # tests/plan_l/test_corpus_fi
 KS = (5, 3)  # BS:417's top_k and the worker's limit (worker/src/ops_worker/handlers.py)
 GRID = tuple(i / 100 for i in range(100))  # ruling 6: 0.00 to 0.99
 LEXICAL_GRID = tuple(round(0.25 + i * 0.05, 2) for i in range(16))  # ruling 9: 0.25 (the stored minimum) to 1.00
+# Ruling 6's rule applied to the lexical ranks for the report's like-for-like sentence (round 1, Minor 11): the same
+# 0.01 steps from the stored minimum, far past any rank corpus-1's queries reach.
+LEXICAL_RULE_GRID = tuple(round(0.25 + i / 100, 2) for i in range(976))
 WINDOW_WORDS = 300  # ruling 8: BS:415's lower bound of the initial chunk proposal, in [a-z0-9]+ words
 REPEAT_COSINE = 0.9999  # ruling 14: two embeddings of one text are the same vector within this
 
@@ -1698,10 +1923,10 @@ def sweep(
 
 
 def choose_threshold(rows: Sequence[Mapping[str, Any]]) -> float:
-    """Ruling 6's rule, fixed before measuring: the largest grid value whose hit@k equals the value at 0 (no answerable
-    hit lost); 0.0 when only 0 keeps it."""
-    at_zero = next(r["hit_at_k"] for r in rows if r["threshold"] == 0.0)
-    return max(float(r["threshold"]) for r in rows if r["hit_at_k"] == at_zero)
+    """Ruling 6's rule, fixed before measuring: the largest grid value whose hit@k equals the value at the grid's
+    first threshold (0 for the vector grid; no answerable hit lost); the first threshold when only it keeps them."""
+    first = rows[0]["hit_at_k"]
+    return max(float(r["threshold"]) for r in rows if r["hit_at_k"] == first)
 
 
 def lexical_sweep(outcomes: Sequence[rb.Outcome], thresholds: Sequence[float]) -> list[dict[str, Any]]:
@@ -1737,50 +1962,107 @@ def window_text(group: Sequence[corpus.Section]) -> str:
 
 @dataclass(frozen=True)
 class Window:
-    """One window of the experiment: its tenant, asset family, the evidence IDs it contains and its text."""
+    """One window of the experiment: its tenant, asset family, the evidence IDs it contains, its text, its
+    `[a-z0-9]+` word count, and whether it is its whole document version."""
 
     tenant: str
     asset_family: str | None
     evidence_ids: tuple[str, ...]
     text: str
+    words: int
+    whole_version: bool
 
 
 def corpus_windows(governed: corpus.Corpus, now: datetime = AS_OF) -> list[Window]:
     """Every window of every version a search may return at `now` (`corpus.returnable`, the oracle of the SQL rule)."""
     allowed = corpus.returnable(governed, now)
     return [
-        Window(d.tenant, d.asset_family, tuple(d.evidence_id(s) for s in group), window_text(group))
+        Window(
+            d.tenant,
+            d.asset_family,
+            tuple(d.evidence_id(s) for s in group),
+            window_text(group),
+            sum(s.words for s in group),
+            len(group) == len(d.sections),
+        )
         for d in governed.documents
         if d.identity in allowed
         for group in windows(d.sections)
     ]
 
 
+Candidates = Sequence[tuple[Window, float]]  # every window one query may see, with its cosine similarity
+
+
+def window_ranking(candidates: Candidates, threshold: float, limit: int) -> list[Window]:
+    """The windows above `threshold`, best first, ties by their first evidence ID in byte order, at most `limit`."""
+    named = {w.evidence_ids[0]: w for w, _ in candidates}
+    best = ranked([(w.evidence_ids[0], s) for w, s in candidates], threshold, limit)
+    return [named[first] for first, _ in best]
+
+
 def window_metrics(
     cases: Sequence[rb.Case],
-    found: Mapping[str, Sequence[Window]],
+    candidates: Mapping[str, Candidates],
     permitted: Mapping[str, set[str]],
-    total: int,
+    all_windows: Sequence[Window],
+    threshold: float,
 ) -> dict[str, Any]:
-    """The window experiment's case-level figures at k = 5: recall of the labelled sections inside the top windows,
-    hit@5, the no-source cases answered with nothing, and windows holding a section the case may not see (zero by
-    construction, counted anyway)."""
+    """The window experiment at k = 5, with what it can and cannot measure (round 1, I1): the windows per tenant,
+    sections and words per window, and whether each is a whole version; recall@5 at the threshold and at 0, hit@5,
+    hit@1 and MRR@5 over the labelled cases (a window hits when it holds a labelled section); the no-source cases
+    answered with nothing; and windows holding a section the case may not see (zero by construction, counted anyway).
+    When every window is a whole version and k covers every window of a tenant, hit@5 and recall@5 depend on the
+    threshold only; hit@1 and MRR@5 are the figures that still see an order."""
     answerable = [c for c in cases if c.expected]
     nones = [c for c in cases if c.expect_none]
+    found = {c.id: window_ranking(candidates[c.id], threshold, rb.K) for c in cases}
+    open_ = {c.id: window_ranking(candidates[c.id], 0.0, rb.K) for c in cases}
 
-    def inside(c: rb.Case) -> set[str]:
-        return {e for w in found[c.id][: rb.K] for e in w.evidence_ids}
+    def holds(w: Window, c: rb.Case) -> bool:
+        return bool(set(w.evidence_ids) & set(c.expected))
 
-    recall = [len(inside(c) & set(c.expected)) / len(c.expected) for c in answerable]
+    def recall(ranking: Mapping[str, Sequence[Window]]) -> float | None:
+        values = [
+            len({e for w in ranking[c.id] for e in w.evidence_ids} & set(c.expected)) / len(c.expected)
+            for c in answerable
+        ]
+        return round(sum(values) / len(values), 4) if values else None
+
+    def reciprocal(c: rb.Case) -> float:
+        ranks = [i for i, w in enumerate(found[c.id], start=1) if holds(w, c)]
+        return 1 / ranks[0] if ranks else 0.0
+
+    per_tenant: dict[str, int] = {}
+    for w in all_windows:
+        per_tenant[w.tenant] = per_tenant.get(w.tenant, 0) + 1
+    sizes = [len(w.evidence_ids) for w in all_windows]
+    words = [w.words for w in all_windows]
     forbidden = sum(1 for c in cases for w in found[c.id] for e in w.evidence_ids if e not in permitted[c.tenant])
     return {
         "k": rb.K,
-        "windows": total,
-        "recall_at_k": round(sum(recall) / len(recall), 4) if recall else None,
-        "hit_at_k": rb.proportion(sum(bool(inside(c) & set(c.expected)) for c in answerable), len(answerable)),
+        "windows": len(all_windows),
+        "windows_per_tenant": dict(sorted(per_tenant.items())),
+        "sections_per_window": {"min": min(sizes), "max": max(sizes)},
+        "words_per_window": {"min": min(words), "max": max(words)},
+        "every_window_a_whole_version": all(w.whole_version for w in all_windows),
+        "k_covers_every_window": max(per_tenant.values()) <= rb.K,
+        "recall_at_k": recall(found),
+        "recall_at_k_threshold_0": recall(open_),
+        "hit_at_k": rb.proportion(sum(any(holds(w, c) for w in found[c.id]) for c in answerable), len(answerable)),
+        "hit_at_1": rb.proportion(sum(any(holds(w, c) for w in found[c.id][:1]) for c in answerable), len(answerable)),
+        "mrr_at_k": round(sum(reciprocal(c) for c in answerable) / len(answerable), 4) if answerable else None,
         "none_answered_empty": rb.proportion(sum(not found[c.id] for c in nones), len(nones)),
         "forbidden_sections": forbidden,
     }
+
+
+def lexical_rule(outcomes: Sequence[rb.Outcome]) -> dict[str, Any]:
+    """Ruling 6's rule applied to the recorded lexical ranks (round 1, Minor 11): the vector threshold was tuned by
+    it while lexical keeps 0.25, so the report states what lexical would give under the same rule."""
+    rows = lexical_sweep(outcomes, LEXICAL_RULE_GRID)
+    chosen = choose_threshold(rows)
+    return dict(next(r for r in rows if r["threshold"] == chosen))
 
 
 def repeat_check(first: Sequence[embeddings.Vector], second: Sequence[embeddings.Vector]) -> dict[str, Any]:
@@ -1834,6 +2116,7 @@ def comparison(
         },
         "vector_threshold_sweep": list(vector_sweep),
         "lexical_threshold_sweep": list(lexical_sweep_rows),
+        "lexical_under_the_vector_rule": lexical_rule(lexical),
         "window_experiment": dict(window),
         "repeat_embedding": dict(repeat),
         "cases": [
@@ -1895,7 +2178,7 @@ def markdown(doc: Mapping[str, Any]) -> str:
             lines.append(f"| {label} | {rb._rate(lx[key])} | {rb._rate(v[key])} |")
         fl, fv = lx["forbidden_rows"], v["forbidden_rows"]
         forbidden = f"{fl['forbidden']}/{fl['returned']} | {fv['forbidden']}/{fv['returned']}"
-        lines += [f"| forbidden sections among returned rows | {forbidden} |", ""]
+        lines += [f"| forbidden sections among the top-{k} rows | {forbidden} |", ""]
     lines += [
         "## By category (k = 5)",
         "",
@@ -1922,7 +2205,8 @@ def markdown(doc: Mapping[str, Any]) -> str:
     chosen = (
         f"Vector minimum similarity {s['vector_minimum_similarity']} (`app._min_similarity()`), chosen by the rule "
         "fixed before measuring: the largest value on a 0.01 grid at which vector hit@5 over the labelled cases equals "
-        "its value at 0. The sweep below re-applies it to the stored vectors."
+        "its value at 0. The table re-applies it to the stored vectors; it prints every 0.05 and every 0.01 from 0.50 "
+        "to 0.80, and the JSON (`vector_threshold_sweep`) holds all 100 values."
     )
     lines += [
         "- With this few cases an exact test has little power: p >= 0.05 is not evidence that the modes are equal.",
@@ -1940,9 +2224,14 @@ def markdown(doc: Mapping[str, Any]) -> str:
                 f"| {row['threshold']:.2f} | {row['hit_at_k']}/{row['answerable']} | "
                 f"{row['none_answered_empty']}/{row['expect_none']} |"
             )
+    rule = doc["lexical_under_the_vector_rule"]
     lexical_note = (
         "Lexical minimum rank, swept over the recorded ranks (the definer already drops 0.25 and below); it stays "
-        "0.25, and the residue is T20's relevance criterion (erratum 102)."
+        "0.25, and the residue is T20's relevance criterion (erratum 102). The vector threshold was tuned by the rule "
+        "above while lexical keeps 0.25: the same rule applied to the recorded lexical ranks chooses "
+        f"{rule['threshold']:.2f} (hit@5 {rule['hit_at_k']}/{rule['answerable']}, answered-empty "
+        f"{rule['none_answered_empty']}/{rule['expect_none']}), so part of the answered-empty difference between the "
+        "modes is the tuning, not the method."
     )
     lines += [
         "",
@@ -1958,14 +2247,26 @@ def markdown(doc: Mapping[str, Any]) -> str:
         )
     w = doc["window_experiment"]
     r = doc["repeat_embedding"]
+    tenants = ", ".join(f"{tenant} {n}" for tenant, n in w["windows_per_tenant"].items())
     window = (
-        f"Adjacent sections of one version joined until at least {WINDOW_WORDS} `[a-z0-9]+` words ({w['windows']} "
-        "windows), embedded with the same prefix, ranked by cosine over the same permitted versions, kept above the "
-        f"same threshold. A window hits when it contains a labelled section. recall@5 {w['recall_at_k']}; hit@5 "
-        f"{rb._rate(w['hit_at_k'])}; no-source cases answered with nothing {rb._rate(w['none_answered_empty'])}; "
-        f"windows holding a section the case may not see: {w['forbidden_sections']}. The stored unit stays one chunk "
-        "per section (evidence IDs, citations and T41's labels unchanged)."
+        f"Adjacent sections of one version joined until at least {WINDOW_WORDS} `[a-z0-9]+` words: {w['windows']} "
+        f"windows ({tenants}), {w['sections_per_window']['min']}-{w['sections_per_window']['max']} sections and "
+        f"{w['words_per_window']['min']}-{w['words_per_window']['max']} words each, embedded with the same prefix, "
+        "ranked by cosine over the same permitted versions, kept above the same threshold. A window hits when it "
+        f"holds a labelled section. recall@5 {w['recall_at_k']} (at threshold 0: {w['recall_at_k_threshold_0']}); "
+        f"hit@5 {rb._rate(w['hit_at_k'])}; hit@1 {rb._rate(w['hit_at_1'])}; MRR@5 {w['mrr_at_k']}; no-source cases "
+        f"answered with nothing {rb._rate(w['none_answered_empty'])}; windows holding a section the case may not see: "
+        f"{w['forbidden_sections']}."
     )
+    if w["every_window_a_whole_version"] and w["k_covers_every_window"]:
+        window += (
+            " On this corpus every returnable version is one window and k = 5 covers every window of either tenant, so "
+            "hit@5 and recall@5 measure only the threshold (tuned on section embeddings), not a ranking: read this as "
+            "whole-version embeddings against section embeddings, with hit@1 and MRR@5 as the figures that see an "
+            "order. It does not measure a 300-word window."
+        )
+    window += " The stored unit stays one chunk per section (evidence IDs, citations and T41's labels unchanged)."
+
     repeat = (
         f"Each of the {r['queries']} queries embedded twice: largest component difference "
         f"{r['max_abs_component_delta']}, smallest cosine {r['min_cosine']:.10f} (bound {r['bound']}). Stored vectors "
@@ -2023,7 +2324,7 @@ if __name__ == "__main__":
     sys.exit(main(sys.argv))
 ```
 
-Run: `uv run python -m pytest tests/plan_n/test_retrieval_comparison.py -q` → `9 passed`.
+Run: `uv run python -m pytest tests/plan_n/test_retrieval_comparison.py -q` → `11 passed`.
 
 - [ ] **Step 4: Measure the threshold (local Ollama, read-only; before Task 3 freezes it)**
 
@@ -2037,7 +2338,7 @@ rule yields 0 and the helper returns 0 (ruling 6); the report says so.
 
 - [ ] **Step 5: Gates and commit**
 
-`check.py` → `1408 passed, 205 skipped`; `verify_handoff.py` exit 0; live gate → `1592 passed, 21 skipped`.
+`check.py` → `1411 passed, 205 skipped`; `verify_handoff.py` exit 0; live gate → `1595 passed, 21 skipped`.
 
 ```bash
 git add scripts/retrieval_comparison.py scripts/retrieval_baseline.py tests/plan_n/test_retrieval_comparison.py
@@ -2142,6 +2443,7 @@ def test_the_table_is_the_corpus_row_one_row_per_chunk_and_exact() -> None:
     assert "FOREIGN KEY (tenant_id, evidence_id) REFERENCES app.chunks (tenant_id, evidence_id)" in ddl
     assert "embedding public.vector(768) NOT NULL" in ddl and "CHECK (dimension = 768)" in ddl
     assert "CHECK (model = 'nomic-embed-text')" in ddl and "input_sha256 text NOT NULL" in ddl
+    assert "CHECK (public.vector_norm(embedding) > 0)" in ddl  # no zero vector: its NaN cosine would sort first
     everything = "\n".join(module.SCHEMA_CHANGES).upper()
     assert "CREATE INDEX" not in everything and "EXTENSION" not in everything  # exact search; the bootstrap's type
 
@@ -2285,9 +2587,9 @@ Revises: 0012_asset_scope
 
 - `embeddings`: one row per stored chunk, keyed like the chunk (`tenant_id`, `evidence_id`) and referencing it, with
   the model, its digest, the dimension, the SHA-256 of the exact text that was embedded (the `search_document:` prefix
-  included, so a stored row proves its prefix) and the `public.vector(768)` itself. A model change is a later
-  revision's re-embedding, so the model and the dimension are pinned by CHECK. The cells are AM-20.2's corpus row
-  (SA:431): `worker` inserts and reads (the operator command `scripts/skeleton.py embed`), `app_definer` reads, nobody
+  included, so a stored row proves its prefix) and the `public.vector(768)` itself, never a zero vector. A model
+  change is a later revision's re-embedding, so the model and the dimension are pinned by CHECK. The cells are
+  AM-20.2's corpus row (SA:431): `worker` inserts and reads (the operator command `scripts/skeleton.py embed`), `app_definer` reads, nobody
   else; ENABLE + FORCE RLS with the `tenant_isolation` policy (SA:510). No vector index: a sequential scan over the
   tenant's permitted chunks is exact by construction (ruling 7), and an index would make the search approximate.
 - `_min_similarity()`: the vector branch keeps only a cosine similarity above it; chosen on the development queries by
@@ -2357,6 +2659,8 @@ SCHEMA_CHANGES = (
         f" dimension integer NOT NULL CHECK (dimension = {DIMENSION_0013}),"
         " input_sha256 text NOT NULL CHECK (input_sha256 ~ '^[a-f0-9]{64}$'),"
         f" embedding public.vector({DIMENSION_0013}) NOT NULL,"
+        # A zero vector has a NaN cosine, which PostgreSQL orders above every number (round 1, Minor 6).
+        " CHECK (public.vector_norm(embedding) > 0),"
         " embedded_at timestamptz NOT NULL DEFAULT now(),"
         " PRIMARY KEY (tenant_id, evidence_id),"
         " CONSTRAINT embeddings_chunk_fkey FOREIGN KEY (tenant_id, evidence_id)"
@@ -2925,8 +3229,9 @@ other-family section (the same filters as lexical); another tenant's embedding u
 embedding, with another dimension or a zero vector, or a lexical call with one, answered instead of refused
 BAD_ARGUMENT; a permitted chunk without an embedding silently left out instead of EMBEDDINGS_INCOMPLETE (while a draft
 chunk without one changes nothing); an empty corpus answered other than `[]`; any role but the worker able to write
-an embedding, the worker able to change or delete one or to write another tenant's; and a downgrade that leaves the
-table or the helper behind, does not restore 0012's body with the same grant, or does not come back exactly.
+an embedding, the worker able to change or delete one or to write another tenant's, a zero vector stored; and a
+downgrade that leaves the table or the helper behind, does not restore 0012's body with the same grant, or does not
+come back exactly.
 """
 
 import importlib.util
@@ -3122,6 +3427,8 @@ async def test_only_the_worker_writes_embeddings_and_only_its_tenants(
             " embedding) VALUES (%s, %s, 'nomic-embed-text', %s, 768, %s, %s::public.vector)"
         )
         row = (tenant, "OWN:v1:turbine", "0" * 64, "1" * 64, embeddings.vector_literal(QUERY))
+        with pytest.raises(psycopg.errors.CheckViolation):  # not even the superuser stores a zero vector
+            await app_conn.execute(insert, (*row[:4], embeddings.vector_literal([0.0] * 768)))
         for role in (Role.API, Role.SWEEPER, Role.MCP_READ, Role.MCP_EXEC, Role.OPERATOR):
             assert await refused(await role_conn(role), "SELECT 1 FROM app.embeddings", ()) == "42501", role
             assert await refused(await role_conn(role), insert, row) == "42501", role
@@ -3274,7 +3581,7 @@ The two round trips (0011's to 0010, 0012's to 0011) now pass through 0013's dow
 
 - [ ] **Step 5: Gates and commit**
 
-`check.py` → `1419 passed, 209 skipped`; `verify_handoff.py` exit 0; the live gate → `1607 passed, 21 skipped`. This
+`check.py` → `1422 passed, 209 skipped`; `verify_handoff.py` exit 0; the live gate → `1610 passed, 21 skipped`. This
 live run is the first execution of 0013's SQL: read Review Focus 1-3 before it, and on a failure in
 `test_migration_0013_live.py` compare the message with them first.
 
@@ -3314,7 +3621,8 @@ Create `tests/plan_n/test_embed_command.py`:
 """`scripts/skeleton.py embed` without a database or Ollama (Plan N ruling 2; erratum 98's operator-command shape).
 
 Catches: the command connecting as anyone but the worker; a missing pin, a model mismatch, an unreachable model or a
-mixed-digest store reported as success or with a value in the message; a repeat that does not say it wrote nothing;
+mixed-digest store reported as success or with a value in the message; a failure or a refusal after an earlier tenant
+committed reported as "nothing written" (round 1, Minor 7: the written tenants are named, as `ingest` names them);
 and the sub-command not registered.
 """
 
@@ -3337,6 +3645,14 @@ def quiet(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return []
 
 
+def after_alpha(cause: Exception) -> embed.EmbedInterrupted:
+    """A failure while writing beta, after alpha committed, as `embed.embed` raises it."""
+    try:
+        raise embed.EmbedInterrupted(("alpha",)) from cause
+    except embed.EmbedInterrupted as error:
+        return error
+
+
 def test_the_command_reports_each_outcome_and_connects_as_the_worker(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], quiet: list[Any]
 ) -> None:
@@ -3351,15 +3667,23 @@ def test_the_command_reports_each_outcome_and_connects_as_the_worker(
     for failure, line in (
         (
             embeddings.PinMismatch("the installed embedding model is not the pinned one"),
-            "EMBED: failed (UNSUPPORTED_MODE: the installed embedding model is not the pinned one)",
+            "EMBED: failed (UNSUPPORTED_MODE: the installed embedding model is not the pinned one), nothing written",
         ),
         (
             embeddings.Unavailable("the embedding model could not be reached"),
-            "EMBED: failed (UNAVAILABLE: the embedding model could not be reached)",
+            "EMBED: failed (UNAVAILABLE: the embedding model could not be reached), nothing written",
+        ),
+        (
+            after_alpha(embeddings.Unavailable("the embedding model could not be reached")),
+            "EMBED: failed (UNAVAILABLE: the embedding model could not be reached) after writing alpha",
         ),
         (
             embed.EmbedRefused(["beta: 3 stored embeddings were made with another model digest than the pin"]),
             "EMBED: refused, nothing written",
+        ),
+        (
+            embed.EmbedRefused(["beta: another model digest appeared while embedding"], ("alpha",)),
+            "EMBED: refused after writing alpha",
         ),
     ):
 
@@ -3406,8 +3730,11 @@ against Ollama's `/api/tags` before anything is written.
 Like ingestion, a run plans every tenant first, each in a read-only unit under its tenant setting, and writes nothing
 if any tenant is refused: a tenant that already holds an embedding made with another digest than the pin is refused
 (a model change is a later revision's re-embedding, never a mix). The vectors are fetched outside any transaction;
-then each tenant is written in one transaction that re-reads what is missing and inserts only those rows, so a
-concurrent run cannot make it write a row twice. A repeat with nothing missing writes nothing.
+then each tenant is written in one transaction that re-reads what is missing and inserts those rows with
+`ON CONFLICT DO NOTHING`, so a second run at the same moment neither fails on the key nor writes a row twice, and each
+report counts only the rows its own run inserted. A failure while writing (Ollama gone, an answer that is not the
+pinned vectors) leaves the tenants already committed as they are and names them (`EmbedInterrupted`, as ingestion's
+`IngestInterrupted`); a re-run embeds only what is still missing. A repeat with nothing missing writes nothing.
 """
 
 from __future__ import annotations
@@ -3416,6 +3743,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
+import psycopg
+
 from ops_core import embeddings, persistence
 from ops_core.model_pins import EmbeddingPins
 
@@ -3423,11 +3752,23 @@ RELATIONS = ("app.chunks", "app.embeddings")
 
 
 class EmbedRefused(Exception):
-    """The run was refused before anything was written; `problems` names each tenant and the rule, never a text."""
+    """The run was refused; `problems` names each tenant and the rule, never a text. `written` names the tenants an
+    earlier transaction of this run already committed (empty for every refusal of the planning phase, which writes
+    nothing; non-empty only when another digest appeared while writing)."""
 
-    def __init__(self, problems: list[str]) -> None:
+    def __init__(self, problems: list[str], written: tuple[str, ...] = ()) -> None:
         self.problems = tuple(problems)
+        self.written = written
         super().__init__("\n".join(self.problems))
+
+
+class EmbedInterrupted(Exception):
+    """A failure while writing stopped the run after `written` tenants had committed (the failing tenant rolled back);
+    the failure itself is the `__cause__`."""
+
+    def __init__(self, written: tuple[str, ...]) -> None:
+        self.written = written
+        super().__init__("embedding interrupted after writing " + ", ".join(written))
 
 
 @dataclass(frozen=True)
@@ -3481,8 +3822,11 @@ async def embed(
     Raises:
         PersistenceError: revision 0013 is missing (`persistence.assert_relation`).
         embeddings.EmbeddingError: the model is not the pinned one (PinMismatch), cannot be reached (Unavailable) or
-            answered something else than the pinned vectors (Malformed); tenants written before it stay written.
-        EmbedRefused: a tenant holds embeddings of another digest; nothing was written.
+            answered something else than the pinned vectors (Malformed), before any tenant committed. This and any
+            `psycopg.Error` or `PersistenceError` propagate unchanged when nothing was written.
+        EmbedInterrupted: one of those failures after earlier tenants had committed; `written` names them.
+        EmbedRefused: a tenant holds embeddings of another digest (`written` empty: nothing was written), or another
+            digest appeared while writing (`written` names the tenants already committed).
     """
     for relation in RELATIONS:
         await persistence.assert_relation(conn, relation)
@@ -3499,37 +3843,54 @@ async def embed(
         raise EmbedRefused(problems)
     reports: list[Report] = []
     for tenant, tenant_id in order:  # phase 2: fetch outside a transaction, then one transaction per tenant
-        async with conn.transaction():
-            await persistence.set_tenant(conn, tenant_id)
-            missing, _, _ = await _read(conn, pins.digest)
-        vectors = await embedder.embed([m.text for m in missing], pins) if missing else []
-        made = {m.evidence_id: (m, v) for m, v in zip(missing, vectors, strict=True)}
-        async with conn.transaction():
-            await persistence.set_tenant(conn, tenant_id)
-            still, present, foreign = await _read(conn, pins.digest)
-            if foreign:
-                raise EmbedRefused([f"{tenant}: another model digest appeared while embedding; nothing written"])
-            added = 0
-            for row in still:
-                if row.evidence_id not in made:
-                    continue  # a chunk ingested meanwhile: the next run embeds it
-                chunk, vector = made[row.evidence_id]
-                await conn.execute(
-                    "INSERT INTO app.embeddings (tenant_id, evidence_id, model, model_digest, dimension, input_sha256,"
-                    " embedding) VALUES (%s, %s, %s, %s, %s, %s, %s::public.vector)",
-                    (
-                        tenant_id,
-                        chunk.evidence_id,
-                        pins.model,
-                        pins.digest,
-                        pins.dimension,
-                        embeddings.input_sha256(chunk.text),
-                        embeddings.vector_literal(vector),
-                    ),
-                )
-                added += 1
-        reports.append(Report(tenant, added, present))
+        written = tuple(r.tenant for r in reports if r.added)
+        try:
+            reports.append(await _write(conn, embedder, pins, tenant, tenant_id))
+        except EmbedRefused as refusal:
+            raise EmbedRefused(list(refusal.problems), written) from refusal
+        except (embeddings.EmbeddingError, psycopg.Error, persistence.PersistenceError) as error:
+            if not written:
+                raise  # nothing committed: the failure itself is the whole story
+            raise EmbedInterrupted(written) from error
     return reports
+
+
+async def _write(
+    conn: persistence.Conn, embedder: embeddings.Embedder, pins: EmbeddingPins, tenant: str, tenant_id: UUID
+) -> Report:
+    """One tenant: what is missing, its vectors (outside a transaction), then one transaction that re-checks and
+    inserts."""
+    async with conn.transaction():
+        await persistence.set_tenant(conn, tenant_id)
+        missing, _, _ = await _read(conn, pins.digest)
+    vectors = await embedder.embed([m.text for m in missing], pins) if missing else []
+    made = {m.evidence_id: (m, v) for m, v in zip(missing, vectors, strict=True)}
+    async with conn.transaction():
+        await persistence.set_tenant(conn, tenant_id)
+        still, present, foreign = await _read(conn, pins.digest)
+        if foreign:
+            raise EmbedRefused([f"{tenant}: another model digest appeared while embedding; this tenant rolled back"])
+        added = 0
+        for row in still:
+            if row.evidence_id not in made:
+                continue  # a chunk ingested meanwhile: the next run embeds it
+            chunk, vector = made[row.evidence_id]
+            cur = await conn.execute(
+                "INSERT INTO app.embeddings (tenant_id, evidence_id, model, model_digest, dimension, input_sha256,"
+                " embedding) VALUES (%s, %s, %s, %s, %s, %s, %s::public.vector)"
+                " ON CONFLICT (tenant_id, evidence_id) DO NOTHING",
+                (
+                    tenant_id,
+                    chunk.evidence_id,
+                    pins.model,
+                    pins.digest,
+                    pins.dimension,
+                    embeddings.input_sha256(chunk.text),
+                    embeddings.vector_literal(vector),
+                ),
+            )
+            added += cur.rowcount  # 0 when a concurrent run inserted the row first
+    return Report(tenant, added, present)
 ```
 
 Edit 1 (`scripts/skeleton.py`), replace:
@@ -3598,18 +3959,36 @@ def embed() -> int:
     except model_pins.ModelPinsError:
         print("EMBED: refused, nothing written (data/embedding-pins.json is missing or malformed)")
         return 1
-    except embeddings.EmbeddingError as error:
-        # Our own messages name a rule, never a value or an address.
-        print(f"EMBED: failed ({error.code}: {error})")
-        return 1
     except corpus_embed.EmbedRefused as error:
-        print("EMBED: refused, nothing written")
+        print(
+            f"EMBED: refused after writing {', '.join(error.written)}"
+            if error.written
+            else "EMBED: refused, nothing written"
+        )
         for problem in error.problems:
             print(f"  {problem}")
         return 1
-    except (persistence.PersistenceError, psycopg.Error) as error:
-        detail = f": {error}" if isinstance(error, persistence.PersistenceError) else ""
-        print(f"EMBED: failed ({type(error).__name__}{detail})")
+    except (
+        embeddings.EmbeddingError,
+        persistence.PersistenceError,
+        psycopg.Error,
+        corpus_embed.EmbedInterrupted,
+    ) as error:
+        # A failure after earlier tenants committed arrives wrapped with their names; the failure itself is its cause.
+        cause: BaseException | None = error
+        written: tuple[str, ...] = ()
+        if isinstance(error, corpus_embed.EmbedInterrupted):
+            cause, written = error.__cause__, error.written
+        # Our own messages name a rule, never a value or an address; a driver message can name the host, so only its
+        # class is printed (as `ingest`).
+        if isinstance(cause, embeddings.EmbeddingError):
+            detail = f"{cause.code}: {cause}"
+        elif isinstance(cause, persistence.PersistenceError):
+            detail = f"{type(cause).__name__}: {cause}"
+        else:
+            detail = type(cause).__name__
+        after = f" after writing {', '.join(written)}" if written else ", nothing written"
+        print(f"EMBED: failed ({detail}){after}")
         return 1
     for report in reports:
         print(f"EMBED: {report.tenant}: {report.added} new, {report.present} present")
@@ -3872,7 +4251,7 @@ async def test_the_definer_is_exact_against_a_brute_force_ranking(
 
 - [ ] **Step 4: Gates and commit**
 
-`check.py` → `1421 passed, 213 skipped`; `verify_handoff.py` exit 0; the live gate → `1613 passed, 21 skipped`. The
+`check.py` → `1424 passed, 213 skipped`; `verify_handoff.py` exit 0; the live gate → `1616 passed, 21 skipped`. The
 first `embedded` use embeds corpus-1's 69 sections through local Ollama (five requests of at most 16 inputs); later
 uses find nothing missing.
 
@@ -3913,8 +4292,9 @@ Create `tests/plan_n/test_mcp_read_vector.py`:
 5 and 16; SA:348; errata 3 and 108).
 
 Catches: an invalid handle that reaches the embedding model (it must never learn what the server supports, Plan M
-ruling 14); a missing or mismatched pin answered with anything but `UNSUPPORTED_MODE`, an unreachable model with
-anything but a retryable `UNAVAILABLE`, a malformed answer with anything but `UPSTREAM_INVALID`, and any of them
+ruling 14), or a search that asks the model before asset-sim has answered for the run's asset type (ruling 4); a
+missing or mismatched pin answered with anything but `UNSUPPORTED_MODE`, an unreachable model with anything but a
+retryable `UNAVAILABLE`, a malformed answer with anything but `UPSTREAM_INVALID`, and any of them
 reaching the definer; the definer's `EMBEDDINGS_INCOMPLETE` lost instead of answered as `REFUSED`; a vector answer
 that reports another mode or breaks the committed result contract; and the committed tool schemas changed for T18
 (no tool argument changes, so R029's comparison stays byte for byte).
@@ -3928,8 +4308,9 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 from ops_core import embeddings, persistence
+from ops_mcp_read import assets
 
-from tests.plan_l.test_mcp_read_corpus import Database, UnitConn, call
+from tests.plan_l.test_mcp_read_corpus import Database, RunType, UnitConn, call
 from tests.plan_n.test_embeddings import FakeEmbedder
 
 pytestmark = pytest.mark.asyncio
@@ -4003,6 +4384,24 @@ async def test_incomplete_embeddings_are_refused_not_omitted(monkeypatch: pytest
 async def test_the_committed_tool_contracts_are_unchanged() -> None:
     for path, digest in UNCHANGED.items():
         assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
+
+
+@pytest.mark.parametrize(
+    ("answer", "arguments", "code"),
+    [
+        (assets.Unavailable("asset-sim could not be reached"), {}, "UNAVAILABLE"),
+        ("pump", {"asset_type": "valve"}, "ASSET_TYPE_OUT_OF_SCOPE"),
+    ],
+    ids=["asset-sim-down", "another-asset-type"],
+)
+async def test_the_embedding_model_is_asked_only_after_the_runs_asset_type(
+    monkeypatch: pytest.MonkeyPatch, answer: Any, arguments: dict[str, str], code: str
+) -> None:
+    """Round 1, Minor 8: ruling 4's order puts the pin check and the query embedding after asset-sim's answer."""
+    fake = FakeEmbedder()
+    doc = doc_of(await call(monkeypatch, Database(UnitConn()), {**VECTOR, **arguments}, RunType(answer), embedder=fake))
+    assert doc["error"]["code"] == code
+    assert fake.verified == 0 and fake.texts == []
 ```
 
 Edit 1 (`tests/plan_l/test_mcp_read_corpus.py`), replace:
@@ -4467,9 +4866,15 @@ with:
 
 - [ ] **Step 4: Gates and commit**
 
-`check.py` → `1429 passed, 213 skipped`; `verify_handoff.py` exit 0; the live gate → `1621 passed, 21 skipped`.
-`grep -rn "TODO(T18)" --include=*.py . | grep -v "^./reference/"` prints only `0011_governed_corpus.py:178` and the
-quotation of it in `0013_embeddings.py` (departure 10).
+`check.py` → `1434 passed, 213 skipped`; `verify_handoff.py` exit 0; the live gate → `1626 passed, 21 skipped`.
+`grep -rn "TODO(T18)" --include=*.py . | grep -v "^./reference/"` prints exactly these three lines, in some order (departure 10): revision
+0011's frozen body, 0013's quotation of it, and the unit test that asserts the re-created body no longer carries it:
+
+```text
+./migrations/app/versions/0011_governed_corpus.py:178:        -- TODO(T18): exact pgvector search over app.embeddings under the same filters (R034).
+./migrations/app/versions/0013_embeddings.py:118:    "        -- TODO(T18): exact pgvector search over app.embeddings under the same filters (R034).\n"
+./tests/plan_n/test_migration_0013.py:115:    assert "VECTOR_MODE_UNAVAILABLE" not in body and "TODO(T18)" not in body
+```
 
 ```bash
 git add mcp-read/src/ops_mcp_read/server.py core/src/ops_core/routing.py scripts/build_schemas.py \
@@ -4627,18 +5032,18 @@ async def test_r034_exact_vector_search_against_the_lexical_baseline(
     }
     sweep = rc.sweep(cases, scored, rc.GRID)
     assert rc.choose_threshold(sweep) == pytest.approx(threshold)  # the frozen value is still the rule's (ruling 6)
-    found = {}
-    for c, q in zip(cases, queries, strict=True):
-        # A window is named by its first section, so ties break by evidence_id in byte order as in the definer.
-        candidates = {
-            w.evidence_ids[0]: (w, embeddings.cosine(q, v))
+    candidates = {
+        c.id: [
+            (w, embeddings.cosine(q, v))
             for w, v in zip(windows, window_vectors, strict=True)
             if w.tenant == c.tenant and (c.asset_type is None or w.asset_family in (None, c.asset_type))
-        }
-        best = rc.ranked([(first, s) for first, (_, s) in candidates.items()], threshold, rb.K)
-        found[c.id] = [candidates[first][0] for first, _ in best]
-    window = rc.window_metrics(cases, found, permitted, len(windows))
+        ]
+        for c, q in zip(cases, queries, strict=True)
+    }
+    window = rc.window_metrics(cases, candidates, permitted, windows, threshold)
     assert window["forbidden_sections"] == 0
+    # Round 1, I1: on corpus-1 the 300-word rule gives one window per returnable version; the report says so.
+    assert window["every_window_a_whole_version"] and window["windows"] == 8
     settings = {
         "model": pins.model,
         "model_digest": pins.digest,
@@ -4677,19 +5082,21 @@ async def test_r034_exact_vector_search_against_the_lexical_baseline(
 
 - [ ] **Step 2: Run it and read the report**
 
-Run the live gate (`PYTHONUTF8=1 uv run python scripts/check.py --profile test`) → `1622 passed, 21 skipped`; or, to
+Run the live gate (`PYTHONUTF8=1 uv run python scripts/check.py --profile test`) → `1627 passed, 21 skipped`; or, to
 iterate, `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e/test_retrieval_comparison_live.py -q` (it brings
 up its own per-session databases) → `1 passed`. Then read `reports/retrieval-comparison.md`. Expected from the
 pre-measurement (not gates): lexical hit@5 27/27 and answered-empty 15/20 exactly as T17's report; vector hit@5 26/27
 (A08 regressed) and answered-empty 18/20 (B10, B13, B17 and B18 improved, A13 regressed); McNemar p 1.0 on hit@5 and
 0.375 on answered-empty, so "no ranking claim"; a vector threshold of 0.68 re-chosen on the stored vectors; zero
-forbidden rows. Record in the report the md's Results tables and both McNemar lines. Then `git checkout --
+forbidden rows; the lexical note saying the same rule would put lexical at 0.79 with 17/20 answered empty; and the
+window paragraph saying that each of the 8 windows is a whole version, so its hit@5 and recall@5 measure only the
+threshold. Record in the report the md's Results tables and both McNemar lines. Then `git checkout --
 reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases reports/events reports/outbox
 reports/mcp-read reports/mcp-write reports/asset-sim reports/retrieval`, leaving the two new report files untracked.
 
 - [ ] **Step 3: Gates and commit**
 
-`check.py` → `1429 passed, 214 skipped`; `verify_handoff.py` exit 0.
+`check.py` → `1434 passed, 214 skipped`; `verify_handoff.py` exit 0.
 
 ```bash
 git add tests/e2e/test_retrieval_comparison_live.py
@@ -4702,7 +5109,7 @@ git commit -m "test: exact vector search measured against the lexical baseline (
 
 **Files:**
 - Modify: `docs/retrieval.md`, `docs/runbooks/mcp-read.md`, `docs/runbooks/walking-skeleton.md`,
-  `docs/ARCHITECTURE.md`, `docs/adr/ADR-0001-deployable-units-as-top-level-directories.md`
+  `docs/runbooks/dev-topology.md`, `docs/ARCHITECTURE.md`, `docs/adr/ADR-0001-deployable-units-as-top-level-directories.md`
 
 **Requirements:** BS:417 (settings and score interpretation stored), ruling 4's erratum 108, ruling 18's documents.
 This task writes no behaviour.
@@ -4730,9 +5137,12 @@ is claimed; evaluating another window is part of T18's comparison.
 with:
 
 ```markdown
-is claimed. T18's comparison evaluated one other window as an experiment (adjacent sections of one version joined
-until at least 300 words; `reports/retrieval-comparison.md`); the stored unit stays one chunk per section, because
-another unit would change the evidence IDs every citation and T41's labels name.
+is claimed. T18's comparison evaluated the 300-word window as an experiment (adjacent sections of one version
+joined until at least 300 words; `reports/retrieval-comparison.md`). On corpus-1 it degenerates: every returnable
+version has 327-343 words, so each is one window, and k = 5 covers every window of either tenant; the experiment
+therefore compares whole-version embeddings with section embeddings, and its hit@5 and recall@5 measure only the
+threshold. The stored unit stays one chunk per section, because another unit would change the evidence IDs every
+citation and T41's labels name.
 ```
 
 Edit 3 (`docs/retrieval.md`, the threshold row), replace:
@@ -4792,8 +5202,11 @@ size) and, for a proportion with no cases, no interval. T18 compares exact vecto
 `schemas/embedding-pins.schema.json`), the generation model's `data/model-pins.json` untouched (erratum 107). The
 digest is the bare 64-hex value `/api/tags` reports (`/api/show` carries none). `uv run python
 scripts/pin_embedding_model.py` writes the file from the running Ollama (`/api/version`, `/api/tags`, one
-`/api/embed` for the dimension) and invents nothing; re-run it only when the owner changes the model, and then embed
-again in a new revision (one embedding per chunk).
+`/api/embed` for the dimension) and invents nothing. It refuses, writing nothing, to replace a pin of another model,
+digest or dimension: the stored embeddings were made with the pinned model, and a new pin alone would let mcp-read
+compare a new model's query vectors with the old model's document vectors. A model change is a new revision that
+re-embeds every chunk and then updates the pin in that same revision; re-running the script for the same model only
+refreshes `ollama_version` and `probed_at`.
 
 **Embedding the corpus.** After `ingest`, `uv run python scripts/skeleton.py embed` embeds every stored chunk that has
 none, as the role `worker`, into the database `OPS_PG_DB` names (default `ops`): it checks the pin against Ollama
@@ -4801,9 +5214,11 @@ none, as the role `worker`, into the database `OPS_PG_DB` names (default `ops`):
 only 768 finite non-zero numbers per input, and writes one transaction per tenant. A chunk's text is exactly
 `search_document: ` + its heading + a blank line + its body (the prefix nomic-embed-text is trained with, SA:645), and
 the row keeps that text's SHA-256 (`input_sha256`) beside the vector. It prints `EMBED: <tenant>: n new, n present`;
-a repeat writes nothing. It exits 1 and writes nothing when the pin is missing or does not match the installed model,
-or a tenant already holds embeddings of another digest; an unreachable Ollama exits 1 after the tenants already
-written. Every stored chunk is embedded, whatever its status: lifecycle is decided at query time. Chunks ingested
+a repeat writes nothing, and two runs at the same moment neither fail nor write a row twice (`ON CONFLICT DO
+NOTHING`). It exits 1 and writes nothing when the pin is missing or does not match the installed model, or a tenant
+already holds embeddings of another digest; a failure while writing (Ollama gone, an answer that is not the pinned
+vectors) exits 1 and names the tenants already written (`EMBED: failed (…) after writing alpha`); a re-run completes
+the rest. Every stored chunk is embedded, whatever its status: lifecycle is decided at query time. Chunks ingested
 later need another `embed` run; until then vector mode refuses (below) and lexical mode is unaffected.
 
 | Setting | Value |
@@ -4827,8 +5242,9 @@ comparable with `ts_rank_cd` (BS:417). Like the lexical rank it never reaches th
 in both modes at the labelling instant and writes `reports/retrieval-comparison.md` and `.json`: both modes' metrics at
 k = 5 and 3 with Wilson intervals and denominators, per category, every case's two answers, the questions each mode
 gained or lost, exact McNemar tests on hit@5 and on the no-source cases answered with nothing (no ranking claim
-without p < 0.05; with this few cases a test has little power), both threshold sweeps, the window experiment, a
-repeat-embedding check and the settings. It asserts that no forbidden section reached either mode and that the lexical
+without p < 0.05; with this few cases a test has little power), both threshold sweeps (with what lexical would give
+under the vector's rule, since only the vector threshold was tuned), the window experiment (stated as what it
+measures on corpus-1), a repeat-embedding check and the settings. It asserts that no forbidden section reached either mode and that the lexical
 answers are T17's, answer for answer.
 ```
 
@@ -4988,9 +5404,28 @@ with:
    The dev database must carry revision 0013 (`skeleton.py migrate`) before `up`: mcp-read's own startup check refuses anything older (the API needs 0007 and the sweeper 0008), so on a database still at 0012 or below `up` leaves mcp-read down until the owner migrates it. The browser login walk-through is in `dev-topology.md`.
 ```
 
-- [ ] **Step 4: `docs/ARCHITECTURE.md` and the ADR note (erratum 108)**
+- [ ] **Step 4: `docs/runbooks/dev-topology.md`**
 
-Edit 17 (`docs/ARCHITECTURE.md`, the diagram's model node), replace:
+Edit 17 (`docs/runbooks/dev-topology.md`, the Ollama table), replace:
+
+```markdown
+| containers (the worker in Compose, T08) | `OLLAMA_BASE_URL_CONTAINER=http://host.docker.internal:11434` |
+```
+
+with:
+
+```markdown
+| containers (the worker in Compose, T08) | `OLLAMA_BASE_URL_CONTAINER=http://host.docker.internal:11434` |
+| mcp-read and `scripts/skeleton.py embed` (T18) | `OPS_OLLAMA_URL`, default `http://127.0.0.1:11434` (an `OPS_*` setting, not a `.env` key) |
+
+mcp-read (the query embedding) and `skeleton.py embed` (the document embeddings) read `OPS_OLLAMA_URL`
+(`ops_core.settings.Urls.ollama`), asking only `/api/tags`, `/api/version` and `/api/embed` with `nomic-embed-text`;
+the two `.env` keys above stay the bridge test's, and the worker's generation path (T19) chooses its own.
+```
+
+- [ ] **Step 5: `docs/ARCHITECTURE.md` and the ADR note (erratum 108)**
+
+Edit 18 (`docs/ARCHITECTURE.md`, the diagram's model node), replace:
 
 ```markdown
   OL[Ollama qwen3:8b]
@@ -5002,7 +5437,7 @@ with:
   OL[Ollama qwen3:8b, nomic-embed-text]
 ```
 
-Edit 18 (`docs/ARCHITECTURE.md`, the diagram's edges), replace:
+Edit 19 (`docs/ARCHITECTURE.md`, the diagram's edges), replace:
 
 ```markdown
   MR --> AS
@@ -5015,7 +5450,7 @@ with:
   MR -->|query embeddings only| OL
 ```
 
-Edit 19 (`docs/ARCHITECTURE.md`, mcp-read's principal row), replace:
+Edit 20 (`docs/ARCHITECTURE.md`, mcp-read's principal row), replace:
 
 ```markdown
 | `mcp-read` | Keycloak client; DB role `mcp_read` | **no tables**; `EXECUTE` on `resolve_invocation`, `asset_scope`, `search_procedures_scoped` | PostgreSQL (functions), asset-sim | any write-path function; incident-sim |
@@ -5027,7 +5462,7 @@ with:
 | `mcp-read` | Keycloak client; DB role `mcp_read` | **no tables**; `EXECUTE` on `resolve_invocation`, `asset_scope`, `search_procedures_scoped` | PostgreSQL (functions), asset-sim, Ollama (`/api/tags` and `/api/embed` with the embedding model only, T18) | any write-path function; incident-sim; a generation request |
 ```
 
-Edit 20 (`docs/ARCHITECTURE.md`, after section 10), replace:
+Edit 21 (`docs/ARCHITECTURE.md`, after section 10), replace:
 
 ```markdown
 ## Where the code will live (not yet written)
@@ -5044,9 +5479,12 @@ the model that ranks it cannot act: mcp-read asks Ollama for one query embedding
 - **One filter text.** The vector branch of `search_procedures_scoped` repeats the lexical branch's tenant, lifecycle
   and asset filters byte for byte, and refuses (`EMBEDDINGS_INCOMPLETE`) rather than silently dropping a permitted
   section without an embedding.
-- **A pinned model on both sides.** `data/embedding-pins.json` names the model, its digest and its 768 dimensions;
-  `skeleton.py embed` checks it before writing and mcp-read before each vector call, so a swapped model is refused,
-  not used; each stored row keeps the SHA-256 of the prefixed text it was made from.
+- **A pinned model.** `data/embedding-pins.json` names the model, its digest and its 768 dimensions. What is
+  guaranteed: mcp-read refuses a query model that differs from the pin (`UNSUPPORTED_MODE`); the pin cannot be
+  replaced by `scripts/pin_embedding_model.py` with another model's; every stored row carries its digest and the
+  SHA-256 of the prefixed text it was made from, and `skeleton.py embed` refuses to mix digests. A model change is a
+  revision that re-embeds and then updates the pin; a read-path check of the stored rows' digest belongs to that
+  revision (debt list).
 - **mcp-read → Ollama (erratum 108).** SA:348 and SA:461 make mcp-read compute the query embedding, so mcp-read
   reaches Ollama for `/api/tags` and `/api/embed` with the embedding model only; BS:646's MCP row, BS:144's diagram
   and ADR-0001's boundary list did not name that edge. It is not a generation, so it holds no `model_permit` (SA:203).
@@ -5062,7 +5500,7 @@ the model that ranks it cannot act: mcp-read asks Ollama for one query embedding
 ## Where the code will live (not yet written)
 ```
 
-Edit 21 (`docs/adr/ADR-0001-deployable-units-as-top-level-directories.md`, the end of the file), replace:
+Edit 22 (`docs/adr/ADR-0001-deployable-units-as-top-level-directories.md`, the end of the file), replace:
 
 ```markdown
 - The two synthetic services (`asset-sim/`, `incident-sim/`) are separate on purpose. The destination needs an independent database and credentials (§14). The read API does not.
@@ -5081,14 +5519,15 @@ The decision above stands. One network edge is added to the boundary list: mcp-r
 not name. The owner decides the erratum; `docs/ARCHITECTURE.md` section 11 records the edge.
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
-Check: `grep -n "T18's comparison\|refused (\`VECTOR_MODE_UNAVAILABLE\`)\|arrives with T18" docs/retrieval.md
-docs/runbooks/mcp-read.md` prints nothing.
+Check: `grep -n "part of T18's comparison\|tuning it is T18's\|refused (\`VECTOR_MODE_UNAVAILABLE\`)\|arrives with
+T18" docs/retrieval.md docs/runbooks/mcp-read.md` prints nothing (the old phrases are gone; the new text names T18's
+comparison as done).
 
 ```bash
-git add docs/retrieval.md docs/runbooks/mcp-read.md docs/runbooks/walking-skeleton.md docs/ARCHITECTURE.md \
-  docs/adr/ADR-0001-deployable-units-as-top-level-directories.md
+git add docs/retrieval.md docs/runbooks/mcp-read.md docs/runbooks/walking-skeleton.md docs/runbooks/dev-topology.md \
+  docs/ARCHITECTURE.md docs/adr/ADR-0001-deployable-units-as-top-level-directories.md
 git commit -m "docs: exact vector search, the embedding pin, mcp-read's vector mode and its Ollama edge (T18)"
 ```
 
@@ -5175,7 +5614,9 @@ r034_note = (
     "(lock 81f50c2b...1862), 47 development queries at the labelling instant, both modes through "
     f"search_procedures_scoped as mcp_read at k = 5 and 3: {figures}. Every case's two answers, the improved and "
     "regressed questions by id, per-category rows, both threshold sweeps, a 300-word window experiment and a "
-    "repeat-embedding check are in reports/retrieval-comparison.md and .json. Exact by construction (no index) and "
+    "repeat-embedding check are in reports/retrieval-comparison.md and .json (the window experiment, on corpus-1, "
+    "compares whole-version embeddings with section embeddings: every returnable version is one 300-word window). "
+    "Exact by construction (no index) and "
     "proven against a brute-force ranking of the stored vectors (tests/e2e/test_vector_retrieval_live.py). The vector "
     "threshold (0.68) was chosen on these same queries by a rule fixed before measuring: development figures, not "
     "held-out ones (the holdout is T25's)."
@@ -5251,7 +5692,19 @@ T41. The Plan M record follows.
 **Plan M record:** Plan M (T16) is executed on branch `plan-m` (from `main`: `9e7d716..bbaba40` holds the debt list and the
 ```
 
-Edit 3 (`SESSION_STATE.md`, the environment row), replace:
+Edit 3 (`SESSION_STATE.md`, the repository line), replace:
+
+```markdown
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-m` off `main` (Plan M executed, pushed 2026-10-18, PR #12 into `main`;
+```
+
+with:
+
+```markdown
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-n` off `plan-m` (Plan N executed, not pushed; `plan-m`: Plan M executed, pushed 2026-10-18, PR #12 into `main`;
+```
+
+Edit 4 (`SESSION_STATE.md`, the environment row), replace:
 
 ```markdown
 | Ollama | Observed at 0.40.4 on 2026-10-15 (recorded 0.33.3 before; Plan J did not change it, and per AM-30 an upgrade is the owner's decision, so this records the observation and claims nothing either way); `qwen3:8b` and `nomic-embed-text` installed as last recorded |
@@ -5263,7 +5716,7 @@ with:
 | Ollama | Observed at 0.40.4 on 2026-10-15 (recorded 0.33.3 before; Plan J did not change it, and per AM-30 an upgrade is the owner's decision, so this records the observation and claims nothing either way); `qwen3:8b` and `nomic-embed-text` installed as last recorded. Plan N pinned `nomic-embed-text:latest` at digest `0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f`, 768 dimensions, on 0.40.4 (`data/embedding-pins.json`, <date>) |
 ```
 
-Edit 4 (`SESSION_STATE.md`, before the walking-skeleton debt list), replace:
+Edit 5 (`SESSION_STATE.md`, before the walking-skeleton debt list), replace:
 
 ```markdown
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
@@ -5317,7 +5770,7 @@ with:
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 ```
 
-Edit 5 (`SESSION_STATE.md`, the end of "Dev database state", before "Open owner inputs"), replace:
+Edit 6 (`SESSION_STATE.md`, the end of "Dev database state", before "Open owner inputs"), replace:
 
 ```markdown
 ## Open owner inputs
@@ -5337,7 +5790,7 @@ and lexical ones work.
 ## Open owner inputs
 ```
 
-Edit 6 (`SESSION_STATE.md`, "Open owner inputs"), replace:
+Edit 7 (`SESSION_STATE.md`, "Open owner inputs"), replace:
 
 ```markdown
   executed") and 103-106 (see "Plan M executed").
@@ -5354,7 +5807,32 @@ with:
 - Decide on the installed Ollama 0.40.4 against SA:587's 0.33.3 (the embedding pin records 0.40.4).
 ```
 
-Edit 7 (`STATUS.md`, at the end), replace:
+Edit 8 (`SESSION_STATE.md`, "Exact next step", the walking-skeleton commands), replace:
+
+```bash
+uv run python scripts/skeleton.py ingest  # the governed corpus (T17); a repeat writes nothing
+```
+
+with:
+
+```bash
+uv run python scripts/skeleton.py ingest  # the governed corpus (T17); a repeat writes nothing
+uv run python scripts/skeleton.py embed   # after ingest (T18): the stored chunks through local Ollama
+```
+
+Edit 9 (`SESSION_STATE.md`, "Exact next step", its last paragraph), replace:
+
+```markdown
+Then wait for the owner inputs above (holdout seal, then live probe; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-L, up to 102) and write Plan M for T16 (the read tools and asset-sim over the governed store, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T17, unblocked by T15, T10 and T17; T18 and T23 are unblocked too).
+```
+
+with:
+
+```markdown
+Then wait for the owner inputs above (holdout seal, then live probe; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-N, up to 111; the dev database's migration to 0013 and its `embed`) and write the plan for T23 (the development eval set, gold labels and rubric: the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T18, which depends on T17 only; T19 and T41 wait on owner steps, T20 on T19).
+```
+
+Edit 10 (`STATUS.md`, at the end), replace:
 
 ```markdown
 - Next: T18 (vector retrieval, now with mcp-read's vector mode) or T23.
@@ -5384,7 +5862,7 @@ with:
 - Next: T23 (the development eval set).
 ```
 
-Edit 8 (`docs/PROJECT_HISTORY.md`, before the last section), replace:
+Edit 11 (`docs/PROJECT_HISTORY.md`, before the last section), replace:
 
 ```markdown
 ## 31. What the process taught
@@ -5408,9 +5886,26 @@ comparison writes `reports/retrieval-comparison.md`. <execution>
 
 **Review.** Writing the plan against the code moved several details. pgvector's operator lives in `public` and the
 definers pin `search_path = app, pg_temp`, so the branch spells `OPERATOR(public.<=>)`. A zero vector has a NaN cosine,
-and PostgreSQL sorts NaN above every number, so it became a `BAD_ARGUMENT`. The live baseline test rewrites the T17
-report on every run before the comparison runs, so the lexical answers are pinned by a digest computed from the
-committed file. The threshold rule was run against local Ollama before the revision was written: it chose 0.68.
+and PostgreSQL sorts NaN above every number, so it became a `BAD_ARGUMENT` and, after review, a table CHECK too. The
+live baseline test rewrites the T17 report on every run before the comparison runs, so the lexical answers are pinned
+by a digest computed from the committed file. The threshold rule was run against local Ollama before the revision was
+written: it chose 0.68. The writer slipped once, typing a bare `python3 -` that read standard input; it was stopped by
+its task ID, and nothing ran.
+
+**Problem.** The first static review (0 Critical, 2 Important, 13 Minor) found that two claims would not have been
+true. The 300-word window experiment could not tell one ranking from another on corpus-1: every returnable version has
+327-343 words, so each became one window, and the top five held every window of a tenant; its hit@5 measured only a
+threshold tuned for sections. And the pin script overwrote the pin unconditionally, so re-running it after a model
+change, as the documents told the owner to, would have let mcp-read compare a new model's query vectors with the old
+model's stored ones, with nothing to refuse it.
+
+**Change.** The report now gives the windows per tenant, their sizes, hit@1, MRR@5 and recall at threshold 0, and says
+plainly that on corpus-1 the experiment compares whole-version embeddings with section embeddings. The pin script
+refuses to replace another model's pin; a model change is a revision that re-embeds and then updates the pin, and the
+architecture document claims only what holds. The minors tightened the rest: forbidden rows counted within the top k,
+a CHECK against a stored zero vector, `embed` naming the tenants it wrote and tolerating a concurrent run, a test that
+the model is asked only after asset-sim answers, and the report saying that the vector threshold was tuned while the
+lexical one was not (the same rule would move lexical from 15 to 17 of 20 no-source cases answered empty).
 
 ## 32. What the process taught
 ```
@@ -5418,8 +5913,8 @@ committed file. The threshold rule was run against local Ollama before the revis
 - [ ] **Step 3: Final gates and the evidence**
 
 With the dev stack up, local Ollama answering and every skeleton process down: `PYTHONUTF8=1 uv run python
-scripts/check.py` → `CHECK: GREEN`, pytest `1429 passed, 214 skipped`; `PYTHONUTF8=1 uv run python scripts/check.py
---profile test` → `CHECK: GREEN`, pytest `1622 passed, 21 skipped` (or the measured counts; Step 4 writes what was
+scripts/check.py` → `CHECK: GREEN`, pytest `1434 passed, 214 skipped`; `PYTHONUTF8=1 uv run python scripts/check.py
+--profile test` → `CHECK: GREEN`, pytest `1627 passed, 21 skipped` (or the measured counts; Step 4 writes what was
 measured); `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` → exit 0. Then `git
 checkout -- reports/bootstrap reports/skeleton reports/auth reports/admission reports/leases reports/events
 reports/outbox reports/mcp-read reports/mcp-write reports/asset-sim reports/retrieval`, and keep, from this run,
@@ -5471,7 +5966,10 @@ git commit -m "docs: close T18 - handoff records, R034, errata 107-111, the comp
    test that ran without the `embedded` fixture after a round trip would see `EMBEDDINGS_INCOMPLETE`.
 6. **mcp-read starts only on 0013.** Every mcp-read start, in-process or as a process (R105's skeleton), now asks for
    `VECTOR_SEARCH`; the test databases are migrated to the head by the session fixture, the dev database is not.
-7. **The pin is read per call.** mcp-read reads `data/embedding-pins.json` from the checkout on every vector call and
+7. **`embed` inserts with `ON CONFLICT (tenant_id, evidence_id) DO NOTHING`.** The worker holds INSERT and SELECT on
+   `app.embeddings`, which is what PostgreSQL asks for a conflict target; RLS's WITH CHECK still applies to the row.
+   A failure there names a privilege, not the code's logic.
+8. **The pin is read per call.** mcp-read reads `data/embedding-pins.json` from the checkout on every vector call and
    checks it against `/api/tags`; packaging it for an image is T30's (debt list).
 
 ## Self-review (run by the plan's author before execution)
@@ -5486,9 +5984,9 @@ git commit -m "docs: close T18 - handoff records, R034, errata 107-111, the comp
   in the revision (`text, text, text, public.vector, text, integer, text`); the helper's signature is `app._min_similarity()`.
 - **Measured, not assumed.** On the scratch copy of `6d00d06`: every hunk above applies to the repository's text
   exactly once (the edits were generated from that copy and re-applied to the repository's files by a script that
-  checks uniqueness); `tests/plan_n` 52 passed; the dev suite 1429 passed, 214 skipped (13 git-dependent failures that
+  checks uniqueness); `tests/plan_n` 57 passed; the dev suite 1434 passed, 214 skipped (13 git-dependent failures that
   pass in a checkout); ruff, ruff format and mypy strict clean on every member; `verify_handoff.py --contracts` PASS
-  with 27 schemas and 93 examples; `scripts/pin_embedding_model.py` and `python -m scripts.retrieval_comparison
+  with 27 schemas, 36 accepted and 55 negative examples; `scripts/pin_embedding_model.py` and `python -m scripts.retrieval_comparison
   threshold` ran against local Ollama (the pin above; `CHOSEN: 0.68`). Not measured: the per-step red states (stated
   from the import graph), and anything against a database or Keycloak (no service was reachable for the writer, by
   instruction).
