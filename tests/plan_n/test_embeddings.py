@@ -131,15 +131,17 @@ async def test_the_pin_is_checked_against_the_tags_digest() -> None:
         [],
         [[0.1] * 767],
         [[0.1] * 767 + [float("nan")]],
+        [[0.1] * 767 + [float("inf")]],
+        [[0.1] * 767 + [10**400]],  # an integer too large for a double: math.isfinite raises OverflowError
         [[0.1] * 767 + [True]],
         [[0.0] * 768],
         "not a list",
     ],
-    ids=["no-vector", "767", "nan", "boolean", "zeros", "not-a-list"],
+    ids=["no-vector", "767", "nan", "infinity", "overflow", "boolean", "zeros", "not-a-list"],
 )
 async def test_a_malformed_answer_is_refused(vectors: Any) -> None:
     def answer(request: httpx2.Request) -> httpx2.Response:
-        # json.dumps writes NaN as a bare token, which Python's parser reads back as a float NaN.
+        # json.dumps writes NaN and Infinity as bare tokens, which Python's parser reads back as floats.
         return httpx2.Response(200, content=json.dumps({"embeddings": vectors}).encode())
 
     client, _ = ollama(answer)

@@ -7,9 +7,9 @@ made; the unit tests assert the request bodies an embedder sends, and every stor
 text it was made from.
 
 `OllamaEmbedder` talks to local Ollama (`OPS_OLLAMA_URL`, loopback by default) with `httpx2`, a 10-second timeout per
-request and no retry (asset-sim's client pattern). It asks only `/api/tags` (the pinned digest; `/api/show` carries
-none) and `/api/embed`, never a generation endpoint, so it is not a `model_permit` holder (SA:203 governs
-generation). Failures map to one exception each, which the callers turn into their own answers: unreachable, a timeout
+request and no retry (asset-sim's client pattern). It asks only `/api/version`, `/api/tags` (the pinned digest;
+`/api/show` carries none) and `/api/embed`, never a generation endpoint, so it is not a `model_permit` holder (SA:203
+governs generation). Failures map to one exception each, which the callers turn into their own answers: unreachable, a timeout
 or a 5xx is `Unavailable` (retryable); a digest or model other than the pin is `PinMismatch`; any answer that is not
 exactly one list of 768 finite floats per input, with a non-zero norm, is `Malformed`.
 
@@ -109,7 +109,11 @@ def checked(raw: object, expected: int, dimension: int = DIMENSION) -> list[Vect
     for item in raw:
         if not isinstance(item, list) or len(item) != dimension:
             raise Malformed("an embedding has another dimension than the pinned one")
-        if not all(isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v) for v in item):
+        try:
+            numbers = all(isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v) for v in item)
+        except OverflowError as exc:  # a JSON integer too large for a double is no number the model can have made
+            raise Malformed("an embedding holds a value that is not a finite number") from exc
+        if not numbers:
             raise Malformed("an embedding holds a value that is not a finite number")
         vector = tuple(float(v) for v in item)
         if not any(vector):
@@ -186,6 +190,16 @@ class OllamaEmbedder:
                 digest = entry.get("digest")
                 return digest if isinstance(digest, str) else None
         return None
+
+    async def dimension(self, model: str) -> int:
+        """The dimension of one real `/api/embed` answer for `model`: what the pin script records. The answer must be
+        exactly one finite, non-zero vector (Malformed otherwise); whether the length is the pinned 768 is the
+        caller's rule, as no pin exists yet when this is asked."""
+        body = await self._json("POST", "/api/embed", {"model": model, "input": ["dimension probe"]})
+        raw = body.get("embeddings")
+        if not isinstance(raw, list) or len(raw) != 1 or not isinstance(raw[0], list):
+            raise Malformed("the dimension probe did not answer exactly one vector")
+        return len(checked(raw, 1, len(raw[0]))[0])
 
     async def verify(self, pins: EmbeddingPins) -> None:
         """Refuse a pin for another model or dimension, and an installed model whose `/api/tags` digest is not the

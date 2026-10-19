@@ -15,6 +15,9 @@ a new revision that removes the stored embeddings (or moves them aside); its com
 reviewed change, and `skeleton.py embed` runs again (Plan N rounds 1 and 2, I2). The refusal guards against a silent
 re-pin by this script; it cannot stop a hand edit of the committed file, which is a reviewed repository change.
 Re-running it for the same model only refreshes `ollama_version` and `probed_at`.
+
+Every failure has one shape: a single `PIN: <rule>, nothing written` line (a rule, never an address or a value) and
+exit status 1, whether Ollama is unreachable, the model is missing, an answer is malformed or the pin would be invalid.
 """
 
 from __future__ import annotations
@@ -27,7 +30,18 @@ from pathlib import Path
 
 import httpx2
 from ops_core import embeddings, settings
-from ops_core.model_pins import ModelPinsError, load_embedding_pins
+from ops_core.model_pins import EmbeddingPins, ModelPinsError, load_embedding_pins
+from pydantic import ValidationError
+
+
+class PinFailed(Exception):
+    """A rule the pin cannot be written under; the message names the rule, never an address or a value."""
+
+
+def refuse(rule: str) -> int:
+    """The one failure shape: a `PIN:` line naming the rule, and the exit status."""
+    print(f"PIN: {rule}, nothing written")
+    return 1
 
 
 async def probe(base: str, transport: httpx2.AsyncBaseTransport | None = None) -> dict[str, object]:
@@ -37,18 +51,15 @@ async def probe(base: str, transport: httpx2.AsyncBaseTransport | None = None) -
         version = await embedder.version()
         digest = await embedder.installed_digest(embeddings.MODEL)
         if digest is None:
-            raise SystemExit(f"PIN: {embeddings.MODEL} is not installed in this Ollama; nothing written")
-        # The raw answer, not `embed`: `embed` checks the dimension against a pin, and this is what makes the pin.
-        answer = await embedder._json("POST", "/api/embed", {"model": embeddings.MODEL, "input": ["dimension probe"]})
+            raise PinFailed(f"{embeddings.MODEL} is not installed in this Ollama")
+        # Not `embed`: `embed` checks the dimension against a pin, and this is what makes the pin.
+        dimension = await embedder.dimension(embeddings.MODEL)
     finally:
         await embedder.aclose()
-    vectors = answer.get("embeddings")
-    if not isinstance(vectors, list) or not vectors or not isinstance(vectors[0], list):
-        raise SystemExit("PIN: /api/embed answered without a vector; nothing written")
     return {
         "model": embeddings.MODEL,
         "digest": digest,
-        "dimension": len(vectors[0]),
+        "dimension": dimension,
         "ollama_version": version,
         "probed_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
@@ -66,14 +77,17 @@ def replaces_another_model(out: Path, pin: dict[str, object]) -> bool:
 
 
 def main(out: Path = embeddings.PINS, transport: httpx2.AsyncBaseTransport | None = None) -> int:
-    """Probe, refuse another dimension or a pin of another model, write the pin and read it back."""
-    pin = asyncio.run(probe(settings.urls().ollama, transport))
+    """Probe, refuse another dimension or a pin of another model, validate, write the pin and read it back."""
+    try:
+        pin = asyncio.run(probe(settings.urls().ollama, transport))
+    except (embeddings.EmbeddingError, PinFailed) as exc:
+        return refuse(str(exc))
     if pin["dimension"] != embeddings.DIMENSION:
-        print(
-            f"PIN: {embeddings.MODEL} answered {pin['dimension']} dimensions, not {embeddings.DIMENSION}; "
-            "nothing written"
-        )
-        return 1
+        return refuse(f"{embeddings.MODEL} answered {pin['dimension']} dimensions, not {embeddings.DIMENSION}")
+    try:
+        EmbeddingPins.model_validate_json(json.dumps(pin))  # the pin as the services will read it, before it is written
+    except ValidationError:  # its text would carry the probed values
+        return refuse("the probed pin does not match the embedding pin's shape")
     if replaces_another_model(out, pin):
         print(
             "PIN: refused, nothing written: data/embedding-pins.json pins another model build; a model change is a new "

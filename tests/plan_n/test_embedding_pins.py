@@ -104,3 +104,35 @@ def test_the_pin_script_writes_a_pin_and_never_replaces_another_models(
     assert "PIN: refused, nothing written" in capsys.readouterr().out
     other = tmp_path / "other.json"
     assert pin_embedding_model.main(other, ollama_answering(MEASURED, 384)) == 1 and not other.exists()
+
+
+def ollama_failing(kind: str) -> httpx2.MockTransport:
+    """A local Ollama that cannot give the pin: unreachable, without the model, or answering no usable vector."""
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        if kind == "unreachable":
+            raise httpx2.ConnectError("refused", request=request)
+        if request.url.path == "/api/version":
+            return httpx2.Response(200, json={"version": "0.40.4"})
+        if request.url.path == "/api/tags":
+            models = [] if kind == "not-installed" else [{"name": "nomic-embed-text:latest", "digest": MEASURED}]
+            return httpx2.Response(200, json={"models": models})
+        assert request.url.path == "/api/embed", request.url.path
+        vectors = {"no-vector": [], "two-vectors": [[0.1] * 768] * 2, "zeros": [[0.0] * 768]}[kind]
+        return httpx2.Response(200, json={"embeddings": vectors})
+
+    return httpx2.MockTransport(answer)
+
+
+@pytest.mark.parametrize("kind", ["unreachable", "not-installed", "no-vector", "two-vectors", "zeros"])
+def test_every_failure_is_one_pin_line_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], kind: str
+) -> None:
+    """One shape for every failure (fix round 1): a single `PIN: <rule>, nothing written` line, exit 1, no file and no
+    traceback, with no address or value in the line."""
+    out = tmp_path / "embedding-pins.json"
+    assert pin_embedding_model.main(out, ollama_failing(kind)) == 1
+    assert not out.exists()
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1 and lines[0].startswith("PIN: ") and lines[0].endswith(", nothing written")
+    assert "127.0.0.1" not in lines[0] and "http" not in lines[0]
