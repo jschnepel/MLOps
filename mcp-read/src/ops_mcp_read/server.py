@@ -82,7 +82,8 @@ def stamp(value: datetime) -> str:
 
 
 def tool_error(code: str, message: str, *, retryable: bool = False) -> dict[str, Any]:
-    """The `error` object of an envelope; only an unavailable asset-sim is worth a retry (ruling 15)."""
+    """The `error` object of an envelope; only an unavailable upstream (asset-sim,
+    the embedding model) is worth a retry (ruling 15)."""
     return {"code": code, "message": message, "retryable": retryable}
 
 
@@ -306,7 +307,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
             return embeddings.Unavailable("the embedding model is not configured")
         try:
             pins = model_pins.load_embedding_pins(embeddings.PINS)
-        except model_pins.ModelPinsError:
+        except (model_pins.ModelPinsError, OSError, ValueError):  # unreadable or undecodable: as a missing pin
             return embeddings.PinMismatch("no valid embedding pin")
         try:
             async with asyncio.timeout(embeddings.TIMEOUT_SECONDS):

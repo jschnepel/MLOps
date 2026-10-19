@@ -10,6 +10,7 @@ that reports another mode or breaks the committed result contract; and the commi
 (no tool argument changes, so R029's comparison stays byte for byte).
 """
 
+import asyncio
 import hashlib
 import json
 from pathlib import Path
@@ -17,7 +18,7 @@ from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
-from ops_core import embeddings, persistence
+from ops_core import embeddings, model_pins, persistence
 from ops_mcp_read import assets
 
 from tests.plan_l.test_mcp_read_corpus import Database, RunType, UnitConn, call
@@ -82,7 +83,73 @@ async def test_a_missing_pin_is_unsupported_mode(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(embeddings, "PINS", tmp_path / "embedding-pins.json")
     fake = FakeEmbedder()
     doc = doc_of(await call(monkeypatch, Database(UnitConn()), VECTOR, embedder=fake))
-    assert doc["error"]["code"] == "UNSUPPORTED_MODE" and fake.texts == []
+    assert doc["error"] == {"code": "UNSUPPORTED_MODE", "message": "no valid embedding pin", "retryable": False}
+    assert fake.texts == []
+
+
+async def test_an_unreadable_pin_answers_as_a_missing_one(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A pin file the OS refuses to read never escapes as a transport error and never carries its path."""
+
+    def unreadable(path: Path) -> None:
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(model_pins, "load_embedding_pins", unreadable)
+    fake = FakeEmbedder()
+    db = Database(UnitConn())
+    doc = doc_of(await call(monkeypatch, db, VECTOR, embedder=fake))
+    assert doc["error"] == {"code": "UNSUPPORTED_MODE", "message": "no valid embedding pin", "retryable": False}
+    assert fake.verified == 0 and [name for name, _, _ in db.calls] == ["resolve", "scope"]
+
+
+async def test_an_undecodable_pin_answers_as_a_missing_one(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """UnicodeDecodeError is a ValueError."""
+    pin = tmp_path / "embedding-pins.json"
+    pin.write_bytes(bytes([0xFF, 0xFE, 0x00]))
+    monkeypatch.setattr(embeddings, "PINS", pin)
+    doc = doc_of(await call(monkeypatch, Database(UnitConn()), VECTOR, embedder=FakeEmbedder()))
+    assert doc["error"] == {"code": "UNSUPPORTED_MODE", "message": "no valid embedding pin", "retryable": False}
+
+
+async def test_a_server_without_an_embedder_is_unavailable_and_retryable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lifespan builds the client; a server whose build gave none answers, never raises."""
+    monkeypatch.setattr(embeddings.OllamaEmbedder, "from_settings", classmethod(lambda cls: None))
+    db = Database(UnitConn())
+    doc = doc_of(await call(monkeypatch, db, VECTOR))
+    assert doc["error"] == {
+        "code": "UNAVAILABLE",
+        "message": "the embedding model is not configured",
+        "retryable": True,
+    }
+    assert [name for name, _, _ in db.calls] == ["resolve", "scope"]
+
+
+class SlowVerify(FakeEmbedder):
+    """An embedder whose pin check outlasts the budget."""
+
+    async def verify(self, pins: Any) -> None:
+        await super().verify(pins)
+        await asyncio.sleep(5)
+
+
+async def test_the_budget_covers_the_pin_check_and_the_embedding_together(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(embeddings, "TIMEOUT_SECONDS", 0.05)
+    slow = SlowVerify()
+    db = Database(UnitConn())
+    doc = doc_of(await call(monkeypatch, db, VECTOR, embedder=slow))
+    assert doc["error"] == {
+        "code": "UNAVAILABLE",
+        "message": "the embedding model did not answer in time",
+        "retryable": True,
+    }
+    assert slow.verified == 1 and slow.texts == []  # the budget ran out inside the check
+    assert [name for name, _, _ in db.calls] == ["resolve", "scope"]  # no third unit
+
+
+async def test_a_lexical_search_leaves_the_embedding_model_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeEmbedder()
+    doc = doc_of(await call(monkeypatch, Database(UnitConn()), {**VECTOR, "mode": "lexical"}, embedder=fake))
+    assert doc["data"]["retrieval_mode"] == "lexical"
+    assert fake.verified == 0 and fake.texts == []
 
 
 async def test_incomplete_embeddings_are_refused_not_omitted(monkeypatch: pytest.MonkeyPatch) -> None:
