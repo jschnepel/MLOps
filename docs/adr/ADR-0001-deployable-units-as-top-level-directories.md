@@ -39,3 +39,10 @@ web/           React + TypeScript + Vite
 - Interviewers can read one service at a time, and each Dockerfile builds only its member plus `core/`.
 - There is a risk of `core/` turning into a dumping ground. To mitigate it, `core/` keeps the sub-packages `domain/`, `application/`, `adapters/` and `contracts/`, and services contain only wiring, transport and process lifecycle.
 - The two synthetic services (`asset-sim/`, `incident-sim/`) are separate on purpose. The destination needs an independent database and credentials (§14). The read API does not.
+
+## Note (2026-10-19, T18, proposed erratum 108)
+
+The decision above stands. One network edge is added to the boundary list: mcp-read → Ollama, for `/api/tags` and
+`/api/embed` with the embedding model only, never a generation. SA:348 and SA:461 make mcp-read compute the
+`search_query:` embedding of a vector search, which the boundary list (written before vector mode was designed) did
+not name. The owner decides the erratum; `docs/ARCHITECTURE.md` section 11 records the edge.

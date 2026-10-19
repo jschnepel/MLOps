@@ -28,7 +28,7 @@ flowchart LR
   end
   KC[Keycloak]
   PG[(PostgreSQL<br/>app schema, RLS, definer functions)]
-  OL[Ollama qwen3:8b]
+  OL[Ollama qwen3:8b, nomic-embed-text]
   UI -->|HTTPS commands| API
   API -->|SSE| UI
   KC -.tokens.-> API & W & MR & MW
@@ -41,6 +41,7 @@ flowchart LR
   MR -->|functions only| PG
   MW -->|functions only| PG
   MR --> AS
+  MR -->|query embeddings only| OL
   MW --> IS
 ```
 
@@ -60,7 +61,7 @@ The model (bottom right) has no credential, no database access, no network reach
 | `api` | Keycloak client; DB role `api` | SELECT on conversation and audit tables; INSERT on messages, idempotency, feedback, outbox, `resume_input` jobs; UPDATE on `runs.cancel_requested` only; runs, decisions and revisions only through `create_run`, `record_decision`, `create_revision`; status answers and conversation clarifications are plain messages | PostgreSQL, Keycloak (login, `view-users` check) | update `runs.state`; insert decisions, proposals, grants, attempts or events directly; reach either sim |
 | `worker` | Keycloak client; DB role `worker` | run_lease, jobs, drafts, invocation_context (insert), outbox (insert), corpus tables (ingestion), model_permit, checkpoints schema; `runs` columns `checkpoint_id`, `budget_used`; transitions only through `transition_run` (pre-grant states), `freeze_proposal`, `mark_unknown` and `escalate_run`; handle revocation through `revoke_handles` | PostgreSQL, mcp-read, mcp-write, Ollama | write decisions, memberships, grants, attempts or events; mark a run SUCCEEDED; reach either sim |
 | `sweeper` (runs, T11) | DB role `sweeper`; Keycloak `view-users` service account | leases (reclaim), jobs, memberships (sync), outbox, expired sessions and idempotency rows; expiry and deadline transitions only through `expire_proposal` and `escalate_run`, iterating tenants | PostgreSQL, Keycloak admin API (read) | decisions, grants, attempts, any pre-grant or success transition |
-| `mcp-read` | Keycloak client; DB role `mcp_read` | **no tables**; `EXECUTE` on `resolve_invocation`, `asset_scope`, `search_procedures_scoped` | PostgreSQL (functions), asset-sim | any write-path function; incident-sim |
+| `mcp-read` | Keycloak client; DB role `mcp_read` | **no tables**; `EXECUTE` on `resolve_invocation`, `asset_scope`, `search_procedures_scoped` | PostgreSQL (functions), asset-sim, Ollama (`/api/tags` and `/api/embed` with the embedding model only, T18) | any write-path function; incident-sim; a generation request |
 | `mcp-write` | Keycloak client; DB role `mcp_exec` | **no tables**; `EXECUTE` on `resolve_invocation`, `grant_execution`, `mark_sent`, `record_outcome`, `request_abort`, `lookup_action` | PostgreSQL (functions), incident-sim | the search and asset functions; asset-sim; it sees only the frozen payload bytes, never corpus text |
 | `operator` CLI | DB role `operator` | `EXECUTE` on `resolve_escalation` only | PostgreSQL | everything else |
 | `app_definer` | no login | owns the functions, owns no tables; sees rows only through explicit RLS policies | — | be used by a process |
@@ -357,6 +358,37 @@ it is the committed contract's.
 |---|---|
 | R028 | Alpha never reads B22 (refused before asset-sim, or asset-sim's own 404); a requester who lost the membership gets nothing from any of the three tools; the search keeps to the run's asset type and never returns a revoked procedure |
 | R029 | An added or removed tool, an altered schema, an error-flagged, malformed or oversized result each fail the worker's call closed (in-process); the real server passes (live) |
+
+---
+
+## 11. Exact vector retrieval (built in T18)
+
+**Claim.** A vector search returns exactly what a lexical search may return, ranked by the pinned embedding model, and
+the model that ranks it cannot act: mcp-read asks Ollama for one query embedding, never for text.
+
+- **One filter text.** The vector branch of `search_procedures_scoped` repeats the lexical branch's tenant, lifecycle
+  and asset filters byte for byte, and refuses (`EMBEDDINGS_INCOMPLETE`) rather than silently dropping a permitted
+  section without an embedding. It never keeps a NaN similarity: pgvector computes the cosine in single precision, so
+  finite but extreme components can overflow into NaN, which would sort before every real score.
+- **A pinned model.** `data/embedding-pins.json` names the model, its digest and its 768 dimensions. What is
+  guaranteed: mcp-read refuses a query model that differs from the pin, or a pin it cannot read
+  (`UNSUPPORTED_MODE`), on every call; the pin cannot be replaced by `scripts/pin_embedding_model.py` with another
+  model's; every stored row carries its digest and the SHA-256 of the prefixed text it was made from, and
+  `skeleton.py embed` refuses to mix digests and checks the pin again before each tenant's write (a mismatch there
+  stops the run and names the tenants already written). The script's refusal guards against a silent re-pin;
+  replacing the committed pin file by hand is a reviewed repository change, not something the guarantee prevents. A
+  model change is a revision that removes the stored embeddings (or moves them aside), then replaces the pin and runs
+  `embed` again; a read-path check of the stored rows' digest belongs to that revision (debt list).
+- **mcp-read → Ollama (erratum 108).** SA:348 and SA:461 make mcp-read compute the query embedding, so mcp-read
+  reaches Ollama for `/api/tags` and `/api/embed` with the embedding model only; BS:646's MCP row, BS:144's diagram
+  and ADR-0001's boundary list did not name that edge. It is not a generation, so it holds no `model_permit` (SA:203).
+  With no embedder, or when the shared 10-second budget runs out, the call answers `UNAVAILABLE` (retryable).
+- **Exact by construction.** No vector index: every permitted chunk is scored; a live test compares the definer's
+  order with a brute-force ranking of the stored vectors.
+
+| Requirement | What its test shows |
+|---|---|
+| R034 | Both modes on the 47 development queries with denominators, Wilson intervals, per-category rows, matched questions and exact McNemar tests; no forbidden section in either; the lexical answers unchanged since T17 (`reports/retrieval-comparison.md`) |
 
 ---
 

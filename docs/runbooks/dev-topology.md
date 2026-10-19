@@ -63,6 +63,12 @@ All five personas (`alex`, `sam`, `lee` in tenant alpha; `riley`, `jordan` in te
 |---|---|
 | host processes (tests, the worker when run on the host) | `OLLAMA_BASE_URL_HOST=http://127.0.0.1:11434` |
 | containers (the worker in Compose, T08) | `OLLAMA_BASE_URL_CONTAINER=http://host.docker.internal:11434` |
+| mcp-read and `scripts/skeleton.py embed` (T18) | `OPS_OLLAMA_URL`, default `http://127.0.0.1:11434` (an `OPS_*` setting, not a `.env` key) |
+
+mcp-read (the query embedding) and `skeleton.py embed` (the document embeddings) read `OPS_OLLAMA_URL`
+(`ops_core.settings.Urls.ollama`), asking only `/api/tags` and `/api/embed` with `nomic-embed-text` (the pin script
+alone also asks `/api/version`);
+the two `.env` keys above stay the bridge test's, and the worker's generation path (T19) chooses its own.
 
 `tests/plan_b/live/test_ollama_bridge.py` proves both routes answer the same version. Because Docker Desktop delivers container traffic to the host from `127.0.0.1` (measured 2026-10-08), the owner removes LAN exposure by binding Ollama to loopback — `docs/runbooks/ollama-network.md`; no firewall rule is needed on this machine. The worker's digest check reads `data/model-pins.json` through `ops_core.model_pins.load_model_pins` (T19).
 
