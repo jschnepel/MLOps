@@ -1,6 +1,6 @@
 {
   "report": "t18-retrieval-comparison",
-  "measured_at": "2026-10-19T20:30:36Z",
+  "measured_at": "2026-10-19T20:48:12Z",
   "as_of": "2026-10-16T12:00:00Z",
   "corpus_version": "corpus-1",
   "lock_sha256": "81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862",
@@ -272,6 +272,15 @@
             },
             "forbidden_rows": 0
           }
+        },
+        "micro_recall_at_k": {
+          "successes": 31,
+          "n": 31,
+          "rate": 1.0,
+          "wilson95": [
+            0.8897,
+            1.0
+          ]
         }
       },
       "3": {
@@ -514,6 +523,15 @@
             },
             "forbidden_rows": 0
           }
+        },
+        "micro_recall_at_k": {
+          "successes": 30,
+          "n": 31,
+          "rate": 0.9677,
+          "wilson95": [
+            0.8381,
+            0.9943
+          ]
         }
       }
     },
@@ -758,6 +776,15 @@
             },
             "forbidden_rows": 0
           }
+        },
+        "micro_recall_at_k": {
+          "successes": 29,
+          "n": 31,
+          "rate": 0.9355,
+          "wilson95": [
+            0.7928,
+            0.9821
+          ]
         }
       },
       "3": {
@@ -1000,6 +1027,15 @@
             },
             "forbidden_rows": 0
           }
+        },
+        "micro_recall_at_k": {
+          "successes": 28,
+          "n": 31,
+          "rate": 0.9032,
+          "wilson95": [
+            0.751,
+            0.9665
+          ]
         }
       }
     }
@@ -1031,6 +1067,42 @@
       ],
       "mcnemar_p": 0.375,
       "claim": "no ranking claim (p >= 0.05, SA:667)"
+    }
+  },
+  "changes": {
+    "every_expected_at_5": {
+      "n": 27,
+      "lexical": 27,
+      "vector": 25,
+      "improved": [],
+      "regressed": [
+        "A08",
+        "A21"
+      ]
+    },
+    "hit_at_3": {
+      "n": 27,
+      "lexical": 26,
+      "vector": 26,
+      "improved": [
+        "B02"
+      ],
+      "regressed": [
+        "A08"
+      ]
+    },
+    "every_expected_at_3": {
+      "n": 27,
+      "lexical": 26,
+      "vector": 24,
+      "improved": [
+        "B02"
+      ],
+      "regressed": [
+        "A04",
+        "A08",
+        "A21"
+      ]
     }
   },
   "vector_threshold_sweep": [

@@ -97,6 +97,30 @@ def test_k3_counts_only_the_top_three() -> None:
     assert rb.summarize([bad], 3)["cases_without_forbidden"]["successes"] == 1
 
 
+def test_micro_recall_pools_sections_over_the_labelled_cases() -> None:
+    """Fix round 1: DoD 1's recall with its denominator and Wilson interval, beside the per-case mean."""
+    cases = [case("A1", ("x", "y")), case("A2", ("z",)), case("N1", none=True)]
+    allowed = {"x", "y", "z"}
+    outcomes = [
+        rb.evaluate(cases[0], [("x", 0.9), ("a", 0.8), ("b", 0.7), ("y", 0.6)], allowed | {"a", "b"}),
+        rb.evaluate(cases[1], [("z", 0.9)], allowed),
+        rb.evaluate(cases[2], [], allowed),
+    ]
+    five, three = rc.micro_recall(outcomes, 5), rc.micro_recall(outcomes, 3)
+    assert (five["successes"], five["n"], five["rate"]) == (3, 3, 1.0)
+    assert (three["successes"], three["n"]) == (2, 3) and three["wilson95"] is not None
+    assert rc.micro_recall([outcomes[2]], 5)["rate"] is None  # no labelled case, no interval
+
+
+def test_changes_name_the_cases_without_a_test() -> None:
+    cases = [case("A1", ("x", "y")), case("A2", ("z",))]
+    allowed = {"x", "y", "z"}
+    lexical = [rb.evaluate(cases[0], [("x", 1.0)], allowed), rb.evaluate(cases[1], [("z", 1.0)], allowed)]
+    vector = [rb.evaluate(cases[0], [("x", 1.0), ("y", 0.9)], allowed), rb.evaluate(cases[1], [], allowed)]
+    row = rc.changes(lexical, vector, lambda o: o.relevant_at(5) == len(o.case.expected))
+    assert row == {"n": 2, "lexical": 1, "vector": 1, "improved": ["A1"], "regressed": ["A2"]}
+
+
 def test_the_committed_lexical_answers_and_the_inputs_are_t17s() -> None:
     t17: dict[str, Any] = json.loads(rc.T17_REPORT.read_text(encoding="utf-8"))
     assert rc.answers_digest(t17["cases"]) == rc.T17_ANSWERS_SHA256
@@ -135,13 +159,15 @@ def test_window_metrics_report_what_the_windows_can_measure() -> None:
 
 
 def test_window_metrics_count_forbidden_windows_not_sections() -> None:
-    """Review Minor 2: a window holding two sections the case may not see is one forbidden window, at the tuned
-    threshold only (the one below it is not returned)."""
+    """Review Minor 2: a window holding two sections the case may not see is one forbidden window. Fix round 1: it is
+    counted at threshold 0, so a forbidden window below the section-tuned threshold counts too (the stronger check,
+    and the one the report's sentence names)."""
     cases = [case("A1", ("x",))]
     bad, low = window("W1", "alpha", "x", "p", "q"), window("W2", "alpha", "r")
     candidates = {"A1": [(bad, 0.9), (low, 0.5)]}
     row = rc.window_metrics(cases, candidates, {"alpha": {"x"}}, [bad, low], 0.65)
-    assert row["forbidden_windows"] == 1 and "forbidden_sections" not in row
+    assert row["forbidden_windows"] == 2 and "forbidden_sections" not in row
+    assert rc.window_metrics(cases, {"A1": [(bad, 0.9)]}, {"alpha": {"x"}}, [bad], 0.65)["forbidden_windows"] == 1
 
 
 def test_window_metrics_without_any_window_report_nothing_instead_of_failing() -> None:
@@ -162,7 +188,11 @@ def test_the_report_names_both_modes_every_change_and_the_settings() -> None:
     doc = rc.comparison(
         lexical,
         vector,
-        settings={"model": "nomic-embed-text", "vector_minimum_similarity": 0.68},
+        settings={
+            "model": "nomic-embed-text",
+            "vector_minimum_similarity": 0.68,
+            "document_prefix": "search_document: ",
+        },
         vector_sweep=rc.sweep(cases, scored, rc.GRID),
         lexical_sweep_rows=rc.lexical_sweep(lexical, rc.LEXICAL_GRID),
         window=rc.window_metrics(
@@ -182,6 +212,15 @@ def test_the_report_names_both_modes_every_change_and_the_settings() -> None:
         "N1"
     ]
     assert set(doc["summary"]["vector_exact"]) == {"5", "3"}
+    assert doc["summary"]["lexical"]["5"]["micro_recall_at_k"] == {
+        "successes": 2,
+        "n": 2,
+        "rate": 1.0,
+        "wilson95": doc["summary"]["lexical"]["5"]["micro_recall_at_k"]["wilson95"],
+    }
+    assert doc["summary"]["vector_exact"]["5"]["micro_recall_at_k"]["successes"] == 1
+    assert set(doc["changes"]) == {"every_expected_at_5", "hit_at_3", "every_expected_at_3"}
+    assert doc["changes"]["hit_at_3"]["regressed"] == ["A2"] and "mcnemar_p" not in doc["changes"]["hit_at_3"]
     text = rc.markdown(doc)
     for needle in (
         "## Results",
@@ -191,7 +230,13 @@ def test_the_report_names_both_modes_every_change_and_the_settings() -> None:
         "## Thresholds",
         "## Another chunk window",
         "## Determinism",
-        "`vector_minimum_similarity`: 0.68",
+        "`vector_minimum_similarity`: `0.68`",
+        "`document_prefix`: `search_document: `",
+        "expected sections found over expected sections, all labelled cases",
+        "precision@5 (top-5 hits over 5; mean over 2 cases; ceiling",
+        "Changes between the modes, named and descriptive only",
+        "every expected section in the top 3, labelled cases",
+        "Windows returned at threshold 0 (every window within the top 5)",
         "the JSON (`vector_threshold_sweep`) holds all 100 values",
         "the same rule applied to the recorded lexical ranks chooses",
         "whole-version embeddings against section embeddings",

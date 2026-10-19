@@ -70,6 +70,10 @@ async def test_r034_exact_vector_search_against_the_lexical_baseline(
     threshold = float((await cur.fetchone() or {})["m"])
     allowed = corpus.returnable(governed, AS_OF)
     assert allowed == RETURNABLE_AT_AS_OF  # the hand-written anchor of T17's measurement
+    assert rc.AS_OF == AS_OF  # the instant the report records is the one measured
+    cur = await app_conn.execute("SELECT app._min_rank() AS m")
+    min_rank = float((await cur.fetchone() or {})["m"])
+    assert min_rank == rc.LEXICAL_GRID[0]  # the lexical sweep starts at the stored minimum
     permitted = {
         slug: {
             d.evidence_id(s)
@@ -138,7 +142,7 @@ async def test_r034_exact_vector_search_against_the_lexical_baseline(
     }
     window = rc.window_metrics(cases, candidates, permitted, windows, threshold)
     assert window["forbidden_windows"] == 0
-    # Round 1, I1: on corpus-1 the 300-word rule gives one window per returnable version; the report says so.
+    # On corpus-1 the 300-word rule gives one window per returnable version; the report says so.
     assert window["every_window_a_whole_version"] and window["windows"] == 8
     settings = {
         "model": pins.model,
@@ -150,7 +154,7 @@ async def test_r034_exact_vector_search_against_the_lexical_baseline(
         "query_prefix": embeddings.QUERY_PREFIX,
         "distance": "cosine (pgvector <=>); rank = 1 - distance, the cosine similarity",
         "vector_minimum_similarity": threshold,
-        "lexical_minimum_rank": 0.25,
+        "lexical_minimum_rank": min_rank,
         "index": "none: a sequential scan over the tenant's permitted chunks, exact by construction",
         "window": "one chunk per ## section (the stored unit)",
         "window_experiment": {"min_words": rc.WINDOW_WORDS, "rule": "adjacent sections of one version"},

@@ -210,9 +210,10 @@ def window_metrics(
     """The window experiment at k = 5, with what it can and cannot measure (rounds 1 and 2, I1): the windows per
     tenant, sections and words per window, and whether each is a whole version; at the section-tuned threshold,
     recall@5 and hit@5 over the labelled cases (a window hits when it holds a labelled section) and the no-source cases
-    answered with nothing; at threshold 0, the ranking alone, hit@1 and MRR@5; and, among the windows returned at the
-    section-tuned threshold, those holding a section the case may not see (zero by construction, counted anyway). A
-    corpus with no window gives None for the size ranges and false for the whole-version flag. When every window is a whole version and k covers every window
+    answered with nothing; at threshold 0, the ranking alone, hit@1 and MRR@5; and, among the windows returned at
+    threshold 0 (a superset of those the section-tuned threshold returns, so the stronger check), those holding a
+    section the case may not see (zero by construction, counted anyway). A corpus with no window gives None for the
+    size ranges and false for the whole-version flag. When every window is a whole version and k covers every window
     of a tenant, the thresholded figures depend on the threshold only, so the order is read from the threshold-0
     figures (a threshold-0 recall@5 would be 1.0 by construction there, so none is reported)."""
     answerable = [c for c in cases if c.expected]
@@ -240,8 +241,8 @@ def window_metrics(
     sizes = [len(w.evidence_ids) for w in all_windows]
     words = [w.words for w in all_windows]
     forbidden = sum(
-        any(e not in permitted[c.tenant] for e in w.evidence_ids) for c in cases for w in found[c.id]
-    )  # windows, at the section-tuned threshold: the unit the report's sentence names
+        any(e not in permitted[c.tenant] for e in w.evidence_ids) for c in cases for w in open_[c.id]
+    )  # windows, at threshold 0 (every window the case could be shown): the unit and threshold the report names
     return {
         "k": rb.K,
         "windows": len(all_windows),
@@ -261,6 +262,21 @@ def window_metrics(
         "none_answered_empty": rb.proportion(sum(not found[c.id] for c in nones), len(nones)),
         "forbidden_windows": forbidden,
     }
+
+
+def micro_recall(outcomes: Sequence[rb.Outcome], k: int) -> dict[str, Any]:
+    """DoD 1's recall with its denominator and interval: the expected sections found in the top `k` over the sections
+    expected, pooled over the labelled cases (the mean of per-case recalls is reported beside it)."""
+    answerable = [o for o in outcomes if o.case.expected]
+    return rb.proportion(sum(o.relevant_at(k) for o in answerable), sum(len(o.case.expected) for o in answerable))
+
+
+def changes(
+    lexical: Sequence[rb.Outcome], vector: Sequence[rb.Outcome], success: Callable[[rb.Outcome], bool]
+) -> dict[str, Any]:
+    """The cases that changed between the modes, named, without a test: `paired` less its p-value and claim."""
+    row = paired(lexical, vector, success)
+    return {key: value for key, value in row.items() if key not in ("mcnemar_p", "claim")}
 
 
 def lexical_rule(outcomes: Sequence[rb.Outcome]) -> dict[str, Any]:
@@ -303,6 +319,16 @@ def comparison(
 
     answerable = [i for i, o in enumerate(lexical) if o.case.expected]
     nones = [i for i, o in enumerate(lexical) if o.case.expect_none]
+
+    def every(k: int) -> Callable[[rb.Outcome], bool]:
+        return lambda o: o.relevant_at(k) == len(o.case.expected)
+
+    def hit3(o: rb.Outcome) -> bool:
+        return o.relevant_at(3) > 0
+
+    def of(outcomes: Sequence[rb.Outcome], indexes: Sequence[int]) -> list[rb.Outcome]:
+        return [outcomes[i] for i in indexes]
+
     return {
         "report": "t18-retrieval-comparison",
         "measured_at": measured_at,
@@ -313,12 +339,18 @@ def comparison(
         "queries_sha256": queries_sha256,
         "settings": dict(settings),
         "summary": {
-            mode: {str(k): rb.summarize(outcomes, k) for k in KS}
+            mode: {str(k): {**rb.summarize(outcomes, k), "micro_recall_at_k": micro_recall(outcomes, k)} for k in KS}
             for mode, outcomes in (("lexical", lexical), ("vector_exact", vector))
         },
         "paired": {
             "hit_at_5": paired([lexical[i] for i in answerable], [vector[i] for i in answerable], hit5),
             "none_answered_empty": paired([lexical[i] for i in nones], [vector[i] for i in nones], empty),
+        },
+        # Descriptive only (no test): which labelled cases each mode got right that the other did not.
+        "changes": {
+            "every_expected_at_5": changes(of(lexical, answerable), of(vector, answerable), every(5)),
+            "hit_at_3": changes(of(lexical, answerable), of(vector, answerable), hit3),
+            "every_expected_at_3": changes(of(lexical, answerable), of(vector, answerable), every(3)),
         },
         "vector_threshold_sweep": list(vector_sweep),
         "lexical_threshold_sweep": list(lexical_sweep_rows),
@@ -369,13 +401,18 @@ def markdown(doc: Mapping[str, Any]) -> str:
         ]
         lx, v = doc["summary"]["lexical"][k], doc["summary"]["vector_exact"][k]
         n = lx["answerable"]
+        precision = (
+            f"precision@{k} (top-{k} hits over {k}; mean over {n} cases; ceiling "
+            f"{lx['precision_ceiling_at_k']}: all expected sections found, no other)"
+        )
         for label, key in (
             (f"recall@{k} (mean over {n} labelled cases)", "recall_at_k"),
-            (f"precision@{k} (mean over {n} labelled cases)", "precision_at_k"),
+            (precision, "precision_at_k"),
             (f"MRR@{k} (mean over {n} labelled cases)", "mrr_at_k"),
         ):
             lines.append(f"| {label} | {lx[key]} | {v[key]} |")
         for label, key in (
+            (f"recall@{k}, expected sections found over expected sections, all labelled cases", "micro_recall_at_k"),
             (f"hit@{k}", "hit_at_k"),
             (f"every expected section in the top {k}", "all_expected_at_k"),
             ("no-source cases answered with nothing", "none_answered_empty"),
@@ -408,6 +445,18 @@ def markdown(doc: Mapping[str, Any]) -> str:
             f"{', '.join(p['improved']) or 'none'}; regressed: {', '.join(p['regressed']) or 'none'}; "
             f"p = {p['mcnemar_p']}: {p['claim']}."
         )
+    lines += ["", "Changes between the modes, named and descriptive only (no test is applied to them):"]
+    for label, key in (
+        ("every expected section in the top 5", "every_expected_at_5"),
+        ("hit@3", "hit_at_3"),
+        ("every expected section in the top 3", "every_expected_at_3"),
+    ):
+        c = doc["changes"][key]
+        lines.append(
+            f"- {label}, labelled cases: lexical {c['lexical']}/{c['n']}, vector {c['vector']}/{c['n']}; improved by "
+            f"vector: {', '.join(c['improved']) or 'none'}; regressed: {', '.join(c['regressed']) or 'none'}."
+        )
+    lines.append("- The JSON holds every case's two answers (`cases`) and these lists (`changes`).")
     chosen = (
         f"Vector minimum similarity {s['vector_minimum_similarity']} (`app._min_similarity()`), chosen by the rule "
         "fixed before measuring: the largest value on a 0.01 grid at which vector hit@5 over the labelled cases equals "
@@ -462,7 +511,8 @@ def markdown(doc: Mapping[str, Any]) -> str:
         f"section-tuned threshold {s['vector_minimum_similarity']}: recall@5 {w['recall_at_k']}, hit@5 "
         f"{rb._rate(w['hit_at_k'])}, no-source cases answered with nothing {rb._rate(w['none_answered_empty'])}. At "
         f"threshold 0 (the ranking alone): hit@1 {rb._rate(w['hit_at_1_threshold_0'])}, MRR@5 "
-        f"{w['mrr_at_k_threshold_0']}. Windows returned at that threshold holding a section the case may not see: {w['forbidden_windows']}."
+        f"{w['mrr_at_k_threshold_0']}. Windows returned at threshold 0 (every window within the top 5) "
+        f"holding a section the case may not see: {w['forbidden_windows']}."
     )
     if w["every_window_a_whole_version"] and w["k_covers_every_window"]:
         window += (
@@ -482,7 +532,9 @@ def markdown(doc: Mapping[str, Any]) -> str:
     lines += ["", "## Another chunk window (experiment only)", "", window, "", "## Determinism", "", repeat, ""]
     lines += ["## Settings", ""]
     for key, value in s.items():
-        lines.append(f"- `{key}`: {json.dumps(value) if not isinstance(value, str) else value}")
+        text = value if isinstance(value, str) else json.dumps(value)
+        fence = "``" if "`" in text else "`"  # code spans keep a prefix's trailing space visible
+        lines.append(f"- `{key}`: {fence}{text}{fence}")
     lines.append("")
     return "\n".join(lines)
 

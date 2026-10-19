@@ -1,6 +1,6 @@
 # T18 retrieval comparison: exact vector search against the lexical baseline
 
-Measured 2026-10-19T20:30:36Z (lifecycle rules at 2026-10-16T12:00:00Z on the database test clock) on corpus `corpus-1` (lock `81f50c2b8623`) with the development queries `evals/retrieval/dev-queries.jsonl` (sha256 `d6d539bdd9a5`), both modes through `app.search_procedures_scoped` as `mcp_read`. Written by `tests/e2e/test_retrieval_comparison_live.py`. Development figures only: no holdout case was read, and the vector threshold was chosen on these queries.
+Measured 2026-10-19T20:48:12Z (lifecycle rules at 2026-10-16T12:00:00Z on the database test clock) on corpus `corpus-1` (lock `81f50c2b8623`) with the development queries `evals/retrieval/dev-queries.jsonl` (sha256 `d6d539bdd9a5`), both modes through `app.search_procedures_scoped` as `mcp_read`. Written by `tests/e2e/test_retrieval_comparison_live.py`. Development figures only: no holdout case was read, and the vector threshold was chosen on these queries.
 
 ## Results
 
@@ -9,8 +9,9 @@ Measured 2026-10-19T20:30:36Z (lifecycle rules at 2026-10-16T12:00:00Z on the da
 | Metric | lexical | vector_exact |
 |---|---|---|
 | recall@5 (mean over 27 labelled cases) | 1.0 | 0.9444 |
-| precision@5 (mean over 27 labelled cases) | 0.2296 | 0.2148 |
+| precision@5 (top-5 hits over 5; mean over 27 cases; ceiling 0.2296: all expected sections found, no other) | 0.2296 | 0.2148 |
 | MRR@5 (mean over 27 labelled cases) | 0.8963 | 0.9444 |
+| recall@5, expected sections found over expected sections, all labelled cases | 31/31 = 1.00 (Wilson 95% 0.89-1.00) | 29/31 = 0.94 (Wilson 95% 0.79-0.98) |
 | hit@5 | 27/27 = 1.00 (Wilson 95% 0.88-1.00) | 26/27 = 0.96 (Wilson 95% 0.82-0.99) |
 | every expected section in the top 5 | 27/27 = 1.00 (Wilson 95% 0.88-1.00) | 25/27 = 0.93 (Wilson 95% 0.77-0.98) |
 | no-source cases answered with nothing | 15/20 = 0.75 (Wilson 95% 0.53-0.89) | 18/20 = 0.90 (Wilson 95% 0.70-0.97) |
@@ -22,8 +23,9 @@ Measured 2026-10-19T20:30:36Z (lifecycle rules at 2026-10-16T12:00:00Z on the da
 | Metric | lexical | vector_exact |
 |---|---|---|
 | recall@3 (mean over 27 labelled cases) | 0.963 | 0.9259 |
-| precision@3 (mean over 27 labelled cases) | 0.3704 | 0.3457 |
+| precision@3 (top-3 hits over 3; mean over 27 cases; ceiling 0.3827: all expected sections found, no other) | 0.3704 | 0.3457 |
 | MRR@3 (mean over 27 labelled cases) | 0.8889 | 0.9444 |
+| recall@3, expected sections found over expected sections, all labelled cases | 30/31 = 0.97 (Wilson 95% 0.84-0.99) | 28/31 = 0.90 (Wilson 95% 0.75-0.97) |
 | hit@3 | 26/27 = 0.96 (Wilson 95% 0.82-0.99) | 26/27 = 0.96 (Wilson 95% 0.82-0.99) |
 | every expected section in the top 3 | 26/27 = 0.96 (Wilson 95% 0.82-0.99) | 24/27 = 0.89 (Wilson 95% 0.72-0.96) |
 | no-source cases answered with nothing | 15/20 = 0.75 (Wilson 95% 0.53-0.89) | 18/20 = 0.90 (Wilson 95% 0.70-0.97) |
@@ -49,6 +51,12 @@ Measured 2026-10-19T20:30:36Z (lifecycle rules at 2026-10-16T12:00:00Z on the da
 
 - hit@5 over the labelled cases: lexical 27/27, vector 26/27; improved by vector: none; regressed: A08; p = 1.0: no ranking claim (p >= 0.05, SA:667).
 - answered with nothing, no-source cases: lexical 15/20, vector 18/20; improved by vector: B10, B13, B17, B18; regressed: A13; p = 0.375: no ranking claim (p >= 0.05, SA:667).
+
+Changes between the modes, named and descriptive only (no test is applied to them):
+- every expected section in the top 5, labelled cases: lexical 27/27, vector 25/27; improved by vector: none; regressed: A08, A21.
+- hit@3, labelled cases: lexical 26/27, vector 26/27; improved by vector: B02; regressed: A08.
+- every expected section in the top 3, labelled cases: lexical 26/27, vector 24/27; improved by vector: B02; regressed: A04, A08, A21.
+- The JSON holds every case's two answers (`cases`) and these lists (`changes`).
 - With this few cases an exact test has little power: p >= 0.05 is not evidence that the modes are equal.
 
 ## Thresholds
@@ -125,7 +133,7 @@ Lexical minimum rank, swept over the recorded ranks (the definer already drops 0
 
 ## Another chunk window (experiment only)
 
-Adjacent sections of one version joined until at least 300 `[a-z0-9]+` words: 8 windows (alpha 5, beta 3), 4-5 sections and 327-343 words each, embedded with the same prefix, ranked by cosine over the same permitted versions. A window hits when it holds a labelled section. At the section-tuned threshold 0.68: recall@5 0.8519, hit@5 23/27 = 0.85 (Wilson 95% 0.68-0.94), no-source cases answered with nothing 19/20 = 0.95 (Wilson 95% 0.76-0.99). At threshold 0 (the ranking alone): hit@1 27/27 = 1.00 (Wilson 95% 0.88-1.00), MRR@5 1.0. Windows returned at that threshold holding a section the case may not see: 0. On this corpus every returnable version is one window and k = 5 covers every window of either tenant, so hit@5 and recall@5 measure only the threshold (tuned on section embeddings), not a ranking: read this as whole-version embeddings against section embeddings, with the threshold-0 hit@1 and MRR@5 as the figures that see an order (a threshold-0 recall@5 would be 1.0 by construction). It does not measure a 300-word window. The stored unit stays one chunk per section (evidence IDs, citations and T41's labels unchanged).
+Adjacent sections of one version joined until at least 300 `[a-z0-9]+` words: 8 windows (alpha 5, beta 3), 4-5 sections and 327-343 words each, embedded with the same prefix, ranked by cosine over the same permitted versions. A window hits when it holds a labelled section. At the section-tuned threshold 0.68: recall@5 0.8519, hit@5 23/27 = 0.85 (Wilson 95% 0.68-0.94), no-source cases answered with nothing 19/20 = 0.95 (Wilson 95% 0.76-0.99). At threshold 0 (the ranking alone): hit@1 27/27 = 1.00 (Wilson 95% 0.88-1.00), MRR@5 1.0. Windows returned at threshold 0 (every window within the top 5) holding a section the case may not see: 0. On this corpus every returnable version is one window and k = 5 covers every window of either tenant, so hit@5 and recall@5 measure only the threshold (tuned on section embeddings), not a ranking: read this as whole-version embeddings against section embeddings, with the threshold-0 hit@1 and MRR@5 as the figures that see an order (a threshold-0 recall@5 would be 1.0 by construction). It does not measure a 300-word window. The stored unit stays one chunk per section (evidence IDs, citations and T41's labels unchanged).
 
 ## Determinism
 
@@ -133,19 +141,19 @@ Each of the 47 queries embedded twice: largest component difference 0.0, smalles
 
 ## Settings
 
-- `model`: nomic-embed-text
-- `model_digest`: 0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f
-- `dimension`: 768
-- `ollama_version`: 0.40.4
-- `document_prefix`: search_document: 
-- `document_text`: search_document: + section heading + blank line + body
-- `query_prefix`: search_query: 
-- `distance`: cosine (pgvector <=>); rank = 1 - distance, the cosine similarity
-- `vector_minimum_similarity`: 0.68
-- `lexical_minimum_rank`: 0.25
-- `index`: none: a sequential scan over the tenant's permitted chunks, exact by construction
-- `window`: one chunk per ## section (the stored unit)
-- `window_experiment`: {"min_words": 300, "rule": "adjacent sections of one version"}
-- `tie_break`: evidence_id ascending in byte order (COLLATE "C")
-- `ks`: [5, 3]
-- `filters`: tenant from the handle; latest state approved; effective at app.current_time(); not retired (a later version that left draft has reached its effective_from); asset family equal to asset_type or NULL
+- `model`: `nomic-embed-text`
+- `model_digest`: `0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f`
+- `dimension`: `768`
+- `ollama_version`: `0.40.4`
+- `document_prefix`: `search_document: `
+- `document_text`: `search_document: + section heading + blank line + body`
+- `query_prefix`: `search_query: `
+- `distance`: `cosine (pgvector <=>); rank = 1 - distance, the cosine similarity`
+- `vector_minimum_similarity`: `0.68`
+- `lexical_minimum_rank`: `0.25`
+- `index`: `none: a sequential scan over the tenant's permitted chunks, exact by construction`
+- `window`: `one chunk per ## section (the stored unit)`
+- `window_experiment`: `{"min_words": 300, "rule": "adjacent sections of one version"}`
+- `tie_break`: `evidence_id ascending in byte order (COLLATE "C")`
+- `ks`: `[5, 3]`
+- `filters`: `tenant from the handle; latest state approved; effective at app.current_time(); not retired (a later version that left draft has reached its effective_from); asset family equal to asset_type or NULL`
