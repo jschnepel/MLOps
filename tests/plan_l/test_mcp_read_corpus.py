@@ -4,8 +4,9 @@
 Catches: a search run before the handle resolved and the run's scope was read, or in the same unit as either; a search
 that is not given the presented handle and the token's `azp` (the definer must decide the tenant from them, never
 from an argument); the run's asset type not passed, or an unknown asset's absence turned into a filter;
-`vector_exact` reaching the scope or the database before T18; a handle refused at any unit answered with anything but
-the one plain `INVALID_HANDLE`; and a definer refusal escaping as a transport error instead of an envelope.
+`vector_exact` asking the embedding model before the scope and the asset type, or reaching the definer without the
+query's embedding and `mode='vector'` (T18); a handle refused at any unit answered with anything but the one plain
+`INVALID_HANDLE`; and a definer refusal escaping as a transport error instead of an envelope.
 """
 
 from collections.abc import AsyncIterator
@@ -24,6 +25,7 @@ from ops_core.jobs import Tool
 from ops_mcp_read import server
 
 from tests.plan_j.test_mcp_read_http import BASE, ISSUER, RESOURCE, KeyedVerifier
+from tests.plan_n.test_embeddings import FakeEmbedder, unit_vector
 
 pytestmark = pytest.mark.asyncio
 
@@ -124,8 +126,11 @@ async def call(
     arguments: dict[str, Any],
     assets: RunType | None = None,
     configured: bool = True,
+    embedder: Any = None,
 ) -> CallToolResult:
-    """One search over the in-process stack; `configured=False` leaves the server without an asset-sim client."""
+    """One search over the in-process stack; `configured=False` leaves the server without an asset-sim client, and
+    `embedder` stands in for Ollama (T18; without one the lifespan builds the real client, which a lexical search never
+    calls)."""
     monkeypatch.setattr(persistence, "resolve_invocation", db.resolve_invocation)
     monkeypatch.setattr(persistence, "asset_scope", db.asset_scope)
     monkeypatch.setattr(persistence, "search_procedures", db.search_procedures)
@@ -133,6 +138,7 @@ async def call(
     fake: Any = db.conn
     state.session = persistence.Session(fake)  # already set, so the lifespan opens no connection
     state.assets = (assets or RunType("pump")) if configured else None  # A17 is a pump (data/corpus/assets.json)
+    state.embedder = embedder
     if not configured:  # the lifespan would build the real client from the settings
         monkeypatch.setattr(server.assets.HttpAssetSim, "from_settings", classmethod(lambda cls: None))
     app = server.build_app(server.build_server(state, issuer=ISSUER, resource_url=RESOURCE), state)
@@ -152,7 +158,15 @@ async def test_the_handle_resolves_in_its_own_unit_then_the_definer_searches(mon
     assert [(name, unit) for name, unit, _ in db.calls] == [("resolve", 1), ("scope", 2), ("search", 3)]
     assert db.calls[0][2] == {"handle": HANDLE, "azp": "ops-worker", "tool": Tool.SEARCH_PROCEDURES}
     assert db.calls[1][2] == {"handle": HANDLE, "azp": "ops-worker"}
-    assert db.calls[2][2] == {"handle": HANDLE, "azp": "ops-worker", "query": "seal", "asset_type": "pump", "limit": 3}
+    assert db.calls[2][2] == {
+        "handle": HANDLE,
+        "azp": "ops-worker",
+        "query": "seal",
+        "asset_type": "pump",
+        "limit": 3,
+        "mode": "lexical",
+        "embedding": None,
+    }
     doc = result.structured_content
     assert not result.is_error and isinstance(doc, dict) and doc["status"] == "ok"
     assert doc["data"]["corpus_version"] == "corpus-1"
@@ -176,12 +190,19 @@ async def test_the_runs_asset_type_is_searched_and_an_unknown_asset_leaves_the_c
     assert searched == ["pump", None, "valve"]
 
 
-async def test_vector_exact_is_refused_after_resolution_and_before_any_search(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_vector_exact_searches_after_the_scope_with_the_query_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T18 (Plan N ruling 4): the same three units; the query embedding is computed between the asset type and the
+    third unit, and the definer is asked with `mode='vector'` (erratum 3)."""
+    fake = FakeEmbedder()
     db = Database(UnitConn())
-    result = await call(monkeypatch, db, {"query": "seal", "limit": 3, "mode": "vector_exact"})
-    assert [name for name, _, _ in db.calls] == ["resolve"]
+    result = await call(monkeypatch, db, {"query": "seal", "limit": 3, "mode": "vector_exact"}, embedder=fake)
+    assert [(name, unit) for name, unit, _ in db.calls] == [("resolve", 1), ("scope", 2), ("search", 3)]
+    assert fake.texts == ["search_query: seal"]
+    assert db.calls[2][2]["mode"] == "vector" and db.calls[2][2]["embedding"] == tuple(
+        unit_vector("search_query: seal")
+    )
     assert result.structured_content is not None
-    assert result.structured_content["error"]["code"] == "UNSUPPORTED_MODE"
+    assert result.structured_content["data"]["retrieval_mode"] == "vector_exact"
 
 
 @pytest.mark.parametrize("where", ["resolve", "scope", "search"])

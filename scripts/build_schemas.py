@@ -878,7 +878,7 @@ def tool_inputs() -> dict[str, Doc]:
                 "query": SHORT,
                 "asset_type": text(1, 40),
                 "limit": integer(1, 8),
-                "mode": {"enum": ["lexical", "vector_exact"]},  # ruling 3; mcp-read maps vector_exact (TODO(T18))
+                "mode": {"enum": ["lexical", "vector_exact"]},  # ruling 3; mcp-read maps vector_exact (T18)
             },
             ["query", "limit", "mode"],
         ),
