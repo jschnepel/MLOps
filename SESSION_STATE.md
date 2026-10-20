@@ -6,7 +6,8 @@
 building tasks; the close-out is the commit after `80da1f2`). T23 is DONE: R111 is evidenced (`evals/dev/cases.jsonl`,
 `core/src/ops_core/grading.py`, `evals/dev/RUBRIC.md`) subject to erratum 112; errata 112-113 are proposed; the
 numeric-token debt is closed as a measurement (`reports/retrieval/t23-numeric-tokens.md`: lexical 5/6 numeric queries
-against 6/6 controls with pair P06 lost, vector 6/6; the loss is not total, so the search is unchanged). Owner inputs
+against 6/6 controls with pair P06 lost but confounded, vector 6/6; the loss is not total, so the search is
+unchanged). Owner inputs
 added by Plan O: decide errata 112-113; fill in `evals/quality-gates.json` before the first holdout run (SA:672); push
 `plan-o` and open its PR after the final review (not pushed yet; stacked on `plan-n`, so merge #12, then #13, then
 that one). No PLANNED task can start now. T19 and T41 are the only two whose dependencies are all DONE or
@@ -985,7 +986,7 @@ owner's decision does not change a task's status; a task met "subject to" an err
   (d) The two comparison report files were committed in Task 6, not in the close-out; the final live run is
   restored with `git checkout -- reports/`, keeping nothing new.
 
-## Plan O executed (2026-10-20, branch `plan-o`)
+## Plan O executed (2026-10-20 UTC, branch `plan-o`)
 
 - T23 = `e91b27b..80da1f2` (the debt list first, then the four building tasks; the close-out is the commit after
   `80da1f2`). The plan (`docs/superpowers/plans/2026-10-19-first-slice-o-dev-eval-set.md`) holds the 12 rulings of
@@ -996,7 +997,8 @@ owner's decision does not change a task's status; a task met "subject to" an err
   `evals/groundedness-label.schema.json`, `evals/quality-gates.schema.json`; the measurement
   `reports/retrieval/t23-numeric-tokens.md` and `.json` (`tests/e2e/test_numeric_tokens_live.py`, live).
 - The numeric-token finding: numeric tokens at k = 5 over six pairs: lexical numeric 5/6, controls 6/6, decimal 2/3
-  against 3/3, lost P06 (its control is at rank 1); vector_exact numeric 6/6, controls 6/6, decimal 3/3 against 3/3,
+  against 3/3, lost P06 (its control is at rank 1; the pair is confounded: its numeric query writes `mm`, which
+  corpus-1 never uses, and its control says `millimetre`, so the miss is not the decimal split's alone); vector_exact numeric 6/6, controls 6/6, decimal 3/3 against 3/3,
   lost none; no forbidden row in either mode. The lexical loss on the decimal pairs is not total, so the search is
   unchanged (BS:71) and the debt is closed as a measurement; a change would need a total loss and would be a later
   revision under T20.
@@ -1010,10 +1012,11 @@ owner's decision does not change a task's status; a task met "subject to" an err
   word for word; the label and quality-gates schemas.
 - Reviews: one static plan round (0 Critical, 3 Important, 11 Minor, 9 disputed labels; fixed in 10db78d, the
   controller checked the diff instead of a second round) and, per task, one review and one fix round (Tasks 1-3:
-  approved with minors; Task 4: needs fixes, 1 Important). Each round's problem and fix is in
-  `docs/PROJECT_HISTORY.md` section 32.
-- Gates: `check.py` `1538 passed, 219 skipped`; `check.py --profile test` `1736 passed, 21 skipped`;
-  `verify_handoff.py` exit 0. No model ran, and nothing from Plan O connected to the dev database.
+  approved with minors; Task 4: needs fixes, 1 Important) and the final whole-branch review (0 Critical,
+  3 Important, 8 Minor; the controller ruled on each and one fix wave closed them). Each round's problem and fix is
+  in `docs/PROJECT_HISTORY.md` section 32.
+- Gates: `check.py` `1539 passed, 219 skipped`; `check.py --profile test` `1737 passed, 21 skipped`;
+  `verify_handoff.py` exit 0. No generation model ran (the embedding model did, through local Ollama), and nothing from Plan O connected to the dev database.
 - **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan N's
   hundred and eleven:
   112. R111 ("Development evaluation set has gold labels and calibrated graders") and its expected evidence: the
@@ -1033,7 +1036,7 @@ owner's decision does not change a task's status; a task met "subject to" an err
   in 128258c), while merging PRs #12 and #13 and posting a pre-merge review comment on the agent's own PRs were
   refused by the permission system. The merges stay with the owner and block nothing, because `plan-o` is stacked on
   `plan-n`. (c) The plan's live count (1722) was out of date: its arithmetic was one low and the review rounds added
-  13 tests to the dev suite (1525 to 1538). (d) The final live run rewrote the files under `reports/` and they were
+  13 tests to the dev suite (1525 to 1538) and the final review's wave one more (1539). (d) The final live run rewrote the files under `reports/` and they were
   restored with `git checkout -- reports/`, keeping nothing new: the committed numeric report (Task 4) already holds
   these figures.
 
@@ -1399,10 +1402,18 @@ Allowed shortcuts in T23, each with its owning task:
 - the numeric-token measurement is recorded, not acted on: a change to the lexical query normalisation (revision
   0011's `regexp_replace`) needs a total loss on every decimal pair (the only tokens it splits), and even then it is
   a later revision under T20 (the retrieve node and its relevance rule), never T23 (Plan O ruling 7; BS:71);
-- condition A cannot abstain: a manual proposal is always a proposal with at least one reference
-  (`schemas/manual-proposal.schema.json`), so `check_abstention` fails A on every abstain-expected case by
-  construction; how A is scored there (for example, "no manual proposal written" counting as the abstention) → T25
-  (SA:660; round 1, minor 8);
+- condition A on every non-proposal case: a manual proposal is always a proposal with at least one reference
+  (`schemas/manual-proposal.schema.json`), so `check_abstention` fails it on every case that expects an answer or an
+  abstention (41 of the 60: `proposal_on_answer_only` on the `answer_only` ones, `kind_mismatch` or `did_not_abstain`
+  on the rest), by construction; only the 19 proposal-expected cases can pass. How A is scored there (for example,
+  "no manual proposal written" counting as the abstention) → T25 (SA:660; round 1, minor 8; final review, I2);
+- the safety flag's causes against the SA:673 gates: `cross_tenant_leakage` counts only trials whose `safety` holds
+  `cross_tenant`; `unpermitted` (a retired, draft or unknown ID) is a citation-validity failure, not a leak, and T25
+  counts each cause separately; `unauthorized_writes` and `fabricated_success` are run-level facts that no grader
+  here produces → T25 (final review, I1);
+- an unconfounded decimal pair: P06's numeric query writes `mm` and its control `millimetre`, which corpus-1
+  never uses, so its miss is not the split's alone; a pair that differs only in the number → the next retrieval change
+  (final review, I3);
 - `load_cases` reads development rows only (`DV-` ids, `split`, `as_of`, `notes`); a loader for the holdout's rows,
   with T41's labels under their own schema, and the holdout's `as_of` policy (the instant its labels and the safety
   index use) → T25 with T41 (round 1, minor 9).
@@ -1502,7 +1513,7 @@ owner's explicit request, the agent ran `skeleton.py migrate` (`MIGRATE: app at 
 dev)`) and `skeleton.py embed` (`EMBED: alpha: 39 new, 0 present`, `EMBED: beta: 30 new, 0 present`): the dev
 database is at 0013 with corpus-1 embedded.
 
-**Update (2026-10-20):** Plan O added no revision and connected nothing to the dev database; its live tests used only
+**Update (2026-10-20 UTC):** Plan O added no revision and connected nothing to the dev database; its live tests used only
 the `ops_test` databases. The dev database stays at 0013 with corpus-1 embedded.
 
 ## Open owner inputs

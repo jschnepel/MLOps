@@ -1019,14 +1019,15 @@ malformed JSON line escaped as a raw `JSONDecodeError`, and the checker crashed 
 test that a proposal case has an alert in its interval covered one category. **Change.** Seven refusal tests, a
 `CaseError` that names the file and line, a checker that refuses a non-object row by name, the alert check over every
 proposal case, and a precise anchor comment; eight tests were added. **Problem.** Task 2 (the graders) was approved
-with six minors, and the adversarial probes found two real gaps. The safety scan missed references nested in lists,
+with six minors (five were fixed; the sixth was a miscount in the implementer's report, not in the code), and the
+adversarial probes found two real gaps. The safety scan missed references nested in lists,
 tuples or dicts, so a draft that put another tenant's section there lost the cross-tenant flag; and a question on a
 proposal or an answer passed abstention. **Change.** The scan is recursive, the stray question fails as
 `question_unexpected`, `Verdict.reason` is a `Literal` of rule names instead of a string, and three tests cover the
 two causes and the precedence of `answer_only`.
 
-**Problem.** Task 3 (the rubric and the two schemas) was approved with eleven minors, all of them wording that a
-labeller or a later task would have read differently. The level-0 clause did not cover instructions found in the
+**Problem.** Task 3 (the rubric and the two schemas) was approved with eleven minors (ten fixed; the eleventh asked for the JSON `$comment` to be wrapped across
+lines, which JSON cannot do), all of them wording that a labeller or a later task would have read differently. The level-0 clause did not cover instructions found in the
 request. Example 10's level-1 aside was not descriptive, Example 7 did not quote its support, and the title was not
 counted as a claim. The inter-trial instruction overclaimed what the shuffle guarantees, and the second pass did not
 say that a re-labelled output keeps its `output_id` and is shuffled again. **Change.** The clauses and examples are
@@ -1039,13 +1040,30 @@ one was. The live test did not assert that its clock was the instant it claimed.
 lost pair, P06, apart from the decimal pairs, the test asserts the clock at the as-of instant, and the report's
 Markdown was rendered again from the committed JSON; no figure changed.
 
+**Problem.** The final whole-branch review found 0 Critical, 3 Important and 8 Minor, and this wave fixed them. The
+safety gate `cross_tenant_leakage` had no stated relation to the flag the graders compute, so a retired or invented
+ID in one trial could have failed a blocking release gate and been reported as a leak. Condition A fails every
+answer-expected case as well as every abstain-expected one (a manual proposal is always a proposal), and the debt
+list named only the abstain half. The numeric report put P06's loss down to the decimal split, but its pair also
+differs by `mm` against `millimetre`, a word the corpus lacks. The minors were: a scan that skipped dict keys, a
+citation to a review the repository does not keep, a test that built a verdict with a reason outside the rule
+names, a private helper imported across modules, the UTC dates and the "no model ran" claim (the embedding model
+did run), two wording slips in the handoff notes, and the two declined minors of Tasks 2 and 3, now named above. **Change.** The quality-gates
+schema and the grading docstring now say that the gate counts the `cross_tenant` cause only and that `unpermitted`
+is a citation-validity failure; the debt lines widen condition A to every non-proposal case and add the gate
+mapping and an unconfounded decimal pair; the numeric report names P06 as confounded (rendered again from the
+committed JSON, no figure changed); the scan reads dict keys, with a test row; the helper is public. One test was
+added.
+
 **Result.** At k = 5 over the six pairs, the lexical search found 5 of 6 numeric queries against 6 of 6 controls. On
 the three decimal pairs it found 2 against 3, and the one it lost is P06 (`B22 offset 0.05 mm or 0.10 mm?`), whose
-control was found at rank 1. The vector search found 6 of 6 against 6 of 6, and 3 of 3 on the decimal pairs. No
+control was found at rank 1. The pair is confounded, though: its numeric query also writes `mm`, which corpus-1 never
+uses, while its control says `millimetre`, so the miss cannot be put down to the decimal split alone. The vector search found 6 of 6 against 6 of 6, and 3 of 3 on the decimal pairs. No
 forbidden section appeared in either mode. The loss is not total, so the lexical search stays as it is (BS:71); a
 change would need a total loss on the decimal pairs and would be a later revision under T20. The gates were `check.py`
-`1538 passed, 219 skipped`, `check.py --profile test` `1736 passed, 21 skipped` and `verify_handoff.py` exit 0. The
-plan had predicted 1525 and 1722: the review rounds added 13 tests, and its live arithmetic was one low.
+`1539 passed, 219 skipped`, `check.py --profile test` `1737 passed, 21 skipped` and `verify_handoff.py` exit 0. The
+plan had predicted 1525 and 1722: the review rounds added 13 tests, the final review's wave one more, and the plan's
+live arithmetic was one low.
 
 **Process.** Five slips, none of which ran code or opened holdout material. The plan writer ran one `python -c` (it
 printed a constant) and the unfiltered grep and listings described above. The plan critic ran an `mv` on an existing

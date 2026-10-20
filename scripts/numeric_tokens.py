@@ -9,6 +9,10 @@ it; the rows otherwise keep T17's keys, so `retrieval_baseline.evaluate` scores 
 tests/e2e/test_numeric_tokens_live.py runs all twelve through `search_procedures_scoped` as `mcp_read` in both modes
 at T17's labelling instant and hands the answers to `report`; the result is a measurement, and nothing here changes
 the search (BS:71: a lexical change needs evidence, and even total loss is recorded and re-homed, not fixed in T23).
+
+A pair isolates the number only when the control differs in nothing else. P06 does not: its numeric query writes `mm`,
+which corpus-1 never uses, and its control says `millimetre`, so `unit_confounded` marks it and the report says its
+miss cannot be put down to the decimal split alone.
 """
 
 from __future__ import annotations
@@ -90,6 +94,18 @@ def is_decimal(pair: Pair) -> bool:
     """True when the numeric query holds a decimal (0.10, 0.05): the only token revision 0011's normalisation splits
     (an integer such as 14, or 30 in 30-day, stays one word on both sides, so its pair cannot lose to it)."""
     return any("." in m for m in NUMBER.findall(pair.numeric.query))
+
+
+def _words_confounded(numeric_words: Sequence[str], control_words: Sequence[str]) -> bool:
+    """True when the numeric query abbreviates a unit as `mm` and the control spells it `millimetre…`."""
+    return "mm" in numeric_words and any(w.startswith("millimetr") for w in control_words)
+
+
+def unit_confounded(pair: Pair) -> bool:
+    """True when the pair differs in more than the number: the numeric query writes `mm`, which corpus-1 never uses
+    (its sections say millimetres), while the control writes `millimetre`. The control then matches a lexeme the
+    numeric query cannot, so a miss of the numeric query is not the decimal split's alone (final review, I3)."""
+    return _words_confounded(query_words(pair.numeric.query), query_words(pair.control.query))
 
 
 def _hit(outcome: rb.Outcome) -> bool:
@@ -193,8 +209,8 @@ def markdown(doc: Mapping[str, Any]) -> str:
     for mode in MODES:
         s = doc["summary"][mode]
         lost, gained = ", ".join(s["lost"]) or "none", ", ".join(s["gained"]) or "none"
-        numeric, control = rb._rate(s["numeric_hit_at_5"]), rb._rate(s["control_hit_at_5"])
-        decimal = f"{rb._rate(s['decimal_numeric_hit_at_5'])} | {rb._rate(s['decimal_control_hit_at_5'])}"
+        numeric, control = rb.rate(s["numeric_hit_at_5"]), rb.rate(s["control_hit_at_5"])
+        decimal = f"{rb.rate(s['decimal_numeric_hit_at_5'])} | {rb.rate(s['decimal_control_hit_at_5'])}"
         lines.append(f"| {mode} | {numeric} | {control} | {decimal} | {lost} | {gained} | {s['forbidden_rows']} |")
     lines += [
         "",
@@ -219,7 +235,21 @@ def markdown(doc: Mapping[str, Any]) -> str:
         if lexical["total_loss"]
         else f"The loss is not total in lexical mode ({lost}), so the search stays as it is (BS:71; Plan O ruling 7)."
     )
-    lines += ["", "## Finding", "", finding, "", "Positions are 1-based within the top 5; `miss` means not there.", ""]
+    by_pair = {r["pair"]: r for r in doc["pairs"]}
+    confounded = [
+        name
+        for name in lexical["lost"]
+        if _words_confounded(by_pair[name]["numeric"]["words"], by_pair[name]["control"]["words"])
+    ]
+    notes = [
+        f"{name} is confounded: its numeric query writes `mm`, which corpus-1 never uses (its sections say "
+        "millimetres), while its control writes `millimetre`, so the miss cannot be put down to the decimal split "
+        "alone. An unconfounded decimal pair is a debt for the next retrieval change."
+        for name in confounded
+    ]
+    lines += ["", "## Finding", "", finding, ""]
+    lines += [line for note in notes for line in (note, "")]
+    lines += ["Positions are 1-based within the top 5; `miss` means not there.", ""]
     return "\n".join(lines)
 
 

@@ -20,4 +20,6 @@ Measured 2026-10-20T00:19:02Z (lifecycle rules at 2026-10-16T12:00:00Z, T17's la
 
 The loss is not total in lexical mode (1 of 3 decimal pairs lost (lost: P06; decimal pairs: P01, P02, P06); 1 of 6 pairs in all), so the search stays as it is (BS:71; Plan O ruling 7).
 
+P06 is confounded: its numeric query writes `mm`, which corpus-1 never uses (its sections say millimetres), while its control writes `millimetre`, so the miss cannot be put down to the decimal split alone. An unconfounded decimal pair is a debt for the next retrieval change.
+
 Positions are 1-based within the top 5; `miss` means not there.

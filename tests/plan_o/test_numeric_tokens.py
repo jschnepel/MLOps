@@ -143,3 +143,27 @@ def test_the_report_counts_lost_and_gained_pairs_and_total_loss_on_the_decimals(
         "total in lexical mode (2 of 2 decimal pairs lost (lost: P01, P02; decimal pairs: P01, P02); "
         "2 of 3 pairs in all)"
     ) in nt.markdown(total)
+
+
+def test_a_lost_pair_whose_control_also_spells_out_the_unit_is_reported_as_confounded() -> None:
+    """Final review, I3: P06 writes `mm`, corpus-1 never does and its control says `millimetre`, so its miss is not
+    the decimal split's alone. A lost pair that differs only by the number carries no such note."""
+    by_name = {p.pair: p for p in nt.load_pairs()}
+    p1, p6 = by_name["P01"], by_name["P06"]
+    assert [nt.unit_confounded(p) for p in (p1, p6)] == [False, True]
+    for pair, noted in ((p1, False), (p6, True)):
+        lost = {
+            pair.numeric.id: outcome(pair.numeric, []),
+            pair.control.id: outcome(pair.control, list(pair.numeric.expected)),
+        }
+        outcomes = {"lexical": lost, "vector_exact": lost}
+        doc = nt.report([pair], outcomes, corpus_version="c", lock_sha256="f" * 64, queries_sha256="e" * 64,
+                        as_of="a", measured_at="m")  # fmt: skip
+        text = nt.markdown(doc)
+        assert ("confounded" in text) is noted, pair.pair
+        assert (f"{pair.pair} is confounded" in text) is noted
+    committed = json.loads((ROOT / "reports" / "retrieval" / "t23-numeric-tokens.json").read_text(encoding="utf-8"))
+    assert nt.markdown(committed) == (ROOT / "reports" / "retrieval" / "t23-numeric-tokens.md").read_text(
+        encoding="utf-8"
+    )
+    assert "P06 is confounded" in nt.markdown(committed)

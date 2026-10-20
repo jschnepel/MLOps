@@ -369,21 +369,22 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   phase reads full chunk bodies only to count them. Five errata (107-111) are proposed.
 - Next: T23 (the development eval set).
 
-## Update — Plan O executed (2026-10-20, branch `plan-o`)
+## Update — Plan O executed (2026-10-20 UTC, branch `plan-o`)
 
 - Plan O (T23: the development eval set, gold labels, graders and rubric) executed on branch `plan-o`
   (`e91b27b..80da1f2`, on `plan-n`). The plan is `docs/superpowers/plans/2026-10-19-first-slice-o-dev-eval-set.md`.
-- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1538 passed, 219 skipped`.
-  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1736 passed, 21 skipped`.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1539 passed, 219 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1737 passed, 21 skipped`.
   `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
 - **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`, `RECORDED_LOCALLY`): R111 — 60 development cases with gold labels
   (`evals/dev/cases.jsonl`), deterministic graders unit-tested (`core/src/ops_core/grading.py`, `tests/plan_o/`) and
   the groundedness rubric (`evals/dev/RUBRIC.md`), subject to erratum 112 (calibration against owner labels is T25's).
 - Also built: `evals/quality-gates.schema.json` (erratum 113), `evals/groundedness-label.schema.json`, the checker's
   `split` rule for the cases, and the numeric-token measurement (`reports/retrieval/t23-numeric-tokens.md`: at k = 5
-  the lexical search found 5 of 6 numeric queries against 6 of 6 controls and lost one decimal pair, P06; vector found
+  the lexical search found 5 of 6 numeric queries against 6 of 6 controls and lost one decimal pair, P06, which is
+  confounded (its numeric query writes `mm`, which corpus-1 never uses, and its control says `millimetre`); vector found
   6 of 6; no forbidden row in either mode). The loss is not total, so the lexical search is unchanged.
-- No model ran and nothing connected to the dev database. Deferred, each with its owner in `SESSION_STATE.md`: trials,
+- No generation model ran (the embedding model did, through local Ollama) and nothing connected to the dev database. Deferred, each with its owner in `SESSION_STATE.md`: trials,
   conditions and statistics -> T25; the scenario suite -> T24; `evals/quality-gates.json` -> the owner. Two errata
   (112-113) are proposed.
 - Next: no PLANNED task can start; T19 and T41 wait on owner steps.
