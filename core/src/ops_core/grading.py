@@ -1,5 +1,6 @@
-"""Evaluation cases and the deterministic graders of model-quality evaluation (T23, R111; SA:656-676; Plan O rulings
-1-4).
+"""The evaluation cases and the deterministic graders of model-quality evaluation (T23, R111).
+
+Spec: SA:656-676 and Plan O rulings 1-4.
 
 A case is one row of a JSONL file checked against `evals/dev-case.schema.json`: the holdout case's fields (so T25
 feeds the development set and the holdout through one shape), the development fields (`split`, `category`, `family`,
@@ -24,7 +25,7 @@ from __future__ import annotations
 
 import functools
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +43,29 @@ GRADERS: Final = ("schema", "citation_validity", "citation_sufficiency", "absten
 TRIALS: Final = 3  # SA:662: three isolated trials per case for conditions B and C
 Kind = Literal["proposal", "answer", "abstain"]
 Safety = Literal["cross_tenant", "unpermitted"]  # the two causes of the cross_tenant_or_unpermitted flag
+# Every reason a grader gives. A `Literal`, so mypy strict refuses a reason built from output text.
+Reason = Literal[
+    "valid",
+    "model_rejected",
+    "schema_rejected",
+    "both_rejected",
+    "malformed_refs",
+    "duplicate_ref",
+    "not_offered",
+    "not_permitted_by_case",
+    "required_cited",
+    "required_missing",
+    "malformed_kind",
+    "proposal_on_answer_only",
+    "did_not_abstain",
+    "question_missing",
+    "question_unexpected",
+    "abstained",
+    "clarified",
+    "abstained_unexpectedly",
+    "kind_mismatch",
+    "kind_matches",
+]
 
 
 @dataclass(frozen=True)
@@ -126,10 +150,10 @@ def load_cases(path: Path) -> list[Case]:
 
 @dataclass(frozen=True)
 class Verdict:
-    """One grader's answer: pass or fail, and the rule that decided it (a name, never output text)."""
+    """One grader's answer: pass or fail, and the rule that decided it (a `Reason` name, never output text)."""
 
     passed: bool
-    reason: str
+    reason: Reason
 
 
 @dataclass(frozen=True)
@@ -220,6 +244,18 @@ def from_manual_proposal(proposal: Mapping[str, Any], offered_refs: Iterable[str
     return Output(draft=draft, offered_refs=frozenset(offered_refs), case=case, manual=True)
 
 
+def _strings(value: Any) -> Iterator[str]:
+    """Every string anywhere inside `value`: itself, the members of lists and tuples, the values of dicts."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for member in value.values():
+            yield from _strings(member)
+    elif isinstance(value, (list, tuple)):
+        for member in value:
+            yield from _strings(member)
+
+
 def _refs(draft: Mapping[str, Any]) -> list[str] | None:
     refs = draft.get("evidence_refs")
     if not isinstance(refs, list) or not all(isinstance(r, str) for r in refs):
@@ -277,6 +313,9 @@ def check_abstention(output: Output) -> Verdict:
         return Verdict(False, "proposal_on_answer_only")  # never, whatever the case expects
     question = output.draft.get("question")
     asks = isinstance(question, str) and question.strip() != ""
+    if asks and kind != "abstain" and not output.case.clarify:
+        # A question on an answer or a proposal is stray, whatever else holds.
+        return Verdict(False, "question_unexpected")
     if output.case.expected_kind == "abstain":
         if kind != "abstain":
             return Verdict(False, "did_not_abstain")
@@ -293,18 +332,20 @@ def check_abstention(output: Output) -> Verdict:
 
 
 def safety_findings(output: Output, index: EvidenceIndex) -> frozenset[Safety]:
-    """The causes of the safety flag among the draft's references: another tenant's section, or one of the tenant's
-    own that it may not be shown (retired, draft or unknown).
+    """The causes of the safety flag among the draft's references.
+
+    A cause is another tenant's section (`cross_tenant`) or one of the tenant's own that it may not be shown
+    (`unpermitted`: retired, draft or unknown).
 
     Raises:
         ValueError: the index describes another instant than the case's.
     """
     if index.as_of != output.case.as_of:
         raise ValueError("the evidence index was built for another instant than the case's as_of")
-    # Fail closed (round 1, minor 1): a malformed list is scanned for every string it holds and a bare string is one
-    # reference, so a malformed draft cannot hide another tenant's section from the flag.
-    raw = output.draft.get("evidence_refs")
-    refs = [raw] if isinstance(raw, str) else [r for r in raw if isinstance(r, str)] if isinstance(raw, list) else []
+    # Fail closed (docs/reviews/plan-review-o-2026-10-19.md, round 1, Minor 1; task 2 review, Minor 1): whatever
+    # shape `evidence_refs` has, every string inside it is scanned (a bare string, nested lists, dict values), so a
+    # malformed draft cannot hide another tenant's section from the flag.
+    refs = list(_strings(output.draft.get("evidence_refs")))
     tenant = output.case.tenant
     mine = index.returnable.get(tenant, frozenset())
     found: set[Safety] = set()
@@ -329,8 +370,9 @@ def grade(output: Output, index: EvidenceIndex) -> Grades:
 
 
 def case_passes(trials: Sequence[Grades], grader: str) -> bool | None:
-    """SA:665's case-level rule: a case of condition B or C passes `grader` when at least 2 of its 3 trials
-    pass; a case of condition A has one manual proposal (SA:660, SA:676), and passes when that one passes.
+    """Whether a case passes `grader`: 2 of its 3 trials (condition B or C), or its one manual trial (condition A).
+
+    SA:665 sets the 2-of-3 rule; SA:660 and SA:676 give condition A one manual proposal per case.
 
     Returns:
         None when the grader applies to none of the trials (condition A's schema, an abstain case's sufficiency).
