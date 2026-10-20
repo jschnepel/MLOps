@@ -299,6 +299,14 @@ def main() -> int:
             check(set(s["requirement_ids"]) <= rids, f"Unknown scenario requirement: {s['id']}")
             scenarios.append(s)
     check(len({s["id"] for s in scenarios}) == len(scenarios), "Duplicate scenario identifiers")
+    # T23 (Plan O ruling 10): the development eval cases obey the cards' rule; the holdout is never in this repository.
+    # A missing file or a row without `split` is a named refusal, never a traceback (Plan O round 1, minor 7).
+    dev_path = ROOT / "evals/dev/cases.jsonl"
+    check(dev_path.is_file(), "Missing required file: evals/dev/cases.jsonl")
+    dev_cases = [json.loads(line) for line in dev_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    for case in dev_cases:
+        check(isinstance(case, dict), "Development eval case rows must be JSON objects")
+        check(case.get("split") == "development", "Do not fabricate a held-out fixture in development data")
 
     # Syntax inspection only; this deliberately does not execute optional SDKs.
     py_count = 0
@@ -336,7 +344,8 @@ def main() -> int:
     )
     print(
         f"PASS: {len(catalog['documents'])} source hashes; {len(scenarios)} development scenario cards; "
-        f"{py_count} Python syntax checks; 6 SVG XML files; fixture meta.json current"
+        f"{len(dev_cases)} development eval cases; {py_count} Python syntax checks; 6 SVG XML files; "
+        "fixture meta.json current"
     )
     print(
         f"PASS: governed corpus {governed_corpus.corpus_version} ({len(governed_corpus.documents)} documents) "

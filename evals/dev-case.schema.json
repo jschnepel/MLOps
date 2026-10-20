@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ops-copilot/evals/dev-case",
+  "title": "Development evaluation case with its gold labels (T23; agent-authored development data, never the holdout)",
+  "$comment": "The first six fields mirror evals/holdout-case.schema.json so T25 feeds both sets through one shape. The interval is [as_of - hours, as_of). required_refs: at least one must be cited; allowed_refs: may also be cited without penalty.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "tenant",
+    "asset_id",
+    "request_text",
+    "hours",
+    "intent",
+    "split",
+    "category",
+    "family",
+    "as_of",
+    "expected_kind",
+    "clarify",
+    "required_refs",
+    "allowed_refs",
+    "notes"
+  ],
+  "properties": {
+    "case_id": {"type": "string", "pattern": "^DV-[0-9]{3}$"},
+    "tenant": {"type": "string", "enum": ["alpha", "beta"]},
+    "asset_id": {"type": "string", "pattern": "^[A-Z][0-9]{2}$"},
+    "request_text": {"type": "string", "minLength": 10, "maxLength": 2000},
+    "hours": {"type": "integer", "minimum": 1, "maximum": 168},
+    "intent": {"type": "string", "enum": ["investigate", "answer_only"]},
+    "split": {"const": "development"},
+    "category": {
+      "type": "string",
+      "enum": [
+        "investigate_supported",
+        "answer_only",
+        "missing_source",
+        "retired_source",
+        "clarification",
+        "cross_tenant",
+        "injected",
+        "conflicting",
+        "numeric"
+      ]
+    },
+    "family": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$"},
+    "as_of": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "expected_kind": {"type": "string", "enum": ["proposal", "answer", "abstain"]},
+    "clarify": {"type": "boolean"},
+    "required_refs": {"$ref": "#/$defs/refs"},
+    "allowed_refs": {"$ref": "#/$defs/refs"},
+    "notes": {"type": "string", "maxLength": 500}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"expected_kind": {"const": "abstain"}}},
+      "then": {"properties": {"required_refs": {"maxItems": 0}}},
+      "else": {"properties": {"required_refs": {"minItems": 1}, "clarify": {"const": false}}}
+    },
+    {
+      "if": {"properties": {"intent": {"const": "answer_only"}}},
+      "then": {"properties": {"expected_kind": {"enum": ["answer", "abstain"]}}}
+    }
+  ],
+  "$defs": {
+    "refs": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9-]{1,63}:v[1-9][0-9]{0,8}:[a-z][a-z0-9-]{0,39}$"},
+      "maxItems": 16,
+      "uniqueItems": true
+    }
+  }
+}

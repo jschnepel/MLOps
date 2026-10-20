@@ -1938,17 +1938,26 @@
       "id": "R111",
       "category": "evaluation",
       "requirement": "Development evaluation set has gold labels and calibrated graders",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "~60 labelled dev cases; deterministic graders unit-tested; groundedness rubric documented.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "evals/dev/cases.jsonl",
+        "evals/dev-case.schema.json",
+        "core/src/ops_core/grading.py",
+        "tests/plan_o/",
+        "evals/dev/RUBRIC.md",
+        "evals/groundedness-label.schema.json",
+        "evals/quality-gates.schema.json"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M09",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T23"
       ],
-      "suggested_test": "tests/acceptance/test_r111_development_evaluation_set_has_gold_labels_and_c.py"
+      "suggested_test": "tests/acceptance/test_r111_development_evaluation_set_has_gold_labels_and_c.py",
+      "note": "Plan O (T23): 60 agent-authored development cases with gold labels over corpus-1 at 2026-10-06T12:00Z (evals/dev/cases.jsonl; every label a returnable section of the case's tenant and asset family or a family-less document, checked against the hand-written returnable set; never the holdout). Deterministic graders for schema, citation validity, citation sufficiency and abstention with a cross-tenant-or-unpermitted safety flag, unit-tested on hand-written drafts (core/src/ops_core/grading.py, tests/plan_o/). The groundedness rubric with ten worked examples and the labelling instructions (evals/dev/RUBRIC.md). R111 is met subject to erratum 112: 'calibrated graders' means deterministic graders unit-tested; their comparison with the owner's labels is T25's (R073)."
     },
     {
       "id": "R112",

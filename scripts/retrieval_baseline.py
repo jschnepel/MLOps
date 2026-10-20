@@ -251,11 +251,15 @@ def report(
     }
 
 
-def _rate(item: Mapping[str, Any]) -> str:
+def rate(item: Mapping[str, Any]) -> str:
+    """A counted proportion as `k/n = rate (Wilson 95% low-high)`."""
     if item["n"] == 0:
         return "no cases"
     low, high = item["wilson95"]
     return f"{item['successes']}/{item['n']} = {item['rate']:.2f} (Wilson 95% {low:.2f}-{high:.2f})"
+
+
+_rate = rate  # the name the other report scripts and tests already use
 
 
 def markdown(doc: Mapping[str, Any]) -> str:

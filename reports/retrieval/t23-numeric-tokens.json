@@ -1,0 +1,434 @@
+{
+  "report": "t23-numeric-tokens",
+  "measured_at": "2026-10-20T00:19:02Z",
+  "as_of": "2026-10-16T12:00:00Z",
+  "corpus_version": "corpus-1",
+  "lock_sha256": "81f50c2b8623675f9c899033cba748f289b7f4024003385aabc8a95147b71862",
+  "queries": "evals/retrieval/numeric-queries.jsonl",
+  "queries_sha256": "9da6962cedbff53928761a5d88981b0ac794781c44c19c6c4cbecafaa7503814",
+  "k": 5,
+  "normalisation": "the OR of the query's own english lexemes, after every character outside a-z and 0-9 becomes a space",
+  "summary": {
+    "lexical": {
+      "numeric_hit_at_5": {
+        "successes": 5,
+        "n": 6,
+        "rate": 0.8333,
+        "wilson95": [
+          0.4365,
+          0.9699
+        ]
+      },
+      "control_hit_at_5": {
+        "successes": 6,
+        "n": 6,
+        "rate": 1.0,
+        "wilson95": [
+          0.6097,
+          1.0
+        ]
+      },
+      "lost": [
+        "P06"
+      ],
+      "gained": [],
+      "decimal_pairs": [
+        "P01",
+        "P02",
+        "P06"
+      ],
+      "decimal_numeric_hit_at_5": {
+        "successes": 2,
+        "n": 3,
+        "rate": 0.6667,
+        "wilson95": [
+          0.2077,
+          0.9385
+        ]
+      },
+      "decimal_control_hit_at_5": {
+        "successes": 3,
+        "n": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385,
+          1.0
+        ]
+      },
+      "decimal_lost": [
+        "P06"
+      ],
+      "total_loss": false,
+      "forbidden_rows": 0
+    },
+    "vector_exact": {
+      "numeric_hit_at_5": {
+        "successes": 6,
+        "n": 6,
+        "rate": 1.0,
+        "wilson95": [
+          0.6097,
+          1.0
+        ]
+      },
+      "control_hit_at_5": {
+        "successes": 6,
+        "n": 6,
+        "rate": 1.0,
+        "wilson95": [
+          0.6097,
+          1.0
+        ]
+      },
+      "lost": [],
+      "gained": [],
+      "decimal_pairs": [
+        "P01",
+        "P02",
+        "P06"
+      ],
+      "decimal_numeric_hit_at_5": {
+        "successes": 3,
+        "n": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385,
+          1.0
+        ]
+      },
+      "decimal_control_hit_at_5": {
+        "successes": 3,
+        "n": 3,
+        "rate": 1.0,
+        "wilson95": [
+          0.4385,
+          1.0
+        ]
+      },
+      "decimal_lost": [],
+      "total_loss": false,
+      "forbidden_rows": 0
+    }
+  },
+  "pairs": [
+    {
+      "pair": "P01",
+      "tenant": "beta",
+      "expected": [
+        "BETA-PUMP-ALIGN:v2:tolerance"
+      ],
+      "decimal": true,
+      "numeric": {
+        "id": "N01",
+        "query": "Was the 0.10 offset limit for pump B22 withdrawn?",
+        "words": [
+          "was",
+          "the",
+          "0",
+          "10",
+          "offset",
+          "limit",
+          "for",
+          "pump",
+          "b22",
+          "withdrawn"
+        ]
+      },
+      "control": {
+        "id": "C01",
+        "query": "Was the old offset limit for pump B22 withdrawn?",
+        "words": [
+          "was",
+          "the",
+          "old",
+          "offset",
+          "limit",
+          "for",
+          "pump",
+          "b22",
+          "withdrawn"
+        ]
+      },
+      "lexical": {
+        "numeric_hit": true,
+        "numeric_rank": 2,
+        "control_hit": true,
+        "control_rank": 2,
+        "forbidden": []
+      },
+      "vector_exact": {
+        "numeric_hit": true,
+        "numeric_rank": 1,
+        "control_hit": true,
+        "control_rank": 1,
+        "forbidden": []
+      }
+    },
+    {
+      "pair": "P02",
+      "tenant": "beta",
+      "expected": [
+        "BETA-PUMP-ALIGN:v2:tolerance"
+      ],
+      "decimal": true,
+      "numeric": {
+        "id": "N02",
+        "query": "Is 0.05 the offset band for pump B22?",
+        "words": [
+          "is",
+          "0",
+          "05",
+          "the",
+          "offset",
+          "band",
+          "for",
+          "pump",
+          "b22"
+        ]
+      },
+      "control": {
+        "id": "C02",
+        "query": "Is five hundredths of a millimetre the offset band for pump B22?",
+        "words": [
+          "is",
+          "five",
+          "hundredths",
+          "of",
+          "a",
+          "millimetre",
+          "the",
+          "offset",
+          "band",
+          "for",
+          "pump",
+          "b22"
+        ]
+      },
+      "lexical": {
+        "numeric_hit": true,
+        "numeric_rank": 2,
+        "control_hit": true,
+        "control_rank": 1,
+        "forbidden": []
+      },
+      "vector_exact": {
+        "numeric_hit": true,
+        "numeric_rank": 1,
+        "control_hit": true,
+        "control_rank": 1,
+        "forbidden": []
+      }
+    },
+    {
+      "pair": "P03",
+      "tenant": "beta",
+      "expected": [
+        "BETA-PUMP-ALIGN:v2:tolerance"
+      ],
+      "decimal": false,
+      "numeric": {
+        "id": "N03",
+        "query": "What angularity per 100 mm is allowed on pump B22?",
+        "words": [
+          "what",
+          "angularity",
+          "per",
+          "100",
+          "mm",
+          "is",
+          "allowed",
+          "on",
+          "pump",
+          "b22"
+        ]
+      },
+      "control": {
+        "id": "C03",
+        "query": "What angularity per hundred millimetres is allowed on pump B22?",
+        "words": [
+          "what",
+          "angularity",
+          "per",
+          "hundred",
+          "millimetres",
+          "is",
+          "allowed",
+          "on",
+          "pump",
+          "b22"
+        ]
+      },
+      "lexical": {
+        "numeric_hit": true,
+        "numeric_rank": 2,
+        "control_hit": true,
+        "control_rank": 1,
+        "forbidden": []
+      },
+      "vector_exact": {
+        "numeric_hit": true,
+        "numeric_rank": 1,
+        "control_hit": true,
+        "control_rank": 1,
+        "forbidden": []
+      }
+    },
+    {
+      "pair": "P04",
+      "tenant": "alpha",
+      "expected": [
+        "ALPHA-PUMP-SEAL:v2:inspection"
+      ],
+      "decimal": false,
+      "numeric": {
+        "id": "N04",
+        "query": "Does the 30-day seal interval still apply to pump A17?",
+        "words": [
+          "does",
+          "the",
+          "30",
+          "day",
+          "seal",
+          "interval",
+          "still",
+          "apply",
+          "to",
+          "pump",
+          "a17"
+        ]
+      },
+      "control": {
+        "id": "C04",
+        "query": "Does the monthly seal interval still apply to pump A17?",
+        "words": [
+          "does",
+          "the",
+          "monthly",
+          "seal",
+          "interval",
+          "still",
+          "apply",
+          "to",
+          "pump",
+          "a17"
+        ]
+      },
+      "lexical": {
+        "numeric_hit": true,
+        "numeric_rank": 2,
+        "control_hit": true,
+        "control_rank": 2,
+        "forbidden": []
+      },
+      "vector_exact": {
+        "numeric_hit": true,
+        "numeric_rank": 1,
+        "control_hit": true,
+        "control_rank": 1,
+        "forbidden": []
+      }
+    },
+    {
+      "pair": "P05",
+      "tenant": "alpha",
+      "expected": [
+        "ALPHA-PUMP-SEAL:v2:inspection"
+      ],
+      "decimal": false,
+      "numeric": {
+        "id": "N05",
+        "query": "Is the A17 seal inspected every 14 days?",
+        "words": [
+          "is",
+          "the",
+          "a17",
+          "seal",
+          "inspected",
+          "every",
+          "14",
+          "days"
+        ]
+      },
+      "control": {
+        "id": "C05",
+        "query": "Is the A17 seal inspected every fourteen days?",
+        "words": [
+          "is",
+          "the",
+          "a17",
+          "seal",
+          "inspected",
+          "every",
+          "fourteen",
+          "days"
+        ]
+      },
+      "lexical": {
+        "numeric_hit": true,
+        "numeric_rank": 1,
+        "control_hit": true,
+        "control_rank": 1,
+        "forbidden": []
+      },
+      "vector_exact": {
+        "numeric_hit": true,
+        "numeric_rank": 1,
+        "control_hit": true,
+        "control_rank": 1,
+        "forbidden": []
+      }
+    },
+    {
+      "pair": "P06",
+      "tenant": "beta",
+      "expected": [
+        "BETA-PUMP-ALIGN:v2:tolerance"
+      ],
+      "decimal": true,
+      "numeric": {
+        "id": "N06",
+        "query": "B22 offset 0.05 mm or 0.10 mm?",
+        "words": [
+          "b22",
+          "offset",
+          "0",
+          "05",
+          "mm",
+          "or",
+          "0",
+          "10",
+          "mm"
+        ]
+      },
+      "control": {
+        "id": "C06",
+        "query": "B22 offset five or ten hundredths of a millimetre?",
+        "words": [
+          "b22",
+          "offset",
+          "five",
+          "or",
+          "ten",
+          "hundredths",
+          "of",
+          "a",
+          "millimetre"
+        ]
+      },
+      "lexical": {
+        "numeric_hit": false,
+        "numeric_rank": null,
+        "control_hit": true,
+        "control_rank": 1,
+        "forbidden": []
+      },
+      "vector_exact": {
+        "numeric_hit": true,
+        "numeric_rank": 1,
+        "control_hit": true,
+        "control_rank": 1,
+        "forbidden": []
+      }
+    }
+  ]
+}

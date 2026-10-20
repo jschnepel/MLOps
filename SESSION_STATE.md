@@ -2,14 +2,26 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M06 (vector retrieval; T18 is DONE in Plan N, and T41, the owner's holdout labels, is its open task. M05 closed with T16 in Plan M. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
-**Next task:** Plan N (T18) is executed on branch `plan-n` (`4c99f14..799beda` holds the debt list and the seven
+**Next task:** Plan O (T23) is executed on branch `plan-o` (`e91b27b..80da1f2` holds the debt list and the four
+building tasks; the close-out is the commit after `80da1f2`). T23 is DONE: R111 is evidenced (`evals/dev/cases.jsonl`,
+`core/src/ops_core/grading.py`, `evals/dev/RUBRIC.md`) subject to erratum 112; errata 112-113 are proposed; the
+numeric-token debt is closed as a measurement (`reports/retrieval/t23-numeric-tokens.md`: lexical 5/6 numeric queries
+against 6/6 controls with pair P06 lost but confounded, vector 6/6; the loss is not total, so the search is
+unchanged). Owner inputs
+added by Plan O: decide errata 112-113; fill in `evals/quality-gates.json` before the first holdout run (SA:672); merge
+PR #14 (`plan-o` -> `plan-n`, https://github.com/jschnepel/MLOps/pull/14; final review record
+`docs/reviews/plan-o-final-review-2026-10-19.md`, fix wave 1abef84) after #12 and #13. No PLANNED task can start now. T19 and T41 are the only two whose dependencies are all DONE or
+DONE_PENDING_OWNER, and each waits on an owner step: T19 on the probe of T02, the seal of T03 and step 10 of T44, T41
+on the owner's gold labels for the sealed holdout. T20 waits on T19, T21 on T20, T22 on T21, T24 on T22, and T25 on
+T22 and T41. The Plan N record follows.
+**Plan N record:** Plan N (T18) is executed on branch `plan-n` (`4c99f14..799beda` holds the debt list and the seven
 building tasks; the close-out is the commit after `799beda`). T18 is DONE: R034 is evidenced
-(`reports/retrieval-comparison.md`); errata 107-111 are proposed. Owner inputs added by Plan N: migrate the dev
-database to revision 0013 (after 0012), then `uv run python scripts/skeleton.py embed`; decide the proposed errata
+(`reports/retrieval-comparison.md`); errata 107-111 are proposed. The dev database was migrated to 0013 and
+embedded on 2026-10-19 (run by the agent at the owner's request). Owner inputs added by Plan N: decide the proposed errata
 (now 1-111); the installed Ollama 0.40.4 against SA:587's 0.33.3 (the pin records 0.40.4); merge PR #13 (`plan-n` ->
 `plan-m`, https://github.com/jschnepel/MLOps/pull/13; final review record
-`docs/reviews/plan-n-final-review-2026-10-19.md`, fix wave 1d71485), after #12. Still pending from Plan M: merging PR #12 (`plan-m` -> `main`). Next is T23 (unblocked);
-T19 and T41 wait on owner steps, T20 on T19, T25 on T22, T23 and T41. The Plan M record follows.
+`docs/reviews/plan-n-final-review-2026-10-19.md`, fix wave 1d71485), after #12. Still pending from Plan M: merging PR #12 (`plan-m` -> `main`). T23 followed in Plan O (above).
+The Plan M record follows.
 **Plan M record:** Plan M (T16) is executed on branch `plan-m` (from `main`: `9e7d716..bbaba40` holds the debt list and the
 six building tasks, and the close-out is the commit after `bbaba40`). T16 is DONE: R028 and R029 are evidenced; R131's
 read half is complete subject to the owner's decisions on errata 96 and 104. Owner inputs: (1) the holdout seal (T03
@@ -23,7 +35,7 @@ fix wave 71753ab). Next is T18 (vector retrieval; it now also owns mcp-read's ve
 or T23, both unblocked; T19 and T41 wait on owner steps, and T20 waits on T19. A proposed erratum awaiting the
 owner's decision does not change a task's status; a task met "subject to" an erratum stays DONE.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-n` off `plan-m` (Plan N executed, pushed 2026-10-19, PR #13 into `plan-m`; `plan-m`: Plan M executed, pushed 2026-10-18, PR #12 into `main`; `main` 66d6833 has the same tree as `plan-l`, which sat on `plan-k`, on `plan-j`, on `plan-i`, on `plan-h`, on `plan-g`, on `plan-f`, on `plan-e`, on `plan-d`, on `plan-c`, on `plan-b`, on `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) were merged into `main` by the owner on 2026-10-18 (merge commits; the plan branches are kept); `plan-j` and `plan-k` were pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11).
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-o` off `plan-n` (Plan O executed, pushed 2026-10-20, PR #14 into `plan-n`; `plan-n`: Plan N executed, pushed 2026-10-19, PR #13 into `plan-m`; `plan-m`: Plan M executed, pushed 2026-10-18, PR #12 into `main`; `main` 66d6833 has the same tree as `plan-l`, which sat on `plan-k`, on `plan-j`, on `plan-i`, on `plan-h`, on `plan-g`, on `plan-f`, on `plan-e`, on `plan-d`, on `plan-c`, on `plan-b`, on `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) were merged into `main` by the owner on 2026-10-18 (merge commits; the plan branches are kept); `plan-j` and `plan-k` were pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11).
 
 ## Done in the planning session (2026-10-06)
 
@@ -974,6 +986,60 @@ owner's decision does not change a task's status; a task met "subject to" an err
   (d) The two comparison report files were committed in Task 6, not in the close-out; the final live run is
   restored with `git checkout -- reports/`, keeping nothing new.
 
+## Plan O executed (2026-10-20 UTC, branch `plan-o`)
+
+- T23 = `e91b27b..80da1f2` (the debt list first, then the four building tasks; the close-out is the commit after
+  `80da1f2`). The plan (`docs/superpowers/plans/2026-10-19-first-slice-o-dev-eval-set.md`) holds the 12 rulings of
+  the controller's brief as implemented, with seven departures named at its top; the input is
+  `docs/superpowers/research/2026-10-19-plan-o-inputs.md`; the plan review is
+  `docs/reviews/plan-review-o-2026-10-19.md`. Evidence: `evals/dev/cases.jsonl`,
+  `evals/dev-case.schema.json`, `core/src/ops_core/grading.py`, `tests/plan_o/` (unit), `evals/dev/RUBRIC.md`,
+  `evals/groundedness-label.schema.json`, `evals/quality-gates.schema.json`; the measurement
+  `reports/retrieval/t23-numeric-tokens.md` and `.json` (`tests/e2e/test_numeric_tokens_live.py`, live).
+- The numeric-token finding: numeric tokens at k = 5 over six pairs: lexical numeric 5/6, controls 6/6, decimal 2/3
+  against 3/3, lost P06 (its control is at rank 1; the pair is confounded: its numeric query writes `mm`, which
+  corpus-1 never uses, and its control says `millimetre`, so the miss is not the decimal split's alone); vector_exact numeric 6/6, controls 6/6, decimal 3/3 against 3/3,
+  lost none; no forbidden row in either mode. The lexical loss on the decimal pairs is not total, so the search is
+  unchanged (BS:71) and the debt is closed as a measurement; a change would need a total loss and would be a later
+  revision under T20.
+- Shipped, as reviewed: 60 development cases (30 per tenant, nine categories, `as_of` 2026-10-06T12:00Z) with gold
+  labels checked against corpus-1 by test, file and schema SHA-256 pinned; the case loader, which names the file and
+  line of a malformed row; four graders, each a verdict whose reason is a `Literal` rule name (schema, which needs the
+  JSON Schema and `ModelDraft` to agree; citation validity; citation sufficiency; abstention, where a question on a
+  proposal or an answer fails as `question_unexpected`); the `cross_tenant_or_unpermitted` flag, whose scan reaches
+  references nested in lists, tuples and dicts; `case_passes` (2 of 3 trials for conditions B and C, the one manual
+  trial for A) and `case_safe` (any trial); the groundedness rubric with ten worked examples whose quotes are tested
+  word for word; the label and quality-gates schemas.
+- Reviews: one static plan round (0 Critical, 3 Important, 11 Minor, 9 disputed labels; fixed in 10db78d, the
+  controller checked the diff instead of a second round) and, per task, one review and one fix round (Tasks 1-3:
+  approved with minors; Task 4: needs fixes, 1 Important) and the final whole-branch review (0 Critical,
+  3 Important, 8 Minor; the controller ruled on each and one fix wave closed them). Each round's problem and fix is
+  in `docs/PROJECT_HISTORY.md` section 32.
+- Gates: `check.py` `1539 passed, 219 skipped`; `check.py --profile test` `1737 passed, 21 skipped`;
+  `verify_handoff.py` exit 0. No generation model ran (the embedding model did, through local Ollama), and nothing from Plan O connected to the dev database.
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan N's
+  hundred and eleven:
+  112. R111 ("Development evaluation set has gold labels and calibrated graders") and its expected evidence: the
+       graders T23 ships are deterministic (`ops_core.grading`: schema, citation validity, citation sufficiency,
+       abstention, and the cross-tenant-or-unpermitted safety flag), unit-tested on hand-written drafts; calibrating a
+       grader against the owner's reviewed labels is T25's (R073, "Compare grader with reviewed labels"). R111 is met
+       subject to this erratum.
+  113. SA:671 and SA:765 assign `evals/quality-gates.schema.json` to T23; `handoff/tasks.json` (T23's instructions
+       and definition of done) does not list it. T23 owns the schema (an array of `{metric, condition, threshold,
+       applies_to, blocking}`, the metrics `ops_core.grading.GRADERS` plus `groundedness_mean`,
+       `unauthorized_writes`, `fabricated_success` and `cross_tenant_leakage`, the conditions A, B and C); the file
+       `evals/quality-gates.json` stays the owner's, committed before the first holdout run (SA:672).
+- Rulings made during execution (the controller's, from the SDD ledger; none changes a spec line): (a) the plan had
+  one static review round on the owner's steer (a portfolio project, scaffolding first, kept lean), with the
+  fixes checked by the controller. (b) On 2026-10-19, before the plan ran, the owner asked the agent to run the
+  owner steps: `skeleton.py migrate` and `embed` ran on the dev database (0013; alpha 39 and beta 30 sections, recorded
+  in 128258c), while merging PRs #12 and #13 and posting a pre-merge review comment on the agent's own PRs were
+  refused by the permission system. The merges stay with the owner and block nothing, because `plan-o` is stacked on
+  `plan-n`. (c) The plan's live count (1722) was out of date: its arithmetic was one low and the review rounds added
+  13 tests to the dev suite (1525 to 1538) and the final review's wave one more (1539). (d) The final live run rewrote the files under `reports/` and they were
+  restored with `git checkout -- reports/`, keeping nothing new: the committed numeric report (Task 4) already holds
+  these figures.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -1311,8 +1377,46 @@ Allowed shortcuts in T18, each with its owning task:
   endpoints only) and packaging `data/embedding-pins.json` with mcp-read → T30 (erratum 108);
 - the installed Ollama is 0.40.4 where SA:587 records 0.33.3; the pin records the version actually used and nothing
   here upgrades or downgrades it → owner decision (SA:587);
-- the dev database stays below revision 0013 until the owner migrates it and runs `scripts/skeleton.py embed`; until
-  the migration mcp-read refuses to start on it (it checks 0013) → owner input (Plan N ruling 15).
+- the dev database: migrated to 0013 and embedded on 2026-10-19 (the agent ran `skeleton.py migrate` and `embed` at
+  the owner's request) → closed.
+
+## Plan O debt list (T23; committed before coding) [R6-B7]
+
+Allowed shortcuts in T23, each with its owning task:
+- the development cases are checked against corpus-1 by unit test and never run: no model trial, no condition A, B
+  or C run and no groundedness label exists yet → T19 (the first real drafts) and T25 (trials, conditions, labels)
+  (Plan O rulings 4 and 8);
+- "calibrated graders" (R111) is met by deterministic graders unit-tested on hand-written drafts; comparing them with
+  the owner's reviewed labels → T25 (R073; erratum 112);
+- the statistics: case-level Wilson intervals, the case-cluster bootstrap, exact McNemar, intra-rater kappa, and
+  unifying the two Wilson functions (`scripts/retrieval_baseline.wilson`, `scripts/probe_stats.wilson`) → T25 (Plan O
+  ruling 4);
+- `evals/quality-gates.json` (the thresholds) → the owner, committed before the first holdout run (SA:672); the label
+  files → T25 (Plan O rulings 6 and 9);
+- the citation graders see what a draft cites, not whether its claims follow from it: that is the owner's
+  groundedness label (BS:452), and any semantic judge is T25's to calibrate (BS:609, R073);
+- operational-fault and control-path cases (lost response, stale approval, cancellation) and the 32 cards → T24 (the
+  scenario suite, R097); `evals/handoff-development/README.md`'s stale 80/40 text → T24 (its review note);
+- every development case sits at one instant (`as_of` 2026-10-06T12:00Z, the cards' fixture clock); cases at other
+  instants, across a version's effective date, → a later dev-set version, no task (Plan O ruling 1);
+- the numeric-token measurement is recorded, not acted on: a change to the lexical query normalisation (revision
+  0011's `regexp_replace`) needs a total loss on every decimal pair (the only tokens it splits), and even then it is
+  a later revision under T20 (the retrieve node and its relevance rule), never T23 (Plan O ruling 7; BS:71);
+- condition A on every non-proposal case: a manual proposal is always a proposal with at least one reference
+  (`schemas/manual-proposal.schema.json`), so `check_abstention` fails it on every case that expects an answer or an
+  abstention (41 of the 60: `proposal_on_answer_only` on the `answer_only` ones, `kind_mismatch` or `did_not_abstain`
+  on the rest), by construction; only the 19 proposal-expected cases can pass. How A is scored there (for example,
+  "no manual proposal written" counting as the abstention) → T25 (SA:660; round 1, minor 8; final review, I2);
+- the safety flag's causes against the SA:673 gates: `cross_tenant_leakage` counts only trials whose `safety` holds
+  `cross_tenant`; `unpermitted` (a retired, draft or unknown ID) is a citation-validity failure, not a leak, and T25
+  counts each cause separately; `unauthorized_writes` and `fabricated_success` are run-level facts that no grader
+  here produces → T25 (final review, I1);
+- an unconfounded decimal pair: P06's numeric query writes `mm` and its control `millimetre`, which corpus-1
+  never uses, so its miss is not the split's alone; a pair that differs only in the number → the next retrieval change
+  (final review, I3);
+- `load_cases` reads development rows only (`DV-` ids, `split`, `as_of`, `notes`); a loader for the holdout's rows,
+  with T41's labels under their own schema, and the holdout's `as_of` policy (the instant its labels and the safety
+  index use) → T25 with T41 (round 1, minor 9).
 
 ## Environment (observed)
 
@@ -1404,18 +1508,25 @@ where it is until the owner runs `uv run python scripts/skeleton.py migrate` (de
 is still missing) and then `uv run python scripts/skeleton.py embed` (as the worker, through local Ollama; it prints
 `EMBED: alpha: 39 new, 0 present` and `EMBED: beta: 30 new, 0 present` on corpus-1, the first time). Until the
 migration mcp-read refuses to start on it; until `embed`, vector searches are refused (`EMBEDDINGS_INCOMPLETE`)
-and lexical ones work. No agent connected to the dev database in Plan N.
+and lexical ones work. No agent connected to the dev database during Plan N. Afterwards, on 2026-10-19 and at the
+owner's explicit request, the agent ran `skeleton.py migrate` (`MIGRATE: app at app@head, incident at head (profile
+dev)`) and `skeleton.py embed` (`EMBED: alpha: 39 new, 0 present`, `EMBED: beta: 30 new, 0 present`): the dev
+database is at 0013 with corpus-1 embedded.
+
+**Update (2026-10-20 UTC):** Plan O added no revision and connected nothing to the dev database; its live tests used only
+the `ops_test` databases. The dev database stays at 0013 with corpus-1 embedded.
 
 ## Open owner inputs
 
 - Decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed"), 60-71 (see
   "Plan I executed"), 72-81 (see "Plan J executed"), 82-92 (see "Plan K executed"), 93-102 (see "Plan L
-  executed"), 103-106 (see "Plan M executed") and 107-111 (see "Plan N executed").
-- Migrate the dev database to revision 0013 (`uv run python scripts/skeleton.py migrate`), then embed it (`uv run
-  python scripts/skeleton.py embed`); mcp-read refuses to start below 0013.
+  executed"), 103-106 (see "Plan M executed"), 107-111 (see "Plan N executed") and 112-113 (see "Plan O executed").
+- Fill in `evals/quality-gates.json` (schema `evals/quality-gates.schema.json`) and commit it before the first holdout
+  run (SA:672-674): the safety gates are fixed at a blocking 0; the quality thresholds are the owner's choice.
 - Decide on the installed Ollama 0.40.4 against SA:587's 0.33.3 (the embedding pin records 0.40.4).
 - Merge PR #12 (`plan-m` -> `main`), still open; then PR #13 (`plan-n`, stacked on `plan-m`; retarget it to `main`
-  once #12 merges).
+  once #12 merges); then PR #14 (`plan-o`, stacked on `plan-n`; retarget each to `main` as the one below it merges).
+  The agent was refused both merges on 2026-10-19 (a merge without review), so they are the owner's.
 - R025 and R031 have every half evidenced (mcp-read by T15, mcp-write by T47, the import half by T04) but keep
   `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`, because no open task owns them: flipping their status is the owner's call
   (or T15's re-close).
@@ -1453,6 +1564,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-N, up to 111; the dev database's migration to 0013 and its `embed`; the merge of PR #12) and write the plan for T23 (the development eval set, gold labels and rubric: the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T18, which depends on T17 only; T19 and T41 wait on owner steps, T20 on T19).
+Then wait for the owner inputs above (holdout seal, then live probe; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-O, up to 113; the merges of PRs #12 and #13, then `plan-o`'s PR). After T23 no PLANNED task in `handoff/tasks.json` can start: T19 (the real drafting route) and T41 (the owner's gold labels) have every dependency DONE or DONE_PENDING_OWNER but wait on owner steps (T19 on T02's probe, T03's seal and T44 step 10; T41 on T03's seal), and everything else waits on them (T20 on T19, then T21, T22, T24, T25 and the rest). Write the plan for whichever the owner unblocks first (T19 unblocks T20, then T21, T22, T24 and T25).
 
 Do not store secrets or private reasoning in this file.
