@@ -210,7 +210,8 @@ def markdown(doc: Mapping[str, Any]) -> str:
     lexical = doc["summary"]["lexical"]
     lost = (
         f"{len(lexical['decimal_lost'])} of {len(lexical['decimal_pairs'])} decimal pairs lost "
-        f"({', '.join(lexical['decimal_pairs']) or 'none'}); {len(lexical['lost'])} of {len(doc['pairs'])} pairs in all"
+        f"(lost: {', '.join(lexical['decimal_lost']) or 'none'}; decimal pairs: "
+        f"{', '.join(lexical['decimal_pairs']) or 'none'}); {len(lexical['lost'])} of {len(doc['pairs'])} pairs in all"
     )
     finding = (
         f"The loss is total in lexical mode ({lost}): every decimal query missed while its control hit. This is "

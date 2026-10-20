@@ -69,6 +69,9 @@ async def test_numeric_tokens_against_their_controls_in_both_modes(
         for slug, tenant in tenants.items():
             _, _, runs[slug] = await new_run(app_conn, tenant, api=api, requester=REQUESTERS[slug])
         leases = {slug: await lease_for(worker, run, owner="t23-numeric", seconds=600) for slug, run in runs.items()}
+        cur = await app_conn.execute("SELECT app.current_time() AS now")
+        now = (await cur.fetchone() or {})["now"]
+        assert abs(now - AS_OF).total_seconds() < 60, now  # the clock sits at the labelling instant, give or take
         for case, vector in zip(cases, vectors, strict=True):
             run = runs[case.tenant]
             for mode in nt.MODES:

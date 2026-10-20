@@ -126,7 +126,10 @@ def test_the_report_counts_lost_and_gained_pairs_and_total_loss_on_the_decimals(
     third, two_thirds, half = (rb._rate(rb.proportion(k, n)) for k, n in ((1, 3), (2, 3), (1, 2)))
     assert f"| lexical | {third} | {two_thirds} | {half} | {half} | P01, P04 | P02 | 0 |" in text
     assert "| miss / 2 | 1 / 1 |" in text
-    assert "not total in lexical mode (1 of 2 decimal pairs lost (P01, P02); 2 of 3 pairs in all)" in text
+    assert (
+        "not total in lexical mode (1 of 2 decimal pairs lost (lost: P01; decimal pairs: P01, P02); "
+        "2 of 3 pairs in all)"
+    ) in text
     decimals_lost = {
         **outcomes["lexical"],
         p2.numeric.id: outcome(p2.numeric, []),
@@ -136,4 +139,7 @@ def test_the_report_counts_lost_and_gained_pairs_and_total_loss_on_the_decimals(
     total = nt.report(pairs, {**outcomes, "lexical": decimals_lost}, corpus_version="c", lock_sha256="f" * 64,
                       queries_sha256="e" * 64, as_of="a", measured_at="m")  # fmt: skip
     assert total["summary"]["lexical"]["total_loss"] is True
-    assert "total in lexical mode (2 of 2 decimal pairs lost (P01, P02); 2 of 3 pairs in all)" in nt.markdown(total)
+    assert (
+        "total in lexical mode (2 of 2 decimal pairs lost (lost: P01, P02; decimal pairs: P01, P02); "
+        "2 of 3 pairs in all)"
+    ) in nt.markdown(total)
