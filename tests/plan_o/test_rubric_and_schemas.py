@@ -67,7 +67,8 @@ def test_the_worked_examples_cover_every_level_and_the_hard_cases() -> None:
         (block,) = DRAFT.findall(body)  # exactly one draft per example
         draft: dict[str, Any] = json.loads(block)
         kinds.add(draft["kind"])
-        out = grading.Output(draft=draft, offered_refs=frozenset(draft["evidence_refs"]), case=case)
+        offered = case.permitted_refs | set(draft["evidence_refs"])  # wider than the cited set, so membership is tested
+        out = grading.Output(draft=draft, offered_refs=frozenset(offered), case=case)
         assert grading.check_schema(out) == grading.Verdict(True, "valid"), head.group(0)
         assert grading.check_citation_validity(out).passed, head.group(0)  # groundedness is judged on valid citations
         for ref, _ in QUOTE.findall(body):
@@ -78,8 +79,10 @@ def test_the_worked_examples_cover_every_level_and_the_hard_cases() -> None:
 def test_every_quoted_excerpt_is_word_for_word_its_corpus_section() -> None:
     governed = corpus.load(ROOT / "data" / "corpus")
     bodies = {d.evidence_id(s): " ".join(s.body.split()) for d in governed.documents for s in d.sections}
-    quotes = QUOTE.findall(RUBRIC.read_text(encoding="utf-8"))
-    assert len(quotes) >= 8
+    text = RUBRIC.read_text(encoding="utf-8")
+    quotes = QUOTE.findall(text)
+    # A quote line the pattern cannot parse would otherwise escape the word-for-word check.
+    assert len(quotes) >= 8 and len(quotes) == len(re.findall(r"^> ", text, re.MULTILINE))
     for ref, quote in quotes:
         assert quote in bodies[ref], ref
 
@@ -95,6 +98,7 @@ def test_the_label_record_schema() -> None:
         {"pass": 3},
         {"note": "x" * 501},
         {"labelled_at": "2026-11-02T09:00:00"},
+        {"labelled_at": "2026-02-30T09:00:00Z"},  # the right shape, a day that does not exist
         {"output_id": "DV-001-B-1"},  # a case id, condition or trial in the id unblinds the label
         {"condition": "B"},
     ):
@@ -133,12 +137,14 @@ def duplicate_gates(gates: list[dict[str, Any]]) -> list[tuple[str, str]]:
         ({**GATE, "blocking": False}, True),
         (entry("unauthorized_writes", "A", 0), True),
         (entry("groundedness_mean", "C", 1.5, blocking=False), True),
+        ({**GATE, "metric": "citation_sufficiency", "condition": "A", "blocking": True}, True),  # the owner's choice
         ({**GATE, "condition": "A", "blocking": True}, True),  # A is scored on citations and abstention (SA:660)
         (entry("cross_tenant_leakage", "B", 1), False),
         (entry("fabricated_success", "B", 0, blocking=False), False),
         ({**GATE, "metric": "schema", "condition": "A", "blocking": True}, False),
         (entry("groundedness_mean", "A", 1), False),
         (entry("groundedness_mean", "B", 1, "wilson_lower_95"), False),
+        (entry("groundedness_mean", "C", 2.5, blocking=False), False),  # the mean label cannot exceed 2
         ({**GATE, "threshold": 1.2, "blocking": True}, False),
         ({**GATE, "metric": "latency", "blocking": True}, False),
         ({**GATE, "condition": "D", "blocking": True}, False),
