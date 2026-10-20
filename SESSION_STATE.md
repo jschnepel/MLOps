@@ -8,9 +8,9 @@ building tasks; the close-out is the commit after `80da1f2`). T23 is DONE: R111 
 numeric-token debt is closed as a measurement (`reports/retrieval/t23-numeric-tokens.md`: lexical 5/6 numeric queries
 against 6/6 controls with pair P06 lost but confounded, vector 6/6; the loss is not total, so the search is
 unchanged). Owner inputs
-added by Plan O: decide errata 112-113; fill in `evals/quality-gates.json` before the first holdout run (SA:672); push
-`plan-o` and open its PR after the final review (not pushed yet; stacked on `plan-n`, so merge #12, then #13, then
-that one). No PLANNED task can start now. T19 and T41 are the only two whose dependencies are all DONE or
+added by Plan O: decide errata 112-113; fill in `evals/quality-gates.json` before the first holdout run (SA:672); merge
+PR #14 (`plan-o` -> `plan-n`, https://github.com/jschnepel/MLOps/pull/14; final review record
+`docs/reviews/plan-o-final-review-2026-10-19.md`, fix wave 1abef84) after #12 and #13. No PLANNED task can start now. T19 and T41 are the only two whose dependencies are all DONE or
 DONE_PENDING_OWNER, and each waits on an owner step: T19 on the probe of T02, the seal of T03 and step 10 of T44, T41
 on the owner's gold labels for the sealed holdout. T20 waits on T19, T21 on T20, T22 on T21, T24 on T22, and T25 on
 T22 and T41. The Plan N record follows.
@@ -35,7 +35,7 @@ fix wave 71753ab). Next is T18 (vector retrieval; it now also owns mcp-read's ve
 or T23, both unblocked; T19 and T41 wait on owner steps, and T20 waits on T19. A proposed erratum awaiting the
 owner's decision does not change a task's status; a task met "subject to" an erratum stays DONE.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-o` off `plan-n` (Plan O executed, not pushed; `plan-n`: Plan N executed, pushed 2026-10-19, PR #13 into `plan-m`; `plan-m`: Plan M executed, pushed 2026-10-18, PR #12 into `main`; `main` 66d6833 has the same tree as `plan-l`, which sat on `plan-k`, on `plan-j`, on `plan-i`, on `plan-h`, on `plan-g`, on `plan-f`, on `plan-e`, on `plan-d`, on `plan-c`, on `plan-b`, on `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) were merged into `main` by the owner on 2026-10-18 (merge commits; the plan branches are kept); `plan-j` and `plan-k` were pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11).
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-o` off `plan-n` (Plan O executed, pushed 2026-10-20, PR #14 into `plan-n`; `plan-n`: Plan N executed, pushed 2026-10-19, PR #13 into `plan-m`; `plan-m`: Plan M executed, pushed 2026-10-18, PR #12 into `main`; `main` 66d6833 has the same tree as `plan-l`, which sat on `plan-k`, on `plan-j`, on `plan-i`, on `plan-h`, on `plan-g`, on `plan-f`, on `plan-e`, on `plan-d`, on `plan-c`, on `plan-b`, on `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) were merged into `main` by the owner on 2026-10-18 (merge commits; the plan branches are kept); `plan-j` and `plan-k` were pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11).
 
 ## Done in the planning session (2026-10-06)
 
@@ -1525,7 +1525,7 @@ the `ops_test` databases. The dev database stays at 0013 with corpus-1 embedded.
   run (SA:672-674): the safety gates are fixed at a blocking 0; the quality thresholds are the owner's choice.
 - Decide on the installed Ollama 0.40.4 against SA:587's 0.33.3 (the embedding pin records 0.40.4).
 - Merge PR #12 (`plan-m` -> `main`), still open; then PR #13 (`plan-n`, stacked on `plan-m`; retarget it to `main`
-  once #12 merges); then the PR for `plan-o` (stacked on `plan-n`; not pushed yet, opened after the final review).
+  once #12 merges); then PR #14 (`plan-o`, stacked on `plan-n`; retarget each to `main` as the one below it merges).
   The agent was refused both merges on 2026-10-19 (a merge without review), so they are the owner's.
 - R025 and R031 have every half evidenced (mcp-read by T15, mcp-write by T47, the import half by T04) but keep
   `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`, because no open task owns them: flipping their status is the owner's call
