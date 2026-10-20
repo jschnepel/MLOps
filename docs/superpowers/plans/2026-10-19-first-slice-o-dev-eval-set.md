@@ -298,7 +298,7 @@ figure was measured on the scratch copy after its task; the live ones are not me
   `CASE_SCHEMA`, `Kind`, `Case` (with `permitted_refs`), `CaseError`, `case_from_row(row)`, `load_cases(path)`; the
   checker's `split` rule and its PASS count.
 
-- [ ] **Step 1a: Record both baselines**
+- [x] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN` with pytest `1461 passed, 218 skipped`; with the
 dev stack up, local Ollama answering (`curl -s http://127.0.0.1:11434/api/version` → `{"version":"0.40.4"}`) and
@@ -307,13 +307,13 @@ dev stack up, local Ollama answering (`curl -s http://127.0.0.1:11434/api/versio
 scripts/verify_handoff.py --reference-code --manifest --contracts` → exit 0. Record the three lines in the report. A
 gate that is not GREEN stops the plan here, before anything is committed.
 
-- [ ] **Step 1b: Record the base**
+- [x] **Step 1b: Record the base**
 
 Run `git rev-parse --short HEAD` and write the hash as `BASE=<hash>` in the report and in the SDD ledger
 (`.superpowers/sdd/2026-10-19-first-slice-o-dev-eval-set/progress.md`). Task 5's commit span is `<base>..<last>`.
 `git status --short` must print nothing.
 
-- [ ] **Step 1c: Commit the debt list (before any code)**
+- [x] **Step 1c: Commit the debt list (before any code)**
 
 Edit 1 (`SESSION_STATE.md`, at the end of "Plan N debt list (T18; committed before coding) [R6-B7]"), replace:
 
@@ -362,7 +362,7 @@ git add SESSION_STATE.md
 git commit -m "docs: declare Plan O's shortcuts before coding (T23 debt list)"
 ```
 
-- [ ] **Step 2: Put `tests/plan_o` on the test path**
+- [x] **Step 2: Put `tests/plan_o` on the test path**
 
 Edit 2 (`pyproject.toml`), replace:
 
@@ -384,7 +384,7 @@ Create `tests/plan_o/__init__.py`:
 """Plan O (T23): the development eval set, its gold labels, the deterministic graders and the rubric."""
 ```
 
-- [ ] **Step 3: Write the failing test**
+- [x] **Step 3: Write the failing test**
 
 Create `tests/plan_o/test_dev_cases.py`:
 
@@ -541,7 +541,7 @@ def test_the_case_loader_refuses_a_row_the_schema_refuses_and_a_repeated_id(tmp_
 Run: `uv run python -m pytest tests/plan_o -q`
 Expected: one collection error, `ImportError: cannot import name 'grading' from 'ops_core'`.
 
-- [ ] **Step 4: The schema, the cases, the loader and the checker's rule**
+- [x] **Step 4: The schema, the cases, the loader and the checker's rule**
 
 Create `evals/dev-case.schema.json`:
 
@@ -844,7 +844,7 @@ with:
         "fixture meta.json current"
 ```
 
-- [ ] **Step 5: Run the tests, stage, gate and commit**
+- [x] **Step 5: Run the tests, stage, gate and commit**
 
 `git add tests/plan_o/__init__.py tests/plan_o/test_dev_cases.py evals/dev-case.schema.json evals/dev/cases.jsonl
 core/src/ops_core/grading.py` (the checker test copies tracked files), then
@@ -883,7 +883,7 @@ authority fields), BS:456 (the kinds).
   `did_not_abstain`, `question_missing`, `question_unexpected`, `abstained`, `clarified`, `abstained_unexpectedly`,
   `kind_mismatch`, `kind_matches`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_o/test_grading.py`:
 
@@ -1106,7 +1106,7 @@ def test_a_condition_a_case_is_its_one_manual_proposal() -> None:
 Run: `uv run python -m pytest tests/plan_o/test_grading.py -q`
 Expected: one collection error, `AttributeError: module 'ops_core.grading' has no attribute 'evidence_index'`.
 
-- [ ] **Step 2: The graders**
+- [x] **Step 2: The graders**
 
 Edit 1 (`core/src/ops_core/grading.py`), replace:
 
@@ -1442,7 +1442,7 @@ def case_safe(trials: Sequence[Grades]) -> bool:
     return not any(t.cross_tenant_or_unpermitted for t in trials)
 ```
 
-- [ ] **Step 3: Run the tests, gate and commit**
+- [x] **Step 3: Run the tests, gate and commit**
 
 `git add tests/plan_o/test_grading.py`, then `uv run python -m pytest tests/plan_o -q` → `37 passed`.
 `PYTHONUTF8=1 uv run python scripts/check.py` → `CHECK: GREEN`, pytest `1498 passed, 218 skipped` (mypy strict
@@ -1472,7 +1472,7 @@ git commit -m "feat: deterministic graders for schema, citations and abstention,
   `evals/quality-gates.schema.json` (an array of `{metric, condition, threshold, applies_to, blocking}` holding
   the three safety gates, no exact repeat; one gate per `{metric, condition}` checked by the test).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_o/test_rubric_and_schemas.py`:
 
@@ -1648,7 +1648,7 @@ def test_every_safety_gate_is_present_and_each_gate_is_named_once() -> None:
 Run: `uv run python -m pytest tests/plan_o/test_rubric_and_schemas.py -q`
 Expected: `18 failed`, each on `FileNotFoundError` for the rubric or one of the two schemas.
 
-- [ ] **Step 2: The rubric and the two schemas**
+- [x] **Step 2: The rubric and the two schemas**
 
 Create `evals/dev/RUBRIC.md`:
 
@@ -2030,7 +2030,7 @@ with:
 `dev/cases.jsonl` (T23) holds 60 agent-authored development cases with gold labels (schema `dev-case.schema.json`), graded by `core/src/ops_core/grading.py`; `dev/RUBRIC.md` is the owner's groundedness rubric, and each label record follows `groundedness-label.schema.json`. `quality-gates.schema.json` (T23) is the shape of `quality-gates.json`, which the owner fills in before the first holdout run (SA:671-672). None of these files is the holdout.
 ```
 
-- [ ] **Step 3: Run the tests, stage, gate and commit**
+- [x] **Step 3: Run the tests, stage, gate and commit**
 
 `git add evals/dev/RUBRIC.md evals/groundedness-label.schema.json evals/quality-gates.schema.json
 tests/plan_o/test_rubric_and_schemas.py`, then `uv run python -m pytest tests/plan_o -q` → `55 passed`.
@@ -2062,7 +2062,7 @@ git commit -m "feat: the groundedness rubric with worked examples, the label rec
 - Produces: `numeric_tokens.QUERIES`, `KEYS`, `NUMBER`, `MODES`, `Pair(pair, numeric, control)`, `query_words`,
   `load_pairs`, `is_decimal`, `report` (with the decimal subtotal), `markdown`; `reports/retrieval/t23-numeric-tokens.md` and `.json`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_o/test_numeric_tokens.py`:
 
@@ -2320,7 +2320,7 @@ async def test_numeric_tokens_against_their_controls_in_both_modes(
 Run: `uv run python -m pytest tests/plan_o/test_numeric_tokens.py -q`
 Expected: one collection error, `ImportError: cannot import name 'numeric_tokens' from 'scripts'`.
 
-- [ ] **Step 2: The pairs and their loader and report**
+- [x] **Step 2: The pairs and their loader and report**
 
 Create `evals/retrieval/numeric-queries.jsonl` (T17's keys plus `pair`; `N` is the numeric query, `C` its control):
 
@@ -2571,7 +2571,7 @@ def _cell(row: Mapping[str, Any], mode: str) -> str:
     return f"{m['numeric_rank'] or 'miss'} / {m['control_rank'] or 'miss'}"
 ```
 
-- [ ] **Step 3: Run the tests, stage, gate, measure and commit**
+- [x] **Step 3: Run the tests, stage, gate, measure and commit**
 
 `git add evals/retrieval/numeric-queries.jsonl scripts/numeric_tokens.py tests/plan_o/test_numeric_tokens.py
 tests/e2e/test_numeric_tokens_live.py`, then `uv run python -m pytest tests/plan_o -q` → `64 passed`.
@@ -2611,7 +2611,7 @@ Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-
 Step 1b, excluded; `<last>` the newest commit before this task's own). `<date>` is `date -u +%F`. Step 4 replaces
 every placeholder.
 
-- [ ] **Step 1: Handoff records**
+- [x] **Step 1: Handoff records**
 
 Save this outside the repository as `t23_records.py` and run `BASE=<hash> uv run python <path>/t23_records.py` (a
 script file, never standard input). It stops if the report is missing (rerun the live gate first).
@@ -2715,7 +2715,7 @@ print(finding)
 Expected: it prints the span and the finding. `git diff --stat handoff` shows three files changed; `git diff
 handoff/acceptance-matrix.json` shows one row, R111.
 
-- [ ] **Step 2: Project state**
+- [x] **Step 2: Project state**
 
 Edit 1 (`SESSION_STATE.md`, "Next task"), replace:
 
@@ -2905,7 +2905,7 @@ condition A's abstentions and the holdout loader to T25.
 ## 33. What the process taught
 ```
 
-- [ ] **Step 3: Final gates and the evidence**
+- [x] **Step 3: Final gates and the evidence**
 
 With the dev stack up, local Ollama answering and every skeleton process down: `PYTHONUTF8=1 uv run python
 scripts/check.py` → `CHECK: GREEN`, pytest `1525 passed, 219 skipped`; `PYTHONUTF8=1 uv run python scripts/check.py
@@ -2914,7 +2914,7 @@ measured); `uv run python -I scripts/verify_handoff.py --reference-code --manife
 checkout -- reports`, and keep, from this run, `reports/retrieval/t23-numeric-tokens.md` and `.json`. Read the md:
 its forbidden rows must be 0 in both modes, and its figures are the ones Step 1 printed (rerun Step 1 if they moved).
 
-- [ ] **Step 4: Fill in the placeholders and commit**
+- [x] **Step 4: Fill in the placeholders and commit**
 
 Replace `<base>`, `<last>`, `<date>`, `<dev>`, `<live>` and `<numeric>` everywhere this task wrote them (`<numeric>`
 is Step 1's finding line), and `<execution>` in `docs/PROJECT_HISTORY.md` with two sentences: the numeric finding in
