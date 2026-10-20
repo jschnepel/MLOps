@@ -831,6 +831,139 @@ model-facing path for asset data arrives with T20. The eighth, the same RFC 3339
 written in mcp-read, asset-sim and core, was parked: moving them crosses three packages for no change in behaviour,
 each copy is pinned by a test, and the cost of being wrong is a future pattern change made in three places.
 
-## 31. What the process taught
+## 31. The vector plan measured a second retrieval method against the first
+
+**Problem.** Plan N takes T18. The corpus had no embeddings, `search_procedures_scoped` refused vector mode, mcp-read
+answered `vector_exact` with `UNSUPPORTED_MODE`, and nothing pinned the embedding model. The fact sheet found eighteen
+open questions, and the controller's brief ruled on each: a separate `embeddings` table, an operator command to fill
+it, a sibling pin file, the query embedding in mcp-read, the lexical filters reused verbatim, cosine similarity above
+a threshold chosen by a rule fixed before measuring, no index, and a report that re-measures lexical search in the
+same session.
+
+**Change.** Revision 0013 adds the table and the vector branch; `skeleton.py embed` fills it from each section's
+prefixed text and keeps the hash of that text; mcp-read checks the pin and embeds the query before the third unit;
+the live comparison writes `reports/retrieval-comparison.md`.
+
+**Review.** Writing the plan against the code moved several details. pgvector's operator lives in `public` and the
+definers pin `search_path = app, pg_temp`, so the branch spells `OPERATOR(public.<=>)`. A zero vector has a NaN cosine,
+and PostgreSQL sorts NaN above every number, so it became a `BAD_ARGUMENT` and, after review, a table CHECK too. The
+live baseline test rewrites the T17 report on every run before the comparison runs, so the lexical answers are pinned
+by a digest computed from the committed file. The threshold rule was run against local Ollama before the revision was
+written: it chose 0.68, and the same figure came out three times independently. The plan writer slipped once, typing
+a bare `python3 -` that read standard input; it was stopped by its task ID, and nothing ran.
+
+**Problem.** The first static review (0 Critical, 2 Important, 13 Minor) found that two claims would not have been
+true. The 300-word window experiment could not tell one ranking from another on corpus-1: every returnable version has
+327-343 words, so each became one window, and the top five held every window of a tenant; its hit@5 measured only a
+threshold tuned for sections. And the pin script overwrote the pin unconditionally, so re-running it after a model
+change, as the documents told the owner to, would have let mcp-read compare a new model's query vectors with the old
+model's stored ones, with nothing to refuse it.
+
+**Change.** The report now gives the windows per tenant, their sizes, and hit@1 and MRR@5 of the ranking alone, and says
+plainly that on corpus-1 the experiment compares whole-version embeddings with section embeddings. The pin script
+refuses to replace another model's pin; a model change is a revision that removes the stored embeddings, then
+replaces the pin as a reviewed change and embeds again, and the architecture document claims only what holds. The
+minors tightened the rest: forbidden rows counted within the top k, a CHECK against a stored zero vector, `embed`
+naming the tenants it wrote and tolerating a concurrent run, a test that the model is asked only after asset-sim
+answers, and the report saying that the vector threshold was tuned while the lexical one was not (the same rule would
+move lexical from 15 to 17 of 20 no-source cases answered empty).
+
+**Problem.** The second review (0 Critical, 1 Important, 4 Minor) found that the round-1 window fix still measured its
+ranking figures above the tuned threshold, where the threshold could still hide the order. **Change.** The window
+ranking is measured at threshold 0, and the interrupted `embed` and the order of a model change are tested and stated
+as they are. The controller checked these fixes against its rulings instead of asking for a third round. The plan also
+departed from the brief eleven times; they are written down at its top, and the controller accepted all of them.
+
+**Execution.** Plan N was executed on branch `plan-n` (`4c99f14..799beda`) in seven tasks after the debt list. Every
+task had a review, and every review that found something had one fix round. The gates afterwards were `check.py`
+`1450 passed, 218 skipped`, `check.py --profile test` `1647 passed, 21 skipped` and `verify_handoff.py` exit 0 (the
+final review's fix wave raised them to `1461` and `1658`). The plan's own arithmetic (1434 and 1628) was out of
+date by then, because the review rounds added tests. The live suite was the first to run 0013's SQL, and
+its four live tests passed on the first database run, the round trip down to 0012 and back included.
+
+**Problem.** Task 1 (the pin and the client) passed with seven minors. The pin script wrote the file before it
+validated the answer, so an invalid answer could have left a bad pin behind. It failed in three shapes, one of them a
+traceback that could carry the address of the Ollama server. It reached the client through a private call, a huge
+JSON integer escaped as an `OverflowError`, and the infinity case had no test. **Change.** The script validates first,
+and every failure but the refusal to replace a pin is one line, `PIN: <rule>, nothing written`; the probe goes through
+a public `dimension()`, an overflowing number is a malformed answer, and seven tests were added. **Problem.** Task 2
+(the comparison's statistics and the threshold rule) did not run the live gate its brief required. The review found
+`McNemar` returning `Any` under strict typing (`2**n`), a window figure that mixed windows and sections, and a crash on
+an empty window list. **Change.** The fix round ran the live gate, and it was green; `1 << n`, the figure counts
+windows, the empty list is guarded, and two tests were added. The threshold's margin was measured too: the nearest
+cases sit 0.0052 and 0.0097 from 0.68, and the figures are identical to six decimals with the vectors rounded to
+single precision.
+
+**Problem.** Task 3 (revision 0013) had a real bug that no test would have found by chance. pgvector computes the
+cosine in single precision, so finite components near 3e38 overflow to a NaN similarity. NaN is greater than 0.68 in
+PostgreSQL and sorts first, so such a vector would have been kept and returned as the best match. The reviewer
+reproduced it against the live database, and the new test failed before the fix. **Change.** The vector branch drops a
+section whose similarity is `'NaN'::float8` (and only the vector branch), a live test pins it, and the worker reads
+its own embedding back. The other minor was a long line. **Problem.** Task 4 (`embed`) had a refusal no test pinned:
+the planning phase that stops a run when a tenant already holds another model's embeddings. Deleting that phase would
+still have passed. It also checked the pin once at the start, so a model re-pulled between two tenants would have
+written the second tenant's vectors under the old digest, and a failure while building the client leaked a
+connection. **Change.** A two-tenant test with its failure shown, the pin checked again before each tenant's write
+with its own test, the connection closed, and the refusal's problem lines asserted. One thing was parked: the
+planning phase reads every chunk's full body only to count the chunks. On corpus-1's 69 chunks it changes nothing,
+and on a large corpus the plan pass would be slower.
+
+**Problem.** Task 5 (mcp-read's `vector_exact`) let a pin file that could not be read, by permission or by encoding,
+escape the envelope as an exception instead of an answer. Two branches had no test, no embedder at all and the
+shared 10-second budget, and nothing showed that a lexical search never contacts Ollama. **Change.** An unreadable
+pin now answers as a missing one (`UNSUPPORTED_MODE`, "no valid embedding pin"), the untested cases have tests, and
+the missing-pin message is exact. **Problem.** Task 6 (the live comparison and the report) said that the window
+experiment's forbidden-section check ran at threshold 0, and it ran at 0.68. The definition of done asks for recall
+with intervals, and recall was only a mean over cases. **Change.** The check now runs at threshold 0, which is
+stronger and what the report said (the JSON key is `forbidden_windows`, counting windows). Recall is also counted per
+expected section with Wilson intervals (31/31 against 29/31), every matched change is named (A08 and A21 regress on
+every-expected@5; B02 improves and A08 regresses on hit@3), precision is defined with its ceiling, and the as-of
+instant and the lexical minimum rank are asserted from their sources. The controller ruled that the two report files
+are committed in Task 6, not in the close-out.
+
+**Problem.** Task 7 (the documents) wrote two things the code does not do. It said the table of embeddings is read
+only by the search, but the worker also reads it, through its SELECT grant and for `embed`'s idempotency check, and
+the architecture document's model row did not match the new mcp-read edge to Ollama. Some error wording was not the
+code's own, and a note under ADR-0001 claimed the decision "was written before vector mode was designed", which
+nothing supports. **Change.** The statements say what the code does, the Ollama edge reads the same in every place,
+the error wording follows the code, and the unsupported sentence is gone.
+
+**Result.** At k = 5 over the 47 development queries, lexical found a labelled section in the top five for 27 of 27
+questions and vector for 26 of 27 (A08 is the miss). Recall over expected sections was 31/31 and 29/31. Of the 20
+questions with no permitted source, lexical answered 15 with nothing and vector 18 (B10, B13, B17 and B18 improve, A13
+regresses). No forbidden section reached either mode (0 of 122 rows and 0 of 87). The exact tests give p = 1.0 and
+p = 0.375, so the report claims no ranking. The vector threshold was tuned on these queries and the lexical one was
+not; the same rule applied to lexical gives 0.79 and 17 of 20, so part of the difference is the tuning. The rule chose
+0.68 again in the live run. The 300-word experiment came out as 8 windows, each a whole version, with hit@1 27/27 and
+MRR@5 1.0 at threshold 0, and the repeat-embedding check found a smallest cosine of 1.0.
+
+**Final review.** The whole-branch review found 0 Critical, 1 Important and 7 Minor, and the verdict was ready with
+fixes. **Problem.** The Important one was in the records, not the code. Erratum 107 and the docstring of `embed` said
+that a pin mismatch ends the command with nothing written. That is true before the first write, and false for the
+check this plan added before each tenant's write: a model re-pulled between two tenants stops the run after the
+first one committed, and the command names it. The code, the live test and `docs/retrieval.md` were right; the
+erratum would have become spec text that told the owner a mismatch never leaves rows. The Minors: a vector was
+checked for finiteness in double precision but stored and compared in single precision, so a broken model's huge
+components could be stored and then silently never returned; an unreadable pin file was handled in mcp-read only, and
+`embed` and the pin script printed a traceback; the architecture document's Downstream row missed the Ollama edge;
+the T18 note named the wrong endpoints and left two deferred items out; some lines ran past 120 characters; and the
+close-out commit's subject names the comparison report, which was committed in Task 6. **Change.** The erratum and
+the docstring now say what the code does. `checked()` refuses a component above 1e6 and a norm below 1e-6, with
+tests for each; the NaN filter stays as a second guard. The loader turns an unreadable or undecodable file into the
+one error all three callers already handle. The rest is text. The subject of the close-out commit stays as it is,
+because the branch's history is not rewritten; this section says where the report was committed. One item stays as
+debt: nothing on the read path compares the stored rows' digest with the pin, so an owner who edits the pin by hand
+without a re-embedding revision would get mixed-model answers. The first change of embedding model owns that check,
+no task exists for it yet, and the owner opens one when the change is planned.
+
+**Process.** Two slips with an interpreter and no script, neither of which ran code: Task 3's implementer typed a
+bare `python -`, which hangs, and was stopped; the close-out agent typed one `uv run python -` with an empty heredoc,
+which printed the interpreter's banner and exited, and the final fix wave's agent did the same once (the plan
+writer's `python3 -` is above). Two slips with the live
+gate: Task 1's dispatch told its implementer that no live tests were needed, so the controller ran them (1584 passed,
+21 skipped), and Task 2's implementer ran them only in the fix round. The standing rule against reading a script from
+standard input is in every dispatch.
+
+## 32. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.

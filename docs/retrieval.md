@@ -1,4 +1,4 @@
-# Retrieval: the governed corpus and the lexical baseline (T17)
+# Retrieval: the governed corpus, the lexical baseline (T17) and exact vector search (T18)
 
 Who this is for: whoever changes the corpus, ingests it, reads a search result, or compares another retrieval method
 with this one. The design is BUILD_SPEC §11, AM-20.2, AM-20.3 (`search_procedures_scoped`), AM-20.5 and AM-50 in
@@ -42,7 +42,12 @@ characters), the evidence ID is `<DOCUMENT_ID>:v<version>:<section>`, and the st
 SHA-256 covers (the lines after the heading up to the next one, blank edges stripped), with its character offsets
 `[start, end)` in the file. Sizes are measured as `[a-z0-9]+` words: corpus-1's 69 sections hold 45 to 119 words
 (median 77), well under BUILD_SPEC §11's initial 300-600-token proposal. No tokenizer is locked, so no token count
-is claimed; evaluating another window is part of T18's comparison.
+is claimed. T18's comparison evaluated the 300-word window as an experiment (adjacent sections of one version
+joined until at least 300 words; `reports/retrieval-comparison.md`). On corpus-1 it degenerates: every returnable
+version has 327-343 words, so each is one window, and k = 5 covers every window of either tenant; the experiment
+therefore compares whole-version embeddings with section embeddings, and its hit@5 and recall@5 measure only the
+threshold. The stored unit stays one chunk per section, because another unit would change the evidence IDs every
+citation and T41's labels name.
 
 ## Ingestion
 
@@ -82,23 +87,23 @@ the handle in a unit of its own.
 | Query | the OR of the query's own `english` lexemes, after every character outside `a-z` and `0-9` becomes a space |
 | Rank | `ts_rank_cd` with its default normalization, which is none: a longer query reaches a higher rank |
 | Ties | `evidence_id` ascending in byte order (`COLLATE "C"`, whatever the database's collation), so a retry cites the same evidence |
-| Threshold | rank greater than 0.25 (`app._min_rank()`, granted to nobody), chosen on the 47 development queries: the same queries measure it, so the baseline is a development figure, not a held-out one. Because the rank is not normalised the threshold depends on query length; tuning it is T18's, with the comparison |
+| Threshold | rank greater than 0.25 (`app._min_rank()`, granted to nobody), chosen on the 47 development queries: the same queries measure it, so the baseline is a development figure, not a held-out one. Because the rank is not normalised the threshold depends on query length. T18's comparison swept it over the recorded ranks and left it at 0.25; a relevance rule beyond it is T20's (erratum 102) |
 | Results | `limit` 1 to 8 (the worker asks for 3; the measurement uses 5); the excerpt is the whole section up to the contract's 8000 characters, and a cut one sets the envelope's `truncated` (revision 0012, T16; T17's definer cut at 500, so the 15 of corpus-1's 69 sections whose bodies run 504-669 characters, by `meta.json`'s offsets, now return in full; none reaches 8000, so `truncated` never fires on corpus-1; no rank changed, 0012's ranking text is 0011's) |
 | Asset type | the run's own, from asset-sim (T16): a caller may only repeat it; an asset asset-sim does not know leaves the caller's type or none |
 | Instant | `retrieved_at` is the database instant the effectiveness rule ran at (`search_procedures_scoped`'s own column since revision 0012), never the wall clock |
-| Vector mode | refused (`VECTOR_MODE_UNAVAILABLE`) until T18; mcp-read answers `vector_exact` with `UNSUPPORTED_MODE` first |
+| Vector mode | exact cosine search (T18, revision 0013): `mode = 'vector'` with the query's `search_query:` embedding, which mcp-read computes; the same tenant, lifecycle and asset filters (the same SQL text); see "Exact vector search" below |
 
 **How to read a score.** `ts_rank_cd` orders the sections of one query: a higher rank means more of the query's
 words, closer together, with heading words weighing ten times body words (one body occurrence adds about 0.1, one
 heading word about 1.0). It is not a probability, it is not
-comparable between two queries, and it is not comparable with T18's vector distances (BS:417). It never reaches the
-model or the tool result; the measurement records it.
+comparable between two queries, and it is not comparable with vector mode's cosine similarity (BS:417). It never
+reaches the model or the tool result; the measurement records it.
 
 **What it cannot do.** OR-matching returns any permitted section whose rank clears the minimum, so a question with
 no permitted source can still get sections; the measurement reports how often. SA:377 as written counts any returned
 effective chunk as sufficient, so it would not abstain on such a question; T20 must add a relevance criterion
-beyond it (for example a score or label-based sufficiency rule; erratum 102). The worker sends the user's whole message (up to
-500 characters) as the query.
+beyond it (for example a score or label-based sufficiency rule; erratum 102). The worker sends the user's whole
+message (up to 500 characters) as the query.
 
 ## The measurement
 
@@ -119,4 +124,90 @@ rule as the SQL, so that comparison alone is circular. The independent anchor is
 database test clock to that labelling instant (so the figures hold on any date; reset afterwards) and asserts that
 the permitted set it uses equals both `corpus.returnable` at that instant and the hand-written set. The report
 records `as_of`, the SHA-256 of the query file, the ceiling of precision@5 (the most it can be given the labels'
-size) and, for a proportion with no cases, no interval. T18 compares exact vector search against the same JSON.
+size) and, for a proportion with no cases, no interval. T18 compares exact vector search against the same queries
+(below).
+
+## Exact vector search (T18)
+
+**The model and its pin.** `nomic-embed-text` (Ollama `nomic-embed-text:latest`, 768 dimensions), pinned in
+`data/embedding-pins.json` (`{model, digest, dimension, ollama_version, probed_at}`, schema
+`schemas/embedding-pins.schema.json`), the generation model's `data/model-pins.json` untouched (erratum 107). The
+digest is the bare 64-hex value `/api/tags` reports (`/api/show` carries none). `uv run python
+scripts/pin_embedding_model.py` writes the file from the running Ollama (`/api/version`, `/api/tags`, one
+`/api/embed` for the dimension) and invents nothing. It validates the pin before it writes anything, and every
+failure but one has one shape: a single `PIN: <rule>, nothing written` line and exit status 1 (Ollama unreachable, the
+model missing, an answer that is not one usable vector, another dimension than 768, a pin that would not validate).
+The exception is the refusal to replace a pin, which prints its own line (`PIN: refused, nothing written: …`) that
+explains itself after the colon, with the same exit status. It refuses, writing nothing, to replace a pin of another
+model, digest or dimension: the stored embeddings were made
+with the pinned model, and a new pin alone would let mcp-read compare a new model's query vectors with the old
+model's document vectors. A model change is a new revision that removes the stored embeddings (or moves them aside);
+after that the pin is replaced (the script refuses while the old pin exists, so the revision's commit deletes or
+replaces `data/embedding-pins.json` as a reviewed change) and `skeleton.py embed` runs again. The refusal guards
+against a silent re-pin by the script; a hand edit of the committed pin file is a reviewed repository change, which
+the refusal does not prevent. Re-running the script for the same model only refreshes `ollama_version` and
+`probed_at`.
+
+**Embedding the corpus.** After `ingest`, `uv run python scripts/skeleton.py embed` embeds every stored chunk that has
+none, as the role `worker`, into the database `OPS_PG_DB` names (default `ops`): it checks the pin against Ollama
+(`OPS_OLLAMA_URL`, default `http://127.0.0.1:11434`) before writing, sends batches of 16 to `/api/embed`, accepts
+only 768 finite numbers per input, none above 1e6 in magnitude and a norm of at least 1e-6 (pgvector stores and
+sums in single precision, so larger or smaller values could overflow or vanish), and writes one transaction per
+tenant. A chunk's text is exactly
+`search_document: ` + its heading + a blank line + its body (the prefix nomic-embed-text is trained with, SA:645), and
+the row keeps that text's SHA-256 (`input_sha256`) beside the vector. It prints `EMBED: <tenant>: n new, n present`;
+a repeat writes nothing, and two runs at the same moment neither fail nor write a row twice (`ON CONFLICT DO
+NOTHING`). It exits 1 and writes nothing when the pin is missing or does not match the installed model, or a tenant
+already holds embeddings of another digest. It asks for the pin again before the write of each tenant that has
+something to write, after that tenant's vectors have come back, so a model re-pulled while the run was going stores
+nothing under the pinned digest. A failure while writing (Ollama gone, an answer that is not the pinned vectors,
+or that second check finding another model) exits 1 and names the tenants already written (`EMBED: failed (…)
+after writing alpha`); a re-run completes the rest. Every stored chunk is embedded, whatever its status: lifecycle is decided at query time. Chunks ingested
+later need another `embed` run; until then vector mode refuses (below) and lexical mode is unaffected.
+
+| Setting | Value |
+|---|---|
+| Store | `app.embeddings`, one row per chunk (`tenant_id`, `evidence_id`), model, digest, dimension 768, `input_sha256`, `public.vector(768)`; inserted and read by `worker` (the embed command), read by `app_definer` (the search) (AM-20.2's corpus cells), ENABLE + FORCE RLS |
+| Query text | `search_query: ` + the query (mcp-read computes it, SA:348) |
+| Filters | the lexical branch's tenant, lifecycle and asset filters, the same SQL text byte for byte |
+| Distance | cosine (`<=>`); `rank` = `1 - distance`, the cosine similarity |
+| Index | none: every permitted chunk is scored, so the order is exact (a live test compares it with a brute-force ranking); BS:242's "index version" is model + digest + dimension + prefix + window |
+| Threshold | similarity greater than 0.68 (`app._min_similarity()`, granted to nobody), the largest value on a 0.01 grid at which vector hit@5 over the labelled development cases equals its value at 0: a rule fixed before measuring, applied to the development queries, so a development figure |
+| Ties | `evidence_id` ascending in byte order (`COLLATE "C"`), as lexical |
+| NaN | a section whose similarity is NaN is never kept. pgvector computes the cosine in single precision, so finite but extreme components can overflow in it where a double-precision norm does not, and NaN compares greater than every number and would sort first. The embedding client refuses components above 1e6 and a norm below 1e-6, so only a row written around it (a superuser insert) can reach this; such a permitted row is dropped, not refused (debt list) |
+| Completeness | a permitted chunk with no embedding refuses the call (`EMBEDDINGS_INCOMPLETE`): nothing is left out silently |
+| Arguments | `lexical` takes no embedding; `vector` one non-zero embedding of exactly 768 dimensions; the text query is required and bounded in both; anything else is `BAD_ARGUMENT` |
+| Results | the same keys, excerpt bound, instant and corpus version as lexical; the tool reports `retrieval_mode` `vector_exact` |
+
+**How mcp-read answers a vector search.** After the handle, the run's scope and its asset type, and before the
+definer, mcp-read reads the pin and checks its digest against Ollama's `/api/tags`, then embeds `search_query: ` +
+the query with `/api/embed`, both within one 10-second budget and outside any transaction. The pin is read on every
+call, so a model swapped under a running server is refused, not used. A pin that is missing, unreadable or malformed,
+or an installed model that is not the pinned one, is `UNSUPPORTED_MODE` ("no valid embedding pin" for the first
+three). No embedder (before the server's start-up has finished), Ollama unreachable, a 5xx or the shared 10 seconds
+running out is `UNAVAILABLE` (retryable). An answer it cannot use (not one vector of 768 finite numbers within the
+bounds above; a status other than 200 that is not a 5xx; a body that is not a JSON object; a tags answer without a
+model list) is `UPSTREAM_INVALID`. An invalid handle is refused before Ollama is asked anything, and lexical mode
+never contacts it.
+
+**How to read a similarity.** Cosine similarity orders the sections of one query by the angle between their
+embeddings; it is not a probability, it is not comparable between queries in any calibrated way, and it is not
+comparable with `ts_rank_cd` (BS:417). Like the lexical rank it never reaches the model or the tool result.
+
+**The comparison.** `tests/e2e/test_retrieval_comparison_live.py` runs the 47 development queries through the definer
+in both modes at the labelling instant and writes `reports/retrieval-comparison.md` and `.json`: both modes' metrics at
+k = 5 and 3, with the denominators and Wilson intervals of every proportion (recall counted over the labelled cases'
+mean and also per expected section, found over expected), precision defined as the top-k hits over k with its
+ceiling (the most the labels allow), per category, every case's two answers, the questions each mode gained or lost
+(every change between the modes is named; the exact McNemar tests apply to hit@5 and to the no-source cases answered
+with nothing, and no ranking claim is made without p < 0.05, which with this few cases a test rarely reaches), both
+threshold sweeps (with what lexical would give under the vector's rule, since only the vector threshold was tuned),
+the window experiment (stated as what it measures on corpus-1; its forbidden-window check is taken at threshold 0, so
+that every window within the top 5 is examined), a repeat-embedding check and the settings. It asserts that no
+forbidden section reached either mode and that the lexical answers are T17's, answer for answer.
+
+**What it measured** (the report holds the figures and their intervals; read them there, not here). At k = 5 over
+the 27 labelled cases lexical found a labelled section in the top 5 in all 27 and vector in 26 (the miss is A08);
+among the 20 no-source cases lexical answered 15 with nothing and vector 18. Neither difference reaches p < 0.05, so
+the report claims no ranking. The vector figure on the no-source cases is partly the tuning: the same rule applied to
+lexical's recorded ranks chooses a threshold of 0.79 and gives 17 of 20. No forbidden section reached either mode.

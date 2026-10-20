@@ -6,9 +6,10 @@ names its tenant, its category and either the permitted sections that answer it 
 permitted source exists, so nothing relevant may be cited). The live test tests/e2e/test_retrieval_baseline_live.py
 calls `search_procedures_scoped` as `mcp_read` for every query and hands the ranked evidence IDs to `evaluate`; the
 pure functions here turn them into case-level metrics with Wilson 95% intervals and denominators, and render
-reports/retrieval/t17-lexical-baseline.md and .json. T18 measures exact vector search on the same queries against the
-same JSON. A returned section that the oracle (`ops_core.corpus.returnable`) does not permit for the query's tenant
-at the measurement instant is "forbidden": another tenant's, superseded, expired, revoked or draft.
+reports/retrieval/t17-lexical-baseline.md and .json. T18's comparison (scripts/retrieval_comparison.py) runs the same
+queries in both modes and pins a digest of this report's committed per-case answers. A returned section that the
+oracle (`ops_core.corpus.returnable`) does not permit for the query's tenant at the measurement instant is
+"forbidden": another tenant's, superseded, expired, revoked or draft.
 """
 
 from __future__ import annotations
@@ -45,7 +46,8 @@ SETTINGS: Mapping[str, Any] = {
     "rank": "ts_rank_cd(document_vector, query), default normalization (none: a longer query scores higher)",
     "tie_break": 'evidence_id ascending in byte order (COLLATE "C")',
     "minimum_rank": "greater than 0.25 (app._min_rank()), chosen on these same 47 development queries, so the "
-    "baseline is a development figure, not a held-out one; tuning it is T18's",
+    "baseline is a development figure, not a held-out one; T18 swept it and kept it "
+    "(reports/retrieval-comparison.md)",
     "k": K,
     "chunk": "one chunk per ## section; size measured as [a-z0-9]+ words",
     "filters": "tenant from the handle; latest state approved; effective at app.current_time(); not retired (a later "
@@ -81,7 +83,11 @@ class Outcome:
     @property
     def relevant(self) -> int:
         """How many expected sections are in the top K."""
-        return len(set(self.ids[:K]) & set(self.case.expected))
+        return self.relevant_at(K)
+
+    def relevant_at(self, k: int) -> int:
+        """How many expected sections are in the top `k` (T18 also reports k = 3, the worker's limit)."""
+        return len(set(self.ids[:k]) & set(self.case.expected))
 
 
 def load_queries(path: Path) -> list[Case]:
@@ -140,22 +146,26 @@ def proportion(successes: int, n: int) -> dict[str, Any]:
     }
 
 
-def summarize(outcomes: Sequence[Outcome]) -> dict[str, Any]:
-    """Case-level metrics at K with denominators: recall, precision and reciprocal rank as means over the answerable
-    cases; hit@K, every-expected@K, the expect_none cases answered with nothing, and the cases free of forbidden
-    sections as proportions with Wilson intervals; the forbidden rate over every returned row."""
+def summarize(outcomes: Sequence[Outcome], k: int = K) -> dict[str, Any]:
+    """Case-level metrics at `k` (default K) with denominators: recall, precision and reciprocal rank as means over
+    the answerable cases; hit@k, every-expected@k, the expect_none cases answered with nothing in the top `k`, and the
+    cases free of forbidden sections in the top `k` as proportions with Wilson intervals; the forbidden rate over the
+    rows in the top `k` (the T17 report asks for 5 rows, so at the default k these are every returned row)."""
     answerable = [o for o in outcomes if o.case.expected]
     nones = [o for o in outcomes if o.case.expect_none]
 
     def reciprocal(o: Outcome) -> float:
-        ranks = [i for i, e in enumerate(o.ids[:K], start=1) if e in o.case.expected]
+        ranks = [i for i, e in enumerate(o.ids[:k], start=1) if e in o.case.expected]
         return 1 / ranks[0] if ranks else 0.0
 
     def mean(values: list[float]) -> float | None:
         return round(sum(values) / len(values), 4) if values else None
 
-    rows = sum(len(o.returned) for o in outcomes)
-    forbidden_rows = sum(len(o.forbidden) for o in outcomes)
+    def forbidden(o: Outcome) -> int:
+        return sum(e in o.forbidden for e in o.ids[:k])
+
+    rows = sum(len(o.ids[:k]) for o in outcomes)
+    forbidden_rows = sum(forbidden(o) for o in outcomes)
     categories = {}
     for category in CATEGORIES:
         members = [o for o in outcomes if o.case.category == category]
@@ -164,29 +174,32 @@ def summarize(outcomes: Sequence[Outcome]) -> dict[str, Any]:
         categories[category] = {
             "n": len(members),
             "hit_at_k": proportion(
-                sum(o.relevant > 0 for o in members if o.case.expected), sum(1 for o in members if o.case.expected)
+                sum(o.relevant_at(k) > 0 for o in members if o.case.expected),
+                sum(1 for o in members if o.case.expected),
             ),
             "none_answered_empty": proportion(
                 sum(not o.returned for o in members if o.case.expect_none),
                 sum(1 for o in members if o.case.expect_none),
             ),
-            "forbidden_rows": sum(len(o.forbidden) for o in members),
+            "forbidden_rows": sum(forbidden(o) for o in members),
         }
     return {
-        "k": K,
+        "k": k,
         "cases": len(outcomes),
         "answerable": len(answerable),
         "expect_none": len(nones),
-        "recall_at_k": mean([o.relevant / len(o.case.expected) for o in answerable]),
-        "precision_at_k": mean([o.relevant / K for o in answerable]),  # the standard P@k: over k, not over rows
-        # The most P@k can be: a case with m expected sections has at most min(m, K) relevant rows among K. With
+        "recall_at_k": mean([o.relevant_at(k) / len(o.case.expected) for o in answerable]),
+        "precision_at_k": mean([o.relevant_at(k) / k for o in answerable]),  # the standard P@k: over k, not over rows
+        # The most P@k can be: a case with m expected sections has at most min(m, k) relevant rows among k. With
         # recall 1.0 the two are equal, so a low P@k then is the labels' size, not the ranker's fault.
-        "precision_ceiling_at_k": mean([min(len(o.case.expected), K) / K for o in answerable]),
+        "precision_ceiling_at_k": mean([min(len(o.case.expected), k) / k for o in answerable]),
         "mrr_at_k": mean([reciprocal(o) for o in answerable]),
-        "hit_at_k": proportion(sum(o.relevant > 0 for o in answerable), len(answerable)),
-        "all_expected_at_k": proportion(sum(o.relevant == len(o.case.expected) for o in answerable), len(answerable)),
+        "hit_at_k": proportion(sum(o.relevant_at(k) > 0 for o in answerable), len(answerable)),
+        "all_expected_at_k": proportion(
+            sum(o.relevant_at(k) == len(o.case.expected) for o in answerable), len(answerable)
+        ),
         "none_answered_empty": proportion(sum(not o.returned for o in nones), len(nones)),
-        "cases_without_forbidden": proportion(sum(not o.forbidden for o in outcomes), len(outcomes)),
+        "cases_without_forbidden": proportion(sum(not forbidden(o) for o in outcomes), len(outcomes)),
         "forbidden_rows": {"forbidden": forbidden_rows, "returned": rows},
         "by_category": categories,
     }
@@ -264,7 +277,8 @@ def markdown(doc: Mapping[str, Any]) -> str:
     words = doc["chunk_words"]
     sizes = (
         f"Chunks: {words['n']} sections; words per section (`[a-z0-9]+`) min {words['min']}, median "
-        f"{words['median']}, max {words['max']}. Evaluating another chunk window is T18's comparison."
+        f"{words['median']}, max {words['max']}. T18's comparison evaluated another window "
+        "(reports/retrieval-comparison.md)."
     )
     lines = [
         "# T17 lexical retrieval baseline",

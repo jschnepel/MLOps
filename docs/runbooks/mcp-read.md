@@ -37,12 +37,13 @@ checked in this order; the first failure decides the answer.
 
 ## Starting it
 
-`python -m ops_mcp_read` (or `scripts/skeleton.py up`) needs the database at revision 0012: at start it refuses when
+`python -m ops_mcp_read` (or `scripts/skeleton.py up`) needs the database at revision 0013: at start it refuses when
 `app.test_clock` exists outside the test profile, when `app._resolve_handle` lacks 0009's job binding, when
-`app.search_procedures_scoped` (0011) is missing, and when `app.asset_scope` or the search's `retrieved_at` (0012) is
-missing ("… predates this service; run scripts/skeleton.py migrate for this profile"). It also reads its own
-workload secret (`kc_client_secret_ops_mcp_read`) at start, for asset-sim. mcp-write makes the 0009 check at its own
-start. The search answers from the governed corpus, so a database that was never ingested (`scripts/skeleton.py
+`app.search_procedures_scoped` (0011) is missing, when `app.asset_scope` or the search's `retrieved_at` (0012) is
+missing, and when the search has no vector branch (0013) ("… predates this service; run scripts/skeleton.py migrate
+for this profile"). It contacts no Ollama at start: the embedding pin is checked on each vector call. It also reads
+its own workload secret (`kc_client_secret_ops_mcp_read`) at start, for asset-sim. mcp-write makes the 0009 check at
+its own start. The search answers from the governed corpus, so a database that was never ingested (`scripts/skeleton.py
 ingest`) answers every search with no results and `corpus_version` `none`. Readiness (`/health/ready`) needs the
 realm's signing keys and the database; asset-sim is a dependency of a call, not of readiness.
 
@@ -52,8 +53,8 @@ Each tool advertises exactly its committed input schema (`schemas/tools/<tool>.i
 compares what it is shown with the same file and refuses to call a server that lists another tool set (R029). It also
 refuses an answer over 256 KiB (measured as the UTF-8 JSON of the structured result), one that fails the committed
 result contract, and any other failure inside the read session: each is the same failed run, "retrieval failed". Every
-call resolves the handle and checks the tool in one committed unit, then (a `vector_exact` search stops after the
-first) reads the run's scope through `app.asset_scope` in a second (the handle again, and the run's requester must
+call resolves the handle and checks the tool in one committed unit, then reads the run's scope through
+`app.asset_scope` in a second (the handle again, and the run's requester must
 still hold an active requester membership in the run's tenant: R028); a handle refused at any unit, or a requester who
 lost the membership, is the same `INVALID_HANDLE` envelope. The tenant, the asset and the interval come from the run,
 never from an argument.
@@ -71,14 +72,25 @@ never from an argument.
   `limit` alerts, all of the run's asset and interval and none after `as_of`. The envelope's `observed_at` is `as_of`
   (to the second); for alerts, `truncated` is true exactly when `next_cursor` is set. The rules asset-sim answers by
   are in `docs/runbooks/asset-sim.md`.
-- `search_procedures(query 1-500, limit 1-8, mode[, asset_type])`: `vector_exact` is refused `UNSUPPORTED_MODE`
-  after the handle resolution and before anything else (T18). mcp-read asks asset-sim for the run's asset type and
+- `search_procedures(query 1-500, limit 1-8, mode[, asset_type])`: `lexical` or `vector_exact` (T18). mcp-read asks
+  asset-sim for the run's asset type and
   searches that type (documents of that family or of none), whether or not the caller named one; a caller's
   `asset_type` may only repeat it, compared exactly, case included (`ASSET_TYPE_OUT_OF_SCOPE`). Only when asset-sim
   does not know the run's asset does the caller's `asset_type` stand, or, with none given, any asset type. A third
   unit calls `app.search_procedures_scoped`, which returns the instant it decided permission at: every result's
   `retrieved_at` and the envelope's `observed_at` are that instant. An excerpt is the whole section up to 8000
   characters, and a cut one sets `truncated`. The settings and how to read the ranking are in `docs/retrieval.md`.
+  For `vector_exact`, after the asset type and before the third unit, mcp-read reads `data/embedding-pins.json`,
+  checks the pinned digest against Ollama's `/api/tags` (`OPS_OLLAMA_URL`) and embeds `search_query: ` + the query
+  with `/api/embed`, both within one 10-second budget and outside any transaction, then calls the definer with
+  `mode='vector'` and that embedding; the answer says `retrieval_mode` `vector_exact`. It asks Ollama nothing else
+  and never a generation. A missing, unreadable or malformed pin, or an installed model that is not the pinned one,
+  is `UNSUPPORTED_MODE` (`retryable: false`); Ollama unreachable, slow (the 10 seconds spent), failing (5xx) or not
+  configured is `UNAVAILABLE` (`retryable: true`); an answer it cannot use (not 768 finite numbers, none above 1e6
+  in magnitude, with a norm of at least 1e-6; a status other than 200 that is not a 5xx; a body that is not a JSON
+  object; a tags answer without a model list) is `UPSTREAM_INVALID`; a permitted section without an embedding is
+  `REFUSED` with `EMBEDDINGS_INCOMPLETE`. An invalid handle is refused
+  before any of this, and a `lexical` search never contacts Ollama.
 
 ## Variables
 
@@ -88,6 +100,7 @@ never from an argument.
 | `MCP_READ_RESOURCE_URL` | `http://mcp-read:8081/mcp` | its token audience and resource URL, not the listen URL |
 | `OPS_MCP_READ_URL` | `http://127.0.0.1:8081/mcp` | where the worker calls it |
 | `OPS_ASSET_SIM_URL` | `http://127.0.0.1:8091` | where it calls asset-sim (T16) |
+| `OPS_OLLAMA_URL` | `http://127.0.0.1:11434` | where it asks the embedding model for `/api/tags` and `/api/embed` (T18) |
 
 ## Looking at it
 
@@ -117,6 +130,14 @@ SELECT state FROM app.runs WHERE run_id = '<run>';
   retrieval ends FAILED ("retrieval failed"); honouring `retryable` with a bounded re-queue is T20's. If the realm's
   `ops-mcp-read` client lost its `asset-sim` audience, asset-sim answers 403 instead, and the tools say
   `UPSTREAM_INVALID`.
+- **Every `vector_exact` search answers `UNSUPPORTED_MODE`**: `data/embedding-pins.json` is missing, unreadable or
+  malformed, or the installed `nomic-embed-text` is another build than the pin (`curl -s
+  http://127.0.0.1:11434/api/tags` shows its digest). Do not edit the pin by hand: a model change is a re-embedding
+  (`docs/retrieval.md`).
+- **`vector_exact` answers `REFUSED` `EMBEDDINGS_INCOMPLETE`**: chunks were ingested and not embedded; run
+  `uv run python scripts/skeleton.py embed` (dev database: the owner's step). Lexical searches are unaffected.
+- **`vector_exact` answers `UNAVAILABLE`**: Ollama is not answering on `OPS_OLLAMA_URL` within the 10 seconds (or
+  asset-sim is down, as for every search); the worker does not use vector mode today.
 - **A handle in a log line** is a bug (SA:566): the live test `tests/e2e/test_mcp_read_t15_live.py` captures every
   record of the server, the SDK, uvicorn and the client at DEBUG, with no redaction filter, and fails if one holds the
   handle. Never run mcp-read with uvicorn's `trace` level: its message logger writes every request's headers, the
@@ -124,8 +145,9 @@ SELECT state FROM app.runs WHERE run_id = '<run>';
 
 ## Not here yet
 
-Vector search and the `search_query:` embedding (T18), the worker's own asset reads and the evidence bundle (T20),
-recording the status observation for the grant's freshness check (T21), TLS and container host names (T30). The
+The worker's choice of vector mode (T20, T25), the worker's own asset reads and the evidence bundle (T20),
+recording the status observation for the grant's freshness check (T21), TLS, container host names and the route
+from a containerised mcp-read to Ollama (T30). The
 worker's check of the tool list sees only what the SDK keeps: the SDK drops a tool whose `x-mcp-header` annotation is
 invalid before the check runs, and a check on the raw list waits for T30.
 mcp-write's door, with the same verifier rules, is `docs/runbooks/mcp-write.md` (T47).

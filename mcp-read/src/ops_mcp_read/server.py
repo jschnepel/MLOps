@@ -14,8 +14,13 @@ envelope. Three tools (T16):
   asset and fixed interval only (`ASSET_OUT_OF_SCOPE`, `INTERVAL_OUT_OF_SCOPE`), and validate asset-sim's data as a
   whole tool result before returning it (`UPSTREAM_INVALID`, ruling 15).
 - `search_procedures` answers from the governed corpus through `search_procedures_scoped` (T17); mcp-read reads no
-  file. It reads the run's scope the same way and asks asset-sim for the run's asset type, which it passes to the
-  definer: a caller's `asset_type` may only repeat it (`ASSET_TYPE_OUT_OF_SCOPE`, ruling 12).
+  corpus file. It reads the run's scope the same way and asks asset-sim for the run's asset type, which it passes to
+  the definer: a caller's `asset_type` may only repeat it (`ASSET_TYPE_OUT_OF_SCOPE`, ruling 12). In `vector_exact`
+  mode (T18, Plan N ruling 4) it then checks the embedding pin against Ollama and computes the query's
+  `search_query:` embedding itself (SA:348), and only then asks the definer with `mode='vector'` (erratum 3): a
+  missing or mismatched pin is `UNSUPPORTED_MODE`, an unreachable model `UNAVAILABLE` (retryable), a malformed
+  answer `UPSTREAM_INVALID`. mcp-read asks Ollama for `/api/tags` and `/api/embed` with the embedding model only,
+  never for a generation (erratum 108).
 """
 
 from __future__ import annotations
@@ -36,7 +41,7 @@ from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.tools.base import Tool
-from ops_core import persistence, redaction, settings, tool_contracts
+from ops_core import embeddings, model_pins, persistence, redaction, settings, tool_contracts
 from ops_core.jobs import Tool as ToolName
 from ops_core.mcp_protocol import MCP_PATH, ProtocolVersionGuard
 from ops_core.settings import Role
@@ -77,7 +82,8 @@ def stamp(value: datetime) -> str:
 
 
 def tool_error(code: str, message: str, *, retryable: bool = False) -> dict[str, Any]:
-    """The `error` object of an envelope; only an unavailable asset-sim is worth a retry (ruling 15)."""
+    """The `error` object of an envelope; only an unavailable upstream (asset-sim, the embedding model) is worth a
+    retry (ruling 15)."""
     return {"code": code, "message": message, "retryable": retryable}
 
 
@@ -102,12 +108,14 @@ def envelope(
     }
 
 
-def search_response(found: persistence.Procedures) -> ToolResult:
+def search_response(
+    found: persistence.Procedures, retrieval_mode: Literal["lexical", "vector_exact"] = "lexical"
+) -> ToolResult:
     """The tool's answer from what `search_procedures_scoped` returned; database-free so the contract test can validate
     it. The rank stays behind: the contract has no score, and the model never sees one (docs/retrieval.md). Every
     `retrieved_at` and the envelope's `observed_at` are the instant the definer decided permission at, never the wall
     clock (Plan M ruling 3, Plan L final review M4), and a section cut at the contract's bound sets `truncated`
-    (ruling 11)."""
+    (ruling 11). `retrieval_mode` is the mode that actually ran (Plan N ruling 16)."""
     retrieved_at = stamp(found.retrieved_at)
     results = [
         {
@@ -124,7 +132,7 @@ def search_response(found: persistence.Procedures) -> ToolResult:
     ]
     return envelope(
         "search_procedures",
-        data={"results": results, "retrieval_mode": "lexical", "corpus_version": found.corpus_version},
+        data={"results": results, "retrieval_mode": retrieval_mode, "corpus_version": found.corpus_version},
         observed_at=found.retrieved_at,
         truncated=found.truncated,
     )
@@ -218,11 +226,13 @@ def contract_tool(fn: Any) -> Tool:
 
 @dataclass
 class State:
-    """Process-wide dependencies the tools and the app share; `session` and `assets` are filled at startup."""
+    """Process-wide dependencies the tools and the app share; `session`, `assets` and `embedder` are filled at
+    startup."""
 
     session: persistence.Session | None
     verifier: Verifier
     assets: assets.AssetSim | None = None
+    embedder: embeddings.Embedder | None = None  # T18: the query embedding (Plan N ruling 4)
 
 
 @dataclass(frozen=True)
@@ -289,6 +299,26 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         error = tool_error("UNAVAILABLE", "asset-sim is not configured", retryable=True)
         return envelope(tool.value, error=error, observed_at=scope.as_of)
 
+    async def query_embedding(query: str) -> embeddings.Vector | embeddings.EmbeddingError:
+        """The query's `search_query:` embedding with the pinned model, or the failure to answer with. The pin is
+        read and checked against Ollama on every call (Plan N ruling 3), so a model swapped under a running server is
+        refused, not used. One 10-second budget for the check and the embedding together."""
+        if state.embedder is None:  # only before the lifespan ran
+            return embeddings.Unavailable("the embedding model is not configured")
+        try:
+            pins = model_pins.load_embedding_pins(embeddings.PINS)
+        except (model_pins.ModelPinsError, OSError, ValueError):  # unreadable or undecodable: as a missing pin
+            return embeddings.PinMismatch("no valid embedding pin")
+        try:
+            async with asyncio.timeout(embeddings.TIMEOUT_SECONDS):
+                await state.embedder.verify(pins)
+                (vector,) = await state.embedder.embed([embeddings.query_text(query)], pins)
+        except embeddings.EmbeddingError as exc:
+            return exc
+        except TimeoutError:
+            return embeddings.Unavailable("the embedding model did not answer in time")
+        return vector
+
     async def get_asset_status(
         asset_id: Annotated[str, Field(max_length=32, pattern=ASSET_ID)],
         ctx: Context,
@@ -352,17 +382,12 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         # (Plan L ruling 11); the advertised schema is the committed file.
         asset_type: Annotated[str, Field(min_length=1, max_length=40)] = "",
     ) -> ToolResult:
-        """Lexical search over the calling run's tenant's approved, effective procedure sections of the run's asset
-        type (AM-15 read tool), through `search_procedures_scoped` (T17, T16)."""
+        """Lexical or exact vector search over the calling run's tenant's approved, effective procedure sections of
+        the run's asset type (AM-15 read tool), through `search_procedures_scoped` (T17, T16, T18)."""
         name = ToolName.SEARCH_PROCEDURES
-        caller = await resolve(name, ctx)
+        caller = await resolve(name, ctx)  # the handle first: an invalid handle never reaches Ollama (ruling 14)
         if not isinstance(caller, Caller):
             return caller
-        if mode != "lexical":
-            # The handle first, then the mode: an invalid handle never learns what the server supports (ruling 14).
-            # TODO(T18): translate vector_exact to mode=vector and compute the nomic `search_query:` embedding once
-            # T18 stores embeddings (erratum 3; Plan M ruling 1, erratum 103).
-            return envelope(name.value, error=tool_error("UNSUPPORTED_MODE", "vector_exact arrives with T18"))
         scope = await scope_of(name, caller)
         if not isinstance(scope, persistence.AssetScope):
             return scope
@@ -378,6 +403,14 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
         if asset_type and run_type is not None and asset_type != run_type:
             error = tool_error("ASSET_TYPE_OUT_OF_SCOPE", "only the run's own asset type may be searched")
             return envelope(name.value, error=error, observed_at=scope.as_of)
+        embedding: embeddings.Vector | None = None
+        if mode == "vector_exact":
+            # After the scope and the asset type, before the third unit (Plan N ruling 4): outside any transaction.
+            computed = await query_embedding(query)
+            if isinstance(computed, embeddings.EmbeddingError):
+                error = tool_error(computed.code, str(computed), retryable=computed.retryable)
+                return envelope(name.value, error=error, observed_at=scope.as_of)
+            embedding = computed
         assert state.session is not None  # resolve() answered only with a session
         # A third unit (erratum 80): the definer resolves the same handle again, so a handle released in between is
         # refused here too, and the tenant comes from the handle, never an argument.
@@ -390,13 +423,15 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
                     query=query,
                     asset_type=run_type or asset_type or None,
                     limit=limit,
+                    mode="lexical" if embedding is None else "vector",  # erratum 3: the SQL's name for vector_exact
+                    embedding=embedding,
                 )
         except persistence.HandleRejected as exc:
             # The scope is known by now, so these refusals carry its database instant like the asset tools' do.
             return envelope(name.value, error=tool_error("INVALID_HANDLE", str(exc)), observed_at=scope.as_of)
         except persistence.Refused as exc:
             return envelope(name.value, error=tool_error("REFUSED", exc.code), observed_at=scope.as_of)
-        return search_response(found)
+        return search_response(found, mode)
 
     return MCPServer(
         name="mcp-read",
@@ -424,6 +459,7 @@ def build_app(server: MCPServer, state: State) -> Starlette:
                 await persistence.assert_function_text(conn, *persistence.GOVERNED_CORPUS)  # 0011 (T17)
                 await persistence.assert_function_text(conn, *persistence.ASSET_SCOPE)  # 0012 (T16)
                 await persistence.assert_function_text(conn, *persistence.SEARCH_INSTANT)  # 0012 (T16)
+                await persistence.assert_function_text(conn, *persistence.VECTOR_SEARCH)  # 0013 (T18)
             except BaseException:  # a failed start must leak no connection, and a re-entered lifespan re-asserts
                 await conn.close()
                 raise
@@ -432,6 +468,8 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         try:
             if state.assets is None:  # inside the try: a missing secret file must close the connection too
                 state.assets = assets.HttpAssetSim.from_settings()  # mcp-read's own token (rulings 6 and 8)
+            if state.embedder is None:  # no network at start: the pin is checked on each vector call
+                state.embedder = embeddings.OllamaEmbedder.from_settings()
             if not state.verifier.ready:  # inside the try: a failed JWKS load must close the connection too
                 await state.verifier.load_keys()
             async with mcp_app.router.lifespan_context(mcp_app):
@@ -439,11 +477,18 @@ def build_app(server: MCPServer, state: State) -> Starlette:
         finally:
             # Nested, so a close that raises cannot leave the other open; a closed client is never left in the state.
             try:
-                if state.assets is not None:
-                    try:
-                        await state.assets.aclose()
-                    finally:
-                        state.assets = None
+                try:
+                    if state.assets is not None:
+                        try:
+                            await state.assets.aclose()
+                        finally:
+                            state.assets = None
+                finally:
+                    if state.embedder is not None:
+                        try:
+                            await state.embedder.aclose()
+                        finally:
+                            state.embedder = None
             finally:
                 await state.session.conn.close()
 

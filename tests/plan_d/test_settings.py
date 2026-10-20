@@ -83,4 +83,6 @@ def test_keycloak_and_service_urls_default_to_the_dev_stack(secrets: Path, monke
     assert u.incident_sim == "http://127.0.0.1:8090"
     monkeypatch.delenv("OPS_ASSET_SIM_URL", raising=False)
     assert settings.urls().asset_sim == "http://127.0.0.1:8091"  # T16: mcp-read -> asset-sim
+    monkeypatch.delenv("OPS_OLLAMA_URL", raising=False)
+    assert settings.urls().ollama == "http://127.0.0.1:11434"  # T18: mcp-read and embed -> loopback Ollama
     assert not hasattr(settings, "fixtures_dir")  # T17: no service reads the delivered fixtures any more

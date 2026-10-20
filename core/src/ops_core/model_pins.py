@@ -1,4 +1,5 @@
-"""Model pins (`data/model-pins.json`, AM-31): the digest the worker must see from Ollama at warm-up, or fail closed.
+"""Model pins (`data/model-pins.json`, AM-31): the digest the worker must see from Ollama at warm-up, or fail closed;
+and the embedding model's own pin (`data/embedding-pins.json`, T18), which `skeleton.py embed` and mcp-read check.
 
 The digest is the bare 64-hex value Ollama reports in `/api/tags` (no `sha256:` prefix), exactly as `scripts/probe.py`
 writes it; one canonical form keeps the T19 comparison a plain string equality.
@@ -8,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, StringConstraints, ValidationError
 
@@ -54,3 +55,40 @@ def load_model_pins(path: Path) -> ModelPins:
         return ModelPins.model_validate_json(text)
     except ValidationError as exc:
         raise ModelPinsError(f"model pins file is malformed: {path}: {exc}") from exc
+
+
+class EmbeddingPins(BaseModel):
+    """`data/embedding-pins.json` (T18, Plan N ruling 3, erratum 107): the embedding model's pin, a sibling of the
+    generation model's. Strict as `ModelPins`, plus the dimension, which must be the 768 that `app.embeddings` and
+    `search_procedures_scoped` hold (SA:461)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    model: NonEmpty
+    digest: Digest
+    dimension: Literal[768]
+    ollama_version: NonEmpty
+    probed_at: AwareDatetime
+
+
+def load_embedding_pins(path: Path) -> EmbeddingPins:
+    """Read and validate the embedding pins file, with `load_model_pins`'s strictness and messages.
+
+    Raises:
+        ModelPinsError: the file is missing, cannot be read or decoded, is not JSON, or does not match `EmbeddingPins`
+            (so every caller answers a file it cannot use in the one shape).
+    """
+    if not path.is_file():
+        raise ModelPinsError(f"embedding pins file not found: {path}")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:  # a refused read, or bytes that are not UTF-8 (UnicodeDecodeError)
+        raise ModelPinsError(f"embedding pins file cannot be read: {path}: {type(exc).__name__}") from exc
+    try:
+        json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ModelPinsError(f"embedding pins file is not valid JSON: {path}: {exc}") from exc
+    try:
+        return EmbeddingPins.model_validate_json(text)
+    except ValidationError as exc:
+        raise ModelPinsError(f"embedding pins file is malformed: {path}: {exc}") from exc

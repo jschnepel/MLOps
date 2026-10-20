@@ -225,6 +225,12 @@
       "note": "Synthetic target contract example; not a live result."
     },
     {
+      "path": "schemas/examples/embedding-pins-valid.json",
+      "schema": "schemas/embedding-pins.schema.json",
+      "valid": true,
+      "note": "Synthetic target contract example; not a live result."
+    },
+    {
       "path": "schemas/examples/route-valid.json",
       "schema": "schemas/route.schema.json",
       "valid": true,
@@ -429,6 +435,14 @@
       "note": "Synthetic target contract example; not a live result.",
       "reason": "The digest is bare hex (AM-31).",
       "reason_match": "^\\$\\.digest: '.*' (does not match|is too long)"
+    },
+    {
+      "path": "schemas/examples/embedding-pins-invalid-dimension.json",
+      "schema": "schemas/embedding-pins.schema.json",
+      "valid": false,
+      "note": "Synthetic target contract example; not a live result.",
+      "reason": "The dimension is the 768 that app.embeddings stores (T18, SA:461).",
+      "reason_match": "^\\$\\.dimension: 768 was expected$"
     },
     {
       "path": "schemas/examples/message-invalid-kind-question.json",

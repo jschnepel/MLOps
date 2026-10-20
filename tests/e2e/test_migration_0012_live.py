@@ -207,10 +207,11 @@ async def test_the_round_trip_restores_0011(app_conn: persistence.Conn, role_con
     try:
         downgrade("app", superuser, "0011_governed_corpus")
         after = await snapshot(app_conn)
-        assert not any(s.startswith("app.asset_scope(") for s in after)
+        later = ("app.asset_scope(", "app._min_similarity(")  # 0012's own function and 0013's helper (T18)
+        assert not any(s.startswith(later) for s in after)
         cur = await app_conn.execute("SELECT prosrc FROM pg_proc WHERE oid = %s::regprocedure", (search,))
         assert (await cur.fetchone() or {})["prosrc"] == module.REV0011.SEARCH_PROCEDURES_SCOPED.split("$fn$")[1]
-        assert set(after) == {s for s in head if not s.startswith("app.asset_scope(")}
+        assert set(after) == {s for s in head if not s.startswith(later)}
         for signature, details in after.items():
             if signature.startswith("app.search_procedures_scoped("):  # regprocedure text: no spaces
                 assert details["acl"] == head[signature]["acl"]  # REVOKE PUBLIC, EXECUTE to mcp_read, as before

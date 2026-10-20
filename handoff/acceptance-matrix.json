@@ -642,7 +642,7 @@
       "owning_tasks": [
         "T17"
       ],
-      "note": "Plan L (T17): 47 agent-authored development queries labelled against corpus-1 (answerable ones with their permitted sections; no-source ones about expired, revoked, draft-only, missing and other-tenant content (superseded cases are answerable); asset-filtered, injected and conflicting cases) run through search_procedures_scoped as mcp_read at k=5. The report gives recall@5, precision@5, MRR@5, hit@5 and every-expected@5, the no-source cases answered empty and the cases without a forbidden section with Wilson 95% intervals and denominators, and every case's ranked answer; no forbidden section was returned (the test fails otherwise). Missing sources are measured, not guaranteed: at the 0.25 minimum rank 15/20 no-source questions were answered with nothing; R033 is met subject to the owner's decision on erratum 102: the other 5/20 stay open: SA:377 as written counts any returned effective chunk as sufficient and would not abstain on them, so T20 must add a relevance criterion beyond it (for example a score or label-based sufficiency rule). The minimum rank was chosen on these same queries, so the figures are development figures, not held-out ones."
+      "note": "Plan L (T17): 47 agent-authored development queries labelled against corpus-1 (answerable ones with their permitted sections; no-source ones about expired, revoked, draft-only, missing and other-tenant content (superseded cases are answerable); asset-filtered, injected and conflicting cases) run through search_procedures_scoped as mcp_read at k=5. The report gives recall@5, precision@5, MRR@5, hit@5 and every-expected@5, the no-source cases answered empty and the cases without a forbidden section with Wilson 95% intervals and denominators, and every case's ranked answer; no forbidden section was returned (the test fails otherwise). Missing sources are measured, not guaranteed: at the 0.25 minimum rank 15/20 no-source questions were answered with nothing; R033 is met subject to the owner's decision on erratum 102: the other 5/20 stay open: SA:377 as written counts any returned effective chunk as sufficient and would not abstain on them, so T20 must add a relevance criterion beyond it (for example a score or label-based sufficiency rule). The minimum rank was chosen on these same queries, so the figures are development figures, not held-out ones. T18 (Plan N) re-measured the lexical path in the same session as the vector comparison: its per-case answers equal this baseline's (reports/retrieval-comparison.md)."
     },
     {
       "id": "R034",
@@ -650,14 +650,23 @@
       "category": "retrieval",
       "requirement": "Exact vector retrieval is measured against the baseline",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r034_exact_vector_retrieval_is_measured_against_the_b.py",
       "expected_evidence": "Record model/dimension/corpus and matched question retrieval results, including regressions.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "reports/retrieval-comparison.md",
+        "reports/retrieval-comparison.json",
+        "tests/e2e/test_retrieval_comparison_live.py",
+        "tests/e2e/test_vector_retrieval_live.py",
+        "tests/e2e/test_migration_0013_live.py",
+        "tests/plan_n/",
+        "data/embedding-pins.json"
+      ],
       "owning_tasks": [
         "T18"
-      ]
+      ],
+      "note": "Plan N (T18): nomic-embed-text (digest 0a109f42...e59f, 768 dimensions, data/embedding-pins.json) over corpus-1 (lock 81f50c2b...1862), 47 development queries at the labelling instant, both modes through search_procedures_scoped as mcp_read at k = 5 and 3: lexical hit@5 27/27, vector 26/27; no-source answered empty lexical 15/20, vector 18/20; McNemar p 1.0 (hit@5) and 0.375 (answered empty), so no ranking claim at p < 0.05. Every case's two answers, the improved and regressed questions by id, per-category rows, both threshold sweeps, a 300-word window experiment and a repeat-embedding check are in reports/retrieval-comparison.md and .json (the window experiment, on corpus-1, compares whole-version embeddings with section embeddings: every returnable version is one 300-word window, and its forbidden-window figure, window_experiment.forbidden_windows, is counted at threshold 0). Exact by construction (no index) and proven against a brute-force ranking of the stored vectors (tests/e2e/test_vector_retrieval_live.py). The vector threshold (0.68) was chosen on these same queries by a rule fixed before measuring: development figures, not held-out ones (the holdout is T25's); the same rule would move lexical from 15 to 17 of 20 no-source cases answered empty, so part of that difference is the tuning."
     },
     {
       "id": "R035",

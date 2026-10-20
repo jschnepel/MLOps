@@ -19,7 +19,7 @@ import psycopg
 import pytest
 import pytest_asyncio
 import uvicorn
-from ops_core import corpus, ingest, persistence, settings
+from ops_core import corpus, embed, embeddings, ingest, model_pins, persistence, settings
 from ops_core.lease import Lease
 from ops_core.settings import Profile, Role
 from psycopg import sql
@@ -89,6 +89,25 @@ async def ingested(migrated: None) -> None:
         await ingest.ingest(conn, corpus.load(CORPUS), corpus_tenants())
     finally:
         await conn.close()
+
+
+@pytest_asyncio.fixture
+async def embedded(ingested: None) -> None:
+    """Every stored chunk of the seeded tenants embedded as the worker through the real local Ollama with the pinned
+    model (T18, Plan N rulings 2 and 13): the same code `skeleton.py embed` runs. A no-op when nothing is missing, and
+    a fresh embedding after a migration round trip dropped the table. Ollama is already a live-gate dependency
+    (tests/plan_b/live/test_ollama_bridge.py)."""
+    from scripts.skeleton import corpus_tenants
+
+    embedder = embeddings.OllamaEmbedder.from_settings()
+    try:  # the client first, so a failing connect leaks nothing
+        conn = await persistence.connect(settings.app_postgres(Role.WORKER))
+        try:
+            await embed.embed(conn, embedder, model_pins.load_embedding_pins(embeddings.PINS), corpus_tenants())
+        finally:
+            await conn.close()
+    finally:
+        await embedder.aclose()
 
 
 def free_port() -> int:
@@ -246,12 +265,12 @@ async def purge_conversation(conn: persistence.Conn, conversation_id: object) ->
 
 
 async def purge_corpus(conn: persistence.Conn, tenant_id: object) -> None:
-    """Remove a test tenant's corpus rows (T17), children first; the seeded tenants' corpus is the ingested one and
-    stays."""
+    """Remove a test tenant's corpus rows (T17) and their embeddings (T18), children first; the seeded tenants' corpus
+    is the ingested one and stays."""
     if str(tenant_id) in SEEDED_TENANTS:
         return
     async with conn.transaction():
-        for table in ("chunks", "document_states", "documents", "corpus_ingestions"):
+        for table in ("embeddings", "chunks", "document_states", "documents", "corpus_ingestions"):
             await conn.execute(f"DELETE FROM app.{table} WHERE tenant_id = %s", (tenant_id,))
 
 

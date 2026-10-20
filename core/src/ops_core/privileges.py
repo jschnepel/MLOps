@@ -5,7 +5,7 @@ One source of truth for two consumers: the migrations render GRANT, REVOKE and P
 tables each revision creates or changes (never for "every table": an applied revision must not change when a row is
 added here), and the R124/R106 tests enumerate the catalogs against it, so an extra or missing grant fails a test
 instead of hiding. Rows exist only for tables that exist; the owners of later tables (feedback → T21,
-operator_resolutions → T22, embeddings → T18) add their rows. Ten departures from the printed
+operator_resolutions → T22) add their rows; T18 added `embeddings`. Ten departures from the printed
 table, each a proposed erratum (Plan E rulings 6, 10, 17, 23; Plan F rulings 2, 3 and 17 with erratum 25; Plan G
 ruling 4; Plan H rulings 1 and 12; Plan I rulings 12 and 20): the worker (not the sweeper) may UPDATE
 jobs.available_at (re-queue after a transport failure), app_definer may UPDATE runs.updated_at, app_definer may
@@ -146,6 +146,9 @@ GRANTS: Final[dict[str, dict[str, Grant]]] = {
     "documents": {"worker": _SI, DEFINER_ROLE: _S},
     "document_states": {"worker": _SI, DEFINER_ROLE: _S},
     "chunks": {"worker": _SI, DEFINER_ROLE: _S},
+    # T18 (Plan N ruling 1): AM-20.2's corpus row (SA:431) for the embeddings; `scripts/skeleton.py embed` inserts as
+    # the worker, and only search_procedures_scoped reads them.
+    "embeddings": {"worker": _SI, DEFINER_ROLE: _S},
 }
 
 # AM-20.5 tenant tables (of those that exist); FORCE applies to the owner, who is exempt only through BYPASSRLS.
@@ -168,6 +171,7 @@ RLS_TABLES: Final = (
     "documents",
     "document_states",
     "chunks",
+    "embeddings",  # T18: SA:510 names it
 )
 SWEEPER_ALL: Final = ("memberships", "jobs")  # SA:520: the permissive policies besides tenant_isolation
 # T14 (Plan I round 1, I6; erratum 61): a restrictive DELETE policy keeps the sweeper's purge to finished maintenance
@@ -230,6 +234,7 @@ HELPER_FUNCTIONS: Final[dict[str, str]] = {
     "_transition": "uuid, text, text, text, integer, text, jsonb",
     "_dispatch_seconds": "",  # T47: the dispatch deadline, 300 s (Plan K ruling 17)
     "_min_rank": "",  # T17: the search's minimum rank, 0.25 (Plan L ruling 18, round 1)
+    "_min_similarity": "",  # T18: the vector branch's minimum cosine similarity (Plan N ruling 6)
 }
 
 

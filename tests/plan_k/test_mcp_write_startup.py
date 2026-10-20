@@ -61,9 +61,10 @@ def test_mcp_read_does_not_ask_for_0010(monkeypatch: pytest.MonkeyPatch) -> None
         persistence.GOVERNED_CORPUS,
         persistence.ASSET_SCOPE,
         persistence.SEARCH_INSTANT,
+        persistence.VECTOR_SEARCH,
     )
-    conn: Any = MarkerConn({marker for _, marker in present})  # every mcp-read revision through 0012 (T16)
+    conn: Any = MarkerConn({marker for _, marker in present})  # every mcp-read revision through 0013 (T18)
     start(monkeypatch, conn)
     assert all(persistence.WRITE_PATH[1] not in asked for asked in conn.asked)
-    for signature, marker in present:  # mcp-read asks for each of its own revisions' markers, 0012's two included
+    for signature, marker in present:  # mcp-read asks for each of its own revisions' markers, 0013's included
         assert (marker, signature) in conn.asked

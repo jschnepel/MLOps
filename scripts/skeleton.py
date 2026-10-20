@@ -1,5 +1,5 @@
-"""Walking-skeleton operations (T08, T09, T10, T17): `migrate` both databases, `ingest` the governed corpus,
-`up`/`down`/`status` the seven processes, `keys` the destination-vs-grant detective check.
+"""Walking-skeleton operations (T08, T09, T10, T17, T18): `migrate` both databases, `ingest` the governed corpus,
+`embed` its stored chunks, `up`/`down`/`status` the seven processes, `keys` the destination-vs-grant detective check.
 
 Reads `.env` (written by scripts/bootstrap_dev.py) for ports and the secrets directory, exports the `OPS_*` variables
 every service reads (ops_core.settings), and runs the two Alembic trees programmatically with a shared connection
@@ -31,7 +31,8 @@ from uuid import UUID
 import psycopg
 from alembic import command
 from alembic.config import Config
-from ops_core import corpus, persistence, privileges, settings
+from ops_core import corpus, embeddings, model_pins, persistence, privileges, settings
+from ops_core import embed as corpus_embed
 from ops_core import ingest as corpus_ingest
 from ops_core.settings import Profile, Role
 from psycopg import sql
@@ -293,6 +294,74 @@ def ingest() -> int:
     return 0
 
 
+async def _embed(pg: settings.Postgres, pins: model_pins.EmbeddingPins) -> list[corpus_embed.Report]:
+    embedder = embeddings.OllamaEmbedder.from_settings()
+    try:  # the client first: a failing connect then leaks nothing, and a failing client has no connection to leak
+        conn = await persistence.connect(pg)
+        try:
+            return await corpus_embed.embed(conn, embedder, pins, corpus_tenants())
+        finally:
+            await conn.close()
+    finally:
+        await embedder.aclose()
+
+
+def embed() -> int:
+    """Embed every stored chunk without an embedding as role `worker` (T18, Plan N ruling 2), into the database the
+    environment names (`OPS_PG_DB`, default `ops`; the live suite's `ops_test`), with the model that
+    `data/embedding-pins.json` pins, checked against Ollama (`OPS_OLLAMA_URL`) before anything is written. Exit 1 with
+    the reason, and nothing written, when the pin is missing, unreadable or does not match or a tenant holds another
+    digest's embeddings; a failure while writing (Ollama gone, an answer that is not the pinned vectors, or the pin
+    re-check before a later tenant's write finding another model) exits 1 too, and the tenants already written stay
+    written and are named (`EmbedInterrupted`); a re-run completes the rest. A repeated run writes nothing. The dev
+    database waits for the owner (after `ingest`)."""
+    export_environment(load_dotenv(ROOT / ".env"))
+    try:
+        pins = model_pins.load_embedding_pins(embeddings.PINS)
+        pg = settings.app_postgres(Role.WORKER)
+        if sys.platform == "win32":  # psycopg async refuses the Proactor loop (as in serve_app)
+            reports = asyncio.run(_embed(pg, pins), loop_factory=asyncio.SelectorEventLoop)
+        else:
+            reports = asyncio.run(_embed(pg, pins))
+    except model_pins.ModelPinsError:
+        print("EMBED: refused, nothing written (data/embedding-pins.json is missing or malformed)")
+        return 1
+    except corpus_embed.EmbedRefused as error:
+        print(
+            f"EMBED: refused after writing {', '.join(error.written)}"
+            if error.written
+            else "EMBED: refused, nothing written"
+        )
+        for problem in error.problems:
+            print(f"  {problem}")
+        return 1
+    except (
+        embeddings.EmbeddingError,
+        persistence.PersistenceError,
+        psycopg.Error,
+        corpus_embed.EmbedInterrupted,
+    ) as error:
+        # A failure after earlier tenants committed arrives wrapped with their names; the failure itself is its cause.
+        cause: BaseException | None = error
+        written: tuple[str, ...] = ()
+        if isinstance(error, corpus_embed.EmbedInterrupted):
+            cause, written = error.__cause__, error.written
+        # Our own messages name a rule, never a value or an address; a driver message can name the host, so only its
+        # class is printed (as `ingest`).
+        if isinstance(cause, embeddings.EmbeddingError):
+            detail = f"{cause.code}: {cause}"
+        elif isinstance(cause, persistence.PersistenceError):
+            detail = f"{type(cause).__name__}: {cause}"
+        else:
+            detail = type(cause).__name__
+        after = f" after writing {', '.join(written)}" if written else ", nothing written"
+        print(f"EMBED: failed ({detail}){after}")
+        return 1
+    for report in reports:
+        print(f"EMBED: {report.tenant}: {report.added} new, {report.present} present")
+    return 0
+
+
 def clock_guard(superuser: settings.Postgres, profile: Profile) -> None:
     """Refuse to run the dev or demo skeleton against a database that carries app.test_clock (SA:529)."""
     if profile is Profile.TEST:
@@ -483,7 +552,15 @@ def status() -> int:
 
 
 def main(argv: list[str]) -> int:
-    commands = {"migrate": migrate, "ingest": ingest, "up": up, "down": down, "status": status, "keys": keys}
+    commands = {
+        "migrate": migrate,
+        "ingest": ingest,
+        "embed": embed,
+        "up": up,
+        "down": down,
+        "status": status,
+        "keys": keys,
+    }
     if len(argv) == 2 and argv[1] in commands:
         return commands[argv[1]]()
     print(__doc__)

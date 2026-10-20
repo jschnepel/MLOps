@@ -14,14 +14,16 @@ files), so nothing is throwaway.
    suite runs against `ops_test`/`incident_test` and never touches the dev databases. `migrate` also creates the
    `vector` extension if the database lacks it (T17). Then `uv run python scripts/skeleton.py ingest` loads the
    governed corpus (`data/corpus`, T17) as the worker; without it every investigation ends INSUFFICIENT_EVIDENCE, and a
-   repeated run writes nothing (`docs/retrieval.md`).
+   repeated run writes nothing (`docs/retrieval.md`). Then `uv run python scripts/skeleton.py embed` embeds the stored
+   chunks through local Ollama with the pinned `nomic-embed-text` (T18); without it `vector_exact` searches refuse
+   (`EMBEDDINGS_INCOMPLETE`) and lexical ones work.
 3. Either, for a manual session: `uv run python scripts/skeleton.py up` — starts asset-sim :8091 (T16),
    incident-sim :8090, mcp-read :8081, mcp-write :8082, api :8000, worker :8070 (health only), sweeper :8071
    (health only; membership sync every 30 s, expiry purges), all on 127.0.0.1; logs in `runtime/skeleton/`;
    `uv run python scripts/skeleton.py status` shows each process's readiness;
    `uv run python scripts/skeleton.py down` when finished. `up` refuses (exit 2) while a set is running or
    `runtime/skeleton/pids.json` exists, so a second `up` can never orphan the first set: run `down` first.
-   The dev database must carry revision 0012 (`skeleton.py migrate`) before `up`: mcp-read's own startup check refuses anything older (the API needs 0007 and the sweeper 0008), so on a database still at 0011 `up` leaves mcp-read down until the owner migrates it. The browser login walk-through is in `dev-topology.md`.
+   The dev database must carry revision 0013 (`skeleton.py migrate`) before `up`: mcp-read's own startup check refuses anything older (the API needs 0007 and the sweeper 0008), so on a database still at 0012 or below `up` leaves mcp-read down until the owner migrates it. The browser login walk-through is in `dev-topology.md`.
 4. Or, for the proof: with no skeleton processes running (`scripts/skeleton.py status` shows every process `down`),
    `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q` — the R105 module starts and stops its own seven
    processes and writes `reports/skeleton/r105-walking-skeleton.txt`. The in-process live tests of Tasks 5 and 6
@@ -43,7 +45,7 @@ grants refuse `MEMBERSHIP_STALE` after 120 s; a legitimate mass offboarding is a
 override applies to the sweeper's first successful sync only). A subject missing from the listing is deactivated only
 after a per-user lookup confirms it is gone or disabled. A back-channel logout Keycloak could not deliver is not
 retried, so the application session then ends at its own limits. mcp-read refuses to start until the database carries
-revision 0012 (`skeleton.py migrate`, the owner's step on the dev database); the API refuses below 0007 and the sweeper below 0008.
+revision 0013 (`skeleton.py migrate`, the owner's step on the dev database); the API refuses below 0007 and the sweeper below 0008.
 
 The destination (incident-sim, T10): the schema belongs to `incident_owner` and the runtime role `incident` can only
 SELECT and INSERT, so a key is never deleted or rewritten. `POST /internal/actions/{action_id}/abort` takes

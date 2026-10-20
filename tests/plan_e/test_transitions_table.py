@@ -95,6 +95,7 @@ REVISIONS = (
     "0010_write_path",
     "0011_governed_corpus",
     "0012_asset_scope",
+    "0013_embeddings",
     "tc_0001_test_clock",
 )
 assert all((VERSIONS / f"{n}.py").exists() for n in REVISIONS), REVISIONS

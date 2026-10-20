@@ -754,6 +754,26 @@ def model_pins() -> Doc:
     )
 
 
+def embedding_pins() -> Doc:
+    """data/embedding-pins.json (T18, Plan N ruling 3, erratum 107): the embedding model's pin beside the generation
+    model's, written by scripts/pin_embedding_model.py from Ollama's /api/version, /api/tags (the digest: /api/show
+    carries none) and one /api/embed call (the dimension). The spellings are model-pins'; the dimension is the 768 of
+    `app.embeddings` and SA:461's `vector(768)`."""
+    return contract(
+        "embedding-pins",
+        closed(
+            {
+                "model": text(1, 200),
+                "digest": DIGEST,
+                "dimension": {"type": "integer", "const": 768},
+                "ollama_version": text(1, 80),
+                "probed_at": UTC_REQUEST,
+            },
+            ["model", "digest", "dimension", "ollama_version", "probed_at"],
+        ),
+    )
+
+
 def route() -> Doc:
     """The three routers' enumerable routes (AM-16); a document names at least one."""
     return contract(
@@ -858,7 +878,7 @@ def tool_inputs() -> dict[str, Doc]:
                 "query": SHORT,
                 "asset_type": text(1, 40),
                 "limit": integer(1, 8),
-                "mode": {"enum": ["lexical", "vector_exact"]},  # ruling 3; mcp-read maps vector_exact (TODO(T18))
+                "mode": {"enum": ["lexical", "vector_exact"]},  # ruling 3; mcp-read maps vector_exact (T18)
             },
             ["query", "limit", "mode"],
         ),
@@ -887,6 +907,7 @@ def schemas() -> dict[str, Doc]:
         "revision": revision(),
         "cancel-response": cancel_response(),
         "model-pins": model_pins(),
+        "embedding-pins": embedding_pins(),
         "route": route(),
         "run-manifest": run_manifest(),
         "job": job(),
@@ -1083,6 +1104,13 @@ def examples(root: Path = ROOT) -> list[tuple[Doc, Doc]]:
         "digest": "ab" * 32,
         "ollama_version": "0.12.3",
         "probed_at": "2026-10-08T00:00:00Z",
+    }
+    embedding_pins_valid = {
+        "model": "nomic-embed-text",
+        "digest": "cd" * 32,
+        "dimension": 768,
+        "ollama_version": "0.12.3",
+        "probed_at": "2026-10-19T00:00:00Z",
     }
     manifest_valid = {
         "run_id": RUN,
@@ -1303,6 +1331,7 @@ def examples(root: Path = ROOT) -> list[tuple[Doc, Doc]]:
     valid("revision-valid", "revision", {"expected_version": 3, "supersedes_run_id": RUN})
     valid("cancel-response-valid", "cancel-response", cancel_valid)
     valid("model-pins-valid", "model-pins", pins_valid)
+    valid("embedding-pins-valid", "embedding-pins", embedding_pins_valid)
     valid("route-valid", "route", {"admission": "investigate", "graph": "retrieve", "model": "fake"})
     valid("run-manifest-valid", "run-manifest", manifest_valid)
     valid(
@@ -1489,6 +1518,13 @@ def examples(root: Path = ROOT) -> list[tuple[Doc, Doc]]:
         {**pins_valid, "digest": "sha256:" + "ab" * 32},
         "The digest is bare hex (AM-31).",
         "^\\$\\.digest: '.*' (does not match|is too long)",  # 71 characters fail both the pattern and maxLength
+    )
+    invalid(
+        "embedding-pins-invalid-dimension",
+        "embedding-pins",
+        {**embedding_pins_valid, "dimension": 384},
+        "The dimension is the 768 that app.embeddings stores (T18, SA:461).",
+        "^\\$\\.dimension: 768 was expected$",
     )
     invalid(
         "message-invalid-kind-question",

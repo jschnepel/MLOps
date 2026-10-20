@@ -425,6 +425,7 @@ class Urls:
     mcp_write: str
     incident_sim: str
     asset_sim: str  # T16: where mcp-read reaches asset-sim (Plan M ruling 5)
+    ollama: str  # T18: where mcp-read and `skeleton.py embed` reach the embedding model (Plan N ruling 4)
 
 
 def urls() -> Urls:
@@ -435,6 +436,7 @@ def urls() -> Urls:
         mcp_write=env("OPS_MCP_WRITE_URL", "http://127.0.0.1:8082/mcp"),
         incident_sim=env("OPS_INCIDENT_SIM_URL", "http://127.0.0.1:8090"),
         asset_sim=env("OPS_ASSET_SIM_URL", "http://127.0.0.1:8091"),
+        ollama=env("OPS_OLLAMA_URL", "http://127.0.0.1:11434"),
     )
 
 
