@@ -1,20 +1,21 @@
 # Session state
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
-**Current milestone:** M00 (baseline, sealed holdout intents and model probe)
-**Next task:** Plan L (T17) is executed on branch `plan-l` (on top of `plan-k`: `c329145..bbba69c` holds the debt list and
-the five building tasks, and the close-out is the commit after `bbba69c`). T17 is DONE subject to the owner's decision
-on erratum 102 (R033's "missing source remains missing": 15/20 no-source development questions answered with
-nothing at the 0.25 minimum rank; the other 5/20 stay open: SA:377 as written would not abstain on them, so T20 must add a relevance criterion beyond it); R131's read half is met subject to the
-owner's decision on erratum 96 (`asset_scope` still arrives with T16). Owner inputs: (1) the holdout seal (T03
-step 9), then the live probe (T02); (2) merge the stacked PRs #1-#11 in order (plan-b -> main through plan-l ->
-plan-k; #11 is https://github.com/jschnepel/MLOps/pull/11); (3) T44 step 10 (step A applied 2026-10-16; the
-other-device LAN check and the firewall rules remain) (`docs/runbooks/ollama-network.md` step A); (4) decide the
-proposed errata of Plans C, E, F, G, H, I, J, K and L (L: 93-102 below). The dev database is at 0011 with corpus-1
-ingested (owner, 2026-10-18). Next is Plan M = T16 (the read tools and asset-sim, the earliest dependency-satisfied PLANNED task in
-`handoff/tasks.json` after T17, now unblocked; T18 and T23 are unblocked too; T19 and T41 wait on owner steps).
+**Current milestone:** M06 (vector retrieval; T18 is its open task. M05, the MCP servers and the governed corpus, closed with T16 in Plan M. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
+**Next task:** Plan M (T16) is executed on branch `plan-m` (from `main`: `9e7d716..bbaba40` holds the debt list and the
+six building tasks, and the close-out is the commit after `bbaba40`). T16 is DONE: R028 and R029 are evidenced; R131's
+read half is complete subject to the owner's decisions on errata 96 and 104. Owner inputs: (1) the holdout seal (T03
+step 9), then the live probe (T02); (2) T44 step 10 (step A applied 2026-10-16; the other-device LAN check and the
+firewall rules remain) (`docs/runbooks/ollama-network.md` step A); (3) decide the proposed errata of Plans C, E, F,
+G, H, I, J, K, L and M (errata 1-106; M: 103-106 below); (4) migrate the dev database to revision 0012
+(`uv run python scripts/skeleton.py migrate`, dev profile: it creates `app.asset_scope` and re-creates
+`app.search_procedures_scoped`, changing no row); until then mcp-read refuses to start on it; (5) merge PR #12 (`plan-m` -> `main`,
+https://github.com/jschnepel/MLOps/pull/12; final review record `docs/reviews/plan-m-final-review-2026-10-18.md`,
+fix wave 71753ab). Next is T18 (vector retrieval; it now also owns mcp-read's vector mode)
+or T23, both unblocked; T19 and T41 wait on owner steps, and T20 waits on T19. A proposed erratum awaiting the
+owner's decision does not change a task's status; a task met "subject to" an erratum stays DONE.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-l` (Plan L work on top of `plan-k`, on top of `plan-j`, on top of `plan-i`, on top of `plan-h`, on top of `plan-g`, on top of `plan-f`, on top of `plan-e`, on top of `plan-d`, on top of `plan-c`, on top of `plan-b`, on top of `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) are open now; `plan-j` and `plan-k` are pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11). Merging them in order is the owner's call.
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-m` off `main` (Plan M executed, pushed 2026-10-18, PR #12 into `main`; `main` 66d6833 has the same tree as `plan-l`, which sat on `plan-k`, on `plan-j`, on `plan-i`, on `plan-h`, on `plan-g`, on `plan-f`, on `plan-e`, on `plan-d`, on `plan-c`, on `plan-b`, on `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) were merged into `main` by the owner on 2026-10-18 (merge commits; the plan branches are kept); `plan-j` and `plan-k` were pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11).
 
 ## Done in the planning session (2026-10-06)
 
@@ -847,6 +848,55 @@ ingested (owner, 2026-10-18). Next is Plan M = T16 (the read tools and asset-sim
   words such as `records` and are T18's tuning and T20's relevance criterion (SA:377 alone would not abstain on them), not a defect of `corpus-1`; the plan file
   still prints the wrong regprocedure signature in eight places.
 
+## Plan M executed (2026-10-18, branch `plan-m`)
+
+- T16 = `9e7d716..bbaba40` (the debt list first, then the six building tasks; the close-out is the commit after
+  `bbaba40`). The plan (`docs/superpowers/plans/2026-10-18-first-slice-m-read-tools-asset-sim.md`) holds the 18 rulings
+  of the controller's brief as implemented, with ten writer departures named at its top; the input is
+  `docs/superpowers/research/2026-10-18-plan-m-inputs.md`. Evidence: `tests/e2e/test_migration_0012_live.py`,
+  `test_asset_sim_live.py`, `test_mcp_read_t16_live.py`, `reports/asset-sim/t16-asset-sim.txt` and
+  `reports/mcp-read/t16-read-tools.txt` (live); `tests/plan_m/` (unit).
+- Shipped: revision `0012_asset_scope` (`asset_scope`, the requester re-check in both read definers, the search's
+  `retrieved_at` and whole-section excerpt; exact downgrade to 0011); asset-sim on port 8091, the skeleton's seventh
+  process; mcp-read's `get_asset_status` and `get_recent_alerts` and the search on the run's asset type; the committed
+  input schemas advertised and checked (`ops_core.tool_contracts`); the worker's R029 checks.
+- Gates: `check.py` `1372 passed, 205 skipped`; `check.py --profile test` `1556 passed, 21 skipped`; `verify_handoff.py` exit 0. (The plan's own
+  arithmetic, 1344 and 1528, is superseded: the review rounds added tests.)
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan L's
+  hundred and two:
+  103. T16's instruction and review note (`handoff/tasks.json`, "vector mode: mcp-read computes the nomic
+       search_query embedding"), SA:348 and SA:461: mcp-read's `vector_exact` → `mode=vector` translation and the
+       `search_query:` embedding move to T18 with the embeddings; until then mcp-read answers `vector_exact` with
+       `UNSUPPORTED_MODE` after the handle resolution, and the definer refuses `mode=vector`.
+  104. SA:460 (`asset_scope`): the signature is `(raw_handle, client_azp)`, the caller's `azp` second as in
+       `resolve_invocation`, the write path and the search (errata 83 and 93), because `_resolve_handle` binds the
+       handle to the presented token's `azp`; it returns one row `(run_id, tenant_id, asset_id, start_at, end_at,
+       as_of)`, `as_of` being `app.current_time()` read after the lease lock (SA:157), the instant asset-sim answers
+       at; `mcp_read` only; it checks no tool (the allowlist stays in Python, erratum 19).
+  105. BS:362 and BS:401 with R028 (the requester's policy at read time): `asset_scope` and `search_procedures_scoped`
+       require an active `memberships` row `(the run's tenant, subject = runs.requester, role 'requester')`, matched
+       without the issuer because `runs` keeps none (the API admits a requester by `(issuer, subject)` with the
+       realm's one configured issuer); without it the call is refused exactly as a dead handle is (`OC008`, one
+       message, SA:355). `resolve_invocation` is unchanged (erratum 77). Note for the owner: the read-path check
+       requires only an active row, with no `synced_at` freshness bound like the write gate's `MEMBERSHIP_STALE`
+       (0005:129-139). While the sweeper syncs, a deprovisioned requester keeps read access until the next sync (a
+       60-second cadence, SA:547); if the sync stops, that access lasts until it resumes. A read-path freshness bound
+       is T20's, subject to the owner's decision on this erratum.
+  106. SA:461 with erratum 93 (`search_procedures_scoped`'s answer): one row `(corpus_version, retrieved_at,
+       results)`, `retrieved_at` the instant its effectiveness rule ran at; each result's excerpt is the whole section
+       up to the contract's 8000 characters and carries `excerpt_cut`, which mcp-read turns into the envelope's
+       `truncated` and leaves out of the result. It amends erratum 93's 500-character excerpt: on corpus-1, 15 of the
+       69 sections (504 to 669 characters) now return whole.
+- Rulings made during execution (the controller's, from the SDD ledger; none changes a spec line): (a) the stray
+  broad `ValueError`/`TypeError`/`RuntimeError` catch around asset-sim's token fetch and request (Task 3) could turn a
+  bug into a retryable `UNAVAILABLE`; the window is small and the catch is commented, so it is parked, not fixed.
+  (b) The review minors that were debts, not defects, went to the debt list instead of code: the read-membership
+  freshness bound (erratum 105's note), the packaging of `schemas/` for the images of mcp-read and the worker (T30),
+  and a raw-listing check for a tool the SDK drops before the worker sees it (T30). (c) Where a review found the plan's
+  own text wrong (a forged cursor with a valid binding, a status answer's `observed_at`), the fix follows the review
+  and the plan file keeps its text. (d) Task 6 rewrote thirteen sentences of the brief's documentation to match the
+  built code, for example a lost audience gives `UPSTREAM_INVALID`, not `UNAVAILABLE`.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -924,7 +974,7 @@ Allowed shortcuts in T12, each with its owning task:
 - `api` may INSERT any job type (the column grant cannot restrict `type`, Plan G spike §2); the API inserts
   `resume_input` only, by code → T13/T22;
 - the dev database stays at revision 0005 until the owner migrates it to 0006; until then the API and the sweeper
-  refuse to start on it → owner input;
+  refuse to start on it → owner input → closed 2026-10-18 (dev at 0011, corpus-1 ingested);
 - `feedback` (named for T12 in `privileges.py` and the Plan E debt list) is not created: its endpoint (BS:282) is in
   T21's instructions → T21;
 - the clarify, status-answer and accepted bodies have no JSON Schema under `schemas/` (no response has one yet) → T26;
@@ -971,7 +1021,7 @@ Allowed shortcuts in T13, each with its owning task:
   renewal keeps a handle usable and nothing is owed;
 - the global queue count costs one scan per tenant inside every run admission → T29;
 - the dev database stays at revision 0005 until the owner migrates it (0006 and 0007 pending); until then the API,
-  the sweeper, the worker and mcp-write refuse to start on it → owner input;
+  the sweeper, the worker and mcp-write refuse to start on it → owner input → closed 2026-10-18 (dev at 0011, corpus-1 ingested);
 - (added by the final review, M2) SIGTERM is not drained: uvicorn 0.54 re-raises it after the health server shuts
   down, so the worker ends mid-job; the open unit rolls back, the lease lapses and the sweeper hands the job back,
   and an investigate run is failed as interrupted (SIGINT lets the job finish) → T30;
@@ -1021,7 +1071,7 @@ Allowed shortcuts in T14, each with its owning task:
 - incident-sim's fault route accepts any `FaultKind`, so `outbox_sink_fail` can be armed there and is never consumed
   → T47;
 - the dev database stays at revision 0005 until the owner migrates it (0006, 0007 and 0008 pending); until then the
-  API, the sweeper, the worker and mcp-write refuse to start on it → owner input.
+  API, the sweeper, the worker and mcp-write refuse to start on it → owner input → closed 2026-10-18 (dev at 0011, corpus-1 ingested).
 
 ## Plan J debt list (T15; committed before coding) [R6-B7]
 
@@ -1047,7 +1097,7 @@ Allowed shortcuts in T15, each with its owning task:
   listen URLs) → T30 (ruling 16);
 - mcp-read has no `tests/` directory and no Dockerfile of its own (AM-01) → T30 (ruling 25);
 - the dev database stays at revision 0005 until the owner migrates it (0006, 0007, 0008 and 0009 pending); until then
-  the API, the sweeper, the worker, mcp-write and now mcp-read refuse to start on it → owner input;
+  the API, the sweeper, the worker, mcp-write and now mcp-read refuse to start on it → owner input → closed 2026-10-18 (dev at 0011, corpus-1 ingested);
 - added by the final review: no test drives the EXECUTING re-queue's re-send through mcp-write over HTTP (the tool
   path's only production replay is covered in two halves: the allowlist table's (EXECUTE, EXECUTING,
   CREATE_INCIDENT) row and `GrantThenDownMcp`, which skips `resolve_invocation`); T47's DoD gains "a live
@@ -1083,7 +1133,7 @@ Allowed shortcuts in T47, each with its owning task:
 - the network half of T47 DoD 3 and R131 (mcp-read cannot reach incident-sim at all) → T30 (ruling 15);
 - mcp-write has no `tests/` directory and no Dockerfile of its own (AM-01) → T30;
 - the dev database stays at revision 0005 until the owner migrates it (0006 to 0010 pending); until then the API, the
-  sweeper, the worker, mcp-read and mcp-write refuse to start on it, mcp-write now also without 0010 → owner input.
+  sweeper, the worker, mcp-read and mcp-write refuse to start on it, mcp-write now also without 0010 → owner input → closed 2026-10-18 (dev at 0011, corpus-1 ingested).
 
 ## Plan L debt list (T17; committed before coding) [R6-B7]
 
@@ -1111,6 +1161,47 @@ Allowed shortcuts in T17, each with its owning task:
 - shared (cross-tenant) documents: none; a document both tenants need is copied per tenant → no task (erratum 97,
   ruling 9);
 - the dev database: migrated to 0011 and corpus-1 ingested by the owner on 2026-10-18 → closed (ruling 24).
+
+## Plan M debt list (T16; committed before coding) [R6-B7]
+
+Allowed shortcuts in T16, each with its owning task:
+- vector mode: mcp-read's `vector_exact` → `mode=vector` translation and the nomic `search_query:` embedding it
+  computes, with the embeddings themselves → T18 (Plan M ruling 1, erratum 103); until then mcp-read answers
+  `vector_exact` with `UNSUPPORTED_MODE` after the handle resolution and the definer refuses `mode=vector`;
+- the worker's calls to `get_asset_status` and `get_recent_alerts` and their results in the draft and the evidence
+  bundle (BS:419), and SA:377's evidence-sufficiency rule → T20 (rulings 16 and 17);
+- recording the status observation (`observed_at`, `revision`) where the grant can check its 5-minute freshness
+  (R116, BS:476) → T21 (ruling 16);
+- the worker's write calls (`create_incident` at mcp-write) keep T47's result check: no tool discovery and no
+  result-schema check (mcp-write advertises its generated schemas, not the committed files) → T20, which builds
+  AM-12's `execute_approved_proposal (mcp-write)` node (SA:207) and every route of R129;
+- the worker's 256 KiB result bound is applied after the MCP SDK has read and parsed the body (no hook stops it
+  earlier); a transport-level bound → T30, with the container network work (departure 5);
+- the worker's listing check sees the listing as the MCP SDK (2.3.0) hands it over: the SDK drops a tool whose
+  `x-mcp-header` annotation is invalid before `check_listing` runs (`ClientSession._absorb_tool_listing`), and a
+  HEADER_MISMATCH retry inside `call_tool` re-lists outside `check_listing`; a check on the raw listing → T30, with the
+  transport-level bound (the called result is still validated in full, and the dropped tool cannot be called through
+  this client);
+- a run's asset is not tied to its tenant at admission (an alpha run may name beta's B22; asset-sim's own tenant filter
+  answers NOT_FOUND, and the search then has no run type) → T21 (the asset guard; its review note names alpha-for-B22);
+- a handle that dies between `asset_scope` and the asset-sim call still yields one read of the run's own asset (no
+  write, no authority gained): documented, not prevented → no task (ruling 15);
+- the fallback `corpus_version` is closed by T17 (the definer answers `none`) and the `UNSUPPORTED_MODE` order stays
+  (the handle first) → no task (ruling 14);
+- asset-sim and mcp-read read `data/corpus/` and `schemas/` from the checkout; packaging them, asset-sim's Dockerfile
+  and `tests/` directory, TLS and container host names, and the network test that only mcp-read reaches asset-sim →
+  T30 (ruling 5); `ops_core.tool_contracts.SCHEMAS` finds `schemas/` three directories above its own source file, so
+  the images of mcp-read and the worker must ship `schemas/` at that path (or the path becomes a setting) → T30;
+- the requester's membership is matched without an issuer (the run keeps none) → owner decision (erratum 105);
+- the read path's membership re-check requires only an active row, with no `synced_at` freshness bound like the write
+  gate's `MEMBERSHIP_STALE` (0005:129-139): while the sweeper syncs, a deprovisioned requester keeps read access until
+  the next sync (60 s cadence, SA:547); if the sync stops, the access lasts until it resumes → a read-path freshness
+  bound → T20 (the next read-path task), subject to the owner's decision on erratum 105;
+- a retryable read failure ends the run: the worker's investigate handler turns any failed read, including a retryable
+  `UNAVAILABLE` from asset-sim behind the search, into FAILED "retrieval failed" and never reads `retryable` → T20
+  (honour `retryable` from a read with a bounded re-queue of the investigate job);
+- the dev database stays at revision 0011 until the owner runs `scripts/skeleton.py migrate`; until then mcp-read
+  refuses to start on it (it checks 0012) → owner input (ruling 3).
 
 ## Environment (observed)
 
@@ -1191,11 +1282,18 @@ new, 0 restated, 0 unchanged`; `INGEST: beta corpus-1: 7 new, 0 restated, 0 unch
 the dev `ops` database. At the owner's request the agent then ran `skeleton.py up`: all six processes reached ready on
 the dev profile (mcp-read's startup check needs 0011), and `down` stopped them.
 
+**Update (2026-10-18):** Plan M adds revision 0012 (`app.asset_scope`, and `app.search_procedures_scoped` re-created with
+a new return type). The dev `ops` database stays at 0011 until the owner runs `uv run python scripts/skeleton.py
+migrate` (dev profile); the upgrade creates one function, re-creates one and changes no row; until then mcp-read
+refuses to start on it, and `skeleton.py up` starts seven processes (asset-sim first).
+
 ## Open owner inputs
 
 - Decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed"), 60-71 (see
-  "Plan I executed"), 72-81 (see "Plan J executed"), 82-92 (see "Plan K executed") and 93-102 (see "Plan L
-  executed").
+  "Plan I executed"), 72-81 (see "Plan J executed"), 82-92 (see "Plan K executed"), 93-102 (see "Plan L
+  executed") and 103-106 (see "Plan M executed").
+- Migrate the dev database to revision 0012 (`uv run python scripts/skeleton.py migrate`); mcp-read refuses to start
+  on 0011.
 - R025 and R031 have every half evidenced (mcp-read by T15, mcp-write by T47, the import half by T04) but keep
   `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`, because no open task owns them: flipping their status is the owner's call
   (or T15's re-close).
@@ -1232,6 +1330,6 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; merging the PRs; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-L, up to 102) and write Plan M for T16 (the read tools and asset-sim over the governed store, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T17, unblocked by T15, T10 and T17; T18 and T23 are unblocked too).
+Then wait for the owner inputs above (holdout seal, then live probe; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-L, up to 102) and write Plan M for T16 (the read tools and asset-sim over the governed store, the earliest dependency-satisfied PLANNED task in `handoff/tasks.json` after T17, unblocked by T15, T10 and T17; T18 and T23 are unblocked too).
 
 Do not store secrets or private reasoning in this file.

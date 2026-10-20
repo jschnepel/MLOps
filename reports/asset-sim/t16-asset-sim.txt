@@ -1,0 +1,4 @@
+T16 asset-sim — 2026-10-18T23:43:58Z
+DoD 2: refused {'worker (ops-worker)': 403, 'mcp-write (ops-mcp-write)': 403, 'api (persona alex via ops-dev-direct, aud ops-api)': 403, 'api (ops-view-users service account)': 403}; ops-mcp-read 200
+R028 at asset-sim: alpha -> B22 404 (as Z99), beta -> B22 200
+faults (test profile): asset_unavailable -> unavailable, drop_before_commit -> 503, then served again

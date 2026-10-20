@@ -25,9 +25,10 @@ def test_orphan_keys_are_destination_keys_without_a_matching_grant_hash() -> Non
     assert orphan_keys([], grants) == []
 
 
-def test_six_processes_on_distinct_loopback_ports() -> None:
+def test_seven_processes_on_distinct_loopback_ports() -> None:
     from scripts.skeleton import PROCESSES
 
-    assert [p.name for p in PROCESSES] == ["incident-sim", "mcp-read", "mcp-write", "api", "worker", "sweeper"]
-    assert len({p.port for p in PROCESSES}) == 6
+    names = [p.name for p in PROCESSES]
+    assert names == ["asset-sim", "incident-sim", "mcp-read", "mcp-write", "api", "worker", "sweeper"]  # T16
+    assert len({p.port for p in PROCESSES}) == 7
     assert all(p.health_url.startswith("http://127.0.0.1:") for p in PROCESSES)

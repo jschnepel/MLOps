@@ -1,6 +1,6 @@
 # Walking skeleton (T08)
 
-Six host processes against the dev profile (PostgreSQL + Keycloak in Compose). Containers for the application
+Seven host processes against the dev profile (PostgreSQL + Keycloak in Compose). Containers for the application
 processes arrive with T30; everything here reads its configuration the way a container would (environment plus secret
 files), so nothing is throwaway.
 
@@ -15,15 +15,15 @@ files), so nothing is throwaway.
    `vector` extension if the database lacks it (T17). Then `uv run python scripts/skeleton.py ingest` loads the
    governed corpus (`data/corpus`, T17) as the worker; without it every investigation ends INSUFFICIENT_EVIDENCE, and a
    repeated run writes nothing (`docs/retrieval.md`).
-3. Either, for a manual session: `uv run python scripts/skeleton.py up` — starts incident-sim :8090, mcp-read
-   :8081, mcp-write :8082, api :8000, worker :8070 (health only), sweeper :8071
+3. Either, for a manual session: `uv run python scripts/skeleton.py up` — starts asset-sim :8091 (T16),
+   incident-sim :8090, mcp-read :8081, mcp-write :8082, api :8000, worker :8070 (health only), sweeper :8071
    (health only; membership sync every 30 s, expiry purges), all on 127.0.0.1; logs in `runtime/skeleton/`;
    `uv run python scripts/skeleton.py status` shows each process's readiness;
    `uv run python scripts/skeleton.py down` when finished. `up` refuses (exit 2) while a set is running or
    `runtime/skeleton/pids.json` exists, so a second `up` can never orphan the first set: run `down` first.
-   The dev database must carry revision 0006 (`skeleton.py migrate`) before `up`: the API and the sweeper refuse to start otherwise. The browser login walk-through is in `dev-topology.md`.
+   The dev database must carry revision 0012 (`skeleton.py migrate`) before `up`: mcp-read's own startup check refuses anything older (the API needs 0007 and the sweeper 0008), so on a database still at 0011 `up` leaves mcp-read down until the owner migrates it. The browser login walk-through is in `dev-topology.md`.
 4. Or, for the proof: with no skeleton processes running (`scripts/skeleton.py status` shows every process `down`),
-   `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q` — the R105 module starts and stops its own six
+   `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q` — the R105 module starts and stops its own seven
    processes and writes `reports/skeleton/r105-walking-skeleton.txt`. The in-process live tests of Tasks 5 and 6
    bind 18081 and 18090, so their ports never collide with a running skeleton; they purge their rows in `finally`,
    so a running skeleton worker finds no claimable job of theirs.
@@ -39,11 +39,11 @@ Without the sweeper, grants refuse with `MEMBERSHIP_STALE` after 120 s and execu
 until it runs. The sync refuses (and stamps nothing) when three or more and more than half of the active subjects are
 missing from the realm's listing, which is what a listing from the wrong realm looks like (readiness turns 503 and
 grants refuse `MEMBERSHIP_STALE` after 120 s; a legitimate mass offboarding is accepted with
-`OPS_SYNC_ALLOW_MASS_DEACTIVATION=1 uv run python scripts/skeleton.py up`, which restarts all six processes, and the
+`OPS_SYNC_ALLOW_MASS_DEACTIVATION=1 uv run python scripts/skeleton.py up`, which restarts all seven processes, and the
 override applies to the sweeper's first successful sync only). A subject missing from the listing is deactivated only
 after a per-user lookup confirms it is gone or disabled. A back-channel logout Keycloak could not deliver is not
-retried, so the application session then ends at its own limits. The API and the sweeper refuse to start until the
-database carries revision 0006 (`skeleton.py migrate`).
+retried, so the application session then ends at its own limits. mcp-read refuses to start until the database carries
+revision 0012 (`skeleton.py migrate`, the owner's step on the dev database); the API refuses below 0007 and the sweeper below 0008.
 
 The destination (incident-sim, T10): the schema belongs to `incident_owner` and the runtime role `incident` can only
 SELECT and INSERT, so a key is never deleted or rewritten. `POST /internal/actions/{action_id}/abort` takes

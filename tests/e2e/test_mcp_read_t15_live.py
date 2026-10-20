@@ -44,7 +44,8 @@ from tests.e2e.test_mcp_write_live import approved_run
 from tests.e2e.test_migrations_and_persistence import new_run
 
 # T17: the tool answers from the governed corpus, which the `ingested` fixture puts in the seeded tenants.
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested")]
+# T17: the governed corpus; T16: asset-sim, which the search asks for the run's asset type.
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested", "asset_sim")]
 
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")  # the seeded tenant, whose corpus is ingested
@@ -269,14 +270,14 @@ async def test_r085_r131_the_server_derives_tool_server_and_state_from_the_job(
 async def test_r131_mcp_read_can_execute_no_write_path_function(
     app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
 ) -> None:
-    """The pg_proc ACL as it is today: `current_time` (erratum 15), `resolve_invocation` and, since T17,
-    `search_procedures_scoped`; `asset_scope` joins with its owner, T16 (erratum 72 as erratum 96 narrows it)."""
+    """The pg_proc ACL: `current_time` (erratum 15), `resolve_invocation`, `search_procedures_scoped` (T17) and, since
+    T16, `asset_scope`: R131's read half is complete (errata 96 and 104)."""
     cur = await app_conn.execute(
         "SELECT p.proname AS name, has_function_privilege('mcp_read', p.oid, 'EXECUTE') AS allowed"
         " FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app'"
     )
     rows = await cur.fetchall()
-    allowed = {"current_time", "resolve_invocation", "search_procedures_scoped"}
+    allowed = {"current_time", "resolve_invocation", "search_procedures_scoped", "asset_scope"}
     assert {row["name"] for row in rows if row["allowed"]} == allowed
     others = set(privileges.DEFINER_FUNCTIONS) - allowed
     assert others <= {row["name"] for row in rows}  # every other definer exists, so the line above is not vacuous
@@ -286,7 +287,8 @@ async def test_r131_mcp_read_can_execute_no_write_path_function(
         == "42501"
     )
     lines.append(
-        "R131 read half: mcp_read EXECUTE = current_time, resolve_invocation, search_procedures_scoped;"
+        "R131 read half: mcp_read EXECUTE = current_time, resolve_invocation, search_procedures_scoped,"
+        " asset_scope;"
         f" {len(others)} others refused"
     )
 
@@ -325,7 +327,8 @@ async def test_the_protocol_version_is_checked_on_every_request(
     assert (legacy.status_code, legacy.json()["error"]["code"]) == (400, -32022)  # the guard
     assert "2025-11-25" not in legacy.text  # never echoed
     assert (mismatch.status_code, mismatch.json()["error"]["code"]) == (400, -32020)  # the SDK's HEADER_MISMATCH
-    assert listed.status_code == 200 and [t["name"] for t in listed.json()["result"]["tools"]] == ["search_procedures"]
+    names = [t["name"] for t in listed.json()["result"]["tools"]]
+    assert listed.status_code == 200 and names == ["get_asset_status", "get_recent_alerts", "search_procedures"]  # T16
     lines.append("protocol: absent 400/-32022, 2025-11-25 400/-32022, header/_meta mismatch 400/-32020, matching 200")
 
 

@@ -258,6 +258,7 @@ async def test_no_function_an_mcp_server_may_call_inserts_a_job(app_conn: persis
     reachable = {row["oid"] for row in rows if row["by_read"] or row["by_exec"]}
     entry = {names[oid] for oid in reachable}
     assert {"resolve_invocation", "grant_execution", "mark_sent", "record_outcome", "lookup_action"} <= entry
+    assert {"search_procedures_scoped", "asset_scope"} <= entry  # mcp-read's read functions (T17, T16)
     frontier = set(reachable)
     while frontier:  # the helpers they call, and the helpers those call
         called = {name for oid in frontier for name in CALLS.findall(bodies[oid])}

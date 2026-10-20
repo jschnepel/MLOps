@@ -801,11 +801,17 @@ name = "ops-asset-sim"
 version = "0.0.1"
 source = { editable = "asset-sim" }
 dependencies = [
+    { name = "fastapi" },
     { name = "ops-core" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ops-core", editable = "core" }]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.142,<1" },
+    { name = "ops-core", editable = "core" },
+    { name = "uvicorn", specifier = ">=0.54,<1" },
+]
 
 [[package]]
 name = "ops-core"
@@ -814,9 +820,11 @@ source = { editable = "core" }
 dependencies = [
     { name = "alembic" },
     { name = "httpx2" },
+    { name = "jsonschema" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
+    { name = "rfc3339-validator" },
     { name = "sqlalchemy" },
 ]
 
@@ -824,9 +832,11 @@ dependencies = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.20,<2" },
     { name = "httpx2", specifier = ">=2.13,<3" },
+    { name = "jsonschema", specifier = ">=4.26,<5" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3,<4" },
     { name = "pydantic", specifier = ">=2.13,<3" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10,<3" },
+    { name = "rfc3339-validator", specifier = ">=0.1.4,<1" },
     { name = "sqlalchemy", specifier = ">=2.1,<3" },
 ]
 

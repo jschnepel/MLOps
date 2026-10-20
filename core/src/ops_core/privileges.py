@@ -207,6 +207,8 @@ DEFINER_FUNCTIONS: Final[dict[str, tuple[str, tuple[str, ...]]]] = {
     "resolve_invocation": ("text, text", ("mcp_read", "mcp_exec")),
     # T17 (Plan L ruling 1): SA:461 with the caller's azp second, as the write path since T47 (erratum 93).
     "search_procedures_scoped": ("text, text, text, public.vector, text, integer, text", ("mcp_read",)),
+    # T16 (Plan M ruling 2): SA:460 with the caller's azp, for the same reason (erratum 104).
+    "asset_scope": ("text, text", ("mcp_read",)),
     # T13: the raw handle first, so the fence is checked (erratum 48); T47: the token's azp second (Plan K ruling 12).
     "grant_execution": ("text, text, uuid", ("mcp_exec",)),
     "mark_sent": ("text, text, uuid", ("mcp_exec",)),

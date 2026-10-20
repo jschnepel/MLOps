@@ -28,9 +28,18 @@ SAM = "03f7eb09-e18d-5f33-bf75-12c57d5aaa54"  # ALPHA's reviewer
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 
 
-async def new_run(conn: persistence.Conn, tenant_id: UUID | None = None, *, api: persistence.Conn) -> tuple:
+async def new_run(
+    conn: persistence.Conn,
+    tenant_id: UUID | None = None,
+    *,
+    api: persistence.Conn,
+    requester: UUID | None = None,
+    asset_id: str = "A17",
+    interval: tuple[datetime, datetime] | None = None,
+) -> tuple:
     """A QUEUED run in a fresh conversation; on a new random tenant unless a seeded one is given. `conn` is the
-    superuser (seeding), `api` the role connection that may call create_run."""
+    superuser (seeding), `api` the role connection that may call create_run. The requester defaults to ALEX (alpha's
+    requester), the asset to A17 and the interval to the 24 hours before now (T16 tests choose others)."""
     conv, msg = uuid4(), uuid4()
     tenant = tenant_id or uuid4()
     if tenant_id is None:
@@ -46,17 +55,18 @@ async def new_run(conn: persistence.Conn, tenant_id: UUID | None = None, *, api:
             (msg, tenant, conv, ALEX),
         )
         end = datetime.now(UTC).replace(microsecond=0)
+        start_at, end_at = interval or (end - timedelta(hours=24), end)
         async with api.transaction():  # the function sets its own tenant
             run, _ = await persistence.create_run(
                 api,
                 tenant_id=tenant,
                 conversation_id=conv,
                 message_id=msg,
-                requester=UUID(ALEX),
+                requester=requester or UUID(ALEX),
                 intent=Intent.INVESTIGATE,
-                asset_id="A17",
-                start_at=end - timedelta(hours=24),
-                end_at=end,
+                asset_id=asset_id,
+                start_at=start_at,
+                end_at=end_at,
             )
     except BaseException:
         # A failed create_run must not leave the seeded rows behind (the run does not exist, so purge_run cannot).

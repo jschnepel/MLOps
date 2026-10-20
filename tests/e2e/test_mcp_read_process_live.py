@@ -13,6 +13,10 @@ handle (the refusal comes before the tool and the handle lookup; mcp-read forwar
 handle or a token (the worker's, or a foreign one) in the child's own log. That log is written through the service's
 redaction filter (`serve()` installs it first) at uvicorn's "warning" level, so its check is weaker than the in-process
 DEBUG capture of tests/e2e/test_mcp_read_t15_live.py, which runs with no filter at all.
+
+T16: mcp-read is the only separately started process here. asset-sim is the in-process uvicorn fixture (`asset_sim`)
+on a loopback port, so the asset tool's hop from the child to asset-sim, with mcp-read's own token, is a real HTTP
+call; asset-sim itself does not run as a child.
 """
 
 import asyncio
@@ -42,7 +46,8 @@ from tests.e2e.test_mcp_read_t15_live import ANSWER, QUERY, free_port, raw_heade
 from tests.e2e.test_migrations_and_persistence import new_run
 from tests.plan_b.live import kc
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested")]  # T17: the governed corpus
+# T17: the governed corpus; T16: asset-sim, whose URL the child inherits (`asset_sim` exports OPS_ASSET_SIM_URL).
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("ingested", "asset_sim")]
 
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 ROOT = Path(__file__).resolve().parents[2]
@@ -113,18 +118,23 @@ async def test_r025_an_independent_client_lists_and_calls_over_the_network(
             ):
                 tools = (await client.list_tools()).tools
                 result = await client.call_tool("search_procedures", QUERY)
-        assert [tool.name for tool in tools] == ["search_procedures"]
-        assert tools[0].input_schema["additionalProperties"] is False
+                # T16 (ruling 17): an asset tool through the child, which reaches asset-sim with its own token.
+                status = await client.call_tool("get_asset_status", {"asset_id": "A17"})
+        assert [tool.name for tool in tools] == ["get_asset_status", "get_recent_alerts", "search_procedures"]  # T16
+        assert all(tool.input_schema["additionalProperties"] is False for tool in tools)
         doc = result.structured_content
         assert not result.is_error and isinstance(doc, dict) and doc["status"] == "ok"
         assert doc["data"]["results"][0]["evidence_id"] == ANSWER  # first by a wide margin (round 1, M10)
+        answered = status.structured_content
+        assert not status.is_error and isinstance(answered, dict) and answered["status"] == "ok"
+        assert answered["data"]["asset_id"] == "A17" and answered["data"]["data_source"] == "synthetic"
         text = log.read_text(encoding="utf-8", errors="replace")
         leaked = any(value in text for value in (handle, token))  # one boolean: a failing assert prints its operands
         assert not leaked  # the child's own log, written through its redaction filter, holds neither
         assert (version("mcp"), version("mcp-types")) == ("2.3.0", "2.3.0")  # AM-30's lock, R031
         lines.append(
             f"R025 (read half; mcp-write with T47) / R031 (network half): child process; official client mode"
-            f" {PROTOCOL_VERSION} listed [search_procedures], called ok"
+            f" {PROTOCOL_VERSION} listed the three read tools, called search_procedures and get_asset_status ok"
         )
     finally:
         await purge_run(app_conn, run)

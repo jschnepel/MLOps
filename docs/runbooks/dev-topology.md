@@ -72,12 +72,13 @@ Each process connects as its own AM-20.1 login role and never as the owner: api 
 
 ## Host processes (T08, T11)
 
-The six application processes run on the host until T30 containerises them (`docs/runbooks/walking-skeleton.md`). Every listener binds `127.0.0.1`.
+The seven application processes run on the host until T30 containerises them (`docs/runbooks/walking-skeleton.md`). Every listener binds `127.0.0.1`.
 
 | Process | Module | Port | Notes |
 |---|---|---|---|
+| asset-sim | `ops_asset_sim` | 8091 | synthetic assets and alerts; mcp-read's `ops-mcp-read` token only; no database (T16) |
 | incident-sim | `ops_incident_sim` | 8090 | destination; database `incident`, role `incident` |
-| mcp-read | `ops_mcp_read` | 8081 | `/mcp`, read tool `search_procedures` |
+| mcp-read | `ops_mcp_read` | 8081 | `/mcp`, read tools `get_asset_status`, `get_recent_alerts`, `search_procedures` |
 | mcp-write | `ops_mcp_write` | 8082 | `/mcp`, write tool `create_incident` |
 | api | `ops_api` | 8000 | persona bearer tokens, audience `ops-api` |
 | worker | `ops_worker` | 8070 | health only; polls `app.jobs` |

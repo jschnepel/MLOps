@@ -424,6 +424,7 @@ class Urls:
     mcp_read: str
     mcp_write: str
     incident_sim: str
+    asset_sim: str  # T16: where mcp-read reaches asset-sim (Plan M ruling 5)
 
 
 def urls() -> Urls:
@@ -433,6 +434,7 @@ def urls() -> Urls:
         mcp_read=env("OPS_MCP_READ_URL", "http://127.0.0.1:8081/mcp"),
         mcp_write=env("OPS_MCP_WRITE_URL", "http://127.0.0.1:8082/mcp"),
         incident_sim=env("OPS_INCIDENT_SIM_URL", "http://127.0.0.1:8090"),
+        asset_sim=env("OPS_ASSET_SIM_URL", "http://127.0.0.1:8091"),
     )
 
 

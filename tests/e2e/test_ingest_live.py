@@ -25,9 +25,9 @@ from ops_core.settings import Role
 
 from scripts import gen_corpus_meta
 from scripts.skeleton import CORPUS, corpus_tenants
-from tests.e2e.conftest import lease_for, purge_corpus, purge_run, purge_tenant
+from tests.e2e.conftest import add_requester, lease_for, purge_corpus, purge_run, purge_tenant
 from tests.e2e.test_fenced_definers_live import investigate_job, read_handle
-from tests.e2e.test_migrations_and_persistence import new_run
+from tests.e2e.test_migrations_and_persistence import ALEX, new_run
 
 pytestmark = pytest.mark.asyncio
 
@@ -77,6 +77,9 @@ async def test_r032_repeat_change_revoke_and_supersede(
     alpha, beta = uuid4(), uuid4()
     for tenant in (alpha, beta):
         await app_conn.execute("INSERT INTO app.tenants (tenant_id, name) VALUES (%s, %s)", (tenant, f"t-{tenant}"))
+    # The run below is alex's in the fresh alpha: the definer re-checks the run's requester since revision 0012
+    # (T16), and purge_tenant removes the membership with the tenant.
+    await add_requester(app_conn, alpha, ALEX)
     tenants = {"alpha": alpha, "beta": beta}
     root = tmp_path / "corpus"
     shutil.copytree(CORPUS, root)

@@ -56,6 +56,14 @@ def test_mcp_write_starts_on_a_database_at_0010(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_mcp_read_does_not_ask_for_0010(monkeypatch: pytest.MonkeyPatch) -> None:
-    conn: Any = MarkerConn({persistence.HANDLE_BINDING[1], persistence.GOVERNED_CORPUS[1]})
+    present = (
+        persistence.HANDLE_BINDING,
+        persistence.GOVERNED_CORPUS,
+        persistence.ASSET_SCOPE,
+        persistence.SEARCH_INSTANT,
+    )
+    conn: Any = MarkerConn({marker for _, marker in present})  # every mcp-read revision through 0012 (T16)
     start(monkeypatch, conn)
     assert all(persistence.WRITE_PATH[1] not in asked for asked in conn.asked)
+    for signature, marker in present:  # mcp-read asks for each of its own revisions' markers, 0012's two included
+        assert (marker, signature) in conn.asked

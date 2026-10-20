@@ -44,6 +44,7 @@ def start(monkeypatch: pytest.MonkeyPatch, conn: CatalogConn) -> None:
 
     monkeypatch.setattr(persistence, "connect", connect)
     monkeypatch.setattr(settings, "app_postgres", lambda role: role)
+    monkeypatch.setattr(settings, "read_secret", lambda name: "unit-test")  # the asset-sim token source's (T16)
     monkeypatch.setenv("PROFILE", "dev")
     state = server.State(session=None, verifier=KeyedVerifier())
     app = server.build_app(server.build_server(state, issuer=ISSUER, resource_url=RESOURCE), state)

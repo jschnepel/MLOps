@@ -187,10 +187,18 @@ HANDLE_BINDING: Final = ("app._resolve_handle(text, text, text)", "j.run_id = v_
 WRITE_PATH: Final = ("app.request_abort(text, text, uuid)", "ABORT_NOT_DUE")
 # Revision 0011 (T17): mcp-read answers `search_procedures` from the governed corpus through `search_procedures_scoped`,
 # so it refuses to start without it (Plan L rulings 21 and 24). The same rule: a later revision that re-creates the
-# function keeps this text or changes it here in the same commit.
+# function keeps this text or changes it here in the same commit (revision 0012 keeps it: the ranking is unchanged).
 GOVERNED_CORPUS: Final = (
     "app.search_procedures_scoped(text, text, text, public.vector, text, integer, text)",
     "ts_rank_cd(c.search, v_query)",
+)
+# Revision 0012 (T16): `asset_scope` exists, and `search_procedures_scoped` returns the instant it decided permission
+# at. mcp-read calls both with these shapes, so it refuses to start without them (Plan M ruling 3). The same rule: a
+# later revision that re-creates either function keeps its text or changes it here in the same commit.
+ASSET_SCOPE: Final = ("app.asset_scope(text, text)", "as_of := app.current_time()")
+SEARCH_INSTANT: Final = (
+    "app.search_procedures_scoped(text, text, text, public.vector, text, integer, text)",
+    "retrieved_at := v_now",
 )
 
 
@@ -466,11 +474,14 @@ class Procedure:
 
 @dataclass(frozen=True)
 class Procedures:
-    """A search's answer: the tenant's latest ingested corpus version ("none" before any) and the sections, best
-    first."""
+    """A search's answer: the tenant's latest ingested corpus version ("none" before any), the sections, best first,
+    the database instant the definer decided permission at (`retrieved_at`, revision 0012) and whether any section
+    was longer than the contract's excerpt bound and was cut (`truncated`, Plan M ruling 11)."""
 
     corpus_version: str
     results: tuple[Procedure, ...]
+    retrieved_at: datetime
+    truncated: bool = False
 
 
 async def search_procedures(
@@ -480,7 +491,8 @@ async def search_procedures(
     and the mode `lexical` until T18. The handle never reaches a log.
 
     Raises:
-        HandleRejected: the handle does not resolve for mcp-read (the definer's `_resolve_handle`).
+        HandleRejected: the handle does not resolve for mcp-read (the definer's `_resolve_handle`), or the run's
+            requester no longer holds an active requester membership (R028, revision 0012).
         Refused: an argument outside the tool's bounds (`BAD_ARGUMENT`).
     """
     row = await _call(
@@ -490,6 +502,7 @@ async def search_procedures(
     )
     if row is None:
         raise PersistenceError("search_procedures_scoped returned nothing")
+    hits = row["results"]
     results = tuple(
         Procedure(
             evidence_id=str(hit["evidence_id"]),
@@ -501,9 +514,46 @@ async def search_procedures(
             effective_from=datetime.fromisoformat(str(hit["effective_from"])),
             rank=float(hit["rank"]),
         )
-        for hit in row["results"]
+        for hit in hits
     )
-    return Procedures(str(row["corpus_version"]), results)
+    # `excerpt_cut` says the definer cut a body at the contract's bound (ruling 11); it reaches no tool result, only
+    # the envelope's `truncated`.
+    cut = any(hit["excerpt_cut"] is True for hit in hits)
+    return Procedures(str(row["corpus_version"]), results, row["retrieved_at"], cut)
+
+
+@dataclass(frozen=True)
+class AssetScope:
+    """What `asset_scope` returns for a read handle: the run, its tenant, its asset and fixed `[start_at, end_at)`,
+    and `as_of`, the database instant asset-sim answers at (Plan M rulings 2 and 4)."""
+
+    run_id: UUID
+    tenant_id: UUID
+    asset_id: str
+    start_at: datetime
+    end_at: datetime
+    as_of: datetime
+
+
+async def asset_scope(conn: Conn, *, handle: str, azp: str) -> AssetScope:
+    """The handle's run's asset and interval for forwarding to asset-sim (SA:460 with the caller's `azp`, erratum
+    104). The handle never reaches a log.
+
+    Raises:
+        HandleRejected: the handle does not resolve for mcp-read, or the run's requester no longer holds an active
+            requester membership in its tenant (R028); one refusal for every cause (SA:355).
+    """
+    row = await _call(conn, "SELECT * FROM app.asset_scope(%s, %s)", (handle, azp))
+    if row is None:
+        raise HandleRejected("invocation handle rejected")
+    return AssetScope(
+        run_id=UUID(str(row["run_id"])),
+        tenant_id=UUID(str(row["tenant_id"])),
+        asset_id=str(row["asset_id"]),
+        start_at=row["start_at"],
+        end_at=row["end_at"],
+        as_of=row["as_of"],
+    )
 
 
 @dataclass(frozen=True)

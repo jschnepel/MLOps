@@ -27,6 +27,7 @@ class FaultKind(StrEnum):
     RECEIPT_HASH_MISMATCH = "receipt_hash_mismatch"  # the next POST commits and answers another payload hash
     DELAY_RECEIPT = "delay_receipt"  # the next lookup of a committed key answers 404, as if not yet visible
     OUTBOX_SINK_FAIL = "outbox_sink_fail"  # the sweeper's next notification delivery fails (T14, R024)
+    ASSET_UNAVAILABLE = "asset_unavailable"  # asset-sim's next status answers `unavailable` (T16)
 
 
 # BS:405's nine faults, phrase by phrase. Concurrent same-key submission is a harness behaviour, not a hook: two
@@ -45,6 +46,9 @@ BS405: Final[dict[str, FaultKind | None]] = {
 }
 # The sweeper's own hook: not one of BS:405's destination faults, and armed only through its sink's factory argument.
 SWEEPER_FAULTS: Final = frozenset({FaultKind.OUTBOX_SINK_FAIL})
+# asset-sim's own hook (T16, Plan M ruling 6): the contract's third asset state, which no data rule produces. Its
+# other faults are BS:405's (a transient 503, a malformed response, a slow answer), consumed the destination's way.
+ASSET_SIM_FAULTS: Final = frozenset({FaultKind.ASSET_UNAVAILABLE})
 TIMED: Final = frozenset({FaultKind.TIMEOUT_BEFORE_ACCEPT})  # the kinds that take `seconds`
 DEFAULT_SECONDS: Final = 5
 

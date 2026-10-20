@@ -3,8 +3,8 @@
 Catches: an envelope that does not validate against tool-result.schema.json, a rank or other field the contract lacks
 leaking into a result, a timestamp not in the contract's spelling, mcp-read reading a corpus from files again instead
 of the governed store (T17 retired the fixture corpus; the lifecycle, tenant and ranking cases it used to pin here are
-now the definer's, tests/e2e/test_migration_0011_live.py), a tool schema that drifts from schemas/tools/, and an extra
-argument such as tenant_id silently ignored (SA:350).
+now the definer's, tests/e2e/test_migration_0011_live.py), a tool schema that is not the file in schemas/tools/ (T16),
+and an extra argument such as tenant_id silently ignored (SA:350).
 """
 
 import importlib.util
@@ -12,7 +12,6 @@ import inspect
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 from uuid import UUID
 
 import pytest
@@ -27,7 +26,6 @@ NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 TOOL_RESULT = Draft202012Validator(
     json.loads(Path("schemas/tool-result.schema.json").read_text(encoding="utf-8")), format_checker=FormatChecker()
 )
-INPUT = json.loads(Path("schemas/tools/search_procedures.input.schema.json").read_text(encoding="utf-8"))
 
 
 def found_in_corpus(document_id: str, names: tuple[str, ...]) -> persistence.Procedures:
@@ -46,12 +44,12 @@ def found_in_corpus(document_id: str, names: tuple[str, ...]) -> persistence.Pro
         )
         for i, s in enumerate(x for x in doc.sections if x.name in names)
     )
-    return persistence.Procedures("corpus-1", hits)
+    return persistence.Procedures("corpus-1", hits, NOW)
 
 
 def test_search_response_matches_the_tool_result_contract() -> None:
     found = found_in_corpus("ALPHA-ALERT-REVIEW", ("repeated-alerts", "evidence"))
-    doc = server.search_response(found, now=NOW)
+    doc = server.search_response(found)
     TOOL_RESULT.validate(doc)
     assert doc["status"] == "ok" and doc["data"]["retrieval_mode"] == "lexical"
     assert doc["data"]["corpus_version"] == "corpus-1"
@@ -62,7 +60,7 @@ def test_search_response_matches_the_tool_result_contract() -> None:
     first = doc["data"]["results"][0]
     assert (first["effective_from"], first["retrieved_at"]) == ("2026-09-01T00:00:00Z", "2026-10-16T12:00:00Z")
     assert all("rank" not in r for r in doc["data"]["results"])  # the score stays in the database's answer
-    nothing = server.search_response(persistence.Procedures("none", ()), now=NOW)
+    nothing = server.search_response(persistence.Procedures("none", (), NOW))
     TOOL_RESULT.validate(nothing)
     assert nothing["data"] == {"results": [], "retrieval_mode": "lexical", "corpus_version": "none"}
     err = server.envelope("search_procedures", error=server.tool_error("INVALID_HANDLE", "missing invocation handle"))
@@ -89,28 +87,35 @@ class StubVerifier:
 
 
 @pytest.mark.asyncio
-async def test_tool_schema_conforms_to_the_contract_and_rejects_extra_arguments() -> None:
+async def test_tool_schemas_are_the_committed_files_and_extra_arguments_are_refused() -> None:
     state = server.State(session=None, verifier=StubVerifier())
     mcp = server.build_server(
         state, issuer="http://localhost:18080/realms/ops-dev", resource_url="http://mcp-read:8081/mcp"
     )
+    accepted = {
+        "get_asset_status": {"asset_id": "A17"},
+        "get_recent_alerts": {
+            "asset_id": "A17",
+            "start_at": "2026-10-05T00:00:00Z",
+            "end_at": "2026-10-06T00:00:00Z",
+            "limit": 10,
+        },
+        "search_procedures": {"query": "x", "limit": 1, "mode": "lexical"},
+    }
     async with Client(mcp) as client:  # in-process: no HTTP, so no bearer middleware; schema and validation only
         tools = {t.name: t for t in (await client.list_tools()).tools}
-        assert set(tools) == {"search_procedures"}
-        schema: dict[str, Any] = tools["search_procedures"].input_schema
-        assert schema["additionalProperties"] is False
-        assert set(schema["required"]) == set(INPUT["required"])
-        assert set(schema["properties"]) == set(INPUT["properties"])  # since T17 the optional asset_type too
-        assert schema["properties"]["mode"]["enum"] == INPUT["properties"]["mode"]["enum"]
-        assert (schema["properties"]["limit"]["minimum"], schema["properties"]["limit"]["maximum"]) == (1, 8)
-        assert (schema["properties"]["query"]["minLength"], schema["properties"]["query"]["maxLength"]) == (1, 500)
-        asset_type = schema["properties"]["asset_type"]
-        assert (asset_type["type"], asset_type["minLength"], asset_type["maxLength"]) == ("string", 1, 40)
-        assert "default" not in asset_type  # nothing for a schema-driven client to copy (round 1, M3)
-        extra = await client.call_tool(
-            "search_procedures", {"query": "x", "limit": 1, "mode": "lexical", "tenant_id": str(ALPHA)}
-        )
-        assert extra.is_error  # SA:350: an argument that supplies a tenant is rejected, not ignored
+        assert set(tools) == set(accepted)  # the three read tools since T16
+        for name, tool in tools.items():
+            committed = json.loads(Path(f"schemas/tools/{name}.input.schema.json").read_text(encoding="utf-8"))
+            assert tool.input_schema == committed, name  # the committed file itself (Plan M ruling 13)
+        assert "default" not in tools["search_procedures"].input_schema["properties"]["asset_type"]  # round 1, M3
+        for name, arguments in accepted.items():
+            extra = await client.call_tool(name, {**arguments, "tenant_id": str(ALPHA)})
+            assert extra.is_error, name  # SA:350: an argument that supplies a tenant is rejected, not ignored
+            # Without the bearer middleware there is no access token, so the tool body refuses before any lookup.
+            res = await client.call_tool(name, arguments)
+            assert not res.is_error and res.structured_content["status"] == "error", name
+            assert res.structured_content["error"]["code"] == "INVALID_HANDLE", name
         bad = await client.call_tool("search_procedures", {"query": "x", "limit": 9, "mode": "lexical"})
         assert bad.is_error
         for lax in ("1", True):  # lax coercion would accept both as 1
@@ -120,7 +125,3 @@ async def test_tool_schema_conforms_to_the_contract_and_rejects_extra_arguments(
         for empty in ("", None, "x" * 41):  # the contract's asset_type is a string of 1 to 40 characters
             arguments = {"query": "x", "limit": 1, "mode": "lexical", "asset_type": empty}
             assert (await client.call_tool("search_procedures", arguments)).is_error, empty
-        # Without the bearer middleware there is no access token, so the tool body refuses before any lookup.
-        res = await client.call_tool("search_procedures", {"query": "x", "limit": 1, "mode": "lexical"})
-        assert not res.is_error and res.structured_content["status"] == "error"
-        assert res.structured_content["error"]["code"] == "INVALID_HANDLE"

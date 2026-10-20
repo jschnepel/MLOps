@@ -55,7 +55,7 @@ STAMP: dict[str, datetime] = {}  # min(synced_at) right after the skeleton came 
 
 @pytest.fixture(scope="module")
 def skeleton(migrated: None) -> Iterator[Skeleton]:
-    """Six processes for the module (this module is opted out of the autouse stamp, so every later `synced_at` is the
+    """Seven processes for the module (this module is opted out of the autouse stamp, so every later `synced_at` is the
     sweeper's). After they stop, sam's row is restored with no sweeper left to race the restore (a sync that listed
     sam as disabled could otherwise commit after the test's own restore), and `permission_version` goes back to 1 for
     the modules that run later in the session."""
