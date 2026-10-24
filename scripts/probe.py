@@ -8,9 +8,9 @@ keeps the measured package versions independent of the workspace lockfile, and `
 variables or a working-directory module from changing what is imported; the pinned versions are recorded in
 reports/model-probe-freeze.txt.
 
-Preconditions: evals/holdout.sha256 exists (T03 sealed), Ollama is running. Writes
-reports/model-probe-qwen3-8b.md, reports/model-probe-freeze.txt, data/model-pins.json.
-This is measurement, not prompt tuning: the prompts are the sealed starters, unchanged.
+Preconditions: the starter prompts match their pinned sha256, Ollama is running (erratum 114 dropped the holdout
+seal). Writes reports/model-probe-qwen3-8b.md, reports/model-probe-freeze.txt, data/model-pins.json.
+This is measurement, not prompt tuning: the prompts are the pinned starters, unchanged.
 The model is unloaded first so the first call is a true cold start.
 
 Measured configuration (AM-31): ChatOllama(reasoning=False, num_ctx=16384, num_predict=1000, temperature=0)
@@ -42,7 +42,6 @@ from scripts.probe_stats import (
     cold_cell,
     has_thinking,
     mb_or_not_measured,
-    seal_problem,
     summarize,
     vram_row,
     wilson,
@@ -59,10 +58,8 @@ TIMEOUT_S = 60
 PROMPT_DRAFT = ROOT / "handoff/prompts/incident-draft-v1.md"
 PROMPT_REPAIR = ROOT / "handoff/prompts/schema-repair-v1.md"
 SCHEMA = ROOT / "schemas/model-draft.schema.json"
-SEAL = ROOT / "evals/holdout.sha256"
-# sha256 of the two sealed starter prompts. They duplicate lines 2-3 of evals/holdout.sha256 on purpose: main()
-# refuses to run unless the seal file AND the prompt files on disk both match, so the probe can never measure a
-# prompt that was edited after sealing (AM-50).
+# sha256 of the two starter prompts. main() refuses to run unless the prompt files on disk match, so the probe can
+# never measure an edited prompt (AM-50).
 EXPECTED = {
     PROMPT_DRAFT.name: "e3c26da349dcb0a9bfafb6c786a06f15fece389c21fa63b1b64fef7659b6a942",
     PROMPT_REPAIR.name: "8b6658eb0f08136699b78e7ab1d76972f88f4399db720e92e5be5335b0c7c343",
@@ -341,7 +338,7 @@ def render_report(data: dict, digest: str, version: str, probed_at: str) -> str:
     lo3, hi3 = wilson(s["repaired_valid"], n)
     return f"""# Model probe: {MODEL} (AM-31, T02)
 
-Measurement only; prompts unchanged (sha256 verified against the hashes pinned in probe.py; evals/holdout.sha256 present). Distinct inputs: {n}. Date: {probed_at}.
+Measurement only; prompts unchanged (sha256 verified against the hashes pinned in probe.py; no holdout seal, erratum 114). Distinct inputs: {n}. Date: {probed_at}.
 Configuration measured (AM-31): model `{MODEL}`, digest `{digest}`, Ollama {version}, `ChatOllama(reasoning=False, num_ctx=16384, num_predict=1000, temperature=0)` wrapped in `with_structured_output(schemas/model-draft.schema.json, method="json_schema", include_raw=True)`, plus application-side jsonschema validation of the parsed object. First-pass, repair and repeat calls use the wrapper; JSON-valid means the wrapper parsed an object (`parsing_error` is None) and the raw text has no thinking. The mid-generation cancel and the following `ok` call use the same ChatOllama unwrapped. {TIMEOUT_S}s cap per call. Interpreter: {sys.version.split()[0]}. Model unloaded before the first call.
 
 | Metric | Value | Wilson 95% CI |
@@ -371,25 +368,17 @@ model_permit release rule (AM-12, chosen from the cancel row above): [release on
 
 
 def main() -> int:
-    """Check the seal and prompts, run the probe and write the report, pins and freeze file; return an exit code.
+    """Check the prompts, run the probe and write the report, pins and freeze file; return an exit code.
 
-    Returns 2 without calling the model when a precondition fails (seal missing or malformed, prompt hash mismatch,
-    fewer than 30 inputs), so a sealing mistake can never produce a report that looks valid.
+    Returns 2 without calling the model when a precondition fails (prompt hash mismatch, fewer than 30 inputs), so an
+    edited prompt can never produce a report that looks valid.
     """
-    if not SEAL.is_file():
-        print(
-            "evals/holdout.sha256 is missing: T03 must seal the holdout before the probe runs (AM-50)", file=sys.stderr
-        )
-        return 2
-    problem = seal_problem(SEAL.read_text(encoding="utf-8"), EXPECTED)
-    if problem is not None:
-        print(f"evals/holdout.sha256 is malformed: {problem}; refusing to run (AM-50)", file=sys.stderr)
-        return 2
-    # The seal file only records hashes; this confirms the prompt files on disk still match them.
+    # Erratum 114 dropped the holdout seal as a precondition; the prompt pins stay, so the probe still measures the
+    # starter prompts exactly as pinned.
     for name, h in EXPECTED.items():
         actual = sha256_of(ROOT / "handoff/prompts" / name)
         if actual != h:
-            print(f"prompt {name} hash {actual} != sealed/pinned {h}; refusing to run", file=sys.stderr)
+            print(f"prompt {name} hash {actual} != pinned {h}; refusing to run", file=sys.stderr)
             return 2
     # TODO(T46): rename the single-letter names `l` (easily misread as 1), `c`, `s` and `n` here and in run_probe and
     # render_report to descriptive ones (`line`, `case`, `summary`, `count`).

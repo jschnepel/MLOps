@@ -1441,6 +1441,15 @@ Allowed shortcuts in T23, each with its owning task:
 - Every failure category proven by tests.
 - Separate-services architecture.
 - MIT license; publish publicly to `jschnepel/MLOps` once logged in.
+- **Erratum 114 (decided by the owner, 2026-10-21; applied 2026-10-24 on `plan-p`):** the sealed holdout no longer
+  gates anything ("remove holdout seal"). T03 is dropped from T02's and T19's `depends_on`, T41 from T25's;
+  `scripts/probe.py` no longer requires `evals/holdout.sha256` and still refuses an edited starter prompt. T25
+  evaluates on the development set and every report says its results are not held out. A holdout stays optional
+  owner work (T03, T41; `scripts/seal.py` and the case schema remain), and the custody rule still applies to it: no
+  agent opens holdout case material.
+- **Build autonomously (2026-10-21/24):** the owner asked the agent to run the build until it is set up, and chose to
+  go ahead past T44 step 10 with it pending (the loopback bind of step A is applied). The agent records owner
+  decisions it takes on that instruction as provisional, for the owner to confirm or reverse.
 
 ## Dev database state (2026-10-08)
 
@@ -1524,15 +1533,14 @@ the `ops_test` databases. The dev database stays at 0013 with corpus-1 embedded.
 - Fill in `evals/quality-gates.json` (schema `evals/quality-gates.schema.json`) and commit it before the first holdout
   run (SA:672-674): the safety gates are fixed at a blocking 0; the quality thresholds are the owner's choice.
 - Decide on the installed Ollama 0.40.4 against SA:587's 0.33.3 (the embedding pin records 0.40.4).
-- Merge PR #12 (`plan-m` -> `main`), still open; then PR #13 (`plan-n`, stacked on `plan-m`; retarget it to `main`
-  once #12 merges); then PR #14 (`plan-o`, stacked on `plan-n`; retarget each to `main` as the one below it merges).
-  The agent was refused both merges on 2026-10-19 (a merge without review), so they are the owner's.
+- PRs #12, #13 and #14 were merged into `main` on 2026-10-20 at the owner's explicit request (each retargeted to
+  `main` first, CI green; merge commits da1db4b, f8145a4 and 3905b35).
 - R025 and R031 have every half evidenced (mcp-read by T15, mcp-write by T47, the import half by T04) but keep
   `NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED`, because no open task owns them: flipping their status is the owner's call
   (or T15's re-close).
-- Merge the stacked PRs #1-#11 in order (plan-b -> main through plan-l -> plan-k, all open; #1-#5 opened 2026-10-09 and green on CI; the first merge also exercises the push-to-main trigger).
+- The stacked PRs #1-#11 are merged (`main` carried #11 by 2026-10-20).
 - Decide on the nine proposed contract errata (see "Plan C executed").
-- T03: the owner writes about 25 holdout case intents without AI help, keeps them off-machine, and records the seal hash externally before T02.
+- T03 (optional since erratum 114): a holdout is the owner's to write without AI help, if they want one; nothing waits on it.
 - T06 is closed (public repo, PRs green). The first CI runs were red on ruff EXE001 (a shebang on a non-executable file, a rule ruff skips on Windows) with every test green; fixed by a file-mode commit on each branch.
 - T44 step 10: step A was applied on 2026-10-16 (see the runbook's attestation row: listener on 127.0.0.1 only, the container test passes, port closed on this host's own non-loopback addresses). Still the owner's: the LAN check from another device, disabling the allow-any `ollama.exe` firewall rules (elevated), and whether to adopt the proposed AM-31 errata (loopback bind primary, firewall fallback).
 

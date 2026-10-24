@@ -218,7 +218,8 @@
       "external_approval_required": true,
       "review_notes": [
         "Hash procedure: sha256 of the exact file bytes via `python -c \"import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())\" <file>`; the owner attests the external record (dated email) in SESSION_STATE.md.",
-        "Plan A (branch plan-a): agent part done in 13b62d6 (case schema, seal script). Pending owner step 9: author the holdout off-machine, seal it into evals/holdout.sha256 and record the hash outside this repo."
+        "Plan A (branch plan-a): agent part done in 13b62d6 (case schema, seal script). Pending owner step 9: author the holdout off-machine, seal it into evals/holdout.sha256 and record the hash outside this repo.",
+        "Erratum 114 (owner decision 2026-10-21): the sealed holdout no longer gates anything. T02 and T19 no longer depend on T03; the holdout is optional owner work, and its tooling (case schema, scripts/seal.py) stays for it."
       ]
     },
     {
@@ -227,8 +228,7 @@
       "title": "Environment inventory and qwen3:8b probe",
       "instructions": "Per AM-31: author >=30 distinct probe inputs under evals/probe/, each with a small synthetic evidence bundle (not dev seeds, not holdout); use handoff/prompts/incident-draft-v1.md and schema-repair-v1.md unchanged at their recorded hashes; validate against 1.0 model-draft.schema.json; run via `uv run --isolated --no-project --with langchain-ollama==1.1.0` and save the freeze via importlib.metadata; reasoning=False, num_ctx=16384; first-pass and post-repair validity with Wilson CIs; identical-repeat rate at temperature 0; cold-start vs warm latency; VRAM; thinking leakage; mid-generation cancellation via `ollama ps`/GPU. Measurement, not tuning. Writes data/model-pins.json {model, digest, ollama_version, probed_at}.",
       "depends_on": [
-        "T01",
-        "T03"
+        "T01"
       ],
       "requirement_ids": [
         "R081"
@@ -241,7 +241,8 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "Plan A (branch plan-a): agent part done in d008866, 7e5b422 and final-review F3-F5 (probe inputs, probe.py, AM-31 structured-output configuration). Pending owner step: the live probe run after the T03 seal; the probe refuses to run without a well-formed seal."
+        "Plan A (branch plan-a): agent part done in d008866, 7e5b422 and final-review F3-F5 (probe inputs, probe.py, AM-31 structured-output configuration). Pending owner step: the live probe run after the T03 seal; the probe refuses to run without a well-formed seal.",
+        "Erratum 114 (owner decision 2026-10-21): T03 is dropped from depends_on; scripts/probe.py no longer requires evals/holdout.sha256 and still refuses to run unless both starter prompts match their pinned sha256."
       ]
     },
     {
@@ -821,7 +822,10 @@
         "New holdout hash committed and externally recorded with the corpus version it labels.",
         "Holdout content still absent from repo and agent-readable paths."
       ],
-      "external_approval_required": true
+      "external_approval_required": true,
+      "review_notes": [
+        "Erratum 114 (owner decision 2026-10-21): optional: it labels an owner holdout if one is written; nothing depends on it."
+      ]
     },
     {
       "id": "T19",
@@ -832,7 +836,6 @@
         "T07",
         "T17",
         "T02",
-        "T03",
         "T44"
       ],
       "requirement_ids": [
@@ -851,7 +854,8 @@
       ],
       "external_approval_required": false,
       "review_notes": [
-        "`probe.py` pins the digest from `/api/tags` (`/api/show` carried no digest for qwen3:8b on Ollama 0.33.3); reconcile with AM-31's `/api/show` wording before designing the fail-closed check."
+        "`probe.py` pins the digest from `/api/tags` (`/api/show` carried no digest for qwen3:8b on Ollama 0.33.3); reconcile with AM-31's `/api/show` wording before designing the fail-closed check.",
+        "Erratum 114 (owner decision 2026-10-21): T03 is dropped from depends_on."
       ]
     },
     {
@@ -1020,8 +1024,7 @@
       "depends_on": [
         "T22",
         "T18",
-        "T23",
-        "T41"
+        "T23"
       ],
       "requirement_ids": [
         "R070",
@@ -1039,7 +1042,8 @@
       "external_approval_required": false,
       "review_notes": [
         "Condition A deterministic metrics only; blind shuffled B/C groundedness labelling; ~20% re-label for intra-rater kappa; safety metrics any-trial; report ~30-point detectability floor.",
-        "Reads each run's manifest (model route, digest, prompt and corpus versions) into the eval report; conditions B and C must show identical model_route."
+        "Reads each run's manifest (model route, digest, prompt and corpus versions) into the eval report; conditions B and C must show identical model_route.",
+        "Erratum 114 (owner decision 2026-10-21): T41 is dropped from depends_on. T25 evaluates on the development set (evals/dev/cases.jsonl) and every report says its results are not held out; a holdout run is added only if the owner writes one (T03/T41)."
       ]
     },
     {
