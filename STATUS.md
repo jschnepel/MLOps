@@ -388,3 +388,13 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   conditions and statistics -> T25; the scenario suite -> T24; `evals/quality-gates.json` -> the owner. Two errata
   (112-113) are proposed.
 - Next: no PLANNED task can start; T19 and T41 wait on owner steps.
+
+## Update — erratum 114 and the live probe (2026-10-24, branch `plan-p`)
+
+- PRs #12, #13 and #14 are merged into `main` (2026-10-20, at the owner's request).
+- Erratum 114 (the owner's decision, 2026-10-21): the holdout seal no longer gates T02, T19 or T25. `scripts/probe.py`
+  keeps its pinned-prompt check; `check.py` is `CHECK: GREEN` at 1540 passed, 219 skipped.
+- T02's live probe ran on local Ollama 0.40.4 (`reports/model-probe-qwen3-8b.md`, `data/model-pins.json`): JSON-valid
+  59/60, schema-valid 5/60 first pass and after repair (a `question` on proposal and answer drafts), no thinking, warm
+  p50 2.77 s, the cold call over the 60 s cap. Its decision lines (proceed; release on cancel) are provisional.
+- Next: T19 (Plan P).

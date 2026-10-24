@@ -1,0 +1,6 @@
+{
+  "model": "qwen3:8b",
+  "digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+  "ollama_version": "0.40.4",
+  "probed_at": "2026-10-24T22:42:22.383063+00:00"
+}

@@ -242,7 +242,8 @@
       "external_approval_required": false,
       "review_notes": [
         "Plan A (branch plan-a): agent part done in d008866, 7e5b422 and final-review F3-F5 (probe inputs, probe.py, AM-31 structured-output configuration). Pending owner step: the live probe run after the T03 seal; the probe refuses to run without a well-formed seal.",
-        "Erratum 114 (owner decision 2026-10-21): T03 is dropped from depends_on; scripts/probe.py no longer requires evals/holdout.sha256 and still refuses to run unless both starter prompts match their pinned sha256."
+        "Erratum 114 (owner decision 2026-10-21): T03 is dropped from depends_on; scripts/probe.py no longer requires evals/holdout.sha256 and still refuses to run unless both starter prompts match their pinned sha256.",
+        "Live probe run by the agent on 2026-10-24 at the owner's instruction (erratum 114 removed the seal gate): reports/model-probe-qwen3-8b.md, reports/model-probe-freeze.txt, data/model-pins.json (digest 500a1f06...8b41, Ollama 0.40.4). JSON-valid 59/60, schema-valid 5/60 first pass and after repair (a `question` on proposal/answer drafts), cold call over the 60 s cap, warm p50 2.77 s. Decision lines 'proceed' and 'release on cancel' are provisional; the owner confirms them."
       ]
     },
     {

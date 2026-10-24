@@ -2,7 +2,12 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M06 (vector retrieval; T18 is DONE in Plan N, and T41, the owner's holdout labels, is its open task. M05 closed with T16 in Plan M. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
-**Next task:** Plan O (T23) is executed on branch `plan-o` (`e91b27b..80da1f2` holds the debt list and the four
+**Next task:** T19 (Plan P, branch `plan-p` from `main` 3905b35). PRs #12-#14 are merged. Erratum 114 (the owner's
+decision, 2026-10-21) removed the holdout seal as a gate: T19 no longer waits on T03 and T25 no longer on T41. The
+agent ran T02's live probe on 2026-10-24 at the owner's instruction (`reports/model-probe-qwen3-8b.md`,
+`data/model-pins.json`; schema-valid 5/60, diagnosed in the report; its decision lines are provisional), and the owner
+chose to go ahead past T44 step 10 with it pending. The Plan O record follows.
+**Plan O record:** Plan O (T23) is executed on branch `plan-o` (`e91b27b..80da1f2` holds the debt list and the four
 building tasks; the close-out is the commit after `80da1f2`). T23 is DONE: R111 is evidenced (`evals/dev/cases.jsonl`,
 `core/src/ops_core/grading.py`, `evals/dev/RUBRIC.md`) subject to erratum 112; errata 112-113 are proposed; the
 numeric-token debt is closed as a measurement (`reports/retrieval/t23-numeric-tokens.md`: lexical 5/6 numeric queries
@@ -1572,6 +1577,9 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then wait for the owner inputs above (holdout seal, then live probe; the Ollama runbook's other-device LAN check; the proposed errata of Plans C-O, up to 113; the merges of PRs #12 and #13, then `plan-o`'s PR). After T23 no PLANNED task in `handoff/tasks.json` can start: T19 (the real drafting route) and T41 (the owner's gold labels) have every dependency DONE or DONE_PENDING_OWNER but wait on owner steps (T19 on T02's probe, T03's seal and T44 step 10; T41 on T03's seal), and everything else waits on them (T20 on T19, then T21, T22, T24, T25 and the rest). Write the plan for whichever the owner unblocks first (T19 unblocks T20, then T21, T22, T24 and T25).
+Then continue with T19 (Plan P; fact sheet `docs/superpowers/research/2026-10-24-plan-p-inputs.md`), then T20, T21,
+T22, T24 and T25 in dependency order. Owner inputs still open: the Ollama runbook's other-device LAN check (T44 step
+10), the proposed errata (up to 113, plus Plan P's), confirming the probe's provisional decision lines, and
+`evals/quality-gates.json`. Before erratum 114 (2026-10-21) every remaining task waited on the holdout seal (T03).
 
 Do not store secrets or private reasoning in this file.
