@@ -43,7 +43,12 @@ class PersistenceError(Exception):
 
 
 class NotFound(PersistenceError):
-    """The row is absent or belongs to another tenant; the two cases are indistinguishable on purpose (SA:357)."""
+    """The row is absent or belongs to another tenant; the two cases are indistinguishable on purpose (SA:357).
+    `detail` is the function's DETAIL when it names what was missing (`supersedes_run_id`), else None."""
+
+    def __init__(self, message: str, detail: str | None = None) -> None:
+        super().__init__(message)
+        self.detail = detail
 
 
 # The decision definer's DETAIL for each way a decision can conflict (T21, Plan R ruling 3); the API answers each
@@ -106,6 +111,8 @@ def translate(exc: psycopg.Error) -> Exception | None:
     message = f"{exc.diag.message_primary}: {detail}" if detail else str(exc.diag.message_primary)
     if cls is VersionConflict:
         return VersionConflict(message, code=detail if detail in DECISION_CONFLICTS else None)
+    if cls is NotFound:
+        return NotFound(message, detail=detail or None)
     return cls(message)
 
 

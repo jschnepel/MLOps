@@ -214,6 +214,11 @@ def map_refusal(exc: persistence.Refused) -> Exception:
     return Conflict("VERSION_CONFLICT")
 
 
+def already_decided(standing: dict[str, Any]) -> str:
+    """ALREADY_DECIDED's message, naming the decision that stands (T21 ruling 3)."""
+    return f"{CONFLICT_MESSAGES[ErrorCode.ALREADY_DECIDED]}: {standing['decision']} at {stamp(standing['decided_at'])}"
+
+
 def recorded_refusal(exc: persistence.Refused) -> Exception:
     """`map_refusal` for T21's units: a refusal of the caller stays Forbidden (unrecorded), a refusal of the run's
     state becomes the 409 the unit records."""
@@ -719,6 +724,9 @@ class AdmissionStore:
                 authored_by=list(row["authored_by"]),
                 reviewer=reviewer,
             )
+            standing = await unit.decision_of(proposal_id)
+            if standing is not None:  # the definer's order: the first decision wins before the revision is compared
+                return error_verdict(409, ErrorCode.ALREADY_DECIDED, already_decided(standing), rid)
             if row["revision"] != request.expected_revision:
                 stale = CONFLICT_MESSAGES[ErrorCode.STALE_REVISION]
                 return error_verdict(409, ErrorCode.STALE_REVISION, stale, rid)
@@ -733,7 +741,7 @@ class AdmissionStore:
                 message = CONFLICT_MESSAGES[code]
                 recorded = await unit.decision_of(proposal_id) if code is ErrorCode.ALREADY_DECIDED else None
                 if recorded is not None:  # ruling 3: the answer names the decision that stands
-                    message = f"{message}: {recorded['decision']} at {stamp(recorded['decided_at'])}"
+                    message = already_decided(recorded)
                 return error_verdict(409, code, message, rid)
             return Verdict(
                 200,
@@ -809,7 +817,9 @@ class AdmissionStore:
             except Recorded as exc:
                 return error_verdict(exc.status, exc.code, exc.message, idem.request_id)
             if frozen.proposal_id is None:
-                reason = frozen.reason.value if frozen.reason is not None else "asset guard"
+                if frozen.reason is None:
+                    raise Internal("the asset guard refused without a reason")  # a defect, not a client's answer
+                reason = frozen.reason.value
                 return error_verdict(
                     409,
                     ErrorCode(reason.upper()),
@@ -1258,7 +1268,7 @@ class DbUnit:
                     supersedes_run_id=request.supersedes_run_id,
                 )
         except persistence.NotFound as exc:
-            what = "no such superseded run" if str(exc).endswith("supersedes_run_id") else "no such run"
+            what = "no such superseded run" if exc.detail == "supersedes_run_id" else "no such run"
             raise Recorded(404, ErrorCode.NOT_FOUND, what) from exc
         except persistence.VersionConflict as exc:
             raise Recorded(409, ErrorCode.VERSION_CONFLICT, CONFLICT_MESSAGES[ErrorCode.VERSION_CONFLICT]) from exc
@@ -1296,10 +1306,12 @@ class DbUnit:
                     author=author,
                     evidence_ids=request.evidence_refs,
                 )
-                if request.asset_id != facts.asset_id:
+                # Note 4: another asset and another interval are the same 404 with nothing written (SA:154).
+                if request.asset_id != facts.asset_id or (request.start_at, request.end_at) != (
+                    facts.start_at,
+                    facts.end_at,
+                ):
                     raise Recorded(404, ErrorCode.NOT_FOUND, "no such run, asset or permitted section")
-                if (request.start_at, request.end_at) != (facts.start_at, facts.end_at):
-                    raise Recorded(422, ErrorCode.INVALID_INPUT, "the interval is the run's own (SA:154)")
                 payload = ProposalPayload(
                     tenant_id=self.tenant_id,
                     run_id=request.run_id,
@@ -1333,9 +1345,11 @@ class DbUnit:
         except persistence.VersionConflict as exc:
             raise Recorded(409, ErrorCode.VERSION_CONFLICT, "the run does not wait for a manual proposal") from exc
         except persistence.Refused as exc:
-            mapped = recorded_refusal(exc)
-            # Any other refusal names a payload field the API took from the run itself: a defect, not the caller's.
-            raise (mapped if isinstance(mapped, (Forbidden, Recorded)) else Internal(exc.code)) from exc
+            # Any other refusal names a payload field the API took from the run itself (PAYLOAD_RUN_MISMATCH, INTERVAL,
+            # SUPERSEDES_MISMATCH, WORKFLOW_VERSION, EXPIRY): a defect of the server, never recorded as the caller's.
+            if exc.code not in CALLER_REFUSALS | STATE_REFUSALS:
+                raise Internal(exc.code) from exc
+            raise recorded_refusal(exc) from exc
 
     async def feedback(self, *, run_id: UUID, author: UUID, request: FeedbackRequest) -> UUID:
         """The subject must be the run, one of its proposals or one of its events (404 otherwise); then the event and

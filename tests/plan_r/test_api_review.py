@@ -76,10 +76,42 @@ def test_a_decision_runs_the_lazy_expiry_first_and_names_each_conflict(api) -> N
     url = f"/api/v1/proposals/{pid}/decisions"
     refused(c.post(url, headers=h("sam"), json={**DECISION, "expected_revision": 2}), 409, "STALE_REVISION")
     refused(c.post(url, headers=h("sam"), json={**DECISION, "expected_payload_sha256": "8" * 64}), 409, "STALE_HASH")
-    assert fake.expiries == [pid, pid]  # a unit of its own before each decision unit (ruling 5)
+    assert [expired_pid for expired_pid, _ in fake.expiries] == [pid, pid]  # a unit before each decision (ruling 5)
     expired = seed_proposal(fake, seed_run(fake, "AWAITING_APPROVAL"), expired=True)
     body = refused(c.post(f"/api/v1/proposals/{expired}/decisions", headers=h("sam"), json=DECISION), 409, "EXPIRED")
     assert body["message"] == "the proposal expired; a revision and a new review are needed"
+
+
+def test_the_lazy_expiry_commits_in_its_own_unit_before_the_decisions(api) -> None:
+    """Erratum 146 / DEV-008: the expiry is a committed unit of its own, so a 409 or a 403 of the decision's unit can
+    never undo it. Moving it inside the decision's unit fails both halves."""
+    c, fake = api
+    run_id = seed_run(fake, "AWAITING_APPROVAL")
+    pid = seed_proposal(fake, run_id, expired=True)
+    refused(c.post(f"/api/v1/proposals/{pid}/decisions", headers=h("sam"), json=DECISION), 409, "EXPIRED")
+    assert fake.runs[run_id]["state"] == "BLOCKED_REVIEW" and fake.runs[run_id]["reason"] == "expired"
+    assert fake.event_log[-1]["type"] == "review.blocked"
+    [(_, expiry_unit)] = fake.expiries
+    assert expiry_unit not in fake.decision_units  # the decision's unit is another one
+    assert fake.unit_log.index(("commit", expiry_unit)) < min(
+        fake.unit_log.index(("open", n)) for n in fake.decision_units
+    )
+    # A decision unit that rolls back (a self-reviewer's 403) leaves the committed expiry standing.
+    other = seed_run(fake, "AWAITING_APPROVAL")
+    own = seed_proposal(fake, other, expired=True, authored_by=[ALEX, MORGAN])
+    refused(c.post(f"/api/v1/proposals/{own}/decisions", headers=h("morgan"), json=DECISION), 403, "FORBIDDEN")
+    assert fake.runs[other]["state"] == "BLOCKED_REVIEW" and fake.runs[other]["reason"] == "expired"
+    assert [expired_pid for expired_pid, _ in fake.expiries] == [pid, own]
+
+
+def test_an_already_decided_proposal_answers_already_decided_whatever_the_revision(api) -> None:
+    c, fake = api
+    pid = seed_proposal(fake, seed_run(fake, "AWAITING_APPROVAL"))
+    url = f"/api/v1/proposals/{pid}/decisions"
+    assert c.post(url, headers=h("sam"), json=DECISION).status_code == 200
+    stale = c.post(url, headers=h("sam", key="key-decide-02"), json={**DECISION, "expected_revision": 2})
+    body = refused(stale, 409, "ALREADY_DECIDED")  # the definer's order: first decision wins, then the revision
+    assert body["message"].startswith("the proposal is already decided: approve at ")
 
 
 def test_a_requester_who_also_reviews_and_revised_cannot_approve(api) -> None:
@@ -142,6 +174,9 @@ def test_a_cancel_is_the_runs_requesters_or_a_reviewers_and_never_claims_undo(ap
     assert after.status_code == 200 and after.json()["status"] == "EXECUTING" and after.json()["grant_exists"] is True
     assert after.json()["note"] == "a grant exists; what was dispatched stands, and nothing is undone"
     refused(c.post(f"/api/v1/runs/{run_id}/cancel", headers=h(), json={"expected_version": 6}), 409, "VERSION_CONFLICT")
+    stale = seed_run(fake, "BLOCKED_REVIEW")
+    refused(c.post(f"/api/v1/runs/{stale}/cancel", headers=h(), json={"expected_version": 4}), 409, "VERSION_CONFLICT")
+    assert "cancel_requested" not in fake.runs[stale]  # the flag follows the version check (the savepoint's rule)
 
 
 def manual(run_id: UUID, asset: str = "A17") -> dict[str, Any]:
@@ -198,6 +233,15 @@ def test_the_search_is_an_authors_read_without_a_key(api) -> None:
     assert [s.limit for s in fake.searches] == [5]
 
 
+def test_the_search_is_a_read_and_does_not_ask_the_idp(api) -> None:
+    c, fake = api
+    c.app.state.auth.admin.disabled.add(ALEX)  # SA:542 binds mutations; the session's membership check stays
+    bearer = {"Authorization": "Bearer alex"}
+    assert c.post("/api/v1/search", headers=bearer, json={"query": "bearing temperature"}).status_code == 200
+    assert c.post("/api/v1/search", headers={"Authorization": "Bearer nobody"}, json={"query": "x"}).status_code == 401
+    assert len(fake.searches) == 1
+
+
 def test_the_approval_card_and_the_run_snapshot(api) -> None:
     c, fake = api
     run_id = seed_run(fake, "BLOCKED_REVIEW", reason="expired")
@@ -206,4 +250,5 @@ def test_the_approval_card_and_the_run_snapshot(api) -> None:
     assert card["requester"] == str(ALEX) and card["decision"] is None and card["expired"] is False
     assert card["supersedes"] is None and card["submission_state"] == {"grant_exists": False, "attempt_state": None}
     assert c.get(f"/api/v1/runs/{run_id}", headers=h()).json()["reason"] == "expired"
-    assert CASEY not in fake.runs[run_id].get("authors", [])
+    assert card["authored_by"] == [str(ALEX)]  # the proposal's real author set, as the card shows it
+    assert CASEY not in fake.proposals[pid]["authored_by"]

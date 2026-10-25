@@ -306,11 +306,19 @@ def create_app(
         who.require("requester")
         return who
 
-    async def enabled_author(who: Annotated[Identity, Depends(enabled_identity)]) -> Identity:
-        """A manual proposal or a search (T21 ruling 7): a current requester or reviewer, enabled (SA:542)."""
+    def require_author(who: Identity) -> Identity:
+        """T21 ruling 7: a current requester or reviewer of the tenant."""
         if not who.roles & {"requester", "reviewer"}:
             raise ApiError(403, ErrorCode.FORBIDDEN, "the requester or reviewer role is required")
         return who
+
+    async def enabled_author(who: Annotated[Identity, Depends(enabled_identity)]) -> Identity:
+        """A manual proposal (T21 ruling 7): an author who is still enabled at the IdP (SA:542)."""
+        return require_author(who)
+
+    async def reading_author(who: Annotated[Identity, Depends(identity)]) -> Identity:
+        """A search: a read, so SA:542 (which binds mutations) does not apply; the session's membership check does."""
+        return require_author(who)
 
     async def idempotency_key(request: Request) -> str:
         """BS:264: every /api/v1 mutation carries a key, checked after identity and, where the route has one, the role,
@@ -722,7 +730,7 @@ def create_app(
         )
 
     @app.post("/api/v1/search")
-    async def post_search(request: Request, who: Annotated[Identity, Depends(enabled_author)]) -> dict[str, Any]:
+    async def post_search(request: Request, who: Annotated[Identity, Depends(reading_author)]) -> dict[str, Any]:
         """BS:280 (T21 ruling 7, erratum 135): bounded lexical search over the tenant's permitted sections. A read:
         no Idempotency-Key and no record."""
         search: SearchRequest = await body(request, SearchRequest)

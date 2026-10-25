@@ -78,6 +78,7 @@ TABLES = (
     "decision_keys",
     "decisions",
     "feedback",
+    "expiries",
 )
 
 
@@ -106,9 +107,10 @@ class StubVerifier:
 class FakeUnit:
     """`ops_api.store.Unit` over the fake's tables, under one tenant."""
 
-    def __init__(self, fake: FakeStore, tenant_id: UUID) -> None:
+    def __init__(self, fake: FakeStore, tenant_id: UUID, number: int = 0) -> None:
         self.fake = fake
         self.tenant_id = tenant_id
+        self.number = number  # T21: which unit this is, in the order the store opened them
 
     async def lock_scope(self, lock_key: str) -> None:
         self.fake.locks.append(lock_key)  # one process: the lock is a record that it was taken first
@@ -288,12 +290,14 @@ class FakeUnit:
         row = await self.proposal(proposal_id)
         if row is None:
             raise NotFound
+        self.fake.decision_units.append(self.number)
+        run = self.fake.runs.get(row["run_id"], {})
         # T21: the definer's codes, in its order (first decision wins, then the hash, then the expiry).
         if proposal_id in self.fake.decided:
             raise Conflict("ALREADY_DECIDED")
         if row["payload_sha256"] != request.expected_payload_sha256:
             raise Conflict("STALE_HASH")
-        if row.get("expired"):
+        if row.get("expired") or (run.get("state") == "BLOCKED_REVIEW" and run.get("reason") == "expired"):
             raise Conflict("EXPIRED")
         self.fake.decided.add(proposal_id)
         self.fake.decision_keys[proposal_id] = key
@@ -309,7 +313,14 @@ class FakeUnit:
         return self.fake.decisions.get(proposal_id)
 
     async def expire(self, proposal_id: UUID) -> None:
-        self.fake.expiries.append(proposal_id)  # the lazy expiry ran in a unit of its own, before the decision's
+        """`expire_proposal`: a due proposal (`expired` on its row) blocks its run for review, in this unit."""
+        self.fake.expiries.append((proposal_id, self.number))
+        row = self.fake.proposals.get(proposal_id)
+        run = None if row is None else self.fake.runs.get(row["run_id"])
+        if row is not None and run is not None and row.get("expired") and run["state"] == "AWAITING_APPROVAL":
+            run["state"], run["reason"], run["state_version"] = "BLOCKED_REVIEW", "expired", run["state_version"] + 1
+            payload = {"reason": "expired"}
+            self.fake.event_log.append({"run_id": run["run_id"], "type": "review.blocked", "payload": payload})
 
     def _run(self, run_id: UUID) -> dict[str, Any]:
         row = self.fake.runs.get(run_id)
@@ -347,11 +358,12 @@ class FakeUnit:
         roles = {role for tenant, role in ROWS.get(actor, []) if tenant == self.tenant_id}
         if not ("reviewer" in roles or ("requester" in roles and row["requester"] == actor)):
             raise store.Forbidden
-        row["cancel_requested"] = True
         if row.get("grant"):  # the flag only; mark_sent decides (SA:458)
+            row["cancel_requested"] = True
             return persistence.Cancelled(run_id, RunState(row["state"]), row["state_version"], True, None)
         if row["state"] not in PRE_GRANT_STATES or row["state_version"] != request.expected_version:
             raise Recorded(409, ErrorCode.VERSION_CONFLICT, store.CONFLICT_MESSAGES[ErrorCode.VERSION_CONFLICT])
+        row["cancel_requested"] = True  # only after the version check: the definer's refusal leaves no flag behind
         row["state"], row["state_version"] = "CANCELLED", row["state_version"] + 1
         return persistence.Cancelled(run_id, RunState.CANCELLED, row["state_version"], False, None)
 
@@ -433,7 +445,10 @@ class FakeStore(store.AdmissionStore):
         self.jtis: set[str] = set()
         self.clock = time.time  # tests replace it to age sessions and records
         self.decisions: dict[UUID, dict[str, Any]] = {}  # T21: the recorded decision, for ALREADY_DECIDED's answer
-        self.expiries: list[UUID] = []  # T21: every lazy-expiry unit, in order
+        self.expiries: list[tuple[UUID, int]] = []  # T21: (proposal, unit) of each lazy expiry; committed state
+        self.unit_count = 0  # T21: units opened so far; a trace, never rolled back
+        self.unit_log: list[tuple[str, int]] = []  # T21: ("open" | "commit" | "rollback", unit number), in order
+        self.decision_units: list[int] = []  # T21: the unit each decision attempt ran in
         self.feedback: list[dict[str, Any]] = []  # T21: the feedback rows
         self.searches: list[SearchRequest] = []  # T21: every search the route made
 
@@ -441,12 +456,17 @@ class FakeStore(store.AdmissionStore):
     async def unit(self, tenant_id: UUID) -> AsyncIterator[store.Unit]:
         """All-or-nothing like a transaction: the tables are restored when the unit raises."""
         saved = {name: copy.deepcopy(getattr(self, name)) for name in TABLES}
+        self.unit_count += 1
+        number = self.unit_count
+        self.unit_log.append(("open", number))
         try:
-            yield FakeUnit(self, tenant_id)
+            yield FakeUnit(self, tenant_id, number)
         except BaseException:
             for name, value in saved.items():
                 setattr(self, name, value)
+            self.unit_log.append(("rollback", number))
             raise
+        self.unit_log.append(("commit", number))
 
     def seed_question(self, run_id: UUID) -> UUID:
         """Put a run where the worker would (AWAITING_INPUT with a `clarification.requested` event); the event id."""
