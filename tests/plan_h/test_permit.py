@@ -17,6 +17,7 @@ import pytest
 from ops_core import persistence
 from ops_core.lease import Lease, LeaseLost
 from ops_worker.drafting import FakeDraftGenerator
+from ops_worker.ollama_drafting import BUDGET_SECONDS
 from ops_worker.permit import PERMIT_TTL_SECONDS, backoff, model_permit
 
 from tests.plan_d.test_worker import EV, REQ
@@ -64,6 +65,7 @@ def test_the_backoff_doubles_to_two_seconds_with_jitter_in_the_upper_half() -> N
     assert [backoff(i, lambda: 0.0) for i in range(4)] == [0.125, 0.25, 0.5, 1.0]
     assert backoff(10_000, lambda: 1.0) == 2.0  # a long wait never overflows the doubling
     assert PERMIT_TTL_SECONDS == 95  # a draft's 90 s budget, both attempts, plus 5 s (BS:555; T19, Plan P ruling 7)
+    assert PERMIT_TTL_SECONDS >= BUDGET_SECONDS + 5  # the TTL follows the budget it must outlast
 
 
 def test_the_permit_is_released_after_the_block_and_after_a_lost_lease(monkeypatch: pytest.MonkeyPatch) -> None:

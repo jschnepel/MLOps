@@ -1,4 +1,5 @@
-"""The model permit around every model call (AM-12 SA:203-205, Plan H ruling 12): one row of `app.model_permit` per
+"""The model permit around every draft (AM-12 SA:203-205, Plan H ruling 12; the worker's warm-up call runs before any
+claim, outside the permit): one row of `app.model_permit` per
 unit of global model concurrency (one, BS:549), taken with SKIP LOCKED in its own short transaction and released in
 another, so a waiting worker never holds a database transaction. A busy permit is polled with capped exponential
 backoff and jitter while the caller's lease lasts. The take and the release are database units and are never

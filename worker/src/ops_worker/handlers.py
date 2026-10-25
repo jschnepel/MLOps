@@ -157,7 +157,7 @@ async def investigate(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
             model_route=deps.generator.route,
             model_digest=deps.generator.digest,
             prompt_version=PROMPT_VERSION,
-            corpus_version=str(doc["data"]["corpus_version"]),
+            corpus_version=doc["data"]["corpus_version"],
             retrieval_mode=doc["data"]["retrieval_mode"],
         )
     except (McpCallFailed, KeyError, ValidationError, ValueError) as exc:

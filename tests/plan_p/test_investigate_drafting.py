@@ -14,12 +14,13 @@ from typing import Any
 
 import pytest
 from ops_core import persistence
+from ops_core.lease import Lease
 from ops_core.routing import ModelRoute
 from ops_worker import handlers
 from ops_worker.drafting import FakeDraftGenerator, ModelUnavailable
 from ops_worker.ollama_drafting import OllamaDraftGenerator, Reply
 
-from tests.plan_h.test_worker_units import JOB, Log, make, patch
+from tests.plan_h.test_worker_units import JOB, RUN, RUN_ID, Log, make, patch
 from tests.plan_p.test_ollama_drafting import GOOD, PINS, WITH_QUESTION, Script, Tags
 
 CLAIMS_SUCCESS = json.dumps(
@@ -164,3 +165,92 @@ def test_the_fake_route_writes_its_manifest_without_a_digest(monkeypatch: pytest
     asyncio.run(handlers.handle(deps, dict(JOB), lease))
     assert isinstance(deps.generator, FakeDraftGenerator)
     assert [(m.model_route, m.model_digest) for m in inserted] == [(ModelRoute.FAKE, None)]
+
+
+class Recording(FakeDraftGenerator):
+    """The fake route that keeps the request it was given and how many permits were held when it got it."""
+
+    def __init__(self, log: Log) -> None:
+        super().__init__()
+        self.log = log
+        self.requests: list[Any] = []
+        self.held: list[int] = []
+
+    async def generate(self, request: Any, evidence: Any) -> Any:
+        self.requests.append(request)
+        self.held.append(self.log.entries.count("take_model_permit") - self.log.entries.count("release_model_permit"))
+        return await super().generate(request, evidence)
+
+
+def stepped(
+    monkeypatch: pytest.MonkeyPatch, log: Log, *, permit_wait: float
+) -> tuple[handlers.Deps, Lease, list[dict[str, Any]]]:
+    """A lease on a clock the test moves: taking the model permit takes `permit_wait` seconds of it. The lease is long
+    enough that its local deadline is not what these tests meet (the heartbeat would renew it)."""
+    seen = recorded(monkeypatch, log)
+    now = [100.0]
+
+    def clock() -> float:
+        return now[0]
+
+    async def take(*_: Any, **__: Any) -> int:
+        log.entries.append("take_model_permit")
+        now[0] += permit_wait
+        return 1
+
+    monkeypatch.setattr(persistence, "take_model_permit", take)
+    deps, _ = make(log, clock)
+    lease = Lease(run_id=RUN_ID, owner="w:test", fence=3, lease_seconds=3600, started=clock(), clock=clock)
+    return deps, lease, seen
+
+
+def test_the_draft_gets_what_the_run_budget_has_left_once_the_permit_is_held(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BS:555: 90 s from the claim, less the time already spent (here the permit wait) and the 5 s margin; the request
+    is built inside the hold, so the wait counts (round 1 I3)."""
+    log = Log()
+    deps, lease, _ = stepped(monkeypatch, log, permit_wait=12.0)
+    deps.generator = recording = Recording(log)
+    asyncio.run(handlers.handle(deps, dict(JOB), lease))
+    (request,) = recording.requests
+    assert recording.held == [1]  # the permit was already held when the request was built and sent
+    assert request.remaining_seconds == deps.leases.compute_budget_seconds - 12.0 - handlers.BUDGET_MARGIN_SECONDS
+    assert request.remaining_seconds == 73.0 and request.answer_only is False
+
+
+def test_an_answer_only_run_asks_for_an_answer_only_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+    log = Log()
+    deps, lease, _ = stepped(monkeypatch, log, permit_wait=0.0)
+    monkeypatch.setattr(persistence, "run_row", _answer_only_row)
+    deps.generator = recording = Recording(log)
+    asyncio.run(handlers.handle(deps, dict(JOB), lease))
+    assert [r.answer_only for r in recording.requests] == [True]
+    assert "freeze_proposal" not in log.entries  # SA:453: an answer_only run never freezes a proposal
+
+
+async def _answer_only_row(_conn: Any, _run_id: Any, *, lock: bool = False) -> dict[str, Any]:
+    return {**RUN, "intent": "answer_only"}
+
+
+def test_the_last_seconds_of_the_budget_still_reach_the_route_as_the_attempt_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log = Log()
+    deps, lease, seen = stepped(monkeypatch, log, permit_wait=84.0)  # 90 - 84 - 5 = 1 s left
+    deps.generator, chat = real(Reply(GOOD))
+    asyncio.run(handlers.handle(deps, dict(JOB), lease))
+    assert [c[2] for c in chat.calls] == [pytest.approx(1.0, abs=0.1)]  # the generator's own clock ran a little
+    assert ends(seen) == ("DRAFTING", None) and log.entries.count("freeze_proposal") == 1
+
+
+def test_a_budget_spent_before_the_draft_fails_the_run_without_calling_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log = Log()
+    deps, lease, seen = stepped(monkeypatch, log, permit_wait=85.0)  # 90 - 85 - 5 = 0 s left
+    deps.generator, chat = real(Reply(GOOD))
+    asyncio.run(handlers.handle(deps, dict(JOB), lease))
+    assert chat.calls == []  # not a single request to Ollama
+    assert ends(seen) == ("FAILED", handlers.MODEL_UNAVAILABLE)
+    assert "freeze_proposal" not in log.entries
+    assert log.entries.count("take_model_permit") == 1 and log.entries.count("release_model_permit") == 1
+    assert log.entries[-1] == "release_lease"

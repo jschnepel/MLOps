@@ -214,7 +214,22 @@ def test_a_run_budget_already_spent_gives_the_attempt_no_time() -> None:
     request = dataclasses.replace(REQUEST, remaining_seconds=0.0)
     with pytest.raises(ModelUnavailable, match="attempt 1 passed its 0 s"):
         run(generator(chat).generate(request, EVIDENCE))
-    assert chat.calls == []  # with 0 s the call is cut off before it starts
+    assert chat.calls == []  # with 0 s the call is never made (`_chat` is not even entered)
+
+
+def test_a_repair_with_nothing_left_of_the_budget_is_never_made() -> None:
+    clock = Clock()
+
+    class Slow(Script):
+        async def __call__(self, system: str, user: str, seconds: float) -> Reply:
+            clock.now += 50.0
+            return await super().__call__(system, user, seconds)
+
+    chat = Slow(Reply(WITH_QUESTION), Reply(GOOD))
+    request = dataclasses.replace(REQUEST, remaining_seconds=50.0)  # the first pass spends all of it
+    with pytest.raises(ModelUnavailable, match="attempt 2 passed its 0 s"):
+        run(generator(chat, clock=clock).generate(request, EVIDENCE))
+    assert len(chat.calls) == 1  # the repair's `_chat` was not called
 
 
 def test_an_outage_is_unavailable_and_never_repaired_or_replaced() -> None:

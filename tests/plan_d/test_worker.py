@@ -83,6 +83,8 @@ async def test_build_proposal_binds_hash_to_canonical_bytes():
     assert (
         frozen.payload.prompt_version == "incident-draft-v2" and frozen.payload.workflow_version == "investigation-v1"
     )
+    # Knowingly thin: the route and digest a run records are tested in plan_p/test_investigate_drafting.py and the live
+    # worker tests; this only pins what the fake route declares.
     assert drafting.FakeDraftGenerator.route is ModelRoute.FAKE and drafting.FakeDraftGenerator.digest is None
 
 

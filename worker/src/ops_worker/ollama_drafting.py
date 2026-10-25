@@ -273,6 +273,10 @@ class OllamaDraftGenerator:
         if request.remaining_seconds is not None:
             limit = min(limit, request.remaining_seconds - elapsed)
         seconds = max(0.0, min(ATTEMPT_SECONDS, limit))
+        if seconds <= 0:
+            # Nothing left: never start the call (a zero timeout still enters the coroutine up to its first await,
+            # which could open a connection to Ollama before the cancel).
+            raise ModelUnavailable(f"draft attempt {number} passed its {seconds:.0f} s")
         began = self._clock()
         try:
             reply = await asyncio.wait_for(self._chat(system, user, seconds), seconds)
