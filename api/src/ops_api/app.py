@@ -27,7 +27,19 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from ops_core import keycloak_admin, persistence, settings
-from ops_core.contracts import ClarificationReply, DecisionRequest, DuplicateKey, ErrorCode, MessageRequest, load
+from ops_core.contracts import (
+    CancelRequest,
+    ClarificationReply,
+    DecisionRequest,
+    DuplicateKey,
+    ErrorCode,
+    FeedbackRequest,
+    ManualProposalRequest,
+    MessageRequest,
+    RevisionRequest,
+    SearchRequest,
+    load,
+)
 from ops_core.keycloak_admin import AdminUnavailable
 from ops_core.outcomes import EventRuleViolation
 from ops_core.settings import AdmissionSettings, Profile, Role
@@ -63,6 +75,10 @@ ROUTE_CONVERSATIONS = "POST /api/v1/conversations"
 ROUTE_MESSAGES = "POST /api/v1/conversations/{conversation_id}/messages"
 ROUTE_CLARIFICATIONS = "POST /api/v1/runs/{run_id}/clarifications"
 ROUTE_DECISIONS = "POST /api/v1/proposals/{proposal_id}/decisions"
+ROUTE_REVISIONS = "POST /api/v1/runs/{run_id}/revisions"  # T21 (BS:274)
+ROUTE_CANCEL = "POST /api/v1/runs/{run_id}/cancel"  # T21 (BS:276)
+ROUTE_MANUAL = "POST /api/v1/manual-proposals"  # T21 (BS:281)
+ROUTE_FEEDBACK = "POST /api/v1/runs/{run_id}/feedback"  # T21 (BS:282)
 
 
 class ApiError(Exception):
@@ -177,6 +193,8 @@ def create_app(
                 # Revision 0007: admission counts the global queue through queued_runs_total (0006's record table and
                 # message columns come before it); the permit table marks the revision.
                 await persistence.assert_relation(app.state.store.session.conn, "app.model_permit")
+                # Revision 0016 (T21): the review, revision, cancel, manual and feedback definers; feedback marks it.
+                await persistence.assert_relation(app.state.store.session.conn, "app.feedback")
             if not verifier.ready:
                 await verifier.load_keys()
             deps = auth_factory()
@@ -281,6 +299,17 @@ def create_app(
         """A decision by a current reviewer: the role check precedes the key and the record (ruling 21), so a member
         who lost the role cannot replay a recorded decision; independence stays the unit's check (it needs the row)."""
         who.require("reviewer")
+        return who
+
+    async def enabled_requester(who: Annotated[Identity, Depends(enabled_identity)]) -> Identity:
+        """A revision (T21, Plan R ruling 2): any current requester of the tenant, enabled at the IdP (SA:542)."""
+        who.require("requester")
+        return who
+
+    async def enabled_author(who: Annotated[Identity, Depends(enabled_identity)]) -> Identity:
+        """A manual proposal or a search (T21 ruling 7): a current requester or reviewer, enabled (SA:542)."""
+        if not who.roles & {"requester", "reviewer"}:
+            raise ApiError(403, ErrorCode.FORBIDDEN, "the requester or reviewer role is required")
         return who
 
     async def idempotency_key(request: Request) -> str:
@@ -616,6 +645,90 @@ def create_app(
             # operation); like every 403 it is decided before the work and never recorded (ruling 5).
             raise ApiError(403, ErrorCode.FORBIDDEN, "only the run's requester may answer its question") from exc
 
+    @app.post("/api/v1/runs/{run_id}/revisions")
+    async def post_revision(
+        run_id: UUID,
+        request: Request,
+        who: Annotated[Identity, Depends(enabled_requester)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> Response:
+        """BS:274 (T21): a new revision, re-drafted by the worker; the author joins the run's content authors, so a
+        reviewer who revises cannot approve it (R093)."""
+        revision: RevisionRequest = await body(request, RevisionRequest)
+        store: st.Store = request.app.state.store
+        idem = scoped(request, who, ROUTE_REVISIONS, key, {"run_id": str(run_id)}, revision)
+        try:
+            return await recorded(
+                request,
+                store.revise_once(
+                    idem=idem, tenant_id=who.tenant_id, run_id=run_id, author=who.subject, request=revision
+                ),
+            )
+        except st.Forbidden as exc:
+            raise ApiError(403, ErrorCode.FORBIDDEN, "a current requester of the tenant is required") from exc
+
+    @app.post("/api/v1/runs/{run_id}/cancel")
+    async def post_cancel(
+        run_id: UUID,
+        request: Request,
+        who: Annotated[Identity, Depends(enabled_identity)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> Response:
+        """BS:276 (T21 ruling 12): the run's requester or a current reviewer; the definer decides which."""
+        cancel: CancelRequest = await body(request, CancelRequest)
+        store: st.Store = request.app.state.store
+        idem = scoped(request, who, ROUTE_CANCEL, key, {"run_id": str(run_id)}, cancel)
+        try:
+            return await recorded(
+                request,
+                store.cancel_once(idem=idem, tenant_id=who.tenant_id, run_id=run_id, actor=who.subject, request=cancel),
+            )
+        except st.Forbidden as exc:
+            raise ApiError(403, ErrorCode.FORBIDDEN, "the run's requester or a current reviewer is required") from exc
+
+    @app.post("/api/v1/manual-proposals")
+    async def post_manual_proposal(
+        request: Request,
+        who: Annotated[Identity, Depends(enabled_author)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> Response:
+        """BS:281 (T21 ruling 7): a person's proposal for a run the model could not draft for."""
+        manual: ManualProposalRequest = await body(request, ManualProposalRequest)
+        store: st.Store = request.app.state.store
+        idem = scoped(request, who, ROUTE_MANUAL, key, {}, manual)
+        try:
+            return await recorded(
+                request, store.manual_once(idem=idem, tenant_id=who.tenant_id, author=who.subject, request=manual)
+            )
+        except st.Forbidden as exc:
+            raise ApiError(403, ErrorCode.FORBIDDEN, "a current requester or reviewer is required") from exc
+
+    @app.post("/api/v1/runs/{run_id}/feedback")
+    async def post_feedback(
+        run_id: UUID,
+        request: Request,
+        who: Annotated[Identity, Depends(browser_mutation)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> Response:
+        """BS:282 (T21 ruling 8): any current member's classified feedback; no runtime effect (R113)."""
+        feedback: FeedbackRequest = await body(request, FeedbackRequest)
+        store: st.Store = request.app.state.store
+        idem = scoped(request, who, ROUTE_FEEDBACK, key, {"run_id": str(run_id)}, feedback)
+        return await recorded(
+            request,
+            store.feedback_once(
+                idem=idem, tenant_id=who.tenant_id, run_id=run_id, author=who.subject, request=feedback
+            ),
+        )
+
+    @app.post("/api/v1/search")
+    async def post_search(request: Request, who: Annotated[Identity, Depends(enabled_author)]) -> dict[str, Any]:
+        """BS:280 (T21 ruling 7, erratum 135): bounded lexical search over the tenant's permitted sections. A read:
+        no Idempotency-Key and no record."""
+        search: SearchRequest = await body(request, SearchRequest)
+        result: dict[str, Any] = await request.app.state.store.search(who.tenant_id, search)
+        return result
+
     @app.get("/api/v1/runs/{run_id}")
     async def get_run(run_id: UUID, request: Request, who: Annotated[Identity, Depends(identity)]) -> dict[str, Any]:
         row = await request.app.state.store.run(who.tenant_id, run_id)
@@ -625,6 +738,7 @@ def create_app(
             "run_id": str(row["run_id"]),
             "conversation_id": str(row["conversation_id"]),
             "status": row["state"],
+            "reason": row.get("reason"),  # T21 (ruling 15): why a run is BLOCKED_REVIEW, REJECTED or FAILED
             "state_version": row["state_version"],
             "active_proposal_id": str(row["active_proposal_id"]) if row["active_proposal_id"] else None,
             "asset_id": row["asset_id"],
@@ -637,9 +751,11 @@ def create_app(
     async def get_proposal(
         proposal_id: UUID, request: Request, who: Annotated[Identity, Depends(identity)]
     ) -> dict[str, Any]:
-        row = await request.app.state.store.proposal(who.tenant_id, proposal_id)
+        row = await request.app.state.store.proposal_card(who.tenant_id, proposal_id)
         if row is None:
             raise ApiError(404, ErrorCode.NOT_FOUND, "no such proposal")
+        decided = row["decision"] is not None
+        supersedes = row["supersedes_run_id"]
         return {
             "proposal_id": str(row["proposal_id"]),
             "run_id": str(row["run_id"]),
@@ -648,6 +764,20 @@ def create_app(
             "payload_sha256": row["payload_sha256"],
             "authored_by": [str(a) for a in row["authored_by"]],
             "expires_at": stamp(row["expires_at"]),
+            # T21 (ruling 15; BS:464, BS:532): the approval card's facts. T26 renders them.
+            "requester": str(row["requester"]),
+            "expired": bool(row["expired"]),
+            "decision": (
+                {"decision": row["decision"], "reviewer": str(row["reviewer"]), "decided_at": stamp(row["decided_at"])}
+                if decided
+                else None
+            ),
+            "supersedes": (
+                None
+                if supersedes is None
+                else {"run_id": str(supersedes), "incident_id": row["superseded_incident_id"]}
+            ),
+            "submission_state": {"grant_exists": bool(row["grant_exists"]), "attempt_state": row["attempt_state"]},
         }
 
     @app.post("/api/v1/proposals/{proposal_id}/decisions")

@@ -314,7 +314,8 @@ def test_a_decision_replays_and_the_first_decision_wins(api) -> None:
     assert first.status_code == 200 and fake.decision_keys[pid] == "key-decide-1"
     assert c.post(url, headers=h("sam", "key-decide-1"), json=DECISION).content == first.content
     second = c.post(url, headers=h("sam"), json=DECISION)
-    refused(second, 409, "VERSION_CONFLICT")
+    body = refused(second, 409, "ALREADY_DECIDED")  # T21 (Plan R ruling 3): its own code, naming what stands
+    assert body["message"].startswith("the proposal is already decided: approve at ")
 
 
 def test_a_conversation_replay_returns_the_same_id(api) -> None:

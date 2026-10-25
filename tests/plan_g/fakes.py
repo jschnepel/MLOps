@@ -20,9 +20,19 @@ from uuid import UUID, uuid4
 
 from ops_api import store
 from ops_api.idempotency import Record, Scope, Verdict
-from ops_api.store import Accepted, Conflict, Decided, LoginState, NotFound, ReplyRefused, SessionRow
-from ops_core.contracts import DecisionRequest, ErrorCode, StoredMessageKind
-from ops_core.states import ACTIVE_STATES, Intent
+from ops_api.store import Accepted, Conflict, Decided, LoginState, NotFound, Recorded, ReplyRefused, SessionRow
+from ops_core import persistence
+from ops_core.contracts import (
+    CancelRequest,
+    DecisionRequest,
+    ErrorCode,
+    FeedbackRequest,
+    ManualProposalRequest,
+    RevisionRequest,
+    SearchRequest,
+    StoredMessageKind,
+)
+from ops_core.states import ACTIVE_STATES, PRE_GRANT_STATES, Intent, Reason, RunState
 from ops_core.tokens import Principal, TokenRejected
 
 ISSUER = "http://localhost:18080/realms/ops-dev"
@@ -34,7 +44,17 @@ JORDAN = UUID("cb551e64-83ec-582b-9047-8dadf20e151a")
 RILEY = UUID("2f73af91-4906-5b79-9144-22c0df4e2316")  # BETA's requester (the live tests' other-tenant requester)
 DUAL = UUID("11111111-2222-5333-8444-555555555555")  # a subject seeded in two tenants
 CASEY = UUID("22222222-3333-5444-8555-666666666666")  # a second requester of ALPHA (fake-only, like DUAL)
-PERSONAS = {"alex": ALEX, "sam": SAM, "lee": LEE, "jordan": JORDAN, "riley": RILEY, "dual": DUAL, "casey": CASEY}
+MORGAN = UUID("33333333-4444-5555-8666-777777777777")  # T21: ALPHA's requester and reviewer at once (fake-only, R093)
+PERSONAS = {
+    "alex": ALEX,
+    "sam": SAM,
+    "lee": LEE,
+    "jordan": JORDAN,
+    "riley": RILEY,
+    "dual": DUAL,
+    "casey": CASEY,
+    "morgan": MORGAN,
+}
 ROWS = {
     ALEX: [(ALPHA, "requester")],
     SAM: [(ALPHA, "reviewer")],
@@ -43,9 +63,22 @@ ROWS = {
     RILEY: [(BETA, "requester")],
     DUAL: [(ALPHA, "requester"), (BETA, "reviewer")],
     CASEY: [(ALPHA, "requester")],
+    MORGAN: [(ALPHA, "requester"), (ALPHA, "reviewer")],
 }
 ACTIVE = {state.value for state in ACTIVE_STATES}
-TABLES = ("conversations", "messages", "runs", "jobs", "event_log", "records", "proposals", "decided", "decision_keys")
+TABLES = (
+    "conversations",
+    "messages",
+    "runs",
+    "jobs",
+    "event_log",
+    "records",
+    "proposals",
+    "decided",
+    "decision_keys",
+    "decisions",
+    "feedback",
+)
 
 
 class StubVerifier:
@@ -255,12 +288,127 @@ class FakeUnit:
         row = await self.proposal(proposal_id)
         if row is None:
             raise NotFound
-        if row["payload_sha256"] != request.expected_payload_sha256 or proposal_id in self.fake.decided:
-            raise Conflict("VERSION_CONFLICT")  # a stale hash, or the first decision already won
+        # T21: the definer's codes, in its order (first decision wins, then the hash, then the expiry).
+        if proposal_id in self.fake.decided:
+            raise Conflict("ALREADY_DECIDED")
+        if row["payload_sha256"] != request.expected_payload_sha256:
+            raise Conflict("STALE_HASH")
+        if row.get("expired"):
+            raise Conflict("EXPIRED")
         self.fake.decided.add(proposal_id)
         self.fake.decision_keys[proposal_id] = key
+        self.fake.decisions[proposal_id] = {
+            "decision": request.decision,
+            "reviewer": reviewer,
+            "decided_at": datetime.fromtimestamp(self.fake.clock(), UTC),
+        }
         status = "APPROVED" if request.decision == "approve" else "REJECTED"
         return Decided(proposal_id, row["run_id"], request.decision, status, 5)
+
+    async def decision_of(self, proposal_id: UUID) -> dict[str, Any] | None:
+        return self.fake.decisions.get(proposal_id)
+
+    async def expire(self, proposal_id: UUID) -> None:
+        self.fake.expiries.append(proposal_id)  # the lazy expiry ran in a unit of its own, before the decision's
+
+    def _run(self, run_id: UUID) -> dict[str, Any]:
+        row = self.fake.runs.get(run_id)
+        if row is None or row["tenant_id"] != self.tenant_id:
+            raise Recorded(404, ErrorCode.NOT_FOUND, "no such run")
+        return row
+
+    async def revise(self, *, run_id: UUID, author: UUID, request: RevisionRequest) -> persistence.Revised:
+        # create_revision's rules in its order (revision 0016): the author's role, the grant, the state and version,
+        # the author cap, the conversation's slot.
+        row = self._run(run_id)
+        if (self.tenant_id, "requester") not in ROWS.get(author, []):
+            raise store.Forbidden
+        if row.get("grant"):
+            raise Recorded(409, ErrorCode.GRANT_EXISTS, store.CONFLICT_MESSAGES[ErrorCode.GRANT_EXISTS])
+        if row["state"] not in ("AWAITING_APPROVAL", "APPROVED", "BLOCKED_REVIEW") or (
+            row["state_version"] != request.expected_version
+        ):
+            raise Recorded(409, ErrorCode.VERSION_CONFLICT, store.CONFLICT_MESSAGES[ErrorCode.VERSION_CONFLICT])
+        authors = row.setdefault("authors", [row["requester"]])
+        if author not in authors and len(authors) >= 8:
+            raise Recorded(409, ErrorCode.AUTHOR_LIMIT, store.CONFLICT_MESSAGES[ErrorCode.AUTHOR_LIMIT])
+        others = [r for r in self._runs_of(row["conversation_id"]) if r["run_id"] != run_id and r["state"] in ACTIVE]
+        if row["state"] == "BLOCKED_REVIEW" and others:
+            raise Recorded(409, ErrorCode.SLOT_OCCUPIED, store.CONFLICT_MESSAGES[ErrorCode.SLOT_OCCUPIED])
+        if author not in authors:
+            authors.append(author)
+        row["revision"] = row.get("revision", 1) + 1
+        row["state"], row["state_version"], row["active_proposal_id"] = "QUEUED", row["state_version"] + 1, None
+        self.fake.jobs.append({"type": "investigate", "run_id": run_id, "dedup_key": f"{run_id}:{row['revision']}"})
+        return persistence.Revised(run_id, row["state_version"], row["revision"])
+
+    async def cancel(self, *, run_id: UUID, actor: UUID, request: CancelRequest) -> persistence.Cancelled:
+        row = self._run(run_id)
+        roles = {role for tenant, role in ROWS.get(actor, []) if tenant == self.tenant_id}
+        if not ("reviewer" in roles or ("requester" in roles and row["requester"] == actor)):
+            raise store.Forbidden
+        row["cancel_requested"] = True
+        if row.get("grant"):  # the flag only; mark_sent decides (SA:458)
+            return persistence.Cancelled(run_id, RunState(row["state"]), row["state_version"], True, None)
+        if row["state"] not in PRE_GRANT_STATES or row["state_version"] != request.expected_version:
+            raise Recorded(409, ErrorCode.VERSION_CONFLICT, store.CONFLICT_MESSAGES[ErrorCode.VERSION_CONFLICT])
+        row["state"], row["state_version"] = "CANCELLED", row["state_version"] + 1
+        return persistence.Cancelled(run_id, RunState.CANCELLED, row["state_version"], False, None)
+
+    async def manual_proposal(self, *, author: UUID, request: ManualProposalRequest) -> persistence.Frozen:
+        row = self._run(request.run_id)
+        roles = {role for tenant, role in ROWS.get(author, []) if tenant == self.tenant_id}
+        if not roles & {"requester", "reviewer"}:
+            raise store.Forbidden
+        if row["state"] != "DRAFTING" or row.get("checkpoint_id") is not None:
+            raise Recorded(409, ErrorCode.VERSION_CONFLICT, "the run does not wait for a manual proposal")
+        if request.asset_id != row["asset_id"]:  # note 4: nothing written
+            raise Recorded(404, ErrorCode.NOT_FOUND, "no such run, asset or permitted section")
+        if row.get("blocked_by") is not None:  # the asset guard's refusal commits BLOCKED_REVIEW (SA:289)
+            row["state"], row["state_version"] = "BLOCKED_REVIEW", row["state_version"] + 1
+            reason = Reason.ASSET_INCIDENT_EXISTS
+            return persistence.Frozen(None, 1, RunState.BLOCKED_REVIEW, reason, row["state_version"], row["blocked_by"])
+        pid = uuid4()
+        row["state"], row["state_version"], row["active_proposal_id"] = (
+            "AWAITING_APPROVAL",
+            row["state_version"] + 1,
+            pid,
+        )
+        self.fake.proposals[pid] = {
+            "proposal_id": pid,
+            "tenant_id": self.tenant_id,
+            "run_id": request.run_id,
+            "revision": 1,
+            "payload_sha256": "7" * 64,
+            "authored_by": [row["requester"], author] if author != row["requester"] else [author],
+            "requester": row["requester"],
+        }
+        return persistence.Frozen(pid, 1, RunState.AWAITING_APPROVAL, None, row["state_version"])
+
+    async def feedback(self, *, run_id: UUID, author: UUID, request: FeedbackRequest) -> UUID:
+        self._run(run_id)
+        found = {
+            "run": request.subject_id == run_id,
+            "proposal": any(
+                p["run_id"] == run_id for p in self.fake.proposals.values() if p["proposal_id"] == request.subject_id
+            ),
+            "event": any(
+                e.get("event_id") == request.subject_id and e["run_id"] == run_id for e in self.fake.event_log
+            ),
+        }[request.subject_kind]
+        if not found:
+            raise Recorded(404, ErrorCode.NOT_FOUND, "no such run or subject")
+        feedback_id = uuid4()
+        payload = {
+            "subject_kind": request.subject_kind,
+            "subject_id": str(request.subject_id),
+            "category": request.category,
+        }
+        self.fake.event_log.append({"run_id": run_id, "type": "feedback.recorded", "payload": payload})
+        self.fake.feedback.append(
+            {"feedback_id": feedback_id, "run_id": run_id, "author": author, "text": request.text}
+        )
+        return feedback_id
 
 
 class FakeStore(store.AdmissionStore):
@@ -284,6 +432,10 @@ class FakeStore(store.AdmissionStore):
         self.sessions: dict[str, dict[str, Any]] = {}  # session hash -> row fields + last_seen, expires, revoked
         self.jtis: set[str] = set()
         self.clock = time.time  # tests replace it to age sessions and records
+        self.decisions: dict[UUID, dict[str, Any]] = {}  # T21: the recorded decision, for ALREADY_DECIDED's answer
+        self.expiries: list[UUID] = []  # T21: every lazy-expiry unit, in order
+        self.feedback: list[dict[str, Any]] = []  # T21: the feedback rows
+        self.searches: list[SearchRequest] = []  # T21: every search the route made
 
     @asynccontextmanager
     async def unit(self, tenant_id: UUID) -> AsyncIterator[store.Unit]:
@@ -322,6 +474,27 @@ class FakeStore(store.AdmissionStore):
     async def proposal(self, tenant_id: UUID, proposal_id: UUID) -> dict[str, Any] | None:
         row = self.proposals.get(proposal_id)
         return row if row and row["tenant_id"] == tenant_id else None
+
+    async def proposal_card(self, tenant_id: UUID, proposal_id: UUID) -> dict[str, Any] | None:
+        row = await self.proposal(tenant_id, proposal_id)
+        if row is None:
+            return None
+        decided = self.decisions.get(proposal_id, {})
+        return {
+            "supersedes_run_id": None,
+            "superseded_incident_id": None,
+            "expired": False,
+            "grant_exists": False,
+            "attempt_state": None,
+            **row,
+            "decision": decided.get("decision"),
+            "reviewer": decided.get("reviewer"),
+            "decided_at": decided.get("decided_at"),
+        }
+
+    async def search(self, tenant_id: UUID, request: SearchRequest) -> dict[str, Any]:
+        self.searches.append(request)
+        return {"corpus_version": "test", "retrieved_at": "2026-10-25T12:00:00Z", "truncated": False, "results": []}
 
     async def events(self, tenant_id: UUID, run_id: UUID, *, after: int, limit: int) -> list[dict[str, Any]]:
         return [] if await self.run(tenant_id, run_id) is None else [{"sequence": 1, "type": "run.accepted"}]

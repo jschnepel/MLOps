@@ -1,6 +1,8 @@
 """The API's door to the database as role `api`: identity through `resolve_identity`, admission through the AM-16
 router and `create_run`, clarification replies, decisions through `record_decision`; reads under the tenant's unit,
-which RLS scopes. T11: the session store (login_state, sessions, logout_jti).
+which RLS scopes. T11: the session store (login_state, sessions, logout_jti). T21: the lazy expiry in a unit of its
+own before a decision, revisions, cancels, manual proposals (two definer calls with the canonical bytes built between
+them), feedback, the manual baseline's search and the approval card.
 
 Every mutation is one idempotent unit (Plan G rulings 4-6, 21): advisory lock on the key's scope, record lookup,
 the route's own checks and the router's verdict, the effect, and the record written last (SA:188), committed
@@ -20,17 +22,26 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 from uuid import UUID, uuid4
 
 import psycopg
 from ops_core import persistence
+from ops_core.canonical import canonical_json
 from ops_core.contracts import (
+    CancelRequest,
+    CancelResponse,
     ClarificationReply,
     DecisionRequest,
     ErrorCode,
+    FeedbackRequest,
+    ManualProposalRequest,
     MessageKind,
     MessageRequest,
+    ProposalPayload,
+    RevisionRequest,
+    SearchRequest,
+    SourceSnapshot,
     StoredMessageKind,
 )
 from ops_core.jobs import JobType, dedup_key
@@ -90,6 +101,11 @@ class ReplyRefused(Exception):
     def __init__(self, status: int, code: ErrorCode, message: str) -> None:
         super().__init__(message)
         self.status, self.code, self.message = status, code, message
+
+
+class Recorded(ReplyRefused):
+    """A refusal of T21's revision, cancel, manual-proposal or feedback unit that the unit records as its answer (the
+    run's or the request's state decided it, BS:301); a refusal of the caller is Forbidden instead, never recorded."""
 
 
 @dataclass(frozen=True)
@@ -168,15 +184,44 @@ def single_tenant(rows: list[tuple[UUID, str]]) -> Membership | None:
     return Membership(next(iter(tenants)), frozenset(role for _, role in rows))
 
 
+# The definers' refusals of the caller (BS:301: a known resource, a disallowed operation), and the refusals of the
+# run's state that keep their own code (SA:764; T21, Plan R rulings 2, 4, 6 and 7).
+CALLER_REFUSALS: Final = frozenset(
+    {"NOT_REVIEWER", "SELF_REVIEW", "MEMBERSHIP_INACTIVE", "NOT_REQUESTER", "NOT_CANCELLER", "NOT_AUTHOR"}
+)
+STATE_REFUSALS: Final = frozenset({"SLOT_OCCUPIED", "GRANT_EXISTS", "AUTHOR_LIMIT"})
+# One message per 409 code (T21, Plan R ruling 3; Plan G final review M3: no conflict borrows another's message).
+CONFLICT_MESSAGES: Final = {
+    ErrorCode.ALREADY_DECIDED: "the proposal is already decided",
+    ErrorCode.STALE_REVISION: "the proposal is not the run's active revision",
+    ErrorCode.STALE_HASH: "the payload hash is not the proposal's",
+    ErrorCode.EXPIRED: "the proposal expired; a revision and a new review are needed",
+    ErrorCode.VERSION_CONFLICT: "the run is not in a state that allows this at that version",
+    ErrorCode.GRANT_EXISTS: "a grant exists for the run; it can no longer be revised",
+    ErrorCode.SLOT_OCCUPIED: "the conversation already has an active run",
+    ErrorCode.AUTHOR_LIMIT: "the run already has eight content authors",
+}
+
+
 def map_refusal(exc: persistence.Refused) -> Exception:
     """A function's DETAIL code → the HTTP class BUILD_SPEC §7 names; the code itself never reaches the client."""
-    if exc.code in ("NOT_REVIEWER", "SELF_REVIEW", "MEMBERSHIP_INACTIVE"):
+    if exc.code in CALLER_REFUSALS:
         return Forbidden()
-    if exc.code == "SLOT_OCCUPIED":
-        return Conflict("SLOT_OCCUPIED")
+    if exc.code in STATE_REFUSALS:
+        return Conflict(exc.code)
     if exc.code == "INVALID_ARGUMENT":
         return Internal()  # the API's own validation makes this unreachable; a 409 would be a false message
     return Conflict("VERSION_CONFLICT")
+
+
+def recorded_refusal(exc: persistence.Refused) -> Exception:
+    """`map_refusal` for T21's units: a refusal of the caller stays Forbidden (unrecorded), a refusal of the run's
+    state becomes the 409 the unit records."""
+    mapped = map_refusal(exc)
+    if isinstance(mapped, Conflict):
+        code = ErrorCode(mapped.code)
+        return Recorded(409, code, CONFLICT_MESSAGES[code])
+    return mapped
 
 
 def stamp(value: datetime) -> str:
@@ -339,6 +384,31 @@ class Unit(RecordUnit, Protocol):
         self, *, proposal_id: UUID, reviewer: UUID, request: DecisionRequest, key: str
     ) -> Decided:
         """`record_decision` within the unit; Conflict or NotFound leave the unit usable, Forbidden ends it."""
+        ...
+
+    async def decision_of(self, proposal_id: UUID) -> dict[str, Any] | None:
+        """The proposal's recorded decision (`decision`, `reviewer`, `decided_at`), or None."""
+        ...
+
+    async def expire(self, proposal_id: UUID) -> None:
+        """`expire_proposal` for the proposal's run (T21 ruling 5): BLOCKED_REVIEW(expired) when it is due."""
+        ...
+
+    async def revise(self, *, run_id: UUID, author: UUID, request: RevisionRequest) -> persistence.Revised:
+        """`create_revision` within the unit; Recorded leaves the unit usable, Forbidden ends it."""
+        ...
+
+    async def cancel(self, *, run_id: UUID, actor: UUID, request: CancelRequest) -> persistence.Cancelled:
+        """`request_cancel` within the unit; Recorded leaves the unit usable, Forbidden ends it."""
+        ...
+
+    async def manual_proposal(self, *, author: UUID, request: ManualProposalRequest) -> persistence.Frozen:
+        """`prepare_manual_proposal`, the canonical bytes, then `create_manual_proposal`, within the unit (ruling 7);
+        Recorded leaves the unit usable, Forbidden ends it."""
+        ...
+
+    async def feedback(self, *, run_id: UUID, author: UUID, request: FeedbackRequest) -> UUID:
+        """The feedback row and `feedback.recorded` within the unit (ruling 8); Recorded (404) leaves it usable."""
         ...
 
 
@@ -616,6 +686,12 @@ class AdmissionStore:
 
         return await self._idempotent(tenant_id, idem, work)
 
+    async def expire_due(self, tenant_id: UUID, proposal_id: UUID) -> None:
+        """The lazy expiry in its own unit, before the decision's (T21, Plan R ruling 5): an expired proposal's
+        BLOCKED_REVIEW(expired) and `review.blocked` commit whatever the decision then answers (DEV-008)."""
+        async with self.unit(tenant_id) as unit:
+            await unit.expire(proposal_id)
+
     async def decide_once(
         self,
         *,
@@ -626,9 +702,12 @@ class AdmissionStore:
         roles: frozenset[str],
         request: DecisionRequest,
     ) -> Verdict:
-        """The first decision on the exact revision and hash by an independent current reviewer (SA:454); the key
-        is also stored on the decision row (ruling 21). A reviewer refusal raises Forbidden: never recorded."""
+        """The first decision on the exact revision and hash by an independent current reviewer of an unexpired
+        proposal (SA:454); the key is also stored on the decision row (ruling 21). A reviewer refusal raises Forbidden:
+        never recorded. The checks here are early answers; `record_decision` checks every rule again under the runs
+        lock and decides (T21, Plan R ruling 3)."""
         rid = idem.request_id
+        await self.expire_due(tenant_id, proposal_id)
 
         async def work(unit: Unit) -> Verdict:
             row = await unit.proposal(proposal_id)
@@ -640,9 +719,9 @@ class AdmissionStore:
                 authored_by=list(row["authored_by"]),
                 reviewer=reviewer,
             )
-            stale = "the proposal is not the active, undecided revision"
             if row["revision"] != request.expected_revision:
-                return error_verdict(409, ErrorCode.VERSION_CONFLICT, stale, rid)
+                stale = CONFLICT_MESSAGES[ErrorCode.STALE_REVISION]
+                return error_verdict(409, ErrorCode.STALE_REVISION, stale, rid)
             try:
                 decided = await unit.record_decision(
                     proposal_id=proposal_id, reviewer=reviewer, request=request, key=idem.scope.key
@@ -650,7 +729,12 @@ class AdmissionStore:
             except NotFound:
                 return error_verdict(404, ErrorCode.NOT_FOUND, "no such proposal", rid)
             except Conflict as exc:
-                return error_verdict(409, ErrorCode(exc.code), stale, rid)
+                code = ErrorCode(exc.code)
+                message = CONFLICT_MESSAGES[code]
+                recorded = await unit.decision_of(proposal_id) if code is ErrorCode.ALREADY_DECIDED else None
+                if recorded is not None:  # ruling 3: the answer names the decision that stands
+                    message = f"{message}: {recorded['decision']} at {stamp(recorded['decided_at'])}"
+                return error_verdict(409, code, message, rid)
             return Verdict(
                 200,
                 {
@@ -661,6 +745,102 @@ class AdmissionStore:
                     "state_version": decided.state_version,
                 },
             )
+
+        return await self._idempotent(tenant_id, idem, work)
+
+    async def revise_once(
+        self, *, idem: Idem, tenant_id: UUID, run_id: UUID, author: UUID, request: RevisionRequest
+    ) -> Verdict:
+        """BS:274: a new revision of the run, re-drafted by the worker (T21, Plan R rulings 1, 2, 4 and 6); 202."""
+
+        async def work(unit: Unit) -> Verdict:
+            try:
+                revised = await unit.revise(run_id=run_id, author=author, request=request)
+            except Recorded as exc:
+                return error_verdict(exc.status, exc.code, exc.message, idem.request_id)
+            return Verdict(
+                202,
+                {
+                    "run_id": str(run_id),
+                    "status": RunState.QUEUED.value,
+                    "state_version": revised.state_version,
+                    "revision": revised.revision,
+                    "status_url": f"/api/v1/runs/{run_id}",
+                    "events_url": f"/api/v1/runs/{run_id}/events",
+                },
+            )
+
+        return await self._idempotent(tenant_id, idem, work)
+
+    async def cancel_once(
+        self, *, idem: Idem, tenant_id: UUID, run_id: UUID, actor: UUID, request: CancelRequest
+    ) -> Verdict:
+        """BS:276: CANCELLED before a grant; after one, the flag and the attempt's state, never an undo (T21
+        ruling 12)."""
+
+        async def work(unit: Unit) -> Verdict:
+            try:
+                done = await unit.cancel(run_id=run_id, actor=actor, request=request)
+            except Recorded as exc:
+                return error_verdict(exc.status, exc.code, exc.message, idem.request_id)
+            note = "a grant exists; what was dispatched stands, and nothing is undone" if done.grant_exists else None
+            body = CancelResponse(
+                run_id=done.run_id,
+                status=done.state,
+                state_version=done.state_version,
+                cancel_requested=True,
+                grant_exists=done.grant_exists,
+                attempt_state=done.attempt_state,
+                note=note,
+            )
+            return Verdict(200, body.model_dump(mode="json"))
+
+        return await self._idempotent(tenant_id, idem, work)
+
+    async def manual_once(
+        self, *, idem: Idem, tenant_id: UUID, author: UUID, request: ManualProposalRequest
+    ) -> Verdict:
+        """BS:281: a person's proposal for a run the model could not draft for, through the freeze rules and the asset
+        guard (T21 ruling 7); 201, or the guard's 409 with the run's BLOCKED_REVIEW committed (SA:289)."""
+
+        async def work(unit: Unit) -> Verdict:
+            try:
+                frozen = await unit.manual_proposal(author=author, request=request)
+            except Recorded as exc:
+                return error_verdict(exc.status, exc.code, exc.message, idem.request_id)
+            if frozen.proposal_id is None:
+                reason = frozen.reason.value if frozen.reason is not None else "asset guard"
+                return error_verdict(
+                    409,
+                    ErrorCode(reason.upper()),
+                    f"{reason}: blocked by run {frozen.blocking_run_id}",
+                    idem.request_id,
+                )
+            return Verdict(
+                201,
+                {
+                    "proposal_id": str(frozen.proposal_id),
+                    "run_id": str(request.run_id),
+                    "revision": frozen.revision,
+                    "status": frozen.state.value,
+                    "state_version": frozen.state_version,
+                },
+            )
+
+        return await self._idempotent(tenant_id, idem, work)
+
+    async def feedback_once(
+        self, *, idem: Idem, tenant_id: UUID, run_id: UUID, author: UUID, request: FeedbackRequest
+    ) -> Verdict:
+        """BS:282: classified feedback stored for later review, `feedback.recorded` emitted, nothing else (R113);
+        201."""
+
+        async def work(unit: Unit) -> Verdict:
+            try:
+                feedback_id = await unit.feedback(run_id=run_id, author=author, request=request)
+            except Recorded as exc:
+                return error_verdict(exc.status, exc.code, exc.message, idem.request_id)
+            return Verdict(201, {"feedback_id": str(feedback_id), "run_id": str(run_id)})
 
         return await self._idempotent(tenant_id, idem, work)
 
@@ -712,12 +892,44 @@ class Store(Protocol):
         """Record the first decision (idempotent)."""
         ...
 
+    async def revise_once(
+        self, *, idem: Idem, tenant_id: UUID, run_id: UUID, author: UUID, request: RevisionRequest
+    ) -> Verdict:
+        """Create a revision of the run (idempotent)."""
+        ...
+
+    async def cancel_once(
+        self, *, idem: Idem, tenant_id: UUID, run_id: UUID, actor: UUID, request: CancelRequest
+    ) -> Verdict:
+        """Cancel the run, or request it once a grant exists (idempotent)."""
+        ...
+
+    async def manual_once(
+        self, *, idem: Idem, tenant_id: UUID, author: UUID, request: ManualProposalRequest
+    ) -> Verdict:
+        """Freeze a person's proposal (idempotent)."""
+        ...
+
+    async def feedback_once(
+        self, *, idem: Idem, tenant_id: UUID, run_id: UUID, author: UUID, request: FeedbackRequest
+    ) -> Verdict:
+        """Record classified feedback (idempotent)."""
+        ...
+
+    async def search(self, tenant_id: UUID, request: SearchRequest) -> dict[str, Any]:
+        """The manual baseline's lexical search over the tenant's permitted sections."""
+        ...
+
     async def run(self, tenant_id: UUID, run_id: UUID) -> dict[str, Any] | None:
         """Read one run row in the tenant."""
         ...
 
     async def proposal(self, tenant_id: UUID, proposal_id: UUID) -> dict[str, Any] | None:
         """Read one proposal with its run's requester and state."""
+        ...
+
+    async def proposal_card(self, tenant_id: UUID, proposal_id: UUID) -> dict[str, Any] | None:
+        """The approval card: the proposal with its decision, expiry, supersession and submission state."""
         ...
 
     async def events(self, tenant_id: UUID, run_id: UUID, *, after: int, limit: int) -> list[dict[str, Any]]:
@@ -905,7 +1117,7 @@ class DbUnit:
                 message_id = await self.insert_message(
                     conversation_id=conversation_id, kind=kind, text=text, context=context, author=requester
                 )
-                # The function validates the supersedes target against tenant and conversation (SA:450, erratum).
+                # The function validates the supersedes target against the tenant and the asset (SA:286, erratum 138).
                 run_id, version = await persistence.create_run(
                     self.conn,
                     tenant_id=self.tenant_id,
@@ -1003,6 +1215,7 @@ class DbUnit:
                     tenant_id=self.tenant_id,
                     proposal_id=proposal_id,
                     reviewer=reviewer,
+                    expected_revision=request.expected_revision,
                     expected_payload_sha256=request.expected_payload_sha256,
                     decision=request.decision,
                     reason=request.reason,
@@ -1011,10 +1224,157 @@ class DbUnit:
         except persistence.NotFound as exc:
             raise NotFound from exc
         except persistence.VersionConflict as exc:
-            raise Conflict("VERSION_CONFLICT") from exc
+            # T21: the definer names the rule that refused (Plan R ruling 3); an unnamed one is a version conflict.
+            known = exc.code in {c.value for c in CONFLICT_MESSAGES}
+            raise Conflict(exc.code if known and exc.code is not None else "VERSION_CONFLICT") from exc
         except persistence.Refused as exc:
             raise map_refusal(exc) from exc
         return Decided(proposal_id, decided.run_id, request.decision, decided.state.value, decided.state_version)
+
+    async def decision_of(self, proposal_id: UUID) -> dict[str, Any] | None:
+        """The recorded decision, for the ALREADY_DECIDED answer (`api` reads decisions, AM-20.2)."""
+        cur = await self.conn.execute(
+            "SELECT decision, reviewer, decided_at FROM app.decisions WHERE proposal_id = %s", (proposal_id,)
+        )
+        row = await cur.fetchone()
+        return None if row is None else dict(row)
+
+    async def expire(self, proposal_id: UUID) -> None:
+        """`expire_proposal` for the proposal's run in this tenant; an unknown proposal is the decision's 404."""
+        row = await self.proposal(proposal_id)
+        if row is not None:
+            await persistence.expire_proposal(self.conn, row["run_id"])
+
+    async def revise(self, *, run_id: UUID, author: UUID, request: RevisionRequest) -> persistence.Revised:
+        """`create_revision` in a savepoint, its refusals mapped (T21 rulings 2 and 6)."""
+        try:
+            async with self.conn.transaction():
+                return await persistence.create_revision(
+                    self.conn,
+                    tenant_id=self.tenant_id,
+                    run_id=run_id,
+                    expected_version=request.expected_version,
+                    author=author,
+                    supersedes_run_id=request.supersedes_run_id,
+                )
+        except persistence.NotFound as exc:
+            what = "no such superseded run" if str(exc).endswith("supersedes_run_id") else "no such run"
+            raise Recorded(404, ErrorCode.NOT_FOUND, what) from exc
+        except persistence.VersionConflict as exc:
+            raise Recorded(409, ErrorCode.VERSION_CONFLICT, CONFLICT_MESSAGES[ErrorCode.VERSION_CONFLICT]) from exc
+        except persistence.Refused as exc:
+            raise recorded_refusal(exc) from exc
+
+    async def cancel(self, *, run_id: UUID, actor: UUID, request: CancelRequest) -> persistence.Cancelled:
+        """`request_cancel` in a savepoint, its refusals mapped (T21 ruling 12)."""
+        try:
+            async with self.conn.transaction():
+                return await persistence.request_cancel(
+                    self.conn,
+                    tenant_id=self.tenant_id,
+                    run_id=run_id,
+                    expected_version=request.expected_version,
+                    actor=actor,
+                )
+        except persistence.NotFound as exc:
+            raise Recorded(404, ErrorCode.NOT_FOUND, "no such run") from exc
+        except persistence.VersionConflict as exc:
+            raise Recorded(409, ErrorCode.VERSION_CONFLICT, CONFLICT_MESSAGES[ErrorCode.VERSION_CONFLICT]) from exc
+        except persistence.Refused as exc:
+            raise recorded_refusal(exc) from exc
+
+    async def manual_proposal(self, *, author: UUID, request: ManualProposalRequest) -> persistence.Frozen:
+        """The run's facts under the asset guard's lock and the run's lock, the payload built and canonicalised here
+        (the one canonicaliser, `ops_core.canonical`), then the freeze; all in one savepoint (T21 ruling 7). Note 4:
+        another asset or a section that is not the tenant's is 404 with nothing written."""
+        try:
+            async with self.conn.transaction():
+                facts = await persistence.prepare_manual_proposal(
+                    self.conn,
+                    tenant_id=self.tenant_id,
+                    run_id=request.run_id,
+                    author=author,
+                    evidence_ids=request.evidence_refs,
+                )
+                if request.asset_id != facts.asset_id:
+                    raise Recorded(404, ErrorCode.NOT_FOUND, "no such run, asset or permitted section")
+                if (request.start_at, request.end_at) != (facts.start_at, facts.end_at):
+                    raise Recorded(422, ErrorCode.INVALID_INPUT, "the interval is the run's own (SA:154)")
+                payload = ProposalPayload(
+                    tenant_id=self.tenant_id,
+                    run_id=request.run_id,
+                    proposal_id=uuid4(),
+                    revision=facts.revision,
+                    action="create_incident",
+                    destination="synthetic-incidents",
+                    asset_id=facts.asset_id,
+                    start_at=facts.start_at.astimezone(UTC),
+                    end_at=facts.end_at.astimezone(UTC),
+                    title=request.title,
+                    summary=request.summary,
+                    evidence_refs=sorted(request.evidence_refs),
+                    source_snapshots=[SourceSnapshot.model_validate(s) for s in facts.snapshots],
+                    assumptions=list(request.assumptions),
+                    limitations=list(request.limitations),
+                    workflow_version=facts.workflow_version,
+                    prompt_version="manual",  # ruling 7: a person drafted it
+                    expires_at=facts.expires_at.astimezone(UTC),
+                    supersedes_run_id=facts.supersedes_run_id,
+                )
+                return await persistence.create_manual_proposal(
+                    self.conn,
+                    tenant_id=self.tenant_id,
+                    run_id=request.run_id,
+                    payload_canonical=canonical_json(payload.canonical_dict()),
+                    author=author,
+                )
+        except persistence.NotFound as exc:
+            raise Recorded(404, ErrorCode.NOT_FOUND, "no such run, asset or permitted section") from exc
+        except persistence.VersionConflict as exc:
+            raise Recorded(409, ErrorCode.VERSION_CONFLICT, "the run does not wait for a manual proposal") from exc
+        except persistence.Refused as exc:
+            mapped = recorded_refusal(exc)
+            # Any other refusal names a payload field the API took from the run itself: a defect, not the caller's.
+            raise (mapped if isinstance(mapped, (Forbidden, Recorded)) else Internal(exc.code)) from exc
+
+    async def feedback(self, *, run_id: UUID, author: UUID, request: FeedbackRequest) -> UUID:
+        """The subject must be the run, one of its proposals or one of its events (404 otherwise); then the event and
+        the row, in a savepoint (T21 ruling 8). The text goes into the row only, never an event or a log line."""
+        subject = {
+            "run": "SELECT 1 FROM app.runs WHERE run_id = %s AND run_id = %s",
+            "proposal": "SELECT 1 FROM app.proposals WHERE proposal_id = %s AND run_id = %s",
+            "event": "SELECT 1 FROM app.events WHERE event_id = %s AND run_id = %s",
+        }[request.subject_kind]
+        cur = await self.conn.execute(subject, (request.subject_id, run_id))
+        if await cur.fetchone() is None:  # RLS hides another tenant's rows, so theirs read as absent too
+            raise Recorded(404, ErrorCode.NOT_FOUND, "no such run or subject")
+        feedback_id = uuid4()
+        async with self.conn.transaction():
+            await persistence.append_event(
+                self.conn,
+                run_id=run_id,
+                type=EventType.FEEDBACK_RECORDED,
+                payload={
+                    "subject_kind": request.subject_kind,
+                    "subject_id": str(request.subject_id),
+                    "category": request.category,
+                },
+            )
+            await self.conn.execute(
+                "INSERT INTO app.feedback (feedback_id, tenant_id, run_id, subject_kind, subject_id, category, text,"
+                " author, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, app.current_time())",
+                (
+                    feedback_id,
+                    self.tenant_id,
+                    run_id,
+                    request.subject_kind,
+                    request.subject_id,
+                    request.category,
+                    request.text,
+                    author,
+                ),
+            )
+        return feedback_id
 
 
 class DbStore(AdmissionStore):
@@ -1047,6 +1407,53 @@ class DbStore(AdmissionStore):
         """Read one proposal with its run's requester and state."""
         async with self.unit(tenant_id) as unit:
             return await unit.proposal(proposal_id)
+
+    async def proposal_card(self, tenant_id: UUID, proposal_id: UUID) -> dict[str, Any] | None:
+        """The approval card's facts (BS:464, BS:532; T21 ruling 15): the proposal and its run's requester, the
+        decision that stands, whether it expired on the application clock, the superseded run with the incident its
+        receipt named, and the run's grant and latest attempt state. Read in one tenant unit."""
+        async with self.session.unit(tenant_id) as conn:
+            cur = await conn.execute(
+                "SELECT p.*, r.requester, r.supersedes_run_id, p.expires_at < app.current_time() AS expired,"
+                " d.decision, d.reviewer, d.decided_at,"
+                " g.action_id IS NOT NULL AS grant_exists,"
+                " (SELECT s.state FROM app.action_attempt_state s WHERE s.action_id = g.action_id"
+                "  ORDER BY s.attempt_no DESC, s.seq DESC LIMIT 1) AS attempt_state,"
+                " (SELECT e.payload->'receipt'->>'incident_id' FROM app.events e WHERE e.run_id = r.supersedes_run_id"
+                "  AND e.type IN ('action.confirmed', 'action.late_evidence') AND e.payload ? 'receipt'"
+                "  ORDER BY e.sequence DESC LIMIT 1) AS superseded_incident_id"
+                " FROM app.proposals p JOIN app.runs r ON r.run_id = p.run_id"
+                " LEFT JOIN app.decisions d ON d.proposal_id = p.proposal_id"
+                " LEFT JOIN app.execution_grant g ON g.run_id = p.run_id AND g.proposal_id = p.proposal_id"
+                " WHERE p.proposal_id = %s AND p.tenant_id = %s",
+                (proposal_id, tenant_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else dict(row)
+
+    async def search(self, tenant_id: UUID, request: SearchRequest) -> dict[str, Any]:
+        """`search_procedures_api` under the session's tenant (T21 ruling 7); the rank stays inside (BS:417)."""
+        async with self.session.unit() as conn:  # the function sets its own tenant from the argument
+            found = await persistence.search_procedures_api(
+                conn, tenant_id=tenant_id, query=request.query, limit=request.limit
+            )
+        return {
+            "corpus_version": found.corpus_version,
+            "retrieved_at": stamp(found.retrieved_at),
+            "truncated": found.truncated,
+            "results": [
+                {
+                    "evidence_id": hit.evidence_id,
+                    "document_id": hit.document_id,
+                    "version": hit.version,
+                    "section": hit.section,
+                    "content_sha256": hit.content_sha256,
+                    "excerpt": hit.excerpt,
+                    "effective_from": stamp(hit.effective_from),
+                }
+                for hit in found.results
+            ],
+        }
 
     async def events(self, tenant_id: UUID, run_id: UUID, *, after: int, limit: int) -> list[dict[str, Any]]:
         """List a run's events after a sequence number."""

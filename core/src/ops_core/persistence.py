@@ -431,16 +431,32 @@ async def record_decision(
     tenant_id: UUID,
     proposal_id: UUID,
     reviewer: UUID,
+    expected_revision: int,
     expected_payload_sha256: str,
     decision: str,
     reason: str | None = None,
     idempotency_key: str | None = None,
 ) -> Decided:
-    """First decision wins on the exact hash by an independent current reviewer (SA:454)."""
+    """First decision wins on the exact revision and hash by an independent current reviewer of an unexpired proposal
+    (SA:454; T21: the revision checked under the lock too, erratum 131).
+
+    Raises:
+        Refused: NOT_REVIEWER or SELF_REVIEW (the API's unrecorded 403).
+        VersionConflict: `code` ALREADY_DECIDED, STALE_REVISION, STALE_HASH or EXPIRED.
+    """
     row = await _call(
         conn,
-        "SELECT * FROM app.record_decision(%s, %s, %s, %s, %s, %s, %s)",
-        (tenant_id, proposal_id, reviewer, expected_payload_sha256, decision, reason, idempotency_key),
+        "SELECT * FROM app.record_decision(%s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            tenant_id,
+            proposal_id,
+            reviewer,
+            expected_revision,
+            expected_payload_sha256,
+            decision,
+            reason,
+            idempotency_key,
+        ),
     )
     if row is None:
         raise PersistenceError("record_decision returned nothing")

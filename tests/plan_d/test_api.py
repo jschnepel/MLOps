@@ -216,7 +216,7 @@ def test_decision_requires_an_independent_current_reviewer(api):
     assert c.post(f"/api/v1/proposals/{pid}/decisions", headers=auth("lee"), json=body).status_code == 403  # reader
     assert c.post(f"/api/v1/proposals/{pid}/decisions", headers=auth("jordan"), json=body).status_code == 404
     stale = c.post(f"/api/v1/proposals/{pid}/decisions", headers=auth("sam"), json={**body, "expected_revision": 2})
-    assert stale.status_code == 409 and stale.json()["code"] == "VERSION_CONFLICT"
+    assert stale.status_code == 409 and stale.json()["code"] == "STALE_REVISION"  # T21: its own code (ruling 3)
     bad = c.post(f"/api/v1/proposals/{pid}/decisions", headers=auth("sam"), json={**body, "approved_by": "sam"})
     assert bad.status_code == 422
     ok = c.post(f"/api/v1/proposals/{pid}/decisions", headers=auth("sam"), json=body)
