@@ -1,7 +1,8 @@
 """The worker's start-up relation checks (T19; revision 0014), without a database.
 
 Catches: the worker starting on a database that lacks `app.run_manifests`, which would claim jobs it could not
-record a manifest for. The check is read off the order of `assert_relation` calls, stopped at the manifest table.
+record a manifest for. The check is read off the order of `assert_relation` calls, stopped at the manifest table;
+and an unset MODEL_MODE ending in a traceback instead of the logged refusal to start.
 """
 
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from typing import Any
 
 import pytest
 from ops_core import persistence
+from ops_core.settings import SettingsError
 from ops_worker import main
 
 
@@ -51,3 +53,19 @@ async def test_the_worker_asks_for_the_manifest_table_before_it_starts(monkeypat
     with pytest.raises(Stop):
         await main._main()
     assert asked == ["app.model_permit", "app.run_manifests"]
+
+
+@pytest.mark.asyncio
+async def test_an_unset_model_mode_refuses_to_start_through_the_logged_exit(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """R130: no MODEL_MODE is the same clean exit as any route that cannot start, not a SettingsError traceback."""
+
+    def env(name: str) -> str:
+        raise SettingsError(f"{name} is not set")
+
+    monkeypatch.setattr(main, "settings", SimpleNamespace(env=env))
+    monkeypatch.setattr(main.redaction, "install", lambda: None)
+    with pytest.raises(SystemExit) as stopped:
+        await main._main()
+    assert stopped.value.code == 1 and "MODEL_MODE is not set" in caplog.text

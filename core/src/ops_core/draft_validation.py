@@ -1,11 +1,14 @@
 """Structural validation of what a drafting model returned (T19; BUILD_SPEC §12 level 1, BS:449-452; R036, R039, R040).
 
 `validate` takes the reply exactly as the model produced it, its text and any reasoning metadata, and returns a
-`ModelDraft` or raises `DraftInvalid`. Nothing is repaired, stripped or coerced here: the caller decides whether the
-one bounded repair runs (`ops_worker.ollama_drafting`). The checks, in order, each with the rule name it reports:
+`ModelDraft` or raises `DraftInvalid`. Nothing is repaired or coerced here beyond `ModelDraft`'s own normalisation
+(it strips surrounding whitespace and NFC-normalises each text field), and thinking is never stripped: the caller
+decides whether the one bounded repair runs (`ops_worker.ollama_drafting`). The checks, in order, each with the rule
+name it reports:
 
 - `thinking`: a `<think>` tag in the text, or any reasoning content beside it. `reasoning=False` should make this
-  impossible (SA:596); when it happens the reply is refused whole, never stripped and accepted (BS:460, R039).
+  impossible (SA:596); when it happens the reply is refused whole, never stripped and accepted (BS:460, R039). The
+  real route can observe only the inline tags: it cannot see Ollama's separate `thinking` field (erratum 121).
 - `not_json`: the text is not one JSON object under the strict parser the proposal hash uses (no repeated key, no
   NaN; `canonical.parse_json_strict`).
 - `authority_key`: a top-level key that names an authority field (`contracts.AUTHORITY_FIELDS`) or one only the

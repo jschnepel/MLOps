@@ -20,7 +20,7 @@ import psycopg
 import uvicorn
 from ops_core import persistence, redaction, settings
 from ops_core.lease import LeaseLost
-from ops_core.settings import Role
+from ops_core.settings import Role, SettingsError
 from ops_core.tokens import WorkloadTokenSource
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -142,9 +142,10 @@ async def _main() -> None:
     redaction.install()
     try:
         # Unset or any other route refuses to start (R130); the real route checks its digest and warms up first
-        # (R127), before any database connection or claim, so no job ever waits on a model that is not ready.
+        # (R127), before any database connection or claim, so no job ever waits on a model that is not ready. An unset
+        # MODEL_MODE is a SettingsError here; start_route turns the route's own settings errors into ModelStartError.
         generator = await start_route(settings.env("MODEL_MODE"))
-    except ModelStartError as exc:
+    except (ModelStartError, SettingsError) as exc:
         log.error("the worker refuses to start: %s", exc)
         raise SystemExit(1) from exc
     leases = settings.leases()  # an unsafe lease, heartbeat, stall or budget combination refuses to start

@@ -24,7 +24,7 @@ from typing import Any
 from ops_core import persistence
 from ops_core.lease import Lease
 
-PERMIT_TTL_SECONDS = 95  # BS:555: a draft's two attempts share 90 s (ollama_drafting.BUDGET_SECONDS); 5 s more
+PERMIT_TTL_SECONDS = 95  # BS:555: a draft's two attempts share 90 s (drafting.BUDGET_SECONDS); 5 s more
 FIRST_BACKOFF_SECONDS = 0.25
 MAX_BACKOFF_SECONDS = 2.0
 Sleep = Callable[[float], Coroutine[Any, Any, None]]

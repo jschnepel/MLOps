@@ -16,8 +16,7 @@ from uuid import UUID
 import pytest
 from ops_core import persistence
 from ops_core.lease import Lease, LeaseLost
-from ops_worker.drafting import FakeDraftGenerator
-from ops_worker.ollama_drafting import BUDGET_SECONDS
+from ops_worker.drafting import BUDGET_SECONDS, FakeDraftGenerator
 from ops_worker.permit import PERMIT_TTL_SECONDS, backoff, model_permit
 
 from tests.plan_d.test_worker import EV, REQ

@@ -19,8 +19,8 @@ WHERE reads the row), login_state and logout_jti are rows the printed table lack
 restrictive policy, SWEEPER_PURGE, erratum 61). Plan L (T17) adds the corpus: AM-20.2's corpus row on `documents` and
 `chunks`, and the same cells on the two append-only tables the printed table lacks, `document_states` and
 `corpus_ingestions` (erratum 95). Plan P (T19) adds `run_manifests`, a row the printed table lacks (worker INSERT and
-SELECT, api SELECT). `test_harness` exists only in the test profile: the main-line revisions grant it nothing; the
-testclock branch grants it schema USAGE, EXECUTE on current_time() and its test_clock cells.
+SELECT, api SELECT; erratum 120). `test_harness` exists only in the test profile: the main-line revisions grant it
+nothing; the testclock branch grants it schema USAGE, EXECUTE on current_time() and its test_clock cells.
 """
 
 from __future__ import annotations
@@ -149,8 +149,8 @@ GRANTS: Final[dict[str, dict[str, Grant]]] = {
     # T18 (Plan N ruling 1): AM-20.2's corpus row (SA:431) for the embeddings; `scripts/skeleton.py embed` inserts as
     # the worker, and only search_procedures_scoped reads them.
     "embeddings": {"worker": _SI, DEFINER_ROLE: _S},
-    # T19 (revision 0014): a row AM-20.2 lacks (AM-80 names the manifest, no table); the worker writes each run's
-    # manifest once and reads it, the api reads it, and nobody updates it.
+    # T19 (revision 0014, erratum 120): a row AM-20.2 lacks (AM-80 names the manifest, no table); the worker writes each
+    # run's manifest once and reads it, the api reads it, and nobody updates it.
     "run_manifests": {"worker": _SI, "api": _S},
 }
 

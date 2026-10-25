@@ -17,15 +17,20 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Final, Protocol
 
 from ops_core import prompts
 from ops_core.contracts import ModelDraft
 from ops_core.model_pins import ModelPinsError
 from ops_core.routing import ModelRoute
+from ops_core.settings import SettingsError
 
 PROMPT_VERSION = prompts.DRAFT_VERSION  # both routes record it; the fake reads no prompt but stands in for it
 WORKFLOW_VERSION = "investigation-v1"
+# The draft's time limits live here, not in `ollama_drafting`, so the permit and its test can read them without loading
+# LangChain (the fake route and its tests never do).
+ATTEMPT_SECONDS: Final = 60.0  # SA:596, BS:443: the per-attempt cap
+BUDGET_SECONDS: Final = 90.0  # BS:555: both attempts together
 
 
 @dataclass(frozen=True)
@@ -153,7 +158,7 @@ async def start_route(mode: str) -> DraftGenerator:
     """
     try:
         generator = make_generator(mode)
-    except (ModelRouteError, ModelPinsError) as exc:
+    except (ModelRouteError, ModelPinsError, SettingsError) as exc:  # SettingsError: the Ollama URL is unusable
         raise ModelStartError(str(exc)) from exc
     await generator.start()
     return generator

@@ -11,7 +11,7 @@ own route (`OllamaDraftGenerator.from_settings`) over the 60 probe inputs, with 
 | Python, platform, GPU | 3.13.13, Windows-11-10.0.26200-SP0, NVIDIA GeForce RTX 3080 |
 | Parameters | reasoning=False, num_ctx=16384, num_predict=1000, temperature=0, keep_alive=30m, format=model-draft schema (json_schema), 60 s per attempt, 90 s per draft |
 | Prompts | incident-draft-v2 `6540c7158931…`, schema-repair-v2 `c0257f2a0bdb…` |
-| Warm-up (digest check and first call) | 2.32 s |
+| Warm-up (digest check and first call; the model may already have been loaded, so not a cold-start figure) | 2.32 s |
 
 | Metric | Value | Wilson 95% CI |
 |---|---|---|

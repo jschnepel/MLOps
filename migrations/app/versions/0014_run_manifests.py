@@ -9,10 +9,11 @@ is called, so a run whose draft fails still says which route produced (or failed
 route carries and the fake never needs, the two retrieval modes and the length bounds. The run is the primary key, and
 the foreign key on (tenant_id, run_id) ties the row to its run's tenant, as `drafts` does (revision 0002).
 
-Cells (AM-20.2 has no row for it; this revision adds one): `worker` inserts and reads, `api` reads (the run's
-explanation view and T25's reports), nobody updates or deletes, so a written manifest cannot change. ENABLE + FORCE RLS
-with the `tenant_isolation` policy (AM-20.5). The insert's foreign-key check takes FOR KEY SHARE on the run row, which
-the same unit already holds FOR UPDATE through `transition_run`, so the lock order does not move (core/locking.py).
+Cells (AM-20.2 has no row for it; this revision adds one, erratum 120): `worker` inserts and reads, `api` reads (the
+run's explanation view and T25's reports), nobody updates or deletes, so a written manifest cannot change. ENABLE +
+FORCE RLS with the `tenant_isolation` policy (AM-20.5). The insert's foreign-key check takes FOR KEY SHARE on the run
+row, which the same unit already holds FOR UPDATE through `transition_run`, so the lock order does not move
+(core/locking.py).
 
 The downgrade drops the table with its rows, grants and policy.
 """

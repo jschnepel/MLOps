@@ -55,6 +55,8 @@ from ops_core.model_pins import ModelPins, load_model_pins
 from ops_core.routing import ModelRoute
 
 from ops_worker.drafting import (
+    ATTEMPT_SECONDS,
+    BUDGET_SECONDS,
     DraftRequest,
     EvidenceItem,
     ModelOutputInvalid,
@@ -67,8 +69,6 @@ MODEL: Final = ModelRoute.QWEN3_8B.value
 # TODO(T30): package the pin and the draft schema (`schemas/model-draft.schema.json`, through `grading.DRAFT_SCHEMA`);
 # both are read from the checkout until then, as the embedding pin is.
 PINS: Final = Path(__file__).resolve().parents[3] / "data" / "model-pins.json"
-ATTEMPT_SECONDS: Final = 60.0  # SA:596, BS:443: the per-attempt cap
-BUDGET_SECONDS: Final = 90.0  # BS:555: both attempts together
 WARMUP_SECONDS: Final = 180.0  # the T02 probe's cold call passed the 60 s cap (reports/model-probe-qwen3-8b.md)
 KEEP_ALIVE: Final = "30m"  # keeps the warmed model loaded between drafts; Ollama's default unloads it after 5 min
 NUM_CTX: Final = 16384
@@ -259,7 +259,7 @@ class OllamaDraftGenerator:
                 self._chat(self._draft_system, json.dumps(warm_up, ensure_ascii=False), WARMUP_SECONDS),
                 WARMUP_SECONDS,
             )
-        except (TimeoutError, ModelUnavailable) as exc:
+        except Exception as exc:  # a timeout, an outage or a bug alike: never serve on a model that failed to warm
             raise ModelStartError(f"the warm-up call to {MODEL} failed ({type(exc).__name__})") from exc
         log.info("model route %s ready: digest %s, Ollama %s", MODEL, self.digest, self.ollama_version)
 

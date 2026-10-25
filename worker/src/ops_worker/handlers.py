@@ -5,14 +5,14 @@
 `investigate`: QUEUED → RETRIEVING → (read tool) → DRAFTING, with the run manifest → the model route's draft → by its
 kind: a proposal is frozen → AWAITING_APPROVAL; an abstention without a question → INSUFFICIENT_EVIDENCE; an answer or
 a clarifying question → FAILED until T20 routes them; a model outage, or a draft still invalid after its one repair →
-FAILED with a templated message (BS:516). `execute`: mint
-a write handle and call `create_incident`; mcp-write performs the grant, the dispatch and the outcome, while the
-worker records an UNKNOWN envelope through `mark_unknown`. Every handler runs under the run lease its claim took
-(AM-12, T13): each unit that writes for the run opens with `persistence.fenced` (the lease row FOR SHARE; owner, fence
-and expiry compared after the lock), every MCP and model call runs as a lease effect (`Lease.effect`: none starts past
-the lease's local deadline, SA:195, and a lost lease cancels it; database units are never cancelled), and the job's
-final unit revokes the job's handles, closes the job and releases the lease together (`persistence.release_lease`). A
-lost lease raises LeaseLost to the caller, which hands the job back (`abandon`). No LangGraph (→ T20).
+FAILED with a templated message (BS:516). `execute`: mint a write handle and call `create_incident`; mcp-write
+performs the grant, the dispatch and the outcome, while the worker records an UNKNOWN envelope through `mark_unknown`.
+Every handler runs under the run lease its claim took (AM-12, T13): each unit that writes for the run opens with
+`persistence.fenced` (the lease row FOR SHARE; owner, fence and expiry compared after the lock), every MCP and model
+call runs as a lease effect (`Lease.effect`: none starts past the lease's local deadline, SA:195, and a lost lease
+cancels it; database units are never cancelled), and the job's final unit revokes the job's handles, closes the job and
+releases the lease together (`persistence.release_lease`). A lost lease raises LeaseLost to the caller, which hands the
+job back (`abandon`). No LangGraph (→ T20).
 """
 
 from __future__ import annotations

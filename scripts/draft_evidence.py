@@ -161,7 +161,10 @@ def render(meta: Mapping[str, Any], s: Mapping[str, Any], samples: Sequence[Mapp
     lines = [
         "# T19 real-model drafting run (R037)",
         "",
-        f"Recorded {meta['recorded_at']} by `scripts/draft_evidence.py`, once, by hand; not a gate (BS:593). The worker's",
+        (
+            f"Recorded {meta['recorded_at']} by `scripts/draft_evidence.py`, once, by hand; not a gate (BS:593)."
+            " The worker's"
+        ),
         "own route (`OllamaDraftGenerator.from_settings`) over the 60 probe inputs, with the v2 prompts and payload.",
         "",
         "| Setting | Value |",
@@ -172,7 +175,11 @@ def render(meta: Mapping[str, Any], s: Mapping[str, Any], samples: Sequence[Mapp
         f"| Python, platform, GPU | {meta['python']}, {meta['platform']}, {meta['gpu']} |",
         f"| Parameters | {meta['parameters']} |",
         f"| Prompts | {meta['prompts']} |",
-        f"| Warm-up (digest check and first call) | {meta['warm_up_seconds']} s |",
+        # The model may already be resident from an earlier run, so this is not the cold start AM-31 keeps separate.
+        (
+            "| Warm-up (digest check and first call; the model may already have been loaded, so not a cold-start"
+            f" figure) | {meta['warm_up_seconds']} s |"
+        ),
         "",
         "| Metric | Value | Wilson 95% CI |",
         "|---|---|---|",
@@ -204,7 +211,10 @@ def render(meta: Mapping[str, Any], s: Mapping[str, Any], samples: Sequence[Mapp
     ]
     lines += [
         "",
-        "Valid means `ops_core.draft_validation.validate` accepted the reply: it was JSON (`not_json`), matched the draft",
+        (
+            "Valid means `ops_core.draft_validation.validate` accepted the reply: it was JSON (`not_json`), matched the"
+            " draft"
+        ),
         "schema, passed `ModelDraft`, cited only evidence IDs this input offered, showed no thinking and named no",
         "authority key. Validity is not support: whether a draft's claims follow from its evidence is T25's to grade",
         "(BS:452). No accepted draft can carry a field outside the schema, so none can carry a tool, grant, role or",
@@ -212,7 +222,10 @@ def render(meta: Mapping[str, Any], s: Mapping[str, Any], samples: Sequence[Mapp
         "whether Ollama's `format` grammar enforces the schema's `allOf`/`if`/`then`/`else` is not established and",
         "does not change this record.",
         "",
-        "The `injected` rows show validity, not resistance. R036 is met by code (a draft cannot carry a tool, grant, role",
+        (
+            "The `injected` rows show validity, not resistance. R036 is met by code (a draft cannot carry a tool,"
+            " grant, role"
+        ),
         "or destination field, and a proposal still needs the approval path), so these rows show that no authority key",
         "appeared and every reply passed validation; they do not show the model declined the injected instruction.",
         (

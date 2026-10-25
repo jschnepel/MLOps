@@ -14,6 +14,7 @@ import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import ollama
@@ -22,6 +23,7 @@ from langchain_ollama import ChatOllama
 from ops_core import prompts
 from ops_core.embeddings import OllamaEmbedder, Unavailable
 from ops_core.model_pins import ModelPins
+from ops_core.settings import SettingsError
 from ops_worker import drafting, ollama_drafting
 from ops_worker.drafting import (
     DraftRequest,
@@ -183,6 +185,17 @@ def test_a_second_invalid_reply_ends_the_draft_with_no_third_attempt() -> None:
     assert caught.value.rules == ("schema",) and len(chat.calls) == 2  # R040: one repair, then a controlled failure
 
 
+def test_an_answer_only_request_gets_its_proposal_refused_and_repaired_into_an_answer() -> None:
+    """The route hands `answer_only` to the validator, so the refusal is the repairable kind (departure 7): the second
+    call is told why, and an answer is accepted. The fake route's proposal is stopped later, by `freeze_allowed`."""
+    chat = Script(Reply(GOOD), Reply(json.dumps({**json.loads(GOOD), "kind": "answer"})))
+    request = dataclasses.replace(REQUEST, answer_only=True)
+    draft = run(generator(chat).generate(request, EVIDENCE))
+    assert draft.kind == "answer" and len(chat.calls) == 2
+    body = chat.calls[1][1]
+    assert isinstance(body, dict) and body["validation_errors"] == ["/kind: this request allows only answer or abstain"]
+
+
 def test_a_chat_that_supplies_reasoning_is_repaired_without_showing_its_text() -> None:
     """The defensive path: the real `ollama_chat` never supplies reasoning (langchain-ollama drops Ollama's `thinking`
     field when `reasoning=False`), so this exercises the channel with a scripted `Chat` that does."""
@@ -293,9 +306,10 @@ def test_another_ollama_version_is_logged_not_fatal(caplog: pytest.LogCaptureFix
     assert gen.ollama_version == "0.41.0" and "0.41.0" in caplog.text
 
 
-@pytest.mark.parametrize("failure", [ModelUnavailable("down"), TimeoutError()])
+@pytest.mark.parametrize("failure", [ModelUnavailable("down"), TimeoutError(), ValueError("a bug")])
 def test_a_failed_warm_up_fails_the_start(failure: Exception) -> None:
-    with pytest.raises(ModelStartError, match="warm-up"):
+    """Any warm-up exception, a bug included, ends as the one start error that names its type (not a traceback)."""
+    with pytest.raises(ModelStartError, match=rf"warm-up.*\({type(failure).__name__}\)"):
         run(generator(Script(failure)).start())
 
 
@@ -322,6 +336,55 @@ def test_start_route_turns_every_startup_failure_into_one_error(
     monkeypatch.setattr(ollama_drafting, "PINS", tmp_path / "absent.json")
     with pytest.raises(ModelStartError, match="model pins file not found"):
         run(drafting.start_route("qwen3:8b"))
+
+
+def test_start_route_turns_an_unusable_ollama_url_into_the_start_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def urls() -> None:
+        raise SettingsError("OPS_OLLAMA_URL is malformed")
+
+    monkeypatch.setattr(ollama_drafting.settings, "urls", urls)
+    with pytest.raises(ModelStartError, match="OPS_OLLAMA_URL is malformed"):
+        run(drafting.start_route("qwen3:8b"))
+
+
+def test_the_real_chat_pins_the_am31_settings_on_both_clients(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SA:596: both ChatOllama instances share the model options (another `num_ctx` would reload the model), differ
+    only in the client's timeout, and the warm-up budget selects the 180 s one."""
+    made: list[dict[str, Any]] = []
+    asked: list[dict[str, Any]] = []
+
+    class Runnable:
+        def __init__(self, kwargs: dict[str, Any], structured: dict[str, Any]) -> None:
+            self.kwargs, self.structured = kwargs, structured
+
+        async def ainvoke(self, messages: Any) -> dict[str, Any]:
+            asked.append({**self.kwargs, "structured": self.structured})
+            return {"raw": SimpleNamespace(content=GOOD, additional_kwargs={})}
+
+    class Recorder:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+            made.append(kwargs)
+
+        def with_structured_output(self, schema: Any, **kwargs: Any) -> Runnable:
+            return Runnable(self.kwargs, kwargs)
+
+    monkeypatch.setattr(ollama_drafting, "ChatOllama", Recorder)
+    chat = ollama_drafting.ollama_chat("http://127.0.0.1:9")
+    options = {
+        "model": "qwen3:8b",
+        "base_url": "http://127.0.0.1:9",
+        "reasoning": False,
+        "num_ctx": 16384,
+        "num_predict": 1000,
+        "temperature": 0,
+        "keep_alive": "30m",
+    }
+    assert made == [{**options, "client_kwargs": {"timeout": 60.0}}, {**options, "client_kwargs": {"timeout": 180.0}}]
+    run(chat("system", "user", 60.0))  # a draft attempt, at its cap
+    run(chat("system", "user", 180.0))  # the warm-up
+    assert [k["client_kwargs"]["timeout"] for k in asked] == [60.0, 180.0]
+    assert all(k["structured"] == {"method": "json_schema", "include_raw": True} for k in asked)
 
 
 def test_the_run_budget_clips_an_attempt_below_the_drafts_own() -> None:
