@@ -1,7 +1,8 @@
 """The two handlers as role `worker` against the real database with a scripted MCP caller (OPS_LIVE=1): the state
 path through the definer functions, the frozen proposal's bytes and hash, the event order, the execute job's handle,
 the re-queue of an unreachable write server, and the worker's own recording of UNKNOWN. The real MCP transport is
-proved in Task 5's and Task 9's tests.
+proved in Task 5's and Task 9's tests. Since T20 each job runs the graph, whose retrieval reads the asset status and
+the alerts before the search, so the scripted caller answers all three read tools.
 
 Rows are written by role connections, so nothing here can roll back: every test purges its run in `finally`. The
 seeded tenant ALPHA is used because `record_decision` needs SAM's reviewer membership."""
@@ -24,6 +25,7 @@ from ops_worker.mcp import McpCallFailed
 
 from tests.e2e.conftest import lease_for, purge_run
 from tests.e2e.test_migrations_and_persistence import new_run
+from tests.plan_h.test_worker_units import ALERTS, STATUS
 
 pytestmark = pytest.mark.asyncio
 
@@ -62,12 +64,13 @@ class ScriptedMcp:
     async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Resolve the handle for the tool's server, then return the scripted envelope."""
         self.calls.append((url, tool, arguments))
-        server = Server.READ if tool == "search_procedures" else Server.WRITE
+        reads = {"get_asset_status": STATUS, "get_recent_alerts": ALERTS, "search_procedures": SEARCH}
+        server = Server.READ if tool in reads else Server.WRITE
         await persistence.resolve_invocation(
             self.read if server is Server.READ else self.write, handle=handle, azp="ops-worker", tool=Tool(tool)
         )
-        if tool == "search_procedures":
-            return SEARCH
+        if tool in reads:
+            return reads[tool]
         return {
             "status": "ok",
             "data": {
@@ -185,8 +188,7 @@ async def test_investigate_then_execute(
         assert proposal["payload"]["evidence_refs"] == ["ALPHA-INCIDENT:v2:review"]
         assert await event_types(app_conn, run) == [
             ("run.accepted", "application"),
-            ("tool.started", "application"),
-            ("tool.completed", "application"),
+            *[("tool.started", "application"), ("tool.completed", "application")] * 3,  # status, alerts, search
             ("explanation.ready", "model_summary"),
             ("proposal.ready", "application"),
         ]
@@ -204,8 +206,13 @@ async def test_investigate_then_execute(
         assert (await event_types(app_conn, run))[-1] == ("approval.recorded", "application")
         job, lease = await own_job(app_conn, deps.conn, run, "execute")
         await handlers.handle(deps, job, lease)
-        assert [c[1] for c in mcp.calls] == ["search_procedures", "create_incident"]
-        assert mcp.calls[1][2] == {"proposal_id": str(proposal["proposal_id"])}
+        assert [c[1] for c in mcp.calls] == [
+            "get_asset_status",
+            "get_recent_alerts",
+            "search_procedures",
+            "create_incident",
+        ]
+        assert mcp.calls[3][2] == {"proposal_id": str(proposal["proposal_id"])}
         cur = await app_conn.execute("SELECT done_at IS NOT NULL AS done FROM app.jobs WHERE id = %s", (job["id"],))
         assert (await cur.fetchone())["done"]
     finally:
@@ -236,8 +243,7 @@ async def test_drafting_failure_fails_the_run(
         cur = await app_conn.execute("SELECT type FROM app.events WHERE run_id = %s ORDER BY sequence", (run,))
         assert [r["type"] for r in await cur.fetchall()] == [
             "run.accepted",
-            "tool.started",
-            "tool.completed",
+            *["tool.started", "tool.completed"] * 3,
             "run.failed",
         ]
         cur = await app_conn.execute(

@@ -31,8 +31,7 @@ API = "http://127.0.0.1:8000"
 EVIDENCE = Path("reports/skeleton/r105-walking-skeleton.txt")
 EXPECTED_EVENTS = [
     ("run.accepted", "application"),
-    ("tool.started", "application"),
-    ("tool.completed", "application"),
+    *[("tool.started", "application"), ("tool.completed", "application")] * 3,  # T20: status, alerts, search
     ("explanation.ready", "model_summary"),
     ("proposal.ready", "application"),
     ("approval.recorded", "application"),
