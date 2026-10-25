@@ -56,7 +56,7 @@ departs.
    `.env` into the scratch tree, and the e2e fixtures need it (`tests/e2e/conftest.py` `env`), so every live count
    below is arithmetic (dev passed + the dev run's skips − the 21 that skip in both gates), as in Plans I-O. What did
    run live on the scratch copy: the two Ollama-only route tests (`OPS_LIVE=1`, both pass, 6 s) and the evidence script
-   (twice, against local Ollama). The three database live tests this plan adds or changes have never run; Review Focus 1
+   (three times, against local Ollama). The three database live tests this plan adds or changes have never run; Review Focus 1
    names them.
 2. **The Ollama route tests live in `tests/plan_p/`, not `tests/e2e/` (ruling 12).** They need only Ollama on
    loopback, and `tests/e2e/conftest.py`'s autouse fixture migrates the test database, so they carry their own
@@ -77,11 +77,15 @@ departs.
 6. **`grading.check_schema` is not called; its schema file and its two-judge rule are reused (ruling 1).**
    `check_schema` returns a verdict without error locations, and the repair needs `<path>: <rule>` lines, so
    `draft_validation` runs `grading.DRAFT_SCHEMA` and then `ModelDraft` itself. A repeated key is reported as
-   `not_json` (one rule, through `canonical.parse_json_strict`, the parser the proposal hash uses).
+   `not_json` (one rule, through `canonical.parse_json_strict`, the parser the proposal hash uses). A parametrised
+   test proves the two never drift: on eight sample replies `check_schema` passes exactly when `validate` passes its
+   schema-and-contract stage (`test_the_validator_and_the_schema_grader_agree`, round 1 I1).
 7. **A `proposal` on an `answer_only` run is refused inside validation through a new `DraftRequest.answer_only` field
    (ruling 11).** The generator cannot see the run's intent otherwise; the field is a bool the router decided, so it
    carries nothing a model could use (`tests/plan_j/test_worker_azp.py` is updated to say so). It makes the refusal
-   repairable once, as ruling 6 wants for validation failures.
+   repairable once, as ruling 6 wants for validation failures. A second worker-computed field,
+   `DraftRequest.remaining_seconds`, carries what the run's compute budget has left (BS:555), so each attempt is
+   clipped to the run's budget as well as the draft's own 90 s (round 1 I3); the payload carries neither field.
 8. **The ChatOllama client timeout is the per-attempt cap, with a second ChatOllama for the warm-up (rulings 4 and
    8).** One client timeout of 60 s would cut the 180 s warm-up short, so `ollama_chat` builds two ChatOllama objects
    with identical model options (another `num_ctx` would reload the model) and client timeouts of 60 s and 180 s;
@@ -95,6 +99,28 @@ departs.
 11. **The `TODO(T19)` hint markers are removed, not re-owned as `TODO(v2)` (ruling 16).** `docs/CODE_COMMENTS.md`
     rule 7 wants a task id in every TODO, and no task owns the hint; the two comments now say "none in v1, erratum
     118".
+
+## Round 1 changes
+
+The static review (`.superpowers/planp/round1-static.md`: 0 Critical, 3 Important, 10 Minor) is fixed in full, per
+the controller's rulings (`round1-rulings.md`):
+
+- **I1.** `test_draft_validation.py` gains the grader-agreement test (8 cases; departure 6).
+- **I2.** The evidence report says what was sent (no status or alert records; the injected section on each
+  injected input), that it is one machine (BS:566), and that validity is judged by the application; the report test
+  asserts the first and the last.
+- **I3.** BS:555's 90 s are the run's: `Lease.held_for()`, `handlers.BUDGET_MARGIN_SECONDS` (5 s) and
+  `DraftRequest.remaining_seconds` clip every attempt to `min(60, 90 − elapsed, remaining − elapsed)`; one unit test;
+  the debt line now names what still overlaps (the heartbeat's own cancel).
+- **Minors.** M1: `ollama_chat` is unit-tested against loopback port 9, its comment corrected (the stream path
+  raises `httpx.ConnectError`), and langchain-ollama's empty-stream `ValueError` maps to `ModelUnavailable`. M2: the
+  prompts and the schema are read once. M3: the manifest is built inside the retrieval `try` from the mode the tool
+  reports. M4: Task 6 Edit 3 names its anchor a prefix. M5, M6: errata 117 and 119 extended. M7: the schema joins
+  the checkout debt line and the `TODO(T30)`. M8: section 34's review paragraph is written at close-out. M9:
+  `langchain-core`, `ollama` and `httpx` are declared. M10: a debt line → T20.
+- The counts move: `tests/plan_p` 61 unit (51) and 2 live; dev `1603 passed, 222 skipped` (1593); live `1804
+  passed, 21 skipped` (1794, arithmetic). The rendered plan was re-applied to a fresh worktree of `8b1c8b7` and
+  every task re-gated there.
 
 ## Global Constraints
 
@@ -139,10 +165,9 @@ additions below win where the two differ:
   passed, 21 skipped` (Plan O's 1737 plus erratum 114's one dev test). Task 1 Step 1a records both before any change;
   if either differs, every expected count below shifts by the same difference. The rendered plan (every Create and
   every Edit of Tasks 1-5, in order, and `uv lock`) was applied to a fresh worktree of `8b1c8b7` and gated there:
-  ruff, ruff format and mypy strict clean, the stated dev counts, `verify_handoff.py` exit 0; the result equals, file
-  for file, the scratch tree on which every dev count was measured (the evidence script ran on it one commit earlier,
-  before a docstring and the order of one pin check in `OllamaDraftGenerator.start` changed). Task 6's records were
-  applied there too, with the dev gate and `verify_handoff.py` passing. Live counts are arithmetic (departure 1).
+  ruff, ruff format and mypy strict clean, the stated dev counts, `verify_handoff.py` exit 0; the evidence script and
+  the two Ollama route tests ran on that tree's final code. Task 6's records were applied there too, with the dev
+  gate and `verify_handoff.py` passing. Live counts are arithmetic (departure 1).
 
 ## Rulings (the brief's 20, as this plan implements them)
 
@@ -157,7 +182,7 @@ additions below win where the two differ:
 5. **Prompts** — `core/src/ops_core/prompts/` as package data, sha256 pinned by test, `PROMPT_VERSION =
    "incident-draft-v2"`; starters untouched (Task 1; erratum 116).
 6. **Validation and repair** — one repair after any validation failure, none after a timeout or outage; feedback
-   ≤10 instance-free lines; `min(60, remaining of 90)`; a failed repair is FAILED with a template, no `drafts` row, a
+   ≤10 instance-free lines; `min(60, remaining of 90)`, the 90 s the run's (round 1 I3); a failed repair is FAILED with a template, no `drafts` row, a
    log of rule names (Tasks 1, 2, 4).
 7. **Model permit** — one hold over both attempts, TTL 95 s, release on cancel, no `/api/ps` (Task 4).
 8. **Timeouts and errors** — `wait_for` plus the client timeout; `ModelUnavailable`, `ModelOutputInvalid`; both
@@ -183,10 +208,10 @@ additions below win where the two differ:
     subject to T25's half (Task 6).
 20. **Records** — debt list first; close-out note; `current_milestone` → M07; history section 34 (Tasks 1, 6).
 
-## Measured before writing (2026-10-24, scratch copy of `8b1c8b7`)
+## Measured before writing (2026-10-24/25, scratch copies of `8b1c8b7`)
 
-- Dev gate before any change `1540 passed, 219 skipped`; after Tasks 1-5 `1593 passed, 222 skipped`
-  (`tests/plan_p`: 51 unit tests and 2 live; `tests/plan_e` and `tests/plan_h` gain one parametrised case each;
+- Dev gate before any change `1540 passed, 219 skipped`; after Tasks 1-5 `1603 passed, 222 skipped`
+  (`tests/plan_p`: 61 unit tests and 2 live; `tests/plan_e` and `tests/plan_h` gain one parametrised case each;
   `tests/e2e` one live test). `verify_handoff.py` exit 0 after every task (30 JSON Schema documents, unchanged).
 - `uv lock` adds 22 packages and removes none: certifi 2026.10.23, charset-normalizer 3.5.2, distro 1.9.0, httpcore
   1.0.9, httpx 0.28.1, jsonpatch 1.37, jsonpointer 3.5, langchain-core 1.7.0, langchain-ollama 1.1.0,
@@ -196,12 +221,13 @@ additions below win where the two differ:
   ollama and httpx match the probe's isolated freeze (`reports/model-probe-freeze.txt`); pydantic stays 2.13.5 (the
   freeze had 2.14.1). `langchain_core`, `langchain_ollama` and `ollama` ship `py.typed`; mypy strict is clean with no
   override.
-- `OPS_LIVE=1 uv run python -m pytest tests/plan_p/test_model_route_live.py`: `2 passed` in 6.3 s (local Ollama
-  0.40.4: the committed pin's digest equals `/api/tags`; the tampered pin fails before any chat call).
-- The evidence script, run twice on the scratch copy (2026-10-24, 23:27Z and 23:41Z), measured the same figures both
-  times: **valid first pass 60/60** (Wilson [0.940, 1.000]), valid after at most one repair 60/60, no repair asked, no
+- `OPS_LIVE=1 uv run python -m pytest tests/plan_p/test_model_route_live.py`: `2 passed` in 7.4 s on the round-1
+  tree, after the final `start()` (local Ollama 0.40.4: the committed pin's digest equals `/api/tags`; the tampered
+  pin fails before any chat call).
+- The evidence script, run three times (2026-10-24 23:27Z and 23:41Z on the first scratch copy, 2026-10-25 00:40Z on
+  the round-1 tree with the final code and report text), measured the same figures each time: **valid first pass 60/60** (Wilson [0.940, 1.000]), valid after at most one repair 60/60, no repair asked, no
   failure rule, no thinking, no authority key; kinds accepted `abstain` 40 (26 with a clarifying question) and
-  `proposal` 20; first attempt p50 2.2 s, p95 2.9 s; warm-up 10.3 s on the first run, 2.0 s on the second. By scenario:
+  `proposal` 20; first attempt p50 2.2 s, p95 2.9-3.0 s; warm-up 10.3 s on the first run, 1.7-2.0 s after. By scenario:
   `conflicting` 4 proposals, 2 abstentions, 6 questions; `injected` 6, 4, 2; `no_alerts` 0, 6, 6; `one_critical` 4,
   1, 7; `two_warnings` 6, 1, 5. In the worker these would end 20 AWAITING_APPROVAL, 14 INSUFFICIENT_EVIDENCE and 26
   FAILED (a question is not routed until T20). The probe's 5/60 with the starter prompt and a payload without evidence
@@ -228,12 +254,15 @@ block; in short:
      the probe inputs (the no-tuning rule protected a holdout, optional since erratum 114); they live in
      `core/src/ops_core/prompts/` as package data rather than `core/prompts/`.
 117. **SA:379** and T19's "records the route in explanation.ready": met by the event's templated message (route and
-     prompt version) plus the run manifest; the event's closed payload is unchanged.
+     prompt version) plus the run manifest; the event's closed payload is unchanged. The event is emitted only on the
+     proposal path, so for abstained, not-routed and failed runs the route lives in the manifest alone.
 118. **SA:375:** model-assisted intent classification (the admission hint) is not built in v1; the hint stays a tested
      router input with no producer.
 119. **BS:437** (`generate(request_context, evidence_bundle, policy_metadata)`) and **BS:441** (`MODEL_MODE=ollama`):
      `generate` takes the request and the evidence, the one policy fact a draft needs travels as
-     `DraftRequest.answer_only`, and `MODEL_MODE` names the route itself (`fake` | `qwen3:8b`, SA:379's names).
+     `DraftRequest.answer_only`, and `MODEL_MODE` names the route itself (`fake` | `qwen3:8b`, SA:379's names). T19's
+     "future named model" (SA:379, `tasks.json`) gets no enum slot: it is a later route-enum and schema change, which
+     no task owns.
 120. **AM-20.2 and AM-20.5:** `run_manifests` (revision 0014) is a new tenant table: worker INSERT and SELECT, api
      SELECT, no UPDATE or DELETE for anyone, ENABLE + FORCE RLS with `tenant_isolation`.
 
@@ -247,7 +276,7 @@ block; in short:
   `core/src/ops_core/persistence.py` (Tasks 3, 4).
 - `worker/src/ops_worker/handlers.py`, `proposals.py`, `permit.py`, `worker/README.md`,
   `docs/runbooks/dev-topology.md`, `api/src/ops_api/store.py`, `core/src/ops_core/routing.py` (Task 4).
-- `scripts/draft_evidence.py` (Task 5); `reports/model/t19-real-run.md` and `.json` (Task 5, committed in Task 6).
+- `scripts/draft_evidence.py` (Task 5); `reports/model/t19-real-run.md` and `.json` (written and committed in Task 5).
 - Tests: `tests/plan_p/` (`__init__.py`, `test_draft_validation.py` Task 1; `test_ollama_drafting.py`,
   `test_model_route_live.py` Task 2; `test_migration_0014.py` Task 3; `test_investigate_drafting.py` Task 4;
   `test_draft_evidence.py` Task 5); `tests/e2e/test_run_manifest_live.py` (Task 3); edits to
@@ -259,22 +288,24 @@ block; in short:
 ## Task overview
 
 - **Task 1:** the debt list; baselines; `tests/plan_p` on the path; the dependency; the prompts and the validation.
-  Tests: `test_draft_validation.py` 18. Dev `1558 passed, 219 skipped`; live `1756 passed, 21 skipped`.
-- **Task 2:** the qwen3:8b route, the router and the start-up. Tests: `test_ollama_drafting.py` 17,
-  `test_model_route_live.py` 2 (live). Dev `1575 passed, 221 skipped`; live `1775 passed, 21 skipped`.
+  Tests: `test_draft_validation.py` 26 (18, and 8 cases of the grader-agreement test). Dev `1566 passed, 219 skipped`;
+  live `1764 passed, 21 skipped`.
+- **Task 2:** the qwen3:8b route, the router and the start-up. Tests: `test_ollama_drafting.py` 19,
+  `test_model_route_live.py` 2 (live). Dev `1585 passed, 221 skipped`; live `1785 passed, 21 skipped`.
 - **Task 3:** revision 0014, its matrix rows and the manifest insert. Tests: `test_migration_0014.py` 3, one more
-  parametrised revision case, `test_run_manifest_live.py` 1 (live). Dev `1579 passed, 222 skipped`; live `1780 passed,
+  parametrised revision case, `test_run_manifest_live.py` 1 (live). Dev `1589 passed, 222 skipped`; live `1790 passed,
   21 skipped`.
-- **Task 4:** the worker drafts through the route: the manifest, the permit, the kinds, the failures. Tests:
-  `test_investigate_drafting.py` 9, one more parametrised lock-order unit; two live tests gain assertions. Dev `1589
-  passed, 222 skipped`; live `1790 passed, 21 skipped` (the first live gate of the plan).
-- **Task 5:** the evidence script, its tests and its one real run. Tests: `test_draft_evidence.py` 4. Dev `1593
-  passed, 222 skipped`; live `1794 passed, 21 skipped`.
+- **Task 4:** the worker drafts through the route: the manifest, the run's budget, the permit, the kinds, the failures.
+  Tests: `test_investigate_drafting.py` 9, one more parametrised lock-order unit; two live tests gain assertions. Dev
+  `1599 passed, 222 skipped`; live `1800 passed, 21 skipped` (the first live gate of the plan).
+- **Task 5:** the evidence script, its tests and its one real run. Tests: `test_draft_evidence.py` 4. Dev `1603
+  passed, 222 skipped`; live `1804 passed, 21 skipped`.
 - **Task 6:** close-out: handoff records, requirements, errata 115-120, state, history, final gates. No tests.
 
-The arithmetic, once: dev passed 1540 + 18 = 1558, + 17 = 1575, + 3 + 1 = 1579, + 9 + 1 = 1589, + 4 = 1593; dev
-skipped 219, 219, + 2 = 221, + 1 = 222, 222, 222. Live passed = dev passed + (dev skipped − 21): 1756, 1775, 1780,
-1790, 1794, always with 21 skipped. Every dev figure was measured on the scratch copy; the live ones are arithmetic.
+The arithmetic, once: dev passed 1540 + 26 = 1566, + 19 = 1585, + 3 + 1 = 1589, + 9 + 1 = 1599, + 4 = 1603; dev
+skipped 219, 219, + 2 = 221, + 1 = 222, 222, 222. Live passed = dev passed + (dev skipped − 21): 1764, 1785, 1790,
+1800, 1804, always with 21 skipped. Every dev figure was measured on the round-1 scratch copy; the live ones are
+arithmetic.
 
 ---
 ### Task 1: Debt before code — baselines, the dependency, the prompts and the validation
@@ -290,7 +321,8 @@ feedback), R036 (authority keys); SA:698 (the debt list first).
 
 **Interfaces:**
 - Consumes: `ops_core.contracts.ModelDraft`, `AUTHORITY_FIELDS`, `load`; `ops_core.canonical.parse_json_strict`,
-  `CanonicalizationError`; `ops_core.grading.DRAFT_SCHEMA`; `jsonschema.Draft202012Validator`.
+  `CanonicalizationError`; `ops_core.grading.DRAFT_SCHEMA`, `check_schema`, `Output`, `load_cases` (the agreement
+  test); `jsonschema.Draft202012Validator`.
 - Produces: `ops_core.prompts.DRAFT_VERSION`, `REPAIR_VERSION`, `text(version)`, `sha256(version)`;
   `ops_core.draft_validation.validate(text, *, reasoning, allowed_ids, answer_only) -> ModelDraft`, `DraftInvalid`
   (`rules`, `feedback`), `has_thinking`, `MAX_FEEDBACK`, `Rule`, `APPLICATION_KEYS`.
@@ -327,25 +359,29 @@ with:
 Allowed shortcuts in T19, each with its owning task:
 - an `answer` draft and an `abstain` draft with a question end the run FAILED with a templated message; the graph
   router that sends them to ANSWERED and AWAITING_INPUT, and the `resume_input` job, → T20 (SA:137, SA:153; R114,
-  R129) (Plan P ruling 11);
+  R129) (Plan P ruling 11); the payload does not tell the model that an `answer_only` run may not propose, so such a
+  run spends its first attempt on a refused proposal and relies on the repair's feedback; stating it in the payload →
+  T20 (round 1, M10);
 - a model timeout, an unreachable Ollama and a draft still invalid after its one repair each end the run FAILED and
   close the job; bounded retries and outage handling → T22 and T29 (BS:562, BS:680; R061, R062) (ruling 8);
 - with the model unavailable, the authorized manual search and proposal path is not offered → T21 (BS:564; R057 and
   R041's "manual path") (ruling 8);
-- a draft's 90 s budget counts from the start of `generate`, while the heartbeat's compute budget counts from the claim
-  (retrieval and the permit wait included), so a draft near its cap after a long wait can lose its lease to "compute
-  budget spent" → T29 (as Plan H's debt line);
+- BS:555's 90 s are the run's: each draft attempt is clipped to what the run's compute budget has left (measured from
+  the claim, less a 5 s margin), but the heartbeat still cancels the call itself when the budget runs out ("compute
+  budget spent": a lost lease, a hand-back and INTERRUPTED rather than the templated failure), and a run that spent
+  its budget waiting for the permit gets no draft at all → T29 (as Plan H's debt line);
 - the worker sends the model the request, the asset, the interval and the retrieved procedure sections only; the asset
   status and alert records reach the model with T20's asset reads (BS:419; R028's note, R038) (ruling 1);
-- `retrieval_mode` in every manifest is `lexical`, the only mode the worker asks for; choosing it per run → T20 and T25
-  (Plan N ruling 16);
+- every manifest records the `retrieval_mode` the tool reports, today always `lexical`, the only mode the worker asks
+  for; choosing it per run → T20 and T25 (Plan N ruling 16);
 - the manifest holds AM-80's six fields; the commit, workflow version, prompt hash and tool schema version BS:572 also
   names, and the Ollama version, stay in logs and the evidence report → T28 and T37 (ruling 9);
 - the digest is checked once, at startup: a model replaced under a running worker is not seen until it restarts →
   T30 (probes and readiness) (ruling 4);
 - the permit is released when the draft call ends or is cancelled, T02's provisional "release on cancel"; nothing
   polls `/api/ps` → the owner confirms or reverses the line (T02 DoD 2) (ruling 7);
-- the model pin is read from the checkout, as the embedding pin is → T30 (packaging);
+- the model pin and the draft schema (`schemas/model-draft.schema.json`, through `grading.DRAFT_SCHEMA`) are read from
+  the checkout, as the embedding pin is → T30 (packaging);
 - telemetry of the LangChain call → T28 (R058, R059); LangSmith tracing, a transitive dependency of `langchain-core`,
   stays off (no `LANGSMITH_*` or `LANGCHAIN_TRACING*` variable is set anywhere);
 - whether a draft's claims follow from its evidence, the repeated trials and conditions B and C (R130's identical
@@ -395,12 +431,23 @@ dependencies = ["ops-core", "mcp==2.3.0", "uvicorn>=0.54,<1"]
 with:
 
 ```toml
-dependencies = ["ops-core", "mcp==2.3.0", "uvicorn>=0.54,<1", "langchain-ollama==1.1.0"]
+dependencies = [
+  "ops-core",
+  "mcp==2.3.0",
+  "uvicorn>=0.54,<1",
+  "langchain-ollama==1.1.0",
+  # Imported directly by ops_worker.ollama_drafting, so declared at the versions langchain-ollama resolved (SA:582).
+  "langchain-core==1.7.0",
+  "ollama==0.6.3",
+  "httpx==0.28.1",
+]
 ```
 
 Run `uv lock < /dev/null` → its output lists `Added langchain-ollama v1.1.0`, `Added langchain-core v1.7.0`, `Added
 ollama v0.6.3`, `Added httpx v0.28.1` and the other 18 packages of "Measured before writing" (a newer patch of a
-transitive package is acceptable; record the list), and no `Removed` or `Updated` line. Then `uv sync --locked
+package nobody declares is acceptable; record the list), and no `Removed` or `Updated` line. The three direct imports
+are declared at the versions langchain-ollama 1.1.0 resolves (round 1, M9); if the resolver refuses one, stop and
+report it. Then `uv sync --locked
 --all-packages < /dev/null` installs them. Check `ls .venv/Lib/site-packages/langchain_core/py.typed
 .venv/Lib/site-packages/langchain_ollama/py.typed .venv/Lib/site-packages/ollama/py.typed` (POSIX venvs:
 `.venv/lib/python3.13/site-packages/...`) → all three exist, so no mypy override is needed (ruling 13).
@@ -415,8 +462,9 @@ Create `tests/plan_p/test_draft_validation.py`:
 Catches: a runtime prompt edited without a new version (each file's SHA-256 is pinned) or a starter in
 `handoff/prompts/` edited at all (the probe pins them); a reply accepted with thinking in its text or its metadata, or
 with the thinking stripped; an authority key, a question on a proposal, a citation the run did not offer, a proposal
-on an `answer_only` run, a whitespace-only title or a repeated key accepted; and repair feedback that echoes the reply
-(the T02 probe's feedback embedded the whole draft) or runs past ten lines.
+on an `answer_only` run, a whitespace-only title or a repeated key accepted; repair feedback that echoes the reply
+(the T02 probe's feedback embedded the whole draft) or runs past ten lines; and the validator drifting from T23's
+schema grader (`grading.check_schema`), whose two-judge rule it re-implements to get error paths.
 """
 
 import hashlib
@@ -424,7 +472,7 @@ import json
 from pathlib import Path
 
 import pytest
-from ops_core import prompts
+from ops_core import grading, prompts
 from ops_core.contracts import ModelDraft
 from ops_core.draft_validation import MAX_FEEDBACK, DraftInvalid, validate
 
@@ -556,6 +604,33 @@ def test_a_citation_the_run_did_not_offer_is_refused_by_position() -> None:
 
 def test_a_proposal_is_refused_on_an_answer_only_run() -> None:
     assert refused(reply(), answer_only=True).rules == ("proposal_on_answer_only",)
+
+
+DEV_CASE = grading.load_cases(ROOT / "evals" / "dev" / "cases.jsonl")[0]  # check_schema reads no case field
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        reply(),
+        reply(kind="answer"),
+        reply(kind="abstain", evidence_refs=[]),
+        reply(question=None),
+        reply(kind="report"),
+        reply(title="x" * 121),
+        reply(title="x" * 119 + "  "),  # the schema counts the spaces; ModelDraft strips them (Plan O)
+        reply(title="   "),
+    ],
+)
+def test_the_validator_and_the_schema_grader_agree(text: str) -> None:
+    """Departure 6: `validate` passes the schema-and-contract stage exactly when `grading.check_schema` passes."""
+    graded = grading.check_schema(grading.Output(draft=json.loads(text), offered_refs=ALLOWED, case=DEV_CASE))
+    try:
+        validate(text, reasoning=None, allowed_ids=ALLOWED, answer_only=False)
+        structural = True
+    except DraftInvalid as invalid:
+        structural = not ({"schema", "contract"} & set(invalid.rules))
+    assert graded is not None and graded.passed == structural
 ```
 
 Run `git add tests/plan_p && uv run python -m pytest tests/plan_p/test_draft_validation.py -q < /dev/null` → a
@@ -791,11 +866,11 @@ def validate(text: str, *, reasoning: object, allowed_ids: frozenset[str], answe
 - [ ] **Step 7: Run the tests and the gates, then commit**
 
 Run `git add core/src/ops_core/prompts core/src/ops_core/draft_validation.py && uv run ruff format core tests/plan_p &&
-uv run ruff check core tests/plan_p && uv run python -m pytest tests/plan_p -q < /dev/null` → `18 passed`. Run
+uv run ruff check core tests/plan_p && uv run python -m pytest tests/plan_p -q < /dev/null` → `26 passed`. Run
 `sha256sum core/src/ops_core/prompts/*.txt handoff/prompts/incident-draft-v1.md handoff/prompts/schema-repair-v1.md`
 → the two v2 values above and the starters' `e3c26da3…a942` and `8b6658eb…c343` (unchanged).
 
-Gates: `PYTHONUTF8=1 uv run python scripts/check.py < /dev/null` → `CHECK: GREEN`, pytest `1558 passed, 219 skipped`;
+Gates: `PYTHONUTF8=1 uv run python scripts/check.py < /dev/null` → `CHECK: GREEN`, pytest `1566 passed, 219 skipped`;
 `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts < /dev/null` → exit 0. No live
 gate: nothing here is imported by a live test.
 
@@ -821,12 +896,12 @@ R036, R040, R041, R127.
   `load_model_pins`, `ModelPinsError`; `ops_core.embeddings.OllamaEmbedder` (`installed_digest`, `version`,
   `aclose`), `EmbeddingError`; `ops_core.settings.urls().ollama`; `langchain_ollama.ChatOllama`,
   `langchain_core.messages`; `ollama.ResponseError`; `httpx.HTTPError`.
-- Produces: `ops_worker.drafting`: `PROMPT_VERSION` (`incident-draft-v2`), `DraftRequest` (+ `answer_only`),
+- Produces: `ops_worker.drafting`: `PROMPT_VERSION` (`incident-draft-v2`), `DraftRequest` (+ `answer_only`, `remaining_seconds`),
   `DraftGenerator` (+ `route`, `digest`, `start()`), `ModelRouteError`, `ModelStartError`, `ModelUnavailable`,
   `ModelOutputInvalid` (`rules`), `FakeDraftGenerator` (`route = FAKE`, `digest = None`), `make_generator(mode)`,
   `start_route(mode)`; `ops_worker.ollama_drafting`: `MODEL`, `PINS`, `ATTEMPT_SECONDS`, `BUDGET_SECONDS`,
   `WARMUP_SECONDS`, `KEEP_ALIVE`, `NUM_CTX`, `NUM_PREDICT`, `Reply`, `Attempt`, `Chat`, `Tags`, `payload`,
-  `repair_payload`, `ollama_chat`, `OllamaDraftGenerator` (`from_settings(on_attempt=None)`, `start`, `generate`,
+  `repair_payload`, `draft_schema`, `ollama_chat`, `OllamaDraftGenerator` (`from_settings(on_attempt=None)`, `start`, `generate`,
   `pins`, `digest`, `ollama_version`).
 
 - [ ] **Step 1: Write the failing tests**
@@ -836,14 +911,16 @@ Create `tests/plan_p/test_ollama_drafting.py`:
 ```python
 """The qwen3:8b route without a model: scripted replies through the `Chat` seam (T19; AM-31; R036, R040, R041, R127).
 
-Catches: a second repair, a repair after a timeout or an outage, a repair that is not given what is left of the 90 s
-budget, a repair shown the reasoning of a reply that thought; injected text that, through an adversarial reply, ends in
-an accepted draft naming an authority; a start that drafts before the digest check, accepts another digest, another
-pinned model, an absent model or an unreachable Ollama, treats an Ollama version change as fatal, or lets a failed
-warm-up pass; the router accepting `ollama`; and a missing pin that lets the real route start.
+Catches: a second repair, a repair after a timeout or an outage, an attempt given more than what is left of the
+draft's 90 s or of the run's compute budget, a repair shown the reasoning of a reply that thought; injected text that,
+through an adversarial reply, ends in an accepted draft naming an authority; a start that drafts before the digest
+check, accepts another digest, another pinned model, an absent model or an unreachable Ollama, treats an Ollama version
+change as fatal, or lets a failed warm-up pass; the real chat letting a refused connection escape as anything but
+ModelUnavailable; the router accepting `ollama`; and a missing pin that lets the real route start.
 """
 
 import asyncio
+import dataclasses
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1090,6 +1167,29 @@ def test_start_route_turns_every_startup_failure_into_one_error(
     monkeypatch.setattr(ollama_drafting, "PINS", tmp_path / "absent.json")
     with pytest.raises(ModelStartError, match="model pins file not found"):
         run(drafting.start_route("qwen3:8b"))
+
+
+def test_the_run_budget_clips_an_attempt_below_the_drafts_own() -> None:
+    """BS:555: the 90 s are the run's; with 70 s left when drafting starts, a 50 s first pass leaves the repair 20 s,
+    not the draft's own 40 s."""
+    clock = Clock()
+
+    class Slow(Script):
+        async def __call__(self, system: str, user: str, seconds: float) -> Reply:
+            clock.now += 50.0
+            return await super().__call__(system, user, seconds)
+
+    chat = Slow(Reply(WITH_QUESTION), Reply(GOOD))
+    request = dataclasses.replace(REQUEST, remaining_seconds=70.0)
+    run(generator(chat, clock=clock).generate(request, EVIDENCE))
+    assert [c[2] for c in chat.calls] == [60.0, pytest.approx(20.0)]  # min(60, 90, 70), then min(60, 40, 20)
+
+
+def test_the_real_chat_turns_a_refused_connection_into_unavailable() -> None:
+    """`ollama_chat` itself: nothing listens on loopback port 9, and the streaming client's error is mapped."""
+    chat = ollama_drafting.ollama_chat("http://127.0.0.1:9")
+    with pytest.raises(ModelUnavailable, match="ConnectError"):
+        run(chat("system", "user", 5.0))
 ```
 
 Create `tests/plan_p/test_model_route_live.py`:
@@ -1213,8 +1313,10 @@ Edit 4 (`tests/plan_j/test_worker_azp.py`), replace:
 with:
 
 ```python
-    # T19 added `answer_only`, a bool: the router's verdict, which can carry no handle.
-    assert [f.name for f in fields(DraftRequest)] == ["asset_id", "text", "start_at", "end_at", "answer_only"]
+    # T19 added two worker-computed fields the payload never carries: `answer_only`, a bool (the router's verdict), and
+    # `remaining_seconds`, a float (the run's budget left); neither can carry a handle.
+    fields_now = [f.name for f in fields(DraftRequest)]
+    assert fields_now == ["asset_id", "text", "start_at", "end_at", "answer_only", "remaining_seconds"]
 ```
 
 Run `git add tests/plan_p && uv run python -m pytest tests/plan_p/test_ollama_drafting.py -q < /dev/null` → a
@@ -1260,14 +1362,17 @@ WORKFLOW_VERSION = "investigation-v1"
 
 @dataclass(frozen=True)
 class DraftRequest:
-    """What the model may know about the ask; no identity, credential or tool is part of it. `answer_only` is the
-    router's verdict that this run may not propose an incident (SA:153)."""
+    """What the model may know about the ask; no identity, credential or tool is part of it. Two fields are the
+    worker's, never shown to the model: `answer_only`, the router's verdict that this run may not propose an incident
+    (SA:153), and `remaining_seconds`, what the run's compute budget has left when drafting starts (BS:555; None when
+    no run holds a budget, as in the evidence script)."""
 
     asset_id: str
     text: str
     start_at: datetime
     end_at: datetime
     answer_only: bool = False
+    remaining_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1395,8 +1500,9 @@ Create `worker/src/ops_worker/ollama_drafting.py`:
 
 One draft is at most two model attempts inside a 90-second budget (BS:443, BS:554-555): the first pass, and one repair
 only when the reply failed structural validation (`ops_core.draft_validation`). Each attempt gets the 60-second cap
-clipped to what is left of the budget, enforced by `asyncio.wait_for` around the call and by the HTTP client's own
-timeout. A timeout or an unreachable model is `ModelUnavailable` and is never repaired (there is no output to repair);
+clipped to what is left of the draft's 90 s and of the run's own compute budget (`DraftRequest.remaining_seconds`,
+which the handler measures from the claim, as the heartbeat does), enforced by `asyncio.wait_for` around the call and by
+the HTTP client's own timeout. A timeout or an unreachable model is `ModelUnavailable` and is never repaired (there is no output to repair);
 an invalid repair is `ModelOutputInvalid`. Both end the run FAILED (`handlers.investigate`); nothing here retries,
 falls back to the fake, or calls another model (R041). Bounded retries of an outage are T22's and T29's.
 
@@ -1416,6 +1522,7 @@ holds no model permit: no job runs before it ends. The `/api/tags` client is T18
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import time
@@ -1446,7 +1553,8 @@ from ops_worker.drafting import (
 
 log = logging.getLogger("ops_worker")
 MODEL: Final = ModelRoute.QWEN3_8B.value
-# TODO(T30): package the pin; it is read from the checkout until then, as the embedding pin is.
+# TODO(T30): package the pin and the draft schema (`schemas/model-draft.schema.json`, through `grading.DRAFT_SCHEMA`);
+# both are read from the checkout until then, as the embedding pin is.
 PINS: Final = Path(__file__).resolve().parents[3] / "data" / "model-pins.json"
 ATTEMPT_SECONDS: Final = 60.0  # SA:596, BS:443: the per-attempt cap
 BUDGET_SECONDS: Final = 90.0  # BS:555: both attempts together
@@ -1500,6 +1608,13 @@ def _instant(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
 
 
+@functools.cache
+def draft_schema() -> dict[str, Any]:
+    """`schemas/model-draft.schema.json`, read once (no file I/O on the event loop per draft, SA:201); never mutated."""
+    schema: dict[str, Any] = json.loads(grading.DRAFT_SCHEMA.read_text(encoding="utf-8"))
+    return schema
+
+
 def payload(request: DraftRequest, evidence: list[EvidenceItem]) -> dict[str, Any]:
     """The user message of the first pass, with the starter's keys (`handoff/prompts/incident-draft-v1.md`)."""
     return {
@@ -1517,7 +1632,7 @@ def payload(request: DraftRequest, evidence: list[EvidenceItem]) -> dict[str, An
             for e in evidence
         ],
         "allowed_evidence_ids": [e.evidence_id for e in evidence],
-        "requested_output_schema": json.loads(grading.DRAFT_SCHEMA.read_text(encoding="utf-8")),
+        "requested_output_schema": draft_schema(),
     }
 
 
@@ -1531,7 +1646,7 @@ def repair_payload(first: dict[str, Any], reply: Reply, invalid: DraftInvalid) -
 def ollama_chat(base_url: str) -> Chat:
     """The real `Chat`: one ChatOllama per timeout class (drafting, warm-up), with identical model options, so the
     warm-up loads exactly the model instance the drafts use (another `num_ctx` would reload it)."""
-    schema = json.loads(grading.DRAFT_SCHEMA.read_text(encoding="utf-8"))
+    schema = draft_schema()
 
     def drafter(client_seconds: float) -> Any:
         llm = ChatOllama(
@@ -1552,10 +1667,17 @@ def ollama_chat(base_url: str) -> Chat:
         runnable = warming if seconds > ATTEMPT_SECONDS else drafting
         try:
             out = await runnable.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
-        # ollama turns a refused connection into ConnectionError and an HTTP error status into ResponseError; httpx's
-        # own errors (a read timeout, a dropped connection) pass through it unwrapped.
+        # ChatOllama streams by default, and on the stream path ollama 0.6.3 wraps nothing: a refused connection arrives
+        # as httpx.ConnectError and a timeout or a dropped connection as another httpx error; an HTTP error status is
+        # ollama.ResponseError, and the non-stream path's ConnectionError is kept for completeness.
         except (ConnectionError, ollama.ResponseError, httpx.HTTPError) as exc:
             raise ModelUnavailable(f"Ollama answered no draft ({type(exc).__name__})") from exc
+        except ValueError as exc:
+            # langchain-ollama 1.1.0 raises a bare ValueError("No data received from Ollama stream.") when the stream
+            # ends empty (chat_models.py:1147 and :1173); that is an outage too. Any other ValueError is a bug.
+            if "No data received" not in str(exc):
+                raise
+            raise ModelUnavailable("Ollama answered no draft (empty stream)") from exc
         raw = out["raw"]
         text = raw.content if isinstance(raw.content, str) else json.dumps(raw.content)
         return Reply(text, raw.additional_kwargs.get("reasoning_content"))
@@ -1581,6 +1703,10 @@ class OllamaDraftGenerator:
         self.digest: str | None = pins.digest
         self.ollama_version: str | None = None  # what `start` saw
         self._chat, self._tags, self._clock, self._on_attempt = chat, tags, clock, on_attempt
+        # Read once here, never per draft (SA:201: no synchronous I/O on the event loop).
+        self._draft_system = prompts.text(prompts.DRAFT_VERSION)
+        self._repair_system = prompts.text(prompts.REPAIR_VERSION)
+        draft_schema()
 
     @classmethod
     def from_settings(cls, *, on_attempt: Callable[[Attempt], None] | None = None) -> OllamaDraftGenerator:
@@ -1615,18 +1741,23 @@ class OllamaDraftGenerator:
         warm_up = payload(DraftRequest("WARMUP", WARM_UP_REQUEST, datetime.now(UTC), datetime.now(UTC)), [])
         try:
             await asyncio.wait_for(
-                self._chat(
-                    prompts.text(prompts.DRAFT_VERSION), json.dumps(warm_up, ensure_ascii=False), WARMUP_SECONDS
-                ),
+                self._chat(self._draft_system, json.dumps(warm_up, ensure_ascii=False), WARMUP_SECONDS),
                 WARMUP_SECONDS,
             )
         except (TimeoutError, ModelUnavailable) as exc:
             raise ModelStartError(f"the warm-up call to {MODEL} failed ({type(exc).__name__})") from exc
         log.info("model route %s ready: digest %s, Ollama %s", MODEL, self.digest, self.ollama_version)
 
-    async def _ask(self, number: int, system: str, user: str, started: float) -> tuple[Reply, float]:
-        # The second attempt gets what the first left of the budget; the first always leaves at least 30 s.
-        seconds = max(0.0, min(ATTEMPT_SECONDS, BUDGET_SECONDS - (self._clock() - started)))
+    async def _ask(
+        self, number: int, system: str, user: str, started: float, request: DraftRequest
+    ) -> tuple[Reply, float]:
+        # Each attempt: the 60 s cap, clipped to what is left of the draft's 90 s and of the run's compute budget
+        # (BS:555). An attempt left with nothing times out at once, as ModelUnavailable.
+        elapsed = self._clock() - started
+        limit = BUDGET_SECONDS - elapsed
+        if request.remaining_seconds is not None:
+            limit = min(limit, request.remaining_seconds - elapsed)
+        seconds = max(0.0, min(ATTEMPT_SECONDS, limit))
         began = self._clock()
         try:
             reply = await asyncio.wait_for(self._chat(system, user, seconds), seconds)
@@ -1660,15 +1791,13 @@ class OllamaDraftGenerator:
         started = self._clock()
         allowed = frozenset(e.evidence_id for e in evidence)
         first = payload(request, evidence)
-        reply, seconds = await self._ask(
-            1, prompts.text(prompts.DRAFT_VERSION), json.dumps(first, ensure_ascii=False), started
-        )
+        reply, seconds = await self._ask(1, self._draft_system, json.dumps(first, ensure_ascii=False), started, request)
         judged = self._judge(1, reply, seconds, request, allowed)
         if isinstance(judged, ModelDraft):
             return judged
         log.info("draft attempt 1 invalid (%s); one repair", ", ".join(judged.rules))
         repair = json.dumps(repair_payload(first, reply, judged), ensure_ascii=False)
-        reply, seconds = await self._ask(2, prompts.text(prompts.REPAIR_VERSION), repair, started)
+        reply, seconds = await self._ask(2, self._repair_system, repair, started, request)
         judged = self._judge(2, reply, seconds, request, allowed)
         if isinstance(judged, ModelDraft):
             return judged
@@ -1711,11 +1840,12 @@ with:
 
 Run `git add worker/src/ops_worker && uv run ruff format worker tests && uv run ruff check worker tests && uv run
 python -m pytest tests/plan_p tests/plan_d/test_worker.py tests/plan_j/test_worker_azp.py -q < /dev/null` →
-`43 passed, 2 skipped` (`tests/plan_p` 35 and its two live tests skipped; the other two files 8). With local Ollama up, `OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest
+`53 passed, 2 skipped` (`tests/plan_p` 45 and its two live tests skipped; the other two files 8). With local Ollama up,
+`OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest
 tests/plan_p/test_model_route_live.py -q < /dev/null` → `2 passed` (about 6 s; the first test makes one real warm-up
 call, so a cold model may take up to a minute).
 
-Gates: `check.py` → `CHECK: GREEN`, pytest `1575 passed, 221 skipped`; `verify_handoff.py` → exit 0. No database live
+Gates: `check.py` → `CHECK: GREEN`, pytest `1585 passed, 221 skipped`; `verify_handoff.py` → exit 0. No database live
 gate: the handlers do not use the route's new attributes until Task 4, and the fake route's drafts are unchanged except
 for the prompt version in their limitation and payload.
 
@@ -2147,7 +2277,7 @@ migrations tests && uv run python -m pytest tests/plan_p/test_migration_0014.py 
 -q < /dev/null` → `132 passed` (`test_migration_0014.py` 3; `test_no_op_execute_string_carries_a_sqlalchemy_bind`
 gains `[0014_run_manifests]`; the newest-cell test now reads `GRANTS_0014`).
 
-Gates: `check.py` → `CHECK: GREEN`, pytest `1579 passed, 222 skipped`; `verify_handoff.py` → exit 0. The database live
+Gates: `check.py` → `CHECK: GREEN`, pytest `1589 passed, 222 skipped`; `verify_handoff.py` → exit 0. The database live
 gate waits for Task 4, which makes the worker write the rows (the new live test of this task runs there too).
 
 ```bash
@@ -2161,18 +2291,20 @@ git commit -m "feat: revision 0014 - app.run_manifests, one immutable manifest p
 **Files:**
 - Create: `tests/plan_p/test_investigate_drafting.py`
 - Modify: `worker/src/ops_worker/handlers.py`, `worker/src/ops_worker/proposals.py`, `worker/src/ops_worker/permit.py`,
-  `core/src/ops_core/locking.py`, `tests/plan_d/test_worker.py`, `tests/plan_h/test_permit.py`,
+  `core/src/ops_core/locking.py`, `core/src/ops_core/lease.py`, `tests/plan_d/test_worker.py`, `tests/plan_h/test_permit.py`,
   `tests/e2e/test_worker_live.py`, `worker/README.md`, `docs/runbooks/dev-topology.md`, `api/src/ops_api/store.py`,
   `core/src/ops_core/routing.py`
 
-**Requirements:** rulings 7, 9-11, 15, 16; SA:137, SA:147, SA:451, SA:453, SA:496; BS:516, BS:549; R039, R041, R130.
+**Requirements:** rulings 7, 9-11, 15, 16; SA:137, SA:147, SA:451, SA:453, SA:496; BS:516, BS:549, BS:555 (the run's
+budget, round 1 I3); R039, R041, R130.
 
 **Interfaces:**
 - Consumes: Task 2's route (`deps.generator.route`, `.digest`, `ModelUnavailable`, `ModelOutputInvalid`); Task 3's
   `persistence.insert_run_manifest`; Plan H's unit fakes (`tests/plan_h/test_worker_units.py`: `JOB`, `Log`, `make`,
   `patch`); Task 2's test helpers (`tests/plan_p/test_ollama_drafting.py`: `GOOD`, `PINS`, `WITH_QUESTION`, `Script`,
   `Tags`).
-- Produces: `handlers.MODEL_UNAVAILABLE`, `MODEL_INVALID`, `NOT_ROUTED`, `ABSTAINED`, `RETRIEVAL_MODE`; the manifest
+- Produces: `handlers.MODEL_UNAVAILABLE`, `MODEL_INVALID`, `NOT_ROUTED`, `ABSTAINED`, `RETRIEVAL_MODE`,
+  `BUDGET_MARGIN_SECONDS`; `Lease.held_for()`; the manifest
   in the DRAFTING unit; `proposals.build_proposal` without `corpus_version` and `Frozen` without `manifest`;
   `permit.PERMIT_TTL_SECONDS = 95`; the lock-order unit "worker drafting start (transition_run, run manifest)".
 
@@ -2549,6 +2681,7 @@ from ops_core.routing import RunManifest
 from ops_core.settings import LeaseSettings, Urls
 from ops_core.states import Intent, RunState, freeze_allowed
 from psycopg.pq import TransactionStatus
+from pydantic import ValidationError
 
 from ops_worker import permit, proposals
 from ops_worker.drafting import (
@@ -2577,6 +2710,9 @@ MODEL_INVALID = "the model's draft failed validation after its one repair"
 NOT_ROUTED = "the draft was an answer or a clarifying question, which this build does not route yet"
 ABSTAINED = "the model found the evidence insufficient"
 RETRIEVAL_MODE: Final = "lexical"  # the only mode the worker asks for; choosing it per run is TODO(T25)
+# The draft stops this long before the run's compute budget ends, so the freeze or the failure unit after it still
+# runs inside the budget, before the heartbeat's own gate ("compute budget spent") could cancel the call.
+BUDGET_MARGIN_SECONDS: Final = 5.0
 ```
 
 Edit 13 (`worker/src/ops_worker/handlers.py`), replace:
@@ -2591,7 +2727,33 @@ with:
                 arguments={"query": text[:QUERY_CHARS], "limit": 3, "mode": RETRIEVAL_MODE},
 ```
 
-Edit 14 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 14 (`worker/src/ops_worker/handlers.py`; the manifest is built inside the retrieval `try`, from the corpus
+version and the mode the tool reports, so a malformed tool result is the templated "retrieval failed", round 1 M3),
+replace:
+
+```python
+        evidence = proposals.evidence_from_search(doc)
+    except (McpCallFailed, ValueError) as exc:
+```
+
+with:
+
+```python
+        evidence = proposals.evidence_from_search(doc)
+        # The manifest records the corpus version and the mode the tool reports it ran (mcp-read's `retrieval_mode`),
+        # so a tool result without them, or with values the manifest refuses, is a retrieval failure like any other.
+        manifest = RunManifest(
+            run_id=run["run_id"],
+            model_route=deps.generator.route,
+            model_digest=deps.generator.digest,
+            prompt_version=PROMPT_VERSION,
+            corpus_version=str(doc["data"]["corpus_version"]),
+            retrieval_mode=doc["data"]["retrieval_mode"],
+        )
+    except (McpCallFailed, KeyError, ValidationError, ValueError) as exc:
+```
+
+Edit 15 (`worker/src/ops_worker/handlers.py`), replace:
 
 ```python
     async with deps.conn.transaction():
@@ -2609,14 +2771,6 @@ Edit 14 (`worker/src/ops_worker/handlers.py`), replace:
 with:
 
 ```python
-    manifest = RunManifest(
-        run_id=run["run_id"],
-        model_route=deps.generator.route,
-        model_digest=deps.generator.digest,
-        prompt_version=PROMPT_VERSION,
-        corpus_version=str(doc["data"]["corpus_version"]),
-        retrieval_mode=RETRIEVAL_MODE,
-    )
     async with deps.conn.transaction():
         await persistence.set_tenant(deps.conn, run["tenant_id"])  # the manifest INSERT is RLS-scoped
         await persistence.fenced(deps.conn, lease)
@@ -2640,7 +2794,8 @@ with:
     except Exception:
 ```
 
-Edit 15 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 16 (`worker/src/ops_worker/handlers.py`; the request is built once the permit is held, so `remaining_seconds`
+counts the permit wait too, round 1 I3), replace:
 
 ```python
 async def _draft_and_freeze(
@@ -2660,15 +2815,18 @@ async def _draft_and_freeze(
     deps: Deps, lease: Lease, run: dict[str, Any], text: str, evidence: list[EvidenceItem], manifest: RunManifest
 ) -> None:
     """Draft from the evidence and act on the draft's kind; any failure here is the caller's to turn into FAILED."""
-    request = DraftRequest(
-        asset_id=run["asset_id"],
-        text=text,
-        start_at=run["start_at"],
-        end_at=run["end_at"],
-        answer_only=Intent(run["intent"]) is Intent.ANSWER_ONLY,
-    )
     # One hold spans the first pass and its repair (model concurrency 1, BS:549; the TTL covers both, permit.py).
     async with permit.model_permit(deps.conn, holder=deps.worker_name, lease=lease):
+        request = DraftRequest(
+            asset_id=run["asset_id"],
+            text=text,
+            start_at=run["start_at"],
+            end_at=run["end_at"],
+            answer_only=Intent(run["intent"]) is Intent.ANSWER_ONLY,
+            # BS:555's 90 s are the run's, counted from the claim as the heartbeat counts them, so the draft gets what
+            # retrieval and the permit wait left, less a margin for the unit that follows it.
+            remaining_seconds=deps.leases.compute_budget_seconds - lease.held_for() - BUDGET_MARGIN_SECONDS,
+        )
         draft = await lease.effect(deps.generator.generate(request, evidence))  # a lease effect (SA:195)
     if draft.kind == "abstain" and not draft.clarification_requested:
         await _fail(deps, lease, RunState.DRAFTING, RunState.INSUFFICIENT_EVIDENCE, ABSTAINED)  # SA:147
@@ -2680,7 +2838,26 @@ async def _draft_and_freeze(
     freeze_allowed(Intent(run["intent"]))  # an answer_only run never freezes a proposal (SA:453)
 ```
 
-Edit 16 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 17 (`core/src/ops_core/lease.py`, the run's elapsed compute on the lease's own clock), replace:
+
+```python
+    @property
+    def renewed_at(self) -> float:
+```
+
+with:
+
+```python
+    def held_for(self) -> float:
+        """Seconds since the claim took the lease, on the lease's clock: what the heartbeat's compute gate measures
+        against the run's budget (BS:555)."""
+        return self._clock() - self.held_since
+
+    @property
+    def renewed_at(self) -> float:
+```
+
+Edit 18 (`worker/src/ops_worker/handlers.py`), replace:
 
 ```python
         evidence=evidence,
@@ -2695,7 +2872,7 @@ with:
         now=now,
 ```
 
-Edit 17 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 19 (`worker/src/ops_worker/handlers.py`), replace:
 
 ```python
                 "message": f"Drafted by model route {frozen.manifest.model_route.value} "
@@ -2711,7 +2888,7 @@ with:
 
 - [ ] **Step 3: The proposal, the permit and the lock order**
 
-Edit 18 (`worker/src/ops_worker/proposals.py`), replace:
+Edit 20 (`worker/src/ops_worker/proposals.py`), replace:
 
 ```python
 different order freeze to the same bytes. The run manifest records the model route (SA:379) and is validated here even
@@ -2725,7 +2902,7 @@ different order freeze to the same bytes. The run manifest is not part of the pr
 draft (`handlers.investigate`, R130).
 ```
 
-Edit 19 (`worker/src/ops_worker/proposals.py`), replace:
+Edit 21 (`worker/src/ops_worker/proposals.py`), replace:
 
 ```python
 from ops_core.contracts import ModelDraft, ProposalPayload, SourceSnapshot
@@ -2738,7 +2915,7 @@ with:
 from ops_core.contracts import ModelDraft, ProposalPayload, SourceSnapshot
 ```
 
-Edit 20 (`worker/src/ops_worker/proposals.py`), replace:
+Edit 22 (`worker/src/ops_worker/proposals.py`), replace:
 
 ```python
     """The proposal as frozen: payload, the exact bytes, their hash and the run manifest."""
@@ -2759,7 +2936,7 @@ with:
     sha256: str
 ```
 
-Edit 21 (`worker/src/ops_worker/proposals.py`), replace:
+Edit 23 (`worker/src/ops_worker/proposals.py`), replace:
 
 ```python
     evidence: list[EvidenceItem],
@@ -2780,7 +2957,7 @@ with:
     """Build the payload, its canonical bytes and their hash from a validated draft."""
 ```
 
-Edit 22 (`worker/src/ops_worker/proposals.py`), replace:
+Edit 24 (`worker/src/ops_worker/proposals.py`), replace:
 
 ```python
     doc = payload.canonical_dict()
@@ -2802,7 +2979,7 @@ with:
     return Frozen(payload=payload, canonical=canonical_json(doc), sha256=canonical_sha256(doc))
 ```
 
-Edit 23 (`worker/src/ops_worker/permit.py`, the module docstring), replace:
+Edit 25 (`worker/src/ops_worker/permit.py`, the module docstring), replace:
 
 ```python
 exactly the slot a take returned, also when the lease is lost during the model call. A 65 s TTL (one 60 s model
@@ -2822,7 +2999,7 @@ mid-generation cancel the next call started in 0.15 s, so a cancelled request do
 `/api/ps`.
 ```
 
-Edit 24 (`worker/src/ops_worker/permit.py`), replace:
+Edit 26 (`worker/src/ops_worker/permit.py`), replace:
 
 ```python
 PERMIT_TTL_SECONDS = 65  # SA:596: a model attempt is capped at 60 s; 5 s more for the call around it
@@ -2834,7 +3011,7 @@ with:
 PERMIT_TTL_SECONDS = 95  # BS:555: a draft's two attempts share 90 s (ollama_drafting.BUDGET_SECONDS); 5 s more
 ```
 
-Edit 25 (`core/src/ops_core/locking.py`, `OBSERVED_UNITS`), replace:
+Edit 27 (`core/src/ops_core/locking.py`, `OBSERVED_UNITS`), replace:
 
 ```python
     "worker failure (transition_run)": ("run_lease", "runs"),
@@ -2851,7 +3028,7 @@ with:
 
 - [ ] **Step 4: The docs and the hint markers**
 
-Edit 26 (`worker/README.md`), replace:
+Edit 28 (`worker/README.md`), replace:
 
 ```markdown
 `investigate`: read tool on mcp-read → fake draft under the model permit (`MODEL_MODE=fake`, the only route until
@@ -2868,7 +3045,7 @@ abstention ends INSUFFICIENT_EVIDENCE; an answer or a question, an outage or an 
 `execute`: `create_incident` on mcp-write.
 ```
 
-Edit 27 (`docs/runbooks/dev-topology.md`), replace:
+Edit 29 (`docs/runbooks/dev-topology.md`), replace:
 
 ```markdown
 | mcp-read and `scripts/skeleton.py embed` (T18) | `OPS_OLLAMA_URL`, default `http://127.0.0.1:11434` (an `OPS_*` setting that the bootstrap does not write to `.env`) |
@@ -2891,7 +3068,7 @@ pins): `/api/tags` and `/api/version` at start, then generation through ChatOlla
 bridge test's.
 ```
 
-Edit 28 (`docs/runbooks/dev-topology.md`), replace:
+Edit 30 (`docs/runbooks/dev-topology.md`), replace:
 
 ```markdown
 The worker's digest check reads `data/model-pins.json` through `ops_core.model_pins.load_model_pins` (T19).
@@ -2903,7 +3080,7 @@ with:
 The worker's digest check reads `data/model-pins.json` through `ops_core.model_pins.load_model_pins` and compares it with `/api/tags` before its warm-up call; a mismatch stops the worker before it claims a job (T19, R127).
 ```
 
-Edit 29 (`api/src/ops_api/store.py`), replace:
+Edit 31 (`api/src/ops_api/store.py`), replace:
 
 ```python
                     hint=None,  # TODO(T19): the model router may supply a hint; it can only produce clarify
@@ -2915,7 +3092,7 @@ with:
                     hint=None,  # no hint producer in v1 (SA:375 optional; erratum 118); one could only ask to clarify
 ```
 
-Edit 30 (`core/src/ops_core/routing.py`), replace:
+Edit 32 (`core/src/ops_core/routing.py`), replace:
 
 ```python
     optional model hint (no producer exists yet; TODO(T19))."""
@@ -2932,11 +3109,11 @@ with:
 - [ ] **Step 5: Run the tests and the gates, including the first live gate, then commit**
 
 Run `uv run ruff format worker core api tests && uv run ruff check worker core api tests && uv run python -m pytest
-tests/plan_p tests/plan_d tests/plan_h -q < /dev/null` → `251 passed, 2 skipped` (`test_investigate_drafting.py` 9).
+tests/plan_p tests/plan_d tests/plan_h -q < /dev/null` → `261 passed, 2 skipped` (`test_investigate_drafting.py` 9).
 
-Gates: `check.py` → `CHECK: GREEN`, pytest `1589 passed, 222 skipped`; `verify_handoff.py` → exit 0. Live gate (the
+Gates: `check.py` → `CHECK: GREEN`, pytest `1599 passed, 222 skipped`; `verify_handoff.py` → exit 0. Live gate (the
 first of this plan; Global Constraints): `PYTHONUTF8=1 uv run python scripts/check.py --profile test < /dev/null` →
-`CHECK: GREEN`, pytest `1790 passed, 21 skipped` (arithmetic: 1589 + 222 − 21). It runs, for the first time anywhere,
+`CHECK: GREEN`, pytest `1800 passed, 21 skipped` (arithmetic: 1599 + 222 − 21). It runs, for the first time anywhere,
 the three database live tests this plan adds or changes: `tests/e2e/test_run_manifest_live.py` and the two manifest
 assertions in `tests/e2e/test_worker_live.py`; the two Ollama route tests (`tests/plan_p/test_model_route_live.py`) ran
 on the scratch copy. Then `git checkout -- reports`.
@@ -2973,7 +3150,8 @@ Create `tests/plan_p/test_draft_evidence.py`:
 
 Catches: a probe input turned into another request or interval than the worker would build, an evidence ID the model
 could not copy, an injected input without its tenant's injected corpus-1 section (R036 would then be untested on the
-real model), a repaired or failed draft counted as a first-pass success, and a report without its Wilson intervals.
+real model), a repaired or failed draft counted as a first-pass success, and a report without its Wilson intervals or
+without saying what was sent and that it is one machine.
 """
 
 import json
@@ -3058,6 +3236,7 @@ def test_the_summary_and_the_report_carry_the_rates_and_their_intervals() -> Non
     report = draft_evidence.render(meta, s, [{"probe_id": "PR-x", "scenario": "s", "label": "accepted", "text": "{}"}])
     assert "| Valid first pass | 1/3 | [0.061, 0.792] |" in report
     assert "| Valid after at most one repair | 2/3 | [0.208, 0.939] |" in report
+    assert "No asset status or alert records are sent" in report and "One machine; not a capacity claim" in report
 ```
 
 Run `git add tests/plan_p && uv run python -m pytest tests/plan_p/test_draft_evidence.py -q < /dev/null` → a
@@ -3241,7 +3420,15 @@ def render(meta: Mapping[str, Any], s: Mapping[str, Any], samples: Sequence[Mapp
         "Valid means `ops_core.draft_validation.validate` accepted the reply: the draft schema, `ModelDraft`, every",
         "evidence ID one this input offered, no thinking, no authority key. Validity is not support: whether a draft's",
         "claims follow from its evidence is T25's to grade (BS:452). No accepted draft can carry a field outside the",
-        "schema, so none can name a tool, a grant, a role or a destination.",
+        "schema, so none can name a tool, a grant, a role or a destination. Validity is judged by the application;",
+        "whether Ollama's `format` grammar enforces the schema's `allOf`/`if`/`then`/`else` is not established and",
+        "does not change this record.",
+        "",
+        "What was sent: each input's request text, asset, interval and its one procedure section, with the v2 payload.",
+        "No asset status or alert records are sent (the worker passes none to the model until T20), so many drafts",
+        "abstain for want of alert data. Each `injected` input also carries its tenant's injected corpus-1 section as",
+        "retrieved evidence (`ALPHA-VENDOR-PORTAL:v1:portal-note` or `BETA-CONTRACTOR-MEMO:v1:memo-note`).",
+        "One machine; not a capacity claim (BS:566).",
         "",
         "## Samples",
         "",
@@ -3335,9 +3522,9 @@ if __name__ == "__main__":
 - [ ] **Step 3: Run the tests and the gates, then commit the script**
 
 Run `git add scripts/draft_evidence.py && uv run ruff format scripts tests/plan_p && uv run ruff check scripts
-tests/plan_p && uv run python -m pytest tests/plan_p -q < /dev/null` → `51 passed, 2 skipped`.
+tests/plan_p && uv run python -m pytest tests/plan_p -q < /dev/null` → `61 passed, 2 skipped`.
 
-Gates: `check.py` → `CHECK: GREEN`, pytest `1593 passed, 222 skipped`; `verify_handoff.py` → exit 0.
+Gates: `check.py` → `CHECK: GREEN`, pytest `1603 passed, 222 skipped`; `verify_handoff.py` → exit 0.
 
 ```bash
 git add scripts/draft_evidence.py tests/plan_p/test_draft_evidence.py
@@ -3349,7 +3536,7 @@ git commit -m "feat: scripts/draft_evidence.py - the T19 real-model run over the
 With local Ollama answering and `qwen3:8b` installed at the pinned digest (Task 1 Step 1a), run `PYTHONUTF8=1 uv run
 python -I scripts/draft_evidence.py < /dev/null` (three to five minutes: a warm-up, then 60 drafts of about 2-3 s
 each, more if a repair runs). It prints `valid first pass <n>/60, after repair <m>` and writes
-`reports/model/t19-real-run.md` and `.json`. The scratch runs printed `valid first pass 60/60, after repair 60` twice
+`reports/model/t19-real-run.md` and `.json`. The scratch runs printed `valid first pass 60/60, after repair 60` three times
 ("Measured before writing"); temperature 0 does not make outputs identical (BS:443; the probe saw 1 of 5 inputs repeat
 byte for byte), so the kinds may move by a few. Whatever it prints is the evidence: record the figures in the report;
 nothing is re-run to improve them (BS:566, ruling 12). If `start()` refuses (`ModelStartError`: digest, missing model,
@@ -3465,7 +3652,8 @@ ROWS = {
     "R040": (
         "RECORDED_LOCALLY",
         [*UNIT, "tests/plan_p/test_ollama_drafting.py", "tests/plan_p/test_investigate_drafting.py"],
-        "Plan P (T19): one repair within what is left of the 90 s budget, with instance-free feedback; a second "
+        "Plan P (T19): one repair within what is left of the run's 90 s compute budget (BS:555, measured from the "
+        "claim), with instance-free feedback; a second "
         "invalid reply is ModelOutputInvalid and the run ends FAILED with a templated message, no draft row, no "
         "proposal and no incident. A timeout or an outage is never repaired.",
     ),
@@ -3566,7 +3754,8 @@ its decision lines are provisional), and the owner chose to go ahead past T44 st
 record follows.
 ```
 
-Edit 3 (`SESSION_STATE.md`, the repository line), replace:
+Edit 3 (`SESSION_STATE.md`, the repository line: the anchor below is a prefix of line 43, and the line continues
+after it; replace the prefix only), replace:
 
 ```markdown
 **Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-o` off `plan-n` (Plan O executed, pushed 2026-10-20, PR #14 into `plan-n`;
@@ -3612,13 +3801,17 @@ with:
   117. SA:379 ("the choice, model digest and prompt version are written to the run manifest and the
        `explanation.ready` event") and T19's "records the route in explanation.ready": met by the event's templated
        message, which names the route and the prompt version, together with the run manifest, which holds the digest.
-       The event's closed payload (`message`, `evidence_refs`) is unchanged in schema, code and SQL.
+       The event's closed payload (`message`, `evidence_refs`) is unchanged in schema, code and SQL. The event is
+       emitted only on the proposal path, so for abstained, not-routed and failed runs the route lives in the
+       manifest alone.
   118. SA:375: optional model-assisted intent classification is not built in v1. The admission router keeps its tested
        `hint` input and the API passes none; the Plan G debt line naming T19 is closed.
   119. BS:437 (`DraftGenerator.generate(request_context, evidence_bundle, policy_metadata)`) and BS:441
        (`MODEL_MODE=ollama`): `generate` takes the request and the evidence bundle; the one policy fact a draft
        depends on, whether the run may propose, travels as the request's `answer_only`. `MODEL_MODE` names the route
-       itself, `fake` or `qwen3:8b` (SA:379's names); `ollama` and anything else refuse to start the worker.
+       itself, `fake` or `qwen3:8b` (SA:379's names); `ollama` and anything else refuse to start the worker. T19's
+       "future named model" (SA:379, `handoff/tasks.json`) gets no enum slot now: adding one is a later
+       route-enum and schema change, which no task owns.
   120. AM-20.2 and AM-20.5: `run_manifests` (revision 0014) is a tenant table neither lists. Cells: `worker` INSERT and
        SELECT, `api` SELECT, nobody UPDATE or DELETE (a manifest is immutable); ENABLE + FORCE RLS with the
        `tenant_isolation` policy for `api`, `worker`, `sweeper` and `app_definer`.
@@ -3698,6 +3891,12 @@ with:
 
 - [ ] **Step 3: The history**
 
+Section 34's **Review** paragraph is written now, at close-out, from what actually happened, never in advance: the
+static review's round 1 (`.superpowers/planp/round1-static.md`: the grader-agreement test, the report's statement
+of what was sent, the run's compute budget, and the ten minors), the first live gate's result for the three
+database live tests, and the final review's findings. Replace `<review>` with that paragraph (problems and fixes,
+as every earlier section does) before Step 4.
+
 Edit 8 (`docs/PROJECT_HISTORY.md`), replace:
 
 ```markdown
@@ -3724,23 +3923,18 @@ falls back to the fake. Every run records its route, digest, prompt and corpus i
 model is called. The new prompts add the rules the probe showed missing, and the payload finally lists the allowed
 evidence IDs. On the same 60 inputs the real run recorded <figures>.
 
-**Review.** Writing the plan against the probe's own transcript moved several details. The probe's repair feedback had
-embedded the whole failed draft in every line, so its one repair changed nothing; the new feedback is built from the
-schema's side only. A single HTTP timeout could not serve both the 60-second draft and the 180-second cold warm-up, so
-the route builds two clients with identical model options (a different context size would reload the model). The
-scratch copy could not run the database live suite, because copying `.env` into it was refused, so those counts are
-arithmetic and the three database live checks ran first on the executor's machine.
+**Review.** <review>
 
 ## 35. What the process taught
 ```
 
 - [ ] **Step 4: Fill the placeholders and run the final gates**
 
-Run the final gates: `PYTHONUTF8=1 uv run python scripts/check.py < /dev/null` → `CHECK: GREEN`, pytest `1593 passed,
-222 skipped`; the live gate → `CHECK: GREEN`, `1794 passed, 21 skipped`, then `git checkout -- reports`;
-`verify_handoff.py` → exit 0. Replace every `<base>`, `<last>`, `<date>`, `<dev>`, `<live>` and `<figures>` in
+Run the final gates: `PYTHONUTF8=1 uv run python scripts/check.py < /dev/null` → `CHECK: GREEN`, pytest `1603 passed,
+222 skipped`; the live gate → `CHECK: GREEN`, `1804 passed, 21 skipped`, then `git checkout -- reports`;
+`verify_handoff.py` → exit 0. Replace every `<base>`, `<last>`, `<date>`, `<dev>`, `<live>`, `<figures>` and `<review>` (Step 3) in
 `SESSION_STATE.md`, `STATUS.md` and `docs/PROJECT_HISTORY.md` with the actual values (`git grep -n
-"<base>\|<last>\|<date>\|<dev>\|<live>\|<figures>" -- SESSION_STATE.md STATUS.md docs/PROJECT_HISTORY.md` →
+"<base>\|<last>\|<date>\|<dev>\|<live>\|<figures>\|<review>" -- SESSION_STATE.md STATUS.md docs/PROJECT_HISTORY.md` →
 nothing), tick this plan's checkboxes, and commit:
 
 ```bash
@@ -3768,9 +3962,10 @@ git commit -m "docs: close T19 (Plan P) - records, R036-R041/R127/R130, errata 1
 3. **The startup now does network I/O before the database.** `start_route` runs before any connection, so a worker
    on `qwen3:8b` with Ollama down exits at once with "the worker refuses to start"; on `fake` nothing changes. A model
    replaced under a running worker is not seen until restart (debt → T30).
-4. **The budget overlaps the heartbeat's.** A draft may use 90 s from its own start; the heartbeat's compute budget
-   counts from the claim, so a long permit wait plus a slow draft can lose the lease ("compute budget spent"), which
-   hands the job back and fails the run as interrupted (debt → T29). Both caps are named constants with their reasons.
+4. **The run's budget is shared with the heartbeat.** Each attempt is clipped to what the run's 90 s have left
+   (`remaining_seconds`, measured from the claim less 5 s), so a slow draft ends as the templated `MODEL_UNAVAILABLE`
+   before the heartbeat's gate fires; the heartbeat still cancels the call itself if the two clocks disagree, and a
+   run that spent its budget on the permit wait gets a zero-second attempt and fails at once (debt → T29).
 5. **The dependency set grew by 22 packages,** among them `langsmith`, which LangChain imports but only uses when a
    `LANGSMITH_*`/`LANGCHAIN_TRACING*` variable turns tracing on; none is set (debt → T28). `httpx` 0.28.1 now sits
    beside the workspace's own `httpx2`; only the ollama client uses it.
