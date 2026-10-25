@@ -1,6 +1,6 @@
 {
   "specification": "OPS-BUILD-1.3.6 (BUILD_SPEC 1.0 + SPEC_AMENDMENTS.md)",
-  "current_milestone": "M07",
+  "current_milestone": "M08",
   "note": "Dependency graph. IDs stable since 1.2; T41 (1.3) and T42-T46 (1.3.3 splits) and T47 (1.3.4 mcp-write) appended. Requirements sit with the first task able to test them. review_notes carry later-round items for the owning task. M15 is optional. See SPEC_AMENDMENTS.md AM-60. Status vocabulary: PLANNED, DONE (all steps done and reviewed), DONE_PENDING_OWNER (agent steps done; an owner-only step remains, named in review_notes). A proposed erratum awaiting the owner's decision does not change a task's status; a task met 'subject to' an erratum stays DONE.",
   "milestones": [
     {
@@ -92,7 +92,7 @@
         "T19",
         "T20"
       ],
-      "status": "PLANNED"
+      "status": "DONE"
     },
     {
       "id": "M08",
@@ -879,7 +879,7 @@
         "R114",
         "R129"
       ],
-      "status": "PLANNED",
+      "status": "DONE",
       "definition_of_done": [
         "Trace shows MCP reads complete before drafting.",
         "Pause/resume survives worker restart from the stored checkpoint_id; a newer stray head is ignored.",
@@ -889,7 +889,8 @@
       "external_approval_required": false,
       "review_notes": [
         "LangGraph 1.2.14: explicit checkpoint_id => is_replaying, pending writes NOT re-applied (_loop.py:330, 766-770); Command(resume) keeps RESUME writes; invoke(None, checkpoint_id) forks (886-912). Store IDs from stream_mode='checkpoints'/aget_state, update after forks, make every node idempotent, test kill-mid-superstep and kill-at-interrupt, join stale in-process tasks before re-acquiring.",
-        "Fork writes are non-blocking (_loop.py:1262-1266) and sync durability waits only after the tick (main.py:3526): store only checkpoint IDs confirmed by aget_tuple; treat a missing stored ID as an error; prefer Command(resume) when a resume event exists; test two crashes in a row. Define revision re-entry (new thread per revision or explicit edges back to retrieval)."
+        "Fork writes are non-blocking (_loop.py:1262-1266) and sync durability waits only after the tick (main.py:3526): store only checkpoint IDs confirmed by aget_tuple; treat a missing stored ID as an error; prefer Command(resume) when a resume event exists; test two crashes in a row. Define revision re-entry (new thread per revision or explicit edges back to retrieval).",
+        "Plan Q (branch plan-q): done in d3c148a..a6ffbe2 (the debt list, then four building tasks and the live gate; the close-out is the next commit; plan docs/superpowers/plans/2026-10-25-first-slice-q-langgraph-workflow.md). Shipped: the graph package worker/src/ops_worker/graph/ (SA:207's ten nodes; route_request's conditional edges generated from ops_core.routing.GRAPH_ROUTES over SA:377's seven dimensions; publish_state ends the graph run when the table routes publish); langgraph 1.2.14 and langgraph-checkpoint-postgres 3.1.2 (AsyncPostgresSaver on the worker's fourth connection, search_path=checkpoints,pg_temp); revision 0015 (schema checkpoints, the saver's DDL frozen and its versions recorded, worker-only DML); every invocation durability=sync with stream_mode=checkpoints, each announced checkpoint confirmed by aget_tuple and stored in runs.checkpoint_id under the fence; retrieval reads the asset status, the interval's alerts and the procedures (two retries of a transient read; a 401 told apart) and SA:377's sufficiency rule (erratum 122); questions interrupt with the event id, release the lease and resume with Command(resume=clarification.received id) in the resume_input job; answers end ANSWERED with the cited summary in explanation.ready (erratum 124); the reviewer wait interrupts with the proposal id and the execute job resumes it; crash recovery forks from the stored id; the router rereads the run's dimensions on every hop; a missing stored id fails the run. DoD 1: tests/plan_q/test_graph_flow.py and tests/e2e/test_graph_live.py (every read before the draft). DoD 2: the restart test and the stray-head test. DoD 3: R091's grep of the checkpoint rows, blobs and writes. DoD 4: tests/plan_q/test_graph_routes.py (every row walked to its node). Deferred: the fenced saver -> T38; revision re-entry -> T21; recover jobs and re-queued reads -> T22; the budget's human-wait exclusion -> T29. Errata 122-130 are proposed in SESSION_STATE.md."
       ]
     },
     {

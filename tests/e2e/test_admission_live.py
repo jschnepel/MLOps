@@ -392,7 +392,7 @@ async def test_r129_every_admission_route_live(
             messages(await conversation(c, created)), headers=h(), json={"kind": "clarification", "text": "A17"}
         )
         seen["reject"] = reject.status_code
-        # Nothing in the worker asks for clarification yet (T20), so the run is staged where the worker would put it,
+        # The worker's graph asks only after a draft (T20); this API-boundary test stages the run where it would be,
         # through the worker role's own function (as tests/e2e/test_definers_run_path_live.py does).
         run_id = UUID(inv_body["run_id"])
         async with worker.transaction():

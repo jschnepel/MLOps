@@ -1,8 +1,16 @@
 # Session state
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
-**Current milestone:** M07 (the LangChain draft node and the LangGraph workflow; T19 is DONE in Plan P and T20 is next. M06 closed with T18 in Plan N; its T41, the owner's holdout labels, is optional since erratum 114. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
-**Next task:** T20 (the LangGraph workflow). Plan P (T19) is executed on branch `plan-p` (`ee2729d..737d1ab` holds the
+**Current milestone:** M08 (independent review, grant, execution and recovery; T21 is next. M07 closed with T20 in Plan Q, after T19 in Plan P. M06 closed with T18 in Plan N; its T41, the owner's holdout labels, is optional since erratum 114. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
+**Next task:** T21 (per-revision proposals, the decision rules and the manual path). Plan Q (T20) is executed on
+branch `plan-q` (`d3c148a..a6ffbe2` holds the debt list, the four building tasks and the live gate; the close-out is the
+commit after `a6ffbe2`). T20 is DONE: the run's lifecycle is one LangGraph graph on the Postgres saver with synchronous
+durability and the stored checkpoint id (R022, R038, R042, R091, R108, R114 and R122 live; R129's graph half); errata
+122-130 are proposed (see "Plan Q executed"; the next free erratum number is 131). Owner inputs added by Plan Q: decide
+errata 122-130; migrate the dev database to 0015 (the worker refuses to start without `checkpoints.checkpoints`); merge
+PR #16 (`plan-q` -> `plan-p`, https://github.com/jschnepel/MLOps/pull/16, opened 2026-10-25 UTC after the final review;
+stacked on PR #15, which merges first). Plan P (T19) is executed on branch
+`plan-p` (`ee2729d..737d1ab` holds the
 debt list and the five building tasks; the close-out is the commit after `737d1ab`). T19 is DONE: the qwen3:8b route
 is selectable, validated, bounded, pinned and recorded (R036, R039, R040, R041 recorded locally; R037, R127 and R130
 live, R130 subject to T25's half); errata 115-121 are proposed; the real run is `reports/model/t19-real-run.md`
@@ -1118,6 +1126,59 @@ owner's decision does not change a task's status; a task met "subject to" an err
   wrote CRLF into six files in the fix wave, which the hygiene test caught (converted back). The plan writer could not
   copy `.env` into its scratch copy, so the three database live tests ran for the first time in execution and passed.
 
+## Plan Q executed (2026-10-25, branch `plan-q`)
+
+- T20 = `d3c148a..a6ffbe2` (the debt list first, then the four building tasks, the live gate and their review fixes;
+  the close-out is the commit after `a6ffbe2`). The plan (`docs/superpowers/plans/2026-10-25-first-slice-q-langgraph-
+  workflow.md`) holds the 17 rulings of the controller's brief as implemented, with its departures named at its top;
+  the input is `docs/superpowers/research/2026-10-25-plan-q-inputs.md`. Evidence: `core/src/ops_core/routing.py`
+  (`GRAPH_ROUTES`), `worker/src/ops_worker/graph/`, `worker/src/ops_worker/handlers.py`,
+  `worker/src/ops_worker/evidence.py`, `migrations/app/versions/0015_checkpoints.py`, `tests/plan_q/` (unit, on
+  LangGraph's in-memory saver and Plan H's fakes), `tests/e2e/test_graph_live.py` and `reports/graph/t20-graph-live.md`
+  (live, on the Postgres saver).
+- Gates: `PYTHONUTF8=1 uv run python scripts/check.py` `CHECK: GREEN`, pytest `1738 passed, 227 skipped`; `PYTHONUTF8=1 uv run python
+  scripts/check.py --profile test` `CHECK: GREEN`, pytest `1944 passed, 21 skipped`; `verify_handoff.py` exit 0.
+- Dependencies: `langgraph==1.2.14` and `langgraph-checkpoint-postgres==3.1.2` in `ops-worker` (SA:580-581, resolved as
+  pinned); `uv lock` added langgraph 1.2.14, langgraph-checkpoint 4.3.0, langgraph-checkpoint-postgres 3.1.2,
+  langgraph-prebuilt 1.1.1, langgraph-sdk 0.4.9, ormsgpack 1.13.0 and psycopg-pool 3.3.3 (a declared dependency of
+  the saver package; the worker opens no pool).
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from Plan P's:
+  122. SA:377 ("evidence sufficient?"): at least one status observation in state `normal` or `warning` (`unavailable`
+       observes nothing) observed within 5 minutes (SA:462's asset freshness) of the instant mcp-read answered, and at
+       least one effective procedure section, every returned section retrieved within the same 5 minutes. The
+       search's minimum rank (0.25, T17) is v1's relevance criterion; erratum 102's residue stays measured (T25).
+  123. SA:510 and SA:523 are silent on schema `checkpoints`: its tables carry no RLS (they are not tenant rows; only the
+       worker reads them, by thread id); R122's isolation is the schema privilege.
+  124. SA:496 ("never written ... to events"): the validated question rides in `clarification.requested.message` and
+       the validated answer's summary and citations in `explanation.ready` (`source=model_summary`), so the requester
+       sees them; the draft payload itself stays out of `drafts`, checkpoints and events, and the proposal path's
+       `explanation.ready` stays templated (erratum 117).
+  125. AM-80 and erratum 120: a run that retrieves again after a clarification keeps its one manifest; whether a
+       revision records its own is T21's decision.
+  126. SA:559 (the migrator runs `PostgresSaver.setup()`): revision 0015 runs the same statements, frozen with the
+       schema named and `CONCURRENTLY` dropped (Alembic runs one transaction), and records the version rows `setup()`
+       writes, so a later `setup()` applies nothing. SA:434's "worker: all DML" on schema `checkpoints` excludes
+       `checkpoint_migrations`, the library's bookkeeping, which only the revision writes.
+  127. AM-15 (SA:343) and `JOB_RULES`: a `resume_input` job's read handle also works in RETRIEVING and DRAFTING, because
+       the resumed graph carries the run through retrieval and drafting under the same lease.
+  128. SA:207, SA:496 ("one node") and `docs/ARCHITECTURE.md` §3 ("every node returns to route_request"): the validated
+       draft is held in the worker's memory between `draft_with_langchain` and the node its kind routes to, within one
+       graph run (a resumed graph run without the hold retrieves and drafts again); `publish_state` ends the graph run
+       when the table routes `publish` and otherwise returns to the router; `execute_approved_proposal` hands over to
+       `reconcile_outcome`, which ends the execute job's graph run. A run recovered after a completed draft drafts
+       again, so it can exceed BS:554's two generation attempts and BS:555's 90 s per run, bounded only by each job's
+       own budget (T29). The graph thread of a rejected run ends at the reviewer wait: `record_decision` queues no job
+       on a rejection, `publish_state` does not run for it in v1, and the run's REJECTED state is the API's.
+  129. SA:451: a run that waits in AWAITING_INPUT and cannot be resumed (no stored checkpoint, or a reply that is not
+       the latest) walks AWAITING_INPUT -> QUEUED -> RETRIEVING -> FAILED in one unit, the worker's only path to FAILED.
+  130. SA:136 (RETRIEVING -> AWAITING_INPUT when required context is missing or ambiguous) is not taken in v1: an asset
+       the asset service does not know ends INSUFFICIENT_EVIDENCE, because the run's asset is fixed (SA:154) and a reply
+       could not change it.
+- Limits: the database live tests were first run in execution (the plan writer could not reach the stack's `.env`);
+  R042's restart is a new graph instance on a new saver connection in one process, not a killed process (T30).
+  R108 shows that step N's values were stored when step N+1 ran, on the Postgres saver under sync durability; the
+  async race (the same graph under `durability="async"`) is not shown.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -1538,6 +1599,52 @@ Allowed shortcuts in T19, each with its owning task:
 - the dev database stays at 0013 until the owner migrates it (revision 0014); the worker refuses to start on it before
   then.
 
+## Plan Q debt list (T20; committed before coding) [R6-B7]
+
+Allowed shortcuts in T20, each with its owning task:
+- the stock `AsyncPostgresSaver` does not check the run fence inside its own writes: the stored checkpoint id protects
+  the head, but a stale worker could still append a checkpoint or a pending write after losing its lease; v1 runs one
+  worker replica (SA:217) → T38 (R021, M15);
+- R042's restart is a new graph instance on a new saver connection inside one test process; a killed worker process
+  is not tested → T30 (the `docker kill` recovery demo); SIGTERM is still not drained (T30's marker);
+- crash recovery repeats the reads and their `tool.*` events, and a draft held in memory when the process stopped is
+  drafted again (nothing text-bearing was persisted, SA:496): a run recovered after a completed draft can make more
+  than BS:554's two generation attempts, and its next job counts BS:555's 90 s from its own claim → T29 (erratum 128);
+- a transient read is retried at most twice inside the retrieval node (BS:552) and then the run ends FAILED, and a
+  401 to the worker's token ends FAILED with its own message; a bounded re-queue of the job instead → T22;
+- the read path has no membership freshness bound (erratum 105) → the owner's decision on erratum 105, then T21;
+- "evidence sufficient?" is SA:377's rule with a 5-minute freshness window, and the search's minimum rank is v1's
+  relevance criterion (erratum 122); erratum 102's residue (5 of 20 no-source questions answered) stays measured →
+  T25;
+- the T19 evidence run (`reports/model/t19-real-run.md`) was made before the asset status and alerts reached the
+  payload; its figures may move and it is not re-run here → T25 (the real-model trials);
+- revision re-entry is a seam only: one LangGraph thread per run and revision, `build_proposal` freezes revision 1,
+  `runs.checkpoint_id` is per run, and the manifest stays one per run (erratum 125) → T21;
+- `workflow_version` lives only in the checkpoint metadata → T21 (a column) and T36 (routing across a bump);
+- `recover` jobs are closed unhandled and `reconcile_outcome` only logs → T22;
+- an execute job whose run's latest decision is not an approval of its active proposal ends without a graph run, logs
+  the three ids and leaves the run APPROVED (the worker may not move it, SA:451); recovering such a run → T22;
+- a rejected run's graph thread ends at the reviewer wait: `record_decision` queues no job on a rejection, so
+  `publish_state` never runs for it in v1; the run's REJECTED state is the API's and is authoritative → recorded
+  (erratum 128), no task;
+- the worker's write tool keeps T47's result check: no discovery listing and no result-schema check for
+  `create_incident` (Plan Q departure 4) → T21;
+- a human wait is not excluded from the compute budget, and `runs.budget_used` is not written → T29;
+- the node log is per graph run, in memory and in the logs; spans for the graph's nodes → T28 (R058);
+- the saver has one connection with no pool and no reconnect: a broken saver connection fails the graph run → T30;
+- checkpoints of finished threads are never pruned → T30;
+- an answer's summary is shown as the model wrote it (validated, cited, `source=model_summary`) → T26 (R055's safe
+  display);
+- every run still asks for `lexical` retrieval → T25 (Plan N ruling 16);
+- a job that fails unexpectedly is re-queued with its lease released, and the re-queue is unbounded until T22
+  (`persistence.requeue_job`), as the execute re-queue is today → T22;
+- the worker's MCP client classifies a 4xx other than 401/408/425/429 as `HTTP_REJECTED` (not retried) from the first
+  error answer in a session; the SDK's HEADER_MISMATCH recovery followed by a real connection failure would
+  therefore not be retried — impossible against mcp-read today (no `x-mcp-header` annotations) → T22;
+- a failed node's `repr(exc)` reaches `checkpoint_writes` (LangGraph's pending-write record); no model text, but an
+  exception message could carry a tool's error text → T26 (R055 display) / T38;
+- the dev database stays at 0013 until the owner migrates it; the worker now needs revision 0015 as well.
+
 ## Environment (observed)
 
 | Item | Observed |
@@ -1649,10 +1756,11 @@ the `ops_test` databases. The dev database stays at 0013 with corpus-1 embedded.
 
 - Decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed"), 60-71 (see
   "Plan I executed"), 72-81 (see "Plan J executed"), 82-92 (see "Plan K executed"), 93-102 (see "Plan L
-  executed"), 103-106 (see "Plan M executed"), 107-111 (see "Plan N executed"), 112-113 (see "Plan O executed") and
-  115-121 (see "Plan P executed").
-- Migrate the dev database to revision 0014 (`uv run python scripts/skeleton.py migrate`): the worker refuses to start
-  on 0013, which lacks `app.run_manifests`. To run the worker on the real model, set `MODEL_MODE=qwen3:8b`; the
+  executed"), 103-106 (see "Plan M executed"), 107-111 (see "Plan N executed"), 112-113 (see "Plan O executed"),
+  115-121 (see "Plan P executed") and 122-130 (see "Plan Q executed").
+- Migrate the dev database to revision 0015 (`uv run python scripts/skeleton.py migrate`): the worker refuses to start
+  on 0013, which lacks `app.run_manifests` and `checkpoints.checkpoints`. To run the worker on the real model, set
+  `MODEL_MODE=qwen3:8b`; the
   skeleton's default stays `fake`.
 - Confirm or reverse the T02 probe's two provisional lines (proceed; the permit released on cancel), which T19 builds
   on (`reports/model-probe-qwen3-8b.md`, `worker/src/ops_worker/permit.py`).

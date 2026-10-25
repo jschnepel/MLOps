@@ -399,14 +399,22 @@
       "category": "workflow",
       "requirement": "Human waits release workers and transactions",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r022_human_waits_release_workers_and_transactions.py",
       "expected_evidence": "Pause for review; no active worker lease/long DB transaction/model budget consumed.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "worker/src/ops_worker/graph/build.py",
+        "worker/src/ops_worker/graph/nodes.py",
+        "worker/src/ops_worker/handlers.py",
+        "tests/plan_q/test_graph_flow.py",
+        "tests/e2e/test_graph_live.py",
+        "reports/graph/t20-graph-live.md"
+      ],
       "owning_tasks": [
         "T20"
-      ]
+      ],
+      "note": "Plan Q (T20): both waits are interrupts that end the graph run, after which the job's final unit releases the lease; the live test finds the lease released, no worker backend idle in a transaction and the model permit free while the run waits for its reviewer. The budget's human-wait exclusion is T29's."
     },
     {
       "id": "R023",
@@ -732,14 +740,21 @@
       "category": "workflow",
       "requirement": "Evidence retrieval precedes final drafting",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r038_evidence_retrieval_precedes_final_drafting.py",
       "expected_evidence": "Trace order and input bundle show MCP read results before final model proposal.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "worker/src/ops_worker/graph/build.py",
+        "worker/src/ops_worker/graph/nodes.py",
+        "tests/plan_q/test_graph_flow.py",
+        "tests/e2e/test_graph_live.py",
+        "reports/graph/t20-graph-live.md"
+      ],
       "owning_tasks": [
         "T20"
-      ]
+      ],
+      "note": "Plan Q (T20): retrieve_evidence reads the asset status, the interval's alerts and the procedures, and the draft node runs only after it (the per-run node log); live, every tool.completed precedes the explanation.ready written in the drafts row's unit, and the request carries the status and alert records."
     },
     {
       "id": "R039",
@@ -812,14 +827,22 @@
       "category": "workflow",
       "requirement": "Actual checkpoint pause/resume survives restart",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r042_actual_checkpoint_pause_resume_survives_restart.py",
       "expected_evidence": "Restart graph process during clarification/review and resume from committed event under same run.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "worker/src/ops_worker/graph/build.py",
+        "worker/src/ops_worker/graph/nodes.py",
+        "worker/src/ops_worker/handlers.py",
+        "tests/plan_q/test_graph_flow.py",
+        "tests/e2e/test_graph_live.py",
+        "reports/graph/t20-graph-live.md"
+      ],
       "owning_tasks": [
         "T20"
-      ]
+      ],
+      "note": "Plan Q (T20): a clarification survives a restart: after the interrupt the first saver connection is closed, the API's reply path commits the reply, and a new graph instance on a new saver connection resumes from the stored id with the reply's event (no fork) and runs on to AWAITING_APPROVAL. A killed process is the limit (T30)."
     },
     {
       "id": "R043",
@@ -1601,17 +1624,23 @@
       "id": "R091",
       "category": "privacy",
       "requirement": "Checkpoints and interrupts carry identifiers only",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Grep of checkpoint blobs after pause finds no evidence or proposal text.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "worker/src/ops_worker/graph/state.py",
+        "tests/plan_q/test_graph_flow.py",
+        "tests/e2e/test_graph_live.py",
+        "reports/graph/t20-graph-live.md"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M07",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T20"
       ],
-      "suggested_test": "tests/acceptance/test_r091_checkpoints_and_interrupts_carry_identifiers_onl.py"
+      "suggested_test": "tests/acceptance/test_r091_checkpoints_and_interrupts_carry_identifiers_onl.py",
+      "note": "Plan Q (T20): graph state is ids, verdicts and enum values only, and interrupts carry an event or proposal id; the evidence bundle and the draft are held in memory between nodes. Greps of the in-memory saver and of the Postgres checkpoint rows, blobs and writes after each pause find no proposal, question, answer or alert text."
     },
     {
       "id": "R092",
@@ -1923,17 +1952,24 @@
       "id": "R108",
       "category": "workflow",
       "requirement": "Graphs persist synchronously and resume from the stored checkpoint",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "durability=sync asserted; resume uses runs.checkpoint_id; a stray newer head is ignored.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "worker/src/ops_worker/graph/build.py",
+        "worker/src/ops_worker/handlers.py",
+        "tests/plan_q/test_graph_flow.py",
+        "tests/e2e/test_graph_live.py",
+        "reports/graph/t20-graph-live.md"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M07",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T20"
       ],
-      "suggested_test": "tests/acceptance/test_r108_graphs_persist_synchronously_and_resume_from_the.py"
+      "suggested_test": "tests/acceptance/test_r108_graphs_persist_synchronously_and_resume_from_the.py",
+      "note": "Plan Q (T20): every invocation passes durability='sync' and streams checkpoints (a spy on the call pins the argument); live, a stub node at step N+1 finds step N's checkpoint already in the Postgres saver, so step N's values were stored when step N+1 ran, under sync durability (shown; the async race is not shown); each announced checkpoint is confirmed by aget_tuple and stored under the fence; resumes name the stored id, and a newer head written after it is ignored (the stray-head test); crash recovery forks and stores the fork."
     },
     {
       "id": "R109",
@@ -2028,17 +2064,24 @@
       "id": "R114",
       "category": "workflow",
       "requirement": "Read-only answers complete as ANSWERED without proposals",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Answer path cites evidence, creates no proposal or grant, ends ANSWERED.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "worker/src/ops_worker/graph/build.py",
+        "worker/src/ops_worker/graph/nodes.py",
+        "tests/plan_q/test_graph_flow.py",
+        "tests/e2e/test_graph_live.py",
+        "reports/graph/t20-graph-live.md"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "milestone": "M07",
       "blocking_for_v1": true,
       "owning_tasks": [
         "T20"
       ],
-      "suggested_test": "tests/acceptance/test_r114_read_only_answers_complete_as_answered_without_p.py"
+      "suggested_test": "tests/acceptance/test_r114_read_only_answers_complete_as_answered_without_p.py",
+      "note": "Plan Q (T20): an answer draft takes the answer_only route on any intent (DEV-002); publish_state writes the drafts row, explanation.ready with the cited answer and DRAFTING -> ANSWERED in one unit; no proposal, so no grant; the live answer_only run ends ANSWERED with no proposal row."
     },
     {
       "id": "R115",
@@ -2164,10 +2207,15 @@
       "id": "R122",
       "category": "security",
       "requirement": "Checkpoint tables are reachable only by the worker",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "api role: permission denied on schema checkpoints; worker DML only; migrator ran setup().",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "migrations/app/versions/0015_checkpoints.py",
+        "tests/plan_q/test_migration_0015.py",
+        "tests/e2e/test_graph_live.py",
+        "reports/graph/t20-graph-live.md"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r122_checkpoint_tables_are_reachable_only_by_the_work.py",
       "milestone": "M02",
@@ -2175,7 +2223,7 @@
         "T09"
       ],
       "blocking_for_v1": true,
-      "note": "deferred to T20: langgraph-checkpoint-postgres is not locked (Plan E ruling 2)"
+      "note": "Deferred to T20 (Plan E ruling 2) and built there: revision 0015 creates schema checkpoints with the saver's tables (its setup() statements frozen, erratum 126); the worker holds USAGE and DML, the api, the sweeper and mcp_read are refused at the schema (live). The owner stays T09."
     },
     {
       "id": "R123",
@@ -2302,7 +2350,10 @@
         "tests/e2e/test_admission_live.py",
         "reports/admission/t12-admission.txt",
         "tests/plan_g/test_routing_admission.py",
-        "tests/plan_g/test_api_admission.py"
+        "tests/plan_g/test_api_admission.py",
+        "core/src/ops_core/routing.py",
+        "tests/plan_q/test_graph_table.py",
+        "tests/plan_q/test_graph_routes.py"
       ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r129_every_route_is_enumerable_and_unroutable_input_n.py",
@@ -2312,7 +2363,7 @@
         "T20"
       ],
       "blocking_for_v1": true,
-      "note": "Plan G (T12): the admission router half; the graph router's table and its walk land with T20."
+      "note": "Plan G (T12): the admission router half; the graph router's table and its walk land with T20. Plan Q (T20): the graph router's table is ops_core.routing.GRAPH_ROUTES; route_request's conditional edges are generated from it, and a test walks every row through the compiled graph to its node; the keys the worker can produce all have a row; a model's draft kind selects only abstain, clarify, answer or freeze."
     },
     {
       "id": "R130",

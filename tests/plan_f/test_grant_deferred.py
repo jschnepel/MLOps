@@ -9,9 +9,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 from ops_core import persistence, settings
 from ops_core.lease import Lease
-from ops_core.states import RunState
+from ops_core.states import Intent, RunState
 from ops_mcp_write.server import refusal_error
 from ops_worker import handlers
 from ops_worker.handlers import EXECUTE_RETRY_SECONDS, is_deferred
@@ -83,6 +84,12 @@ async def test_execute_requeues_a_deferred_grant_and_releases_its_lease(monkeypa
     async def mark_unknown(*args: Any) -> None:
         calls["mark_unknown"].append(args)
 
+    async def graph_facts(_conn: Any, _rid: UUID) -> persistence.GraphFacts:  # T20: the graph's router reads these
+        return persistence.GraphFacts(RunState.APPROVED, Intent.INVESTIGATE, True, None, None)
+
+    async def store_checkpoint_id(_conn: Any, _rid: UUID, _checkpoint_id: str) -> None:
+        return None
+
     for name, fn in {
         "run_row": run_row,
         "mint_handle": mint_handle,
@@ -90,6 +97,8 @@ async def test_execute_requeues_a_deferred_grant_and_releases_its_lease(monkeypa
         "fenced": fenced,
         "release_lease": release_lease,
         "mark_unknown": mark_unknown,
+        "graph_facts": graph_facts,
+        "store_checkpoint_id": store_checkpoint_id,
     }.items():
         monkeypatch.setattr(persistence, name, fn)
     conn: Any = FakeConn()
@@ -102,9 +111,10 @@ async def test_execute_requeues_a_deferred_grant_and_releases_its_lease(monkeypa
         urls=settings.urls(),
         worker_name="worker:test",
         workload_azp="ops-worker",
+        saver=InMemorySaver(),
     )
     job = {"id": job_id, "run_id": run_id, "tenant_id": tenant, "type": "execute"}
     assert await handlers.execute(deps, job, lease) is False
-    assert mcp.calls == ["create_incident"] and calls["fenced"] == [2]
+    assert mcp.calls == ["create_incident"] and set(calls["fenced"]) == {2}  # every unit at the job's fence
     assert calls["release_lease"] == [(2, job_id, EXECUTE_RETRY_SECONDS)]
     assert EXECUTE_RETRY_SECONDS == 30 and calls["mark_unknown"] == []

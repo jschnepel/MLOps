@@ -4,8 +4,10 @@ On Plan H's fakes (`tests/plan_h/test_worker_units.py`), which log every unit an
 run manifest written after the model call or outside the DRAFTING unit, or without the route's digest; a permit
 taken twice for one draft (the repair must share the first pass's hold); a failing real route that falls back to a
 fake draft or freezes anything; an outage or an exhausted repair that is not a templated FAILED; an abstention that
-is not INSUFFICIENT_EVIDENCE; an answer or a clarifying question frozen as a proposal before T20 routes them; and a
-draft that claims success turning into an `action.*` event, a status or anything but a proposal awaiting review.
+is not INSUFFICIENT_EVIDENCE; an answer or a clarifying question frozen as a proposal instead of ending ANSWERED or
+waiting for input (T20 routes them); and a draft that claims success turning into an `action.*` event, a status or
+anything but a proposal awaiting review. Since T20 the handler runs the graph (`ops_worker.graph`), so the reads are
+the asset status, the alerts and the search, each between its tool events.
 """
 
 import asyncio
@@ -18,6 +20,7 @@ from ops_core.lease import Lease
 from ops_core.routing import ModelRoute
 from ops_worker import handlers
 from ops_worker.drafting import FakeDraftGenerator, ModelUnavailable
+from ops_worker.graph import nodes
 from ops_worker.ollama_drafting import OllamaDraftGenerator, Reply
 
 from tests.plan_h.test_worker_units import JOB, RUN, RUN_ID, Log, make, patch
@@ -32,21 +35,25 @@ CLAIMS_SUCCESS = json.dumps(
 )
 
 
-def recorded(monkeypatch: pytest.MonkeyPatch, log: Log) -> dict[str, list[dict[str, Any]]]:
-    """Plan H's recorders, plus the arguments of every transition and event (the plain recorders drop them)."""
-    patch(monkeypatch, log)
+def recorded(
+    monkeypatch: pytest.MonkeyPatch, log: Log, run: dict[str, Any] | None = None
+) -> dict[str, list[dict[str, Any]]]:
+    """Plan H's recorders, plus the arguments of every transition and event (the plain recorders drop them); each
+    call still goes through Plan H's recorder, which keeps the run row's state (T20: the nodes reread it)."""
+    patch(monkeypatch, log, run=run)
     seen: dict[str, list[dict[str, Any]]] = {"transition_run": [], "append_event": []}
 
-    def keeping(name: str, result: Any) -> Any:
-        async def call(*_: Any, **kwargs: Any) -> Any:
-            log.entries.append(name)
+    def keeping(name: str) -> Any:
+        inner = getattr(persistence, name)
+
+        async def call(*args: Any, **kwargs: Any) -> Any:
             seen[name].append(kwargs)
-            return result
+            return await inner(*args, **kwargs)
 
         return call
 
-    monkeypatch.setattr(persistence, "transition_run", keeping("transition_run", 2))
-    monkeypatch.setattr(persistence, "append_event", keeping("append_event", None))
+    monkeypatch.setattr(persistence, "transition_run", keeping("transition_run"))
+    monkeypatch.setattr(persistence, "append_event", keeping("append_event"))
     return seen
 
 
@@ -83,7 +90,7 @@ def test_the_manifest_is_written_with_drafting_before_the_model_is_called(monkey
     deps.generator, _ = real(Reply(GOOD))
     asyncio.run(handlers.handle(deps, dict(JOB), lease))
     drafting = next(u for u in log.units() if "insert_run_manifest" in u)
-    assert drafting == ["set_tenant", "fenced", "transition_run", "insert_run_manifest"]
+    assert drafting == ["set_tenant", "fenced", "transition_run", "run_manifest_exists", "insert_run_manifest"]
     assert log.entries.index("insert_run_manifest") < log.entries.index("take_model_permit")
     (manifest,) = inserted
     assert manifest.model_route is ModelRoute.QWEN3_8B and manifest.model_digest == PINS.digest
@@ -118,7 +125,7 @@ def test_a_failing_real_route_fails_the_run_and_never_falls_back(
     log, seen = investigate(monkeypatch, generator)
     assert ends(seen) == ("FAILED", message)
     assert "freeze_proposal" not in log.entries  # R041: no fake draft, no proposal, nothing frozen
-    assert [e["type"].value for e in seen["append_event"]] == ["tool.started", "tool.completed"]
+    assert [e["type"].value for e in seen["append_event"]] == ["tool.started", "tool.completed"] * 3
     assert log.entries[-1] == "release_lease" and log.entries.count("release_model_permit") == 1
 
 
@@ -126,17 +133,20 @@ def test_a_failing_real_route_fails_the_run_and_never_falls_back(
     ("draft", "state", "message"),
     [
         ({"kind": "abstain", "evidence_refs": []}, "INSUFFICIENT_EVIDENCE", handlers.ABSTAINED),
-        ({"kind": "abstain", "evidence_refs": [], "question": "Which hours?"}, "FAILED", handlers.NOT_ROUTED),
-        ({"kind": "answer"}, "FAILED", handlers.NOT_ROUTED),
+        ({"kind": "abstain", "evidence_refs": [], "question": "Which hours?"}, "AWAITING_INPUT", "Which hours?"),
+        ({"kind": "answer"}, "ANSWERED", nodes.ANSWERED),
     ],
 )
 def test_each_kind_that_is_not_a_proposal_ends_the_run_without_freezing(
     monkeypatch: pytest.MonkeyPatch, draft: dict[str, Any], state: str, message: str
 ) -> None:
+    """T20 routes the kinds Plan P left FAILED: a question waits for input (its event carries it), an answer ends
+    ANSWERED with its summary in explanation.ready; neither freezes anything."""
     generator, _ = real(Reply(json.dumps({**json.loads(GOOD), **draft})))
     log, seen = investigate(monkeypatch, generator)
     assert ends(seen) == (state, message) and "freeze_proposal" not in log.entries
-    assert not [e for e in seen["append_event"] if e["type"].value == "explanation.ready"]
+    explained = [e["payload"]["message"] for e in seen["append_event"] if e["type"].value == "explanation.ready"]
+    assert explained == (["The review rule applies."] if state == "ANSWERED" else [])
 
 
 def test_a_draft_claiming_success_is_only_a_proposal_awaiting_review(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -146,7 +156,7 @@ def test_a_draft_claiming_success_is_only_a_proposal_awaiting_review(monkeypatch
     log, seen = investigate(monkeypatch, generator)
     assert log.entries.count("freeze_proposal") == 1 and "mark_unknown" not in log.entries
     types = [e["type"].value for e in seen["append_event"]]
-    assert types == ["tool.started", "tool.completed", "explanation.ready"]
+    assert types == ["tool.started", "tool.completed"] * 3 + ["explanation.ready"]
     explanation = seen["append_event"][-1]["payload"]
     assert explanation["message"] == "Drafted by model route qwen3:8b (prompt incident-draft-v2)."  # a template
     assert [t["dst"].value for t in seen["transition_run"]] == ["RETRIEVING", "DRAFTING"]
@@ -183,11 +193,11 @@ class Recording(FakeDraftGenerator):
 
 
 def stepped(
-    monkeypatch: pytest.MonkeyPatch, log: Log, *, permit_wait: float
-) -> tuple[handlers.Deps, Lease, list[dict[str, Any]]]:
+    monkeypatch: pytest.MonkeyPatch, log: Log, *, permit_wait: float, run: dict[str, Any] | None = None
+) -> tuple[handlers.Deps, Lease, dict[str, list[dict[str, Any]]]]:
     """A lease on a clock the test moves: taking the model permit takes `permit_wait` seconds of it. The lease is long
     enough that its local deadline is not what these tests meet (the heartbeat would renew it)."""
-    seen = recorded(monkeypatch, log)
+    seen = recorded(monkeypatch, log, run)
     now = [100.0]
 
     def clock() -> float:
@@ -219,16 +229,12 @@ def test_the_draft_gets_what_the_run_budget_has_left_once_the_permit_is_held(mon
 
 def test_an_answer_only_run_asks_for_an_answer_only_draft(monkeypatch: pytest.MonkeyPatch) -> None:
     log = Log()
-    deps, lease, _ = stepped(monkeypatch, log, permit_wait=0.0)
-    monkeypatch.setattr(persistence, "run_row", _answer_only_row)
+    deps, lease, seen = stepped(monkeypatch, log, permit_wait=0.0, run={**RUN, "intent": "answer_only"})
     deps.generator = recording = Recording(log)
     asyncio.run(handlers.handle(deps, dict(JOB), lease))
     assert [r.answer_only for r in recording.requests] == [True]
     assert "freeze_proposal" not in log.entries  # SA:453: an answer_only run never freezes a proposal
-
-
-async def _answer_only_row(_conn: Any, _run_id: Any, *, lock: bool = False) -> dict[str, Any]:
-    return {**RUN, "intent": "answer_only"}
+    assert ends(seen) == ("ANSWERED", nodes.ANSWERED)  # the fake route answers an answer_only run (T20)
 
 
 def test_the_last_seconds_of_the_budget_still_reach_the_route_as_the_attempt_limit(

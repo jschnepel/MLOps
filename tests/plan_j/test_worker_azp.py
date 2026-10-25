@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from ops_core import persistence
 from ops_worker import handlers
-from ops_worker.drafting import DraftRequest
+from ops_worker.drafting import DraftRequest, Observation
 
 from tests.plan_h.test_worker_units import JOB, RUN, Log, make, patch
 
@@ -37,13 +37,8 @@ def test_a_minted_handle_carries_the_workload_client(
     monkeypatch: pytest.MonkeyPatch, job_type: str, state: str
 ) -> None:
     log = Log()
-    patch(monkeypatch, log)
+    patch(monkeypatch, log, run={**RUN, "state": state})
     minted = capture_mints(monkeypatch)
-
-    async def run_row(_conn: Any, _run_id: Any, *, lock: bool = False) -> dict[str, Any]:
-        return {**RUN, "state": state}
-
-    monkeypatch.setattr(persistence, "run_row", run_row)
     deps, lease = make(log)
     deps.workload_azp = "ops-worker-renamed"
     asyncio.run(handlers.handle(deps, {**JOB, "type": job_type}, lease))
@@ -52,6 +47,17 @@ def test_a_minted_handle_carries_the_workload_client(
 
 def test_the_model_request_has_no_field_for_a_handle() -> None:
     # T19 added two worker-computed fields the payload never carries: `answer_only`, a bool (the router's verdict), and
-    # `remaining_seconds`, a float (the run's budget left); neither can carry a handle.
+    # `remaining_seconds`, a float (the run's budget left); neither can carry a handle. T20 added `observations`, the
+    # worker's rendering of mcp-read's validated status and alert results (section, revision, excerpt strings): the
+    # handle travels only in a request header and is never part of a tool result.
     fields_now = [f.name for f in fields(DraftRequest)]
-    assert fields_now == ["asset_id", "text", "start_at", "end_at", "answer_only", "remaining_seconds"]
+    assert fields_now == [
+        "asset_id",
+        "text",
+        "start_at",
+        "end_at",
+        "answer_only",
+        "remaining_seconds",
+        "observations",
+    ]
+    assert [f.name for f in fields(Observation)] == ["section", "version", "excerpt"]

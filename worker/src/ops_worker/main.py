@@ -1,6 +1,7 @@
-"""The worker process: a polling loop beside a health server and the lease heartbeat thread, three connections (the
-loop's, the probe's and the heartbeat's synchronous one), SelectorEventLoop on Windows (psycopg async refuses the
-Proactor loop; measured in the Plan D spike; the heartbeat's synchronous connection is not bound by that).
+"""The worker process: a polling loop beside a health server and the lease heartbeat thread, four connections (the
+loop's, the probe's, the heartbeat's synchronous one and the checkpoint saver's, T20), SelectorEventLoop on Windows
+(psycopg async refuses the Proactor loop; measured in the Plan D spike; the heartbeat's synchronous connection is not
+bound by that).
 
 Each poll claims the next job together with its run's lease (`persistence.claim_next`, Plan H ruling 3) and runs the
 handler under that lease while the heartbeat renews it; a lost lease cancels the job's effects in flight and hands the
@@ -29,6 +30,7 @@ from starlette.routing import Route
 
 from ops_worker import handlers
 from ops_worker.drafting import ModelStartError, start_route
+from ops_worker.graph.build import open_saver
 from ops_worker.heartbeat import Heartbeat, Liveness, connector, keep_stamping
 from ops_worker.mcp import HttpMcpCaller
 
@@ -62,8 +64,8 @@ async def run_job(deps: handlers.Deps, claimed: persistence.Claimed) -> None:
     """Run one claimed job under its lease while the heartbeat renews it. A lost lease, raised by a fenced unit or by
     an effect the heartbeat cancelled (`Lease.effect`), hands the job back instead of failing the run (ruling 19 as
     amended in review round 1, B1: only effects are cancelled, never a database unit, so the loop connection is idle
-    when `abandon` runs, and `abandon` checks that). Anything else propagates: the poll loop logs it, the job stays
-    claimed, its lease lapses within one lease and the sweeper reclaims it."""
+    when `abandon` runs, and `abandon` checks that). Anything else propagates after `handle` released the lease and
+    re-queued the job (T20 review): the poll loop logs it, and the job is retried (unbounded until T22)."""
     job, lease = dict(claimed.job), claimed.lease
     if deps.heartbeat is not None:
         deps.heartbeat.hold(lease)
@@ -78,8 +80,8 @@ async def run_job(deps: handlers.Deps, claimed: persistence.Claimed) -> None:
 
 
 async def run_forever(deps: handlers.Deps, stop: asyncio.Event) -> None:
-    """Claim, handle, repeat. A crashed handler is logged and keeps its job claimed until the lease lapses and the
-    sweeper reclaims it; a broken connection ends the loop, and readiness follows it (see health_app)."""
+    """Claim, handle, repeat. A crashed handler is logged; `handle` has released its lease and re-queued its job, which
+    is retried (unbounded until T22). A broken connection ends the loop, and readiness follows it (see health_app)."""
     polls = 0
     while not stop.is_set():
         try:
@@ -94,7 +96,7 @@ async def run_forever(deps: handlers.Deps, stop: asyncio.Event) -> None:
                 log.exception("database connection lost; the poll loop stops and the process exits non-zero")
                 raise
             log.exception("transient database error (deadlock, serialization); the loop continues")
-        except Exception:  # a crashed handler keeps its job until the lease lapses and the sweeper reclaims it
+        except Exception:  # a crashed handler's job was re-queued by `handle`, and is retried
             log.exception("poll iteration failed")
         try:
             await asyncio.wait_for(stop.wait(), timeout=POLL_SECONDS)
@@ -153,13 +155,17 @@ async def _main() -> None:
     tokens = token_source(kc)
     conn = await persistence.connect(settings.app_postgres(Role.WORKER))
     # No unit is ever cancelled, so a unit stuck behind another transaction's lock ends after 10 s with 55P03, which
-    # run_forever logs as transient; its job keeps the claim until the lease lapses and the sweeper reclaims it.
+    # run_forever logs as transient. The job is not lost: `handlers.handle` releases the lease and re-queues the job
+    # (a failure no node recorded), and a lease that had already lapsed is reclaimed by the sweeper.
     await conn.execute(LOOP_LOCK_TIMEOUT)
     # The health server's own connection (see health_app).
     probe = await persistence.connect(settings.app_postgres(Role.WORKER))
     await persistence.assert_clock_profile(probe, settings.profile())
     await persistence.assert_relation(probe, "app.model_permit")  # revision 0007: the permit and the fenced functions
     await persistence.assert_relation(probe, "app.run_manifests")  # revision 0014: every run's manifest (T19)
+    await persistence.assert_relation(probe, "checkpoints.checkpoints")  # revision 0015: the graph's saver (T20)
+    # The saver's own connection (SA:559-562): its writes never share a transaction with an application unit.
+    saver_conn, saver = await open_saver(settings.app_postgres(Role.WORKER))
     liveness = Liveness()
     heartbeat = Heartbeat(connect=connector(settings.app_postgres(Role.WORKER)), settings=leases, liveness=liveness)
     deps = handlers.Deps(
@@ -171,6 +177,7 @@ async def _main() -> None:
         workload_azp=tokens.client_id,
         leases=leases,
         heartbeat=heartbeat,
+        saver=saver,
     )
     stop = asyncio.Event()
     stamps_stop = asyncio.Event()  # its own event: the stamps must outlive the job a shutdown lets finish
@@ -198,13 +205,15 @@ async def _main() -> None:
         # stop only now, or that job would lose its lease to "event loop stalled" (review round 2, m2). SIGTERM is not
         # drained: uvicorn 0.54 re-raises the captured signal once serve() returns, and SIGTERM's default handler ends
         # the process mid-job. Safety holds (the open unit rolls back, the lease lapses and the sweeper hands the job
-        # back), but an investigate run is failed as interrupted (final review, M2). TODO(T30): drain on SIGTERM.
+        # back). The next owner resumes a mid-run investigate from its stored checkpoint, and fails it as interrupted
+        # only when no checkpoint was stored yet (final review, M2). TODO(T30): drain on SIGTERM.
         stamps_stop.set()
         await stamping
         heartbeat.stop()
         await asyncio.to_thread(heartbeat.join, 5.0)  # off the loop: the thread ends its tick and closes its connection
         await conn.close()
         await probe.close()
+        await saver_conn.close()
     # A supervisor restarts a worker that lost its database or its health server; exit 0 would hide either.
     for task in (polling, serving):
         if task.done() and not task.cancelled() and task.exception() is not None:

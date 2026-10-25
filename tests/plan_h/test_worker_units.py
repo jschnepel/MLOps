@@ -23,14 +23,18 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 from ops_core import persistence, settings
 from ops_core.lease import LOCK_FOR_UPDATE, RELEASED, Lease, LeaseLost
-from ops_core.states import RunState
+from ops_core.outcomes import EventType
+from ops_core.states import AttemptState, Intent, RunState
 from ops_worker import handlers, main
 from ops_worker.drafting import FakeDraftGenerator
 from ops_worker.mcp import HttpMcpCaller
 from psycopg.pq import TransactionStatus
 from starlette.testclient import TestClient
+
+from tests.plan_q.fixtures import ALERTS, STATUS
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 TENANT, RUN_ID = uuid4(), uuid4()
@@ -48,7 +52,15 @@ RUN = {
 }
 JOB = {"id": uuid4(), "run_id": RUN_ID, "tenant_id": TENANT, "type": "investigate"}
 REAL_RELEASE = persistence.release_lease  # `patch` replaces it; the release tests run the real unit on fakes
-WRITES = {"transition_run", "mint_handle", "append_event", "freeze_proposal", "insert", "mark_unknown"}
+WRITES = {
+    "transition_run",
+    "mint_handle",
+    "append_event",
+    "freeze_proposal",
+    "insert",
+    "mark_unknown",
+    "store_checkpoint_id",
+}
 SEARCH = {
     "status": "ok",
     "data": {
@@ -67,6 +79,13 @@ SEARCH = {
         "retrieval_mode": "lexical",
         "corpus_version": "handoff-1",
     },
+}
+SUCCEEDED = {"status": "outcome", "data": {"status": "SUCCEEDED"}, "error": None}  # mcp-write, after the receipt
+ANSWERS = {
+    "get_asset_status": STATUS,
+    "get_recent_alerts": ALERTS,
+    "search_procedures": SEARCH,
+    "create_incident": SUCCEEDED,
 }
 
 
@@ -134,25 +153,79 @@ class ScriptedMcp:
 
     async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self.log.entries.append(f"mcp:{tool}")
-        return SEARCH
+        return ANSWERS[tool]
 
 
-def patch(monkeypatch: pytest.MonkeyPatch, log: Log, *, lost_at: int | None = None) -> None:
-    """Replace every persistence call the handlers make with a recorder; the `lost_at`-th `fenced` call raises
-    LeaseLost, as a moved fence would."""
+def patch(
+    monkeypatch: pytest.MonkeyPatch,
+    log: Log,
+    *,
+    lost_at: int | None = None,
+    lose_after: str | None = None,
+    run: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Replace every persistence call the handlers make with a recorder; the `lost_at`-th `fenced` call, or the first
+    one made once `lose_after` is in the log, raises LeaseLost, as a moved fence would. The run row is kept like the
+    database keeps it (T20: the graph's nodes reread it): a transition, a freeze and a stored checkpoint id change it;
+    it is returned so a test can read or set it.
+    Its "events" map holds the run's events by type, as `run_events` reads them: a move to AWAITING_INPUT journals its
+    clarification.requested (transition_run emits it, SA:451), and a test adds what the API would write. Its
+    "messages" map holds the text of each message by id, as `message_text` reads it: the run's own message, and a test
+    adds each reply it writes (an id it did not write raises KeyError, so a read through the wrong id fails loudly)."""
     calls = 0
+    current: dict[str, Any] = {**(RUN if run is None else run), "events": {}}
+    current["messages"] = {current["message_id"]: "Investigate the alerts on A17 over the last 24 hours."}
 
     async def fenced(_conn: Any, lease: Lease) -> None:
         nonlocal calls
         calls += 1
         log.entries.append("fenced")
-        if lost_at is not None and calls >= lost_at:
+        if (lost_at is not None and calls >= lost_at) or (lose_after is not None and lose_after in log.entries):
             lease.mark_lost("the fence moved")
             raise LeaseLost("run lease lost")
 
     async def run_row(_conn: Any, _run_id: Any, *, lock: bool = False) -> dict[str, Any]:
         log.entries.append("run_row")
-        return dict(RUN)
+        return dict(current)
+
+    async def transition_run(_conn: Any, *, dst: RunState, detail: Any = None, **_: Any) -> int:
+        log.entries.append("transition_run")
+        current["state"] = dst.value
+        if dst is RunState.AWAITING_INPUT:
+            asked = current["events"].setdefault(EventType.CLARIFICATION_REQUESTED, [])
+            asked.append((uuid4(), dict(detail or {})))
+        return 2
+
+    async def run_events(_conn: Any, _run_id: Any, event_type: EventType) -> list[tuple[Any, dict[str, Any]]]:
+        log.entries.append("run_events")
+        return list(current["events"].get(event_type, []))
+
+    async def message_text(_conn: Any, message_id: Any) -> str:
+        log.entries.append("message_text")
+        return str(current["messages"][message_id])
+
+    async def freeze_proposal(*_: Any, **__: Any) -> None:
+        log.entries.append("freeze_proposal")
+        current["state"] = RunState.AWAITING_APPROVAL.value
+
+    async def graph_facts(_conn: Any, _run_id: Any) -> persistence.GraphFacts:
+        log.entries.append("graph_facts")
+        state = RunState(current["state"])
+        decided = state in (RunState.APPROVED, RunState.EXECUTING, RunState.OUTCOME_UNKNOWN)
+        attempt = AttemptState.SENT if state is RunState.EXECUTING else None
+        return persistence.GraphFacts(state, Intent(current["intent"]), decided, attempt, current.get("checkpoint_id"))
+
+    async def insert_run_manifest(_conn: Any, **_: Any) -> None:
+        log.entries.append("insert")  # as the real one's INSERT is logged by FakeConn
+        current["manifest"] = True
+
+    async def run_manifest_exists(_conn: Any, _run_id: Any) -> bool:
+        log.entries.append("run_manifest_exists")
+        return bool(current.get("manifest"))
+
+    async def store_checkpoint_id(_conn: Any, _run_id: Any, checkpoint_id: str) -> None:
+        log.entries.append("store_checkpoint_id")
+        current["checkpoint_id"] = checkpoint_id
 
     def recorder(name: str, result: Any = None) -> Callable[..., Any]:
         async def call(*_: Any, **__: Any) -> Any:
@@ -164,11 +237,17 @@ def patch(monkeypatch: pytest.MonkeyPatch, log: Log, *, lost_at: int | None = No
     replaced = {
         "fenced": fenced,
         "run_row": run_row,
+        "graph_facts": graph_facts,
+        "store_checkpoint_id": store_checkpoint_id,
+        "insert_run_manifest": insert_run_manifest,
+        "run_manifest_exists": run_manifest_exists,
+        "run_events": run_events,
+        "message_text": message_text,
         "set_tenant": recorder("set_tenant"),
-        "transition_run": recorder("transition_run", 2),
+        "transition_run": transition_run,
         "mint_handle": recorder("mint_handle", "handle"),
         "append_event": recorder("append_event"),
-        "freeze_proposal": recorder("freeze_proposal"),
+        "freeze_proposal": freeze_proposal,
         "release_lease": recorder("release_lease"),
         "revoke_handles": recorder("revoke_handles", 1),
         "unclaim_job": recorder("unclaim_job"),
@@ -178,6 +257,7 @@ def patch(monkeypatch: pytest.MonkeyPatch, log: Log, *, lost_at: int | None = No
     }
     for name, fn in replaced.items():
         monkeypatch.setattr(persistence, name, fn)
+    return current
 
 
 def make(log: Log, clock: Callable[[], float] = time.monotonic) -> tuple[handlers.Deps, Lease]:
@@ -189,6 +269,7 @@ def make(log: Log, clock: Callable[[], float] = time.monotonic) -> tuple[handler
         urls=settings.urls(),
         worker_name="w:test",
         workload_azp="ops-worker",
+        saver=InMemorySaver(),
     )
     return deps, Lease(run_id=RUN_ID, owner="w:test", fence=3, lease_seconds=30, started=clock(), clock=clock)
 
@@ -199,7 +280,9 @@ def test_every_unit_that_writes_opens_with_the_fence(monkeypatch: pytest.MonkeyP
     deps, lease = make(log)
     asyncio.run(handlers.handle(deps, dict(JOB), lease))
     units = log.units()
-    assert len(units) == 7, log.entries  # start, tool.started, tool.completed, DRAFTING, permit, release, freeze
+    # T20: one unit per stored checkpoint (SA:211) besides the start, the three reads' events, DRAFTING, the permit
+    # and the freeze; every one of them opens with the fence.
+    assert ["set_tenant", "fenced", "store_checkpoint_id"] in units, log.entries
     assert (
         log.entries.index("take_model_permit")
         < log.entries.index("release_model_permit")
@@ -215,20 +298,20 @@ def test_the_final_unit_releases_the_lease_with_the_job(monkeypatch: pytest.Monk
     log = Log()
     patch(monkeypatch, log)
     deps, lease = make(log)
-    asyncio.run(handlers.handle(deps, {**JOB, "type": "resume_input"}, lease))  # not handled yet (T20)
+    asyncio.run(handlers.handle(deps, {**JOB, "type": "recover"}, lease))  # not handled before T22
     assert log.entries == ["release_lease"]  # one unit closes the job, revokes and releases (ruling 28)
 
 
 def test_a_lost_lease_hands_the_job_back_without_a_transition(monkeypatch: pytest.MonkeyPatch) -> None:
     log = Log()
-    patch(monkeypatch, log, lost_at=2)  # the first unit passes; the tool.started event's fence has moved
+    patch(monkeypatch, log, lose_after="transition_run")  # QUEUED -> RETRIEVING passes; tool.started's fence moved
     deps, lease = make(log)
     claimed: Any = persistence.Claimed(dict(JOB), lease)  # a plain dict stands in for the claimed DictRow
     asyncio.run(main.run_job(deps, claimed))
     assert lease.lost == "the fence moved"
     assert log.units()[-1] == ["set_tenant", "revoke_handles", "unclaim_job"]  # the abandon unit (ruling 19)
     assert log.entries.count("transition_run") == 1  # QUEUED -> RETRIEVING before the loss; never FAILED after it
-    assert "release_lease" not in log.entries and "mcp:search_procedures" not in log.entries
+    assert "release_lease" not in log.entries and not [e for e in log.entries if e.startswith("mcp:")]
 
 
 def test_a_busy_run_defers_and_the_poll_gives_up_after_the_bound(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -268,7 +351,7 @@ def test_no_call_starts_past_the_local_deadline(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(persistence, "mint_handle", mint_then_stall)
     with pytest.raises(LeaseLost):
         asyncio.run(handlers.investigate(deps, dict(JOB), lease))
-    assert "mcp:search_procedures" not in log.entries  # SA:195: the call never started
+    assert not [e for e in log.entries if e.startswith("mcp:")]  # SA:195: no call started
 
 
 def test_abandon_closes_a_loop_connection_left_in_a_transaction() -> None:
@@ -324,15 +407,11 @@ class UnknownMcp:
         return UNKNOWN_ENVELOPE
 
 
-def executing(monkeypatch: pytest.MonkeyPatch, log: Log, *, lost_at: int | None = None) -> tuple[handlers.Deps, Lease]:
+def executing(
+    monkeypatch: pytest.MonkeyPatch, log: Log, *, lose_after: str | None = None
+) -> tuple[handlers.Deps, Lease]:
     """The fakes for an execute job whose run is EXECUTING and whose write call answers UNKNOWN."""
-    patch(monkeypatch, log, lost_at=lost_at)
-
-    async def executing_run(_conn: Any, _run_id: Any, *, lock: bool = False) -> dict[str, Any]:
-        log.entries.append("run_row")
-        return {**RUN, "state": "EXECUTING"}
-
-    monkeypatch.setattr(persistence, "run_row", executing_run)
+    patch(monkeypatch, log, lose_after=lose_after, run={**RUN, "state": "EXECUTING"})
     deps, lease = make(log)
     deps.mcp = UnknownMcp(log)
     return deps, lease
@@ -347,16 +426,16 @@ def test_mark_unknown_hands_the_new_fence_to_the_lease(monkeypatch: pytest.Monke
 
 
 def test_a_stale_fence_at_mark_unknown_is_a_lost_lease(monkeypatch: pytest.MonkeyPatch) -> None:
-    for lost_at, raised in ((2, LeaseLost), (None, persistence.VersionConflict)):
+    for lose_after, raised in (("mcp:create_incident", LeaseLost), (None, persistence.VersionConflict)):
         log = Log()
-        deps, lease = executing(monkeypatch, log, lost_at=lost_at)
+        deps, lease = executing(monkeypatch, log, lose_after=lose_after)
 
         async def refused(*_: Any, **__: Any) -> None:
             raise persistence.VersionConflict("version_conflict: stale fence")
 
         monkeypatch.setattr(persistence, "mark_unknown", refused)
-        # With lost_at=2 the fresh fence check after the refusal fails: the fence was stale, a lost lease. Without
-        # it the fence holds, so the refusal was the run's own state and is raised as it came.
+        # Losing after the call, the fresh fence check after the refusal fails: the fence was stale, a lost lease.
+        # Without it the fence holds, so the refusal was the run's own state and is raised as it came.
         with pytest.raises(raised):
             asyncio.run(handlers.execute(deps, {**JOB, "type": "execute"}, lease))
         assert (lease.fence, lease.refencing) == (3, False)
@@ -400,7 +479,7 @@ def test_a_heartbeat_cancel_hands_the_job_back(monkeypatch: pytest.MonkeyPatch) 
     async def scenario() -> None:
         claimed: Any = persistence.Claimed(dict(JOB), lease)
         job = asyncio.create_task(main.run_job(deps, claimed))
-        while "mcp:search_procedures" not in log.entries:
+        while not [e for e in log.entries if e.startswith("mcp:")]:  # the first read is in flight
             await asyncio.sleep(0)
         assert heartbeat.held is lease
         cancelled.append(lose(lease))
@@ -434,9 +513,10 @@ def test_a_loss_during_a_unit_never_interrupts_it(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(persistence, "transition_run", transition_then_lose)
     claimed: Any = persistence.Claimed(dict(JOB), lease)
     asyncio.run(main.run_job(deps, claimed))
-    first = log.entries[: log.entries.index("COMMIT") + 1]
-    assert first[0] == "BEGIN" and "mint_handle" in first and "ROLLBACK" not in first  # the unit committed whole
-    assert cancelled == [0] and "mcp:search_procedures" not in log.entries  # no effect was in flight to cancel
+    start = log.entries.index("transition_run")
+    end = next(i for i in range(start, len(log.entries)) if log.entries[i] in ("COMMIT", "ROLLBACK"))
+    assert log.entries[end] == "COMMIT" and "mint_handle" in log.entries[start:end]  # the unit committed whole
+    assert cancelled == [0] and not [e for e in log.entries if e.startswith("mcp:")]  # no effect was in flight
     assert log.units()[-1] == ["set_tenant", "revoke_handles", "unclaim_job"]
 
 
@@ -543,19 +623,14 @@ def test_an_invalid_handle_under_a_lapsed_lease_hands_the_job_back(monkeypatch: 
     `execute` takes the envelope as final, the final unit finds the lease not live, and the loop hands the job back.
     The job is never closed, so the run's next owner mints a fresh handle and asks for the grant again."""
     log = Log()
-    patch(monkeypatch, log)
+    patch(monkeypatch, log, run={**RUN, "state": "APPROVED"})
     releasing(monkeypatch, log)
-
-    async def approved_run(_conn: Any, _run_id: Any, *, lock: bool = False) -> dict[str, Any]:
-        log.entries.append("run_row")
-        return {**RUN, "state": "APPROVED"}
 
     class Refusing:
         async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
             log.entries.append(f"mcp:{tool}")
             return {"status": "error", "data": None, "error": {"code": "INVALID_HANDLE", "message": "invalid handle"}}
 
-    monkeypatch.setattr(persistence, "run_row", approved_run)
     deps, lease = make(log)
     deps.conn = LeaseRowConn(log, live=False)  # the lease lapsed on the database clock
     deps.mcp = Refusing()

@@ -42,7 +42,12 @@ def test_every_state_and_tool_pair_follows_the_job_rule(job_type: JobType) -> No
 
 def test_the_read_jobs_run_where_the_worker_calls_mcp_read() -> None:
     assert JOB_RULES[JobType.INVESTIGATE].run_states == {RunState.QUEUED, RunState.RETRIEVING, RunState.DRAFTING}
-    assert JOB_RULES[JobType.RESUME_INPUT].run_states == {RunState.AWAITING_INPUT, RunState.QUEUED}
+    assert JOB_RULES[JobType.RESUME_INPUT].run_states == {  # T20: on through retrieval and drafting (erratum 127)
+        RunState.AWAITING_INPUT,
+        RunState.QUEUED,
+        RunState.RETRIEVING,
+        RunState.DRAFTING,
+    }
     assert {JOB_RULES[t].server for t in (JobType.INVESTIGATE, JobType.RESUME_INPUT)} == {Server.READ}
 
 

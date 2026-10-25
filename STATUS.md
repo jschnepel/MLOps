@@ -9,7 +9,7 @@ Authority: `BUILD_SPEC.md`. Detailed observed checks: `reports/handoff/VERIFICAT
 | Identity | Seeded localhost bearer-token fixtures | Keycloak/OIDC, secure sessions, current authorization and scoped workload identity |
 | Persistence | Two independent local SQLite stores | PostgreSQL, migrations, restricted roles/RLS, jobs/fences/checkpoints/outbox |
 | Model | Deterministic substitute; historical direct Ollama adapter | Actual LangChain ChatOllama integration and measured model quality |
-| LangGraph | Historical integration example only | Wire persistent/fenced graph, durable pauses and versioned recovery |
+| LangGraph | One explicit graph on the Postgres saver (T20): sync durability, stored checkpoint ids, durable pauses | Fenced saver (T38, M15) and versioned recovery (T36) |
 | MCP | Historical SDK example only | Authenticated remote server/client, invocation context, restricted receipt lookup |
 | Retrieval | Small historical synthetic fixture | Governed ingestion, lexical baseline, pgvector comparison, revocation tests |
 | UI | Native HTML/JS reference; syntax checks are not browser evidence | React, actual browser/accessibility tests, authorized SSE and manual fallback |
@@ -424,3 +424,24 @@ The inherited source/test/integration bytes are retained unchanged in this hando
 - Deferred, each with its owner in `SESSION_STATE.md`: answers and clarifying questions -> T20; outage retries ->
   T22/T29; the manual path -> T21; trials, conditions and support -> T25. Seven errata (115-121) are proposed.
 - Next: T20 (the LangGraph workflow).
+
+## Update — Plan Q executed (2026-10-25, branch `plan-q`)
+
+- Plan Q (T20: the LangGraph workflow) executed on branch `plan-q` (`d3c148a..a6ffbe2`); the plan is
+  `docs/superpowers/plans/2026-10-25-first-slice-q-langgraph-workflow.md`. T20 is DONE and M07 with it.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1738 passed, 227 skipped`. `PYTHONUTF8=1 uv run python
+  scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1944 passed, 21 skipped`. `verify_handoff.py` exits 0.
+- **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`, `RECORDED_LOCALLY_LIVE`): R022 (the waits release the lease, no open
+  worker transaction, the permit free), R038 (every read before the draft), R042 (a clarification across a restart),
+  R091 (no text in checkpoint rows, blobs or writes), R108 (the `durability="sync"` argument pinned by a spy; a live
+  stub finding step N's checkpoint stored when step N+1 ran, on the Postgres saver under sync durability, which does
+  not show the async race; the stored id; a stray head ignored),
+  R114 (ANSWERED with the cited answer, no proposal), R122 (schema `checkpoints` the worker's alone; owner T09); R129's
+  graph half (every row walked to its node).
+- Built: `GRAPH_ROUTES` in `ops_core.routing`; `worker/src/ops_worker/graph/` (ten nodes, edges generated from the
+  table); revision 0015; the asset status and alerts in the evidence bundle with SA:377's sufficiency rule; the
+  `resume_input` handler; crash recovery from `runs.checkpoint_id`. The dev database is still at 0013; the worker needs
+  0014 and 0015 (`skeleton.py migrate`, an owner step).
+- Deferred, each with its owner in `SESSION_STATE.md`: the fenced saver -> T38; revision re-entry and the write-tool
+  discovery -> T21; recover jobs and re-queued reads -> T22; the human-wait budget -> T29. Nine errata (122-130).
+- Next: T21.

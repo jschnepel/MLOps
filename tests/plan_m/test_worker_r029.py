@@ -219,10 +219,11 @@ def test_a_failed_check_fails_the_run_as_retrieval_failed(monkeypatch: pytest.Mo
     log = Log()
     patch(monkeypatch, log)
     moves: list[tuple[Any, Any, Any]] = []
+    kept = persistence.transition_run  # Plan H's recorder keeps the run row, which the graph's router rereads (T20)
 
     async def transition_run(_conn: Any, *, run_id: Any, src: Any, dst: Any, detail: Any = None) -> int:
         moves.append((src, dst, detail))
-        return 2
+        return int(await kept(_conn, run_id=run_id, src=src, dst=dst, detail=detail))
 
     class Refusing:
         async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -246,10 +247,11 @@ async def test_a_real_sdk_failure_fails_the_run_as_retrieval_failed_not_interrup
     log = Log()
     patch(monkeypatch, log)
     moves: list[tuple[Any, Any, Any]] = []
+    kept = persistence.transition_run  # Plan H's recorder keeps the run row, which the graph's router rereads (T20)
 
     async def transition_run(_conn: Any, *, run_id: Any, src: Any, dst: Any, detail: Any = None) -> int:
         moves.append((src, dst, detail))
-        return 2
+        return int(await kept(_conn, run_id=run_id, src=src, dst=dst, detail=detail))
 
     monkeypatch.setattr(persistence, "transition_run", transition_run)
     db = Database(UnitConn())

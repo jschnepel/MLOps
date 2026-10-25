@@ -50,7 +50,21 @@ LOCK_ORDER: Final = (
     "idempotency_request",  # written last, before commit (SA:188)
 )
 OWN_UNIT: Final = frozenset(
-    {"model_permit", "sessions", "login_state", "logout_jti", "test_clock", "tenants", "run_directory"}
+    {
+        "model_permit",
+        "sessions",
+        "login_state",
+        "logout_jti",
+        "test_clock",
+        "tenants",
+        "run_directory",
+        # T20 (revision 0015): LangGraph's checkpoint tables. The saver writes them on its own autocommit connection,
+        # each write its own transaction (`AsyncPostgresSaver.aput`, `aput_writes`), never inside an application unit,
+        # and no application unit touches them, so they can never close a cycle with a run table (Plan Q ruling 5).
+        "checkpoints",
+        "checkpoint_blobs",
+        "checkpoint_writes",
+    }
 )
 # T17 (revision 0011): the corpus is append-only; ingestion inserts and the search reads, and neither locks a row
 # explicitly. An insert does take FOR KEY SHARE on the existing parent row its foreign key names (a new
@@ -81,6 +95,14 @@ OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "worker failure (transition_run)": ("run_lease", "runs"),
     "worker drafting start (transition_run, run manifest)": ("run_lease", "runs"),  # T19: the manifest's FK share
     "worker draft and freeze": ("run_lease", "runs"),
+    # T20: the graph's units. The checkpoint id is the worker's column UPDATE on its own run row (SA:211); the answer,
+    # the clarification and the abstention insert their drafts row, whose foreign key takes a key share on the run row
+    # (`await_clarification`'s DRAFTING branch takes it before `transition_run` locks the row, an upgrade of the
+    # same entry, so the order holds) and transition the run; the stale-reply failure walks three transitions in
+    # one unit.
+    "worker checkpoint id (store_checkpoint_id)": ("run_lease", "runs"),
+    "worker answer, question or abstention (drafts, transition_run)": ("run_lease", "runs"),
+    "worker unresumable run (fail_from)": ("run_lease", "runs"),
     "worker execute start": ("run_lease", "runs", "jobs:finish"),
     "worker mark_unknown": ("run_lease", "runs", "invocation_context"),
     # T14 (Plan I ruling 10): the release also makes the run's other deferred jobs due; that UPDATE picks its rows
@@ -118,6 +140,7 @@ OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
 }
 OWN_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "worker model permit (take, release)": ("model_permit",),
+    "worker checkpoint saver (aput, aput_writes)": ("checkpoints", "checkpoint_blobs", "checkpoint_writes"),
     "api session touch and revocation": ("sessions",),
     "api login state consumption": ("login_state",),
     "api logout jti record": ("logout_jti",),

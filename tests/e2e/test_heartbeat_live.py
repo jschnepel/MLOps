@@ -22,6 +22,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 from ops_core import persistence, settings
 from ops_core.lease import RELEASED
 from ops_core.settings import Role
@@ -97,6 +98,7 @@ async def worker_deps(role_conn: RoleConn, mcp_class: type[ScriptedMcp], generat
         urls=settings.urls(),
         worker_name=WORKER,
         workload_azp="ops-worker",  # the azp the scripted callers resolve with
+        saver=InMemorySaver(),
         leases=settings.leases(),  # the real defaults: DoD 3 is about these values
     )
 
@@ -217,13 +219,15 @@ async def test_r088_a_forced_renewal_failure_cancels_the_call_and_revokes_the_ha
         row = await cur.fetchone()
         assert row is not None and (row["claimed_by"], row["done_at"]) == (None, None)  # handed back (ruling 19)
         assert (await persistence.run_row(app_conn, run))["state"] == "RETRIEVING"  # no transition
-        # The handed-back job runs again (review round 3, I1): its next owner finds the run interrupted and fails it.
+        # The handed-back job runs again: since T20 its next owner resumes the run from its stored checkpoint (the
+        # first owner stored one before it started reading), here with a read server that answers.
         await expire_lease(app_conn, run)  # the thief is done with the run
+        deps.mcp = ScriptedMcp(mcp.read, mcp.write)
         await main.run_job(deps, await claim(deps, tenant))
-        assert (await persistence.run_row(app_conn, run))["state"] == "FAILED"
+        assert (await persistence.run_row(app_conn, run))["state"] == "AWAITING_APPROVAL"
         lines.append(
             f"R088 forced renewal failure: call cancelled {noticed:.1f} s after the takeover, handle revoked;"
-            " the re-run failed the interrupted run"
+            " the re-run resumed the run from its stored checkpoint"
         )
     finally:
         await purge_run(app_conn, run)
