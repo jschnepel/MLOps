@@ -162,6 +162,14 @@ async def interrupted(ctx: Context, thread: str, checkpoint_id: str) -> bool:
     return bool(snapshot.interrupts)
 
 
+async def ended(ctx: Context, thread: str, checkpoint_id: str) -> bool:
+    """True when the stored checkpoint is where a graph run ended (no node left to run; a final refusal's execute job
+    stores one). Forking it with `None` would run nothing and leave the run where it was, so such a job starts a new
+    graph run instead (Plan Q review of T20, I1)."""
+    snapshot = await build_graph(ctx.deps.saver).aget_state(config(thread, checkpoint_id))
+    return not snapshot.next
+
+
 async def run_graph(ctx: Context, graph_input: GraphInput, *, checkpoint_id: str | None, revision: int = 1) -> None:
     """One graph run under the job's lease: input for a new graph run, `Command(resume=...)` for a human resume, or
     None with the stored checkpoint for crash recovery, which LangGraph treats as time travel and forks (SA:214)."""

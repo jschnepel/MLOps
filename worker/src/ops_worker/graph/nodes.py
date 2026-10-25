@@ -31,7 +31,7 @@ from langgraph.types import interrupt
 from ops_core import persistence
 from ops_core.canonical import canonical_sha256
 from ops_core.contracts import ModelDraft
-from ops_core.jobs import Server, Tool
+from ops_core.jobs import JobType, Server, Tool
 from ops_core.lease import LeaseLost
 from ops_core.outcomes import EventSource, EventType
 from ops_core.routing import DraftKind, Evidence, GraphRoute, RunManifest, route_graph
@@ -553,12 +553,21 @@ async def execute_approved_proposal(state: RunGraphState, runtime: Runtime[Conte
     lease lapsing during the call, the handler's final unit finds the lease not live and raises LeaseLost, so the job
     is handed back and the next owner runs it again (Plan H final review, I1).
 
+    Only an execute job calls mcp-write (AM-15's allowlist). Another job's graph run can get here when the decision
+    commits just before the reviewer wait's reread; it leaves the APPROVED run for the execute job `record_decision`
+    queued and ends (Plan Q review of T20, M1).
+
     Raises:
         Requeue: mcp-write could not be reached, or deferred the grant.
     """
     ctx = runtime.context
     ctx.trace.append("execute_approved_proposal")
     deps, lease, job = ctx.deps, ctx.lease, ctx.job
+    if job["type"] != JobType.EXECUTE.value:
+        log.info(
+            "job %s of type %s reached the execute node; the run waits for its execute job", job["id"], job["type"]
+        )
+        return await facts(ctx, _run_id(state))
     async with unit(ctx) as conn:
         run = dict(await persistence.run_row(conn, _run_id(state), lock=True))
         if RunState(run["state"]) not in (RunState.APPROVED, RunState.EXECUTING):

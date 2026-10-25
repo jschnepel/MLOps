@@ -33,7 +33,7 @@ from ops_worker.graph import build, nodes
 from ops_worker.graph.state import Context, initial
 from ops_worker.mcp import TRANSPORT, UNAUTHENTICATED, McpCallFailed
 
-from tests.plan_h.test_worker_units import JOB, RUN, RUN_ID, SEARCH, Log, make, patch
+from tests.plan_h.test_worker_units import JOB, RUN, RUN_ID, SEARCH, SUCCEEDED, Log, make, patch
 from tests.plan_q.fixtures import ALERTS, STATUS
 
 DRAFT = {"title": "t", "evidence_refs": ["ALPHA-INCIDENT:v2:review"], "assumptions": [], "limitations": []}
@@ -233,6 +233,7 @@ def reply(w: World, text: str = "Clarification: asset A17, hours 24") -> str:
     message = uuid4()
     received = w.run["events"].setdefault(EventType.CLARIFICATION_RECEIVED, [])
     received.append((uuid4(), {"question_id": str(question), "message_id": str(message)}))
+    w.run["messages"][message] = text  # the reply message's own text, read back through its id
     return f"{RUN_ID}:{question}"
 
 
@@ -250,8 +251,9 @@ def test_a_question_waits_without_a_lease_and_the_reply_resumes_it(monkeypatch: 
     assert w.run["state"] == "AWAITING_APPROVAL"  # resumed where it waited, then retrieved and drafted again
     assert w.contexts[-1].trace[:3] == ["await_clarification", "route_request", "retrieve_evidence"]
     (request,) = generator.requests
-    assert request.text.endswith(
-        "Clarification from the requester: Investigate the alerts on A17 over the last 24 hours."
+    assert request.text == (  # the run's message, then the reply read through the reply message's own id
+        "Investigate the alerts on A17 over the last 24 hours."
+        "\n\nClarification from the requester: Clarification: asset A17, hours 24"
     )
     assert snapshot(w, w.run["checkpoint_id"]).values["asked"] == [str(asked)]  # ids only, the round counted
     assert w.log.entries.count("run_manifest_exists") == 2 and w.log.entries.count("insert") == 3  # one manifest
@@ -446,3 +448,111 @@ def test_a_hold_lost_after_a_completed_draft_is_drafted_again(monkeypatch: pytes
     job(w, second)
     assert len(second.requests) == 1 and w.run["state"] == "AWAITING_APPROVAL"
     assert w.contexts[-1].trace[:3] == ["draft_with_langchain", "route_request", "retrieve_evidence"]
+
+
+REFUSED = {"status": "error", "data": None, "error": {"code": "GRANT_REFUSED", "message": "refused"}}
+
+
+class Answering:
+    """mcp-write answering from a list of envelopes, one per call (the reads are never asked of it)."""
+
+    def __init__(self, log: Log, *docs: dict[str, Any]) -> None:
+        self.log, self.docs = log, list(docs)
+
+    async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        self.log.entries.append(f"mcp:{tool}")
+        return self.docs.pop(0)
+
+
+def test_a_redispatched_execute_job_after_a_final_refusal_calls_mcp_write_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 1, I1: a final refusal ends the graph at a terminal checkpoint, which is what the stored id is.
+    Forking it would run no node, so the re-armed job (a refusal that cleared, wakeups.py) starts a new graph run,
+    whose router reads APPROVED and whose execute node rereads everything."""
+    w = world(monkeypatch)
+    job(w, Scripted())
+    approve(w)
+    job(w, Scripted(), "execute", mcp=Answering(w.log, REFUSED))
+    assert w.run["state"] == "APPROVED" and w.log.entries.count("mcp:create_incident") == 1
+    assert snapshot(w, w.run["checkpoint_id"]).next == ()  # the stored checkpoint is the graph run's end
+    job(w, Scripted(), "execute", mcp=Answering(w.log, SUCCEEDED))
+    assert w.log.entries.count("mcp:create_incident") == 2 and w.log.entries[-1] == "release_lease"
+    assert w.contexts[-1].trace[-2:] == ["execute_approved_proposal", "reconcile_outcome"]
+
+
+def test_an_investigate_job_never_calls_the_write_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1, M1: the decision lands between the freeze and the reviewer wait's reread, so the router sends
+    this investigate job to the execute route. Only an execute job calls mcp-write: the graph run ends, the run stays
+    APPROVED for the real execute job, and the lease is released."""
+    w = world(monkeypatch)
+    freeze = persistence.freeze_proposal
+
+    async def freeze_then_approve(*args: Any, **kwargs: Any) -> None:
+        await freeze(*args, **kwargs)
+        approve(w)  # record_decision commits right after the freeze
+
+    monkeypatch.setattr(persistence, "freeze_proposal", freeze_then_approve)
+    job(w, Scripted())  # Plan H's caller answers the reads, and a write call as well (so one would be logged)
+    assert w.run["state"] == "APPROVED" and "mcp:create_incident" not in w.log.entries
+    assert w.contexts[0].trace[-2:] == ["execute_approved_proposal", "reconcile_outcome"]
+    assert w.log.entries[-1] == "release_lease"
+    job(w, Scripted(), "execute", mcp=Answering(w.log, SUCCEEDED))  # the real execute job runs it
+    assert w.log.entries.count("mcp:create_incident") == 1
+
+
+def test_a_failure_in_a_state_the_graph_does_not_fail_still_releases_the_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 1, M2: an unexpected failure with the run APPROVED is re-raised for the poll loop, but only after
+    the lease is released and the job closed; the sweeper re-arms the run."""
+    w = world(monkeypatch, {**RUN, "state": "APPROVED"})
+
+    class Crashing:
+        async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            raise RuntimeError("mcp-write exploded")
+
+    with pytest.raises(RuntimeError):
+        job(w, Scripted(), "execute", mcp=Crashing())
+    assert w.run["state"] == "APPROVED" and w.log.entries[-1] == "release_lease"
+
+
+def test_a_lost_lease_is_not_released_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1, M2: the release after a failure is a no-op once the lease is lost, never a second error."""
+    w = world(monkeypatch)
+    lose_once_after(monkeypatch, w, "transition_run")
+    with pytest.raises(LeaseLost):
+        job(w, Scripted())
+    assert "release_lease" not in w.log.entries
+
+
+def test_an_execute_job_whose_approval_was_rejected_runs_no_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1, M4: a run.rejected event refuses the resume even when the approval names the active proposal."""
+    w = world(monkeypatch)
+    job(w, Scripted())
+    approve(w)
+    w.run["events"][EventType.RUN_REJECTED] = [(uuid4(), {})]
+    moves, start = len(transitions(w)), len(w.log.entries)
+    job(w, Scripted(), "execute")
+    assert "mcp:create_incident" not in w.log.entries and len(transitions(w)) == moves
+    assert "store_checkpoint_id" not in w.log.entries[start:] and w.log.entries[-1] == "release_lease"
+
+
+def test_a_resume_with_no_reply_to_its_question_fails_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1, M4: a resume_input job whose key names a question nobody answered fails the run with the
+    template, by the worker's only path to FAILED from AWAITING_INPUT, before any read."""
+    w = world(monkeypatch)
+    job(w, Scripted(QUESTION))
+    question = w.run["events"][EventType.CLARIFICATION_REQUESTED][-1][0]
+    moves: list[tuple[str, Any]] = []
+    move = persistence.transition_run
+
+    async def keep(*args: Any, **kwargs: Any) -> Any:
+        moves.append((kwargs["dst"].value, (kwargs.get("detail") or {}).get("message")))
+        return await move(*args, **kwargs)
+
+    monkeypatch.setattr(persistence, "transition_run", keep)
+    start = len(w.log.entries)
+    job(w, Scripted(), "resume_input", dedup_key=f"{RUN_ID}:{question}")
+    assert moves == [("QUEUED", None), ("RETRIEVING", None), ("FAILED", nodes.RESUME_REFUSED)]
+    assert not [e for e in w.log.entries[start:] if e.startswith("mcp:")] and w.log.entries[-1] == "release_lease"

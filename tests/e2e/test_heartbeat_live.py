@@ -22,6 +22,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 from ops_core import persistence, settings
 from ops_core.lease import RELEASED
 from ops_core.settings import Role
@@ -97,6 +98,7 @@ async def worker_deps(role_conn: RoleConn, mcp_class: type[ScriptedMcp], generat
         urls=settings.urls(),
         worker_name=WORKER,
         workload_azp="ops-worker",  # the azp the scripted callers resolve with
+        saver=InMemorySaver(),
         leases=settings.leases(),  # the real defaults: DoD 3 is about these values
     )
 

@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 from ops_core import persistence, settings
 from ops_core.lease import Lease
 from ops_core.states import Intent, RunState
@@ -110,6 +111,7 @@ async def test_execute_requeues_a_deferred_grant_and_releases_its_lease(monkeypa
         urls=settings.urls(),
         worker_name="worker:test",
         workload_azp="ops-worker",
+        saver=InMemorySaver(),
     )
     job = {"id": job_id, "run_id": run_id, "tenant_id": tenant, "type": "execute"}
     assert await handlers.execute(deps, job, lease) is False

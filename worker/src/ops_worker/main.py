@@ -64,8 +64,8 @@ async def run_job(deps: handlers.Deps, claimed: persistence.Claimed) -> None:
     """Run one claimed job under its lease while the heartbeat renews it. A lost lease, raised by a fenced unit or by
     an effect the heartbeat cancelled (`Lease.effect`), hands the job back instead of failing the run (ruling 19 as
     amended in review round 1, B1: only effects are cancelled, never a database unit, so the loop connection is idle
-    when `abandon` runs, and `abandon` checks that). Anything else propagates: the poll loop logs it, the job stays
-    claimed, its lease lapses within one lease and the sweeper reclaims it."""
+    when `abandon` runs, and `abandon` checks that). Anything else propagates after `handle` released the lease and
+    closed the job (T20 review, M2): the poll loop logs it, and the sweeper re-arms a run still waiting."""
     job, lease = dict(claimed.job), claimed.lease
     if deps.heartbeat is not None:
         deps.heartbeat.hold(lease)

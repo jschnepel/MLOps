@@ -61,14 +61,15 @@ def test_the_router_edges_are_the_table_routes_and_nothing_else() -> None:
     compiled = build.build_graph(InMemorySaver())
     (branch,) = compiled.builder.branches["route_request"].values()  # the one conditional edge set out of the router
     table = {rule.route.value: build.ROUTE_NODES[rule.route] for rule in GRAPH_ROUTES}
-    assert branch.ends == table == build.edge_map()
+    assert branch.ends == table  # the compiled edges are the rows' routes, each to its node
+    assert set(branch.ends) == {route.value for route in GraphRoute}  # and every route the enum names has an edge
     drawn = compiled.get_graph().edges
     assert {edge.target for edge in drawn if edge.source == "route_request"} == set(table.values())
     publish = {edge.target for edge in drawn if edge.source == "publish_state"}
     assert publish == {"__end__", "route_request"}  # after_publish: the table's publish route ends the graph run
 
 
-def test_every_route_has_one_node_and_some_row() -> None:
+def test_every_route_has_one_node_and_the_graph_has_the_ten_of_sa_207() -> None:
     assert set(build.ROUTE_NODES) == set(GraphRoute)  # a dict: one node each
     assert set(build.ROUTE_NODES.values()) <= set(build.NODES) and len(build.NODES) == 10  # SA:207's ten nodes
 

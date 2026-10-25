@@ -23,6 +23,7 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 from ops_core import persistence, settings
 from ops_core.lease import LOCK_FOR_UPDATE, RELEASED, Lease, LeaseLost
 from ops_core.outcomes import EventType
@@ -168,9 +169,12 @@ def patch(
     database keeps it (T20: the graph's nodes reread it): a transition, a freeze and a stored checkpoint id change it;
     it is returned so a test can read or set it.
     Its "events" map holds the run's events by type, as `run_events` reads them: a move to AWAITING_INPUT journals its
-    clarification.requested (transition_run emits it, SA:451), and a test adds what the API would write."""
+    clarification.requested (transition_run emits it, SA:451), and a test adds what the API would write. Its
+    "messages" map holds the text of each message by id, as `message_text` reads it: the run's own message, and a test
+    adds each reply it writes (an id it did not write raises KeyError, so a read through the wrong id fails loudly)."""
     calls = 0
     current: dict[str, Any] = {**(RUN if run is None else run), "events": {}}
+    current["messages"] = {current["message_id"]: "Investigate the alerts on A17 over the last 24 hours."}
 
     async def fenced(_conn: Any, lease: Lease) -> None:
         nonlocal calls
@@ -195,6 +199,10 @@ def patch(
     async def run_events(_conn: Any, _run_id: Any, type: EventType) -> list[tuple[Any, dict[str, Any]]]:
         log.entries.append("run_events")
         return list(current["events"].get(type, []))
+
+    async def message_text(_conn: Any, message_id: Any) -> str:
+        log.entries.append("message_text")
+        return str(current["messages"][message_id])
 
     async def freeze_proposal(*_: Any, **__: Any) -> None:
         log.entries.append("freeze_proposal")
@@ -234,7 +242,7 @@ def patch(
         "insert_run_manifest": insert_run_manifest,
         "run_manifest_exists": run_manifest_exists,
         "run_events": run_events,
-        "message_text": recorder("message_text", "Investigate the alerts on A17 over the last 24 hours."),
+        "message_text": message_text,
         "set_tenant": recorder("set_tenant"),
         "transition_run": transition_run,
         "mint_handle": recorder("mint_handle", "handle"),
@@ -261,6 +269,7 @@ def make(log: Log, clock: Callable[[], float] = time.monotonic) -> tuple[handler
         urls=settings.urls(),
         worker_name="w:test",
         workload_azp="ops-worker",
+        saver=InMemorySaver(),
     )
     return deps, Lease(run_id=RUN_ID, owner="w:test", fence=3, lease_seconds=30, started=clock(), clock=clock)
 

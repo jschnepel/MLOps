@@ -116,9 +116,14 @@ async def _carry_on(deps: Deps, job: dict[str, Any], lease: Lease, run: dict[str
     state, stored = RunState(run["state"]), run.get("checkpoint_id")
     if state in _MID_RUN or (state is RunState.QUEUED and stored is not None):
         # An earlier owner stopped mid-run, or after a clarification moved the run back to QUEUED: resume from the
-        # stored checkpoint, never from the thread's newest one (a stray head is ignored, R108).
+        # stored checkpoint, never from the thread's newest one (a stray head is ignored, R108). One that is the end of
+        # a graph run has nothing to resume: the run starts a new graph run.
         if await _resumable(deps, job, lease, state, stored):
-            await _drive(deps, job, lease, None, stored)
+            assert stored is not None  # _resumable found it
+            if await build.ended(Context(deps, job, lease), build.thread_id(lease.run_id, 1), stored):
+                await _drive(deps, job, lease, initial(lease.run_id), None)
+            else:
+                await _drive(deps, job, lease, None, stored)
     elif state is RunState.QUEUED:
         await _drive(deps, job, lease, initial(lease.run_id), None)
     else:
@@ -188,18 +193,21 @@ async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
         return True
     stored = run.get("checkpoint_id")
     thread = build.thread_id(lease.run_id, 1)
+    ctx = Context(deps, job, lease)
     graph_input: build.GraphInput = initial(lease.run_id)
     checkpoint = None
     if stored is not None and await build.known(deps.saver, thread, stored):
-        checkpoint = stored
-        graph_input = None
-        if await build.interrupted(Context(deps, job, lease), thread, stored):
+        if await build.interrupted(ctx, thread, stored):
             approval = await _approval(deps, job, lease, run)
             if approval is None:
                 # No transition (the worker may not move an APPROVED run, SA:451) and no retry for ever: the job is
                 # closed by `handle`'s final unit. TODO(T22): recovery of a run approved without a matching decision.
                 return True
-            graph_input = Command(resume=str(approval))
+            checkpoint, graph_input = stored, Command(resume=str(approval))
+        elif not await build.ended(ctx, thread, stored):
+            checkpoint, graph_input = stored, None  # the checkpoint before the execute node: a fork runs it again
+        # else the stored checkpoint ended its graph run (a final refusal): a new graph run, whose router reads the
+        # run's APPROVED or EXECUTING again, instead of a fork that would run nothing
     try:
         await _drive(deps, job, lease, graph_input, checkpoint)
     except Requeue:
@@ -209,19 +217,36 @@ async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
 
 
 async def handle(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
-    """Dispatch a claimed job by type under its lease; the final unit closes the job and releases the lease."""
+    """Dispatch a claimed job by type under its lease; the final unit closes the job and releases the lease, after a
+    failure too: the failure is re-raised for the poll loop to log, but no lease is left to lapse (a lost lease is not
+    released again; `main.run_job` hands that job back)."""
     kind = JobType(job["type"])
-    if kind is JobType.INVESTIGATE:
-        await investigate(deps, job, lease)
-    elif kind is JobType.RESUME_INPUT:
-        await resume_input(deps, job, lease)
-    elif kind is JobType.EXECUTE:
-        if not await execute(deps, job, lease):
-            return  # re-queued: its final unit already released the lease
-    else:
-        # TODO(T22): recover jobs (the graph's recover route reaches reconcile_outcome, which only logs in v1).
-        log.info("job %s of type %s is not handled before T22", job["id"], kind.value)
+    try:
+        if kind is JobType.INVESTIGATE:
+            await investigate(deps, job, lease)
+        elif kind is JobType.RESUME_INPUT:
+            await resume_input(deps, job, lease)
+        elif kind is JobType.EXECUTE:
+            if not await execute(deps, job, lease):
+                return  # re-queued: its final unit already released the lease
+        else:
+            # TODO(T22): recover jobs (the graph's recover route reaches reconcile_outcome, which only logs in v1).
+            log.info("job %s of type %s is not handled before T22", job["id"], kind.value)
+    except Exception:
+        await _release_after_failure(deps, job, lease)
+        raise
     await persistence.release_lease(deps.conn, lease, job=job)
+
+
+async def _release_after_failure(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
+    """The final unit for a job that failed: skipped when the lease is already lost (the loop hands the job back), and
+    a failure of its own is logged, never allowed to replace the one being raised."""
+    if lease.lost is not None:
+        return
+    try:
+        await persistence.release_lease(deps.conn, lease, job=job)
+    except Exception:
+        log.exception("job %s: the lease could not be released after the failure", job["id"])
 
 
 async def abandon(deps: Deps, job: dict[str, Any], lease: Lease) -> None:

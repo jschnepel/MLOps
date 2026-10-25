@@ -12,6 +12,7 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
+from langgraph.checkpoint.memory import InMemorySaver
 from ops_core import persistence, settings
 from ops_core.canonical import canonical_json, canonical_sha256
 from ops_core.jobs import Server, Tool
@@ -96,6 +97,7 @@ async def worker_deps(role_conn: RoleConn) -> WorkerDeps:
             urls=settings.urls(),
             worker_name="t",
             workload_azp="ops-worker",  # the azp ResolvingMcp presents, as the real worker token's would be
+            saver=InMemorySaver(),
         )
         return deps, mcp
 
