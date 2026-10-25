@@ -6,8 +6,10 @@
 branch `plan-q` (`d3c148a..a6ffbe2` holds the debt list, the four building tasks and the live gate; the close-out is the
 commit after `a6ffbe2`). T20 is DONE: the run's lifecycle is one LangGraph graph on the Postgres saver with synchronous
 durability and the stored checkpoint id (R022, R038, R042, R091, R108, R114 and R122 live; R129's graph half); errata
-122-130 are proposed (see "Plan Q executed"). Owner inputs added by Plan Q: decide errata 122-130; migrate the dev
-database to 0015 (the worker refuses to start without `checkpoints.checkpoints`). Plan P (T19) is executed on branch
+122-130 are proposed (see "Plan Q executed"; the next free erratum number is 131). Owner inputs added by Plan Q: decide
+errata 122-130; migrate the dev database to 0015 (the worker refuses to start without `checkpoints.checkpoints`); merge
+PR #16 (`plan-q` -> `plan-p`, https://github.com/jschnepel/MLOps/pull/16, opened 2026-10-25 UTC after the final review;
+stacked on PR #15, which merges first). Plan P (T19) is executed on branch
 `plan-p` (`ee2729d..737d1ab` holds the
 debt list and the five building tasks; the close-out is the commit after `737d1ab`). T19 is DONE: the qwen3:8b route
 is selectable, validated, bounded, pinned and recorded (R036, R039, R040, R041 recorded locally; R037, R127 and R130
