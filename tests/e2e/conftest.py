@@ -218,6 +218,7 @@ PURGE_ORDER = (
     "DELETE FROM app.decisions WHERE proposal_id IN (SELECT proposal_id FROM app.proposals WHERE run_id = %s)",
     "DELETE FROM app.proposals WHERE run_id = %s",
     "DELETE FROM app.drafts WHERE run_id = %s",
+    "DELETE FROM app.run_manifests WHERE run_id = %s",  # T19: the manifest references its run
     "DELETE FROM app.jobs WHERE run_id = %s",
     "DELETE FROM app.run_state_history WHERE run_id = %s",
     "DELETE FROM app.run_directory WHERE run_id = %s",  # the directory references runs

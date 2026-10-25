@@ -18,7 +18,8 @@ WHERE reads the row), login_state and logout_jti are rows the printed table lack
 `_append_event` writes intent, erratum 60), and the sweeper may DELETE from jobs, finished maintenance rows only (a
 restrictive policy, SWEEPER_PURGE, erratum 61). Plan L (T17) adds the corpus: AM-20.2's corpus row on `documents` and
 `chunks`, and the same cells on the two append-only tables the printed table lacks, `document_states` and
-`corpus_ingestions` (erratum 95). `test_harness` exists only in the test profile: the main-line revisions grant it
+`corpus_ingestions` (erratum 95). Plan P (T19) adds `run_manifests`, a row the printed table lacks (worker INSERT and
+SELECT, api SELECT). `test_harness` exists only in the test profile: the main-line revisions grant it
 nothing;
 the testclock branch grants it schema USAGE, EXECUTE on current_time() and its test_clock cells.
 """
@@ -149,6 +150,9 @@ GRANTS: Final[dict[str, dict[str, Grant]]] = {
     # T18 (Plan N ruling 1): AM-20.2's corpus row (SA:431) for the embeddings; `scripts/skeleton.py embed` inserts as
     # the worker, and only search_procedures_scoped reads them.
     "embeddings": {"worker": _SI, DEFINER_ROLE: _S},
+    # T19 (revision 0014): a row AM-20.2 lacks (AM-80 names the manifest, no table); the worker writes each run's
+    # manifest once and reads it, the api reads it, and nobody updates it.
+    "run_manifests": {"worker": _SI, "api": _S},
 }
 
 # AM-20.5 tenant tables (of those that exist); FORCE applies to the owner, who is exempt only through BYPASSRLS.
@@ -172,6 +176,7 @@ RLS_TABLES: Final = (
     "document_states",
     "chunks",
     "embeddings",  # T18: SA:510 names it
+    "run_manifests",  # T19: a tenant's runs' manifests, as its runs
 )
 SWEEPER_ALL: Final = ("memberships", "jobs")  # SA:520: the permissive policies besides tenant_isolation
 # T14 (Plan I round 1, I6; erratum 61): a restrictive DELETE policy keeps the sweeper's purge to finished maintenance

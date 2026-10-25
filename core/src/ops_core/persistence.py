@@ -30,6 +30,7 @@ from ops_core.embeddings import vector_literal
 from ops_core.jobs import ATTEMPT_STATES, JOB_RULES, JobType, Server, Tool, dedup_key
 from ops_core.lease import LOCK_FOR_SHARE, LOCK_FOR_UPDATE, LOCK_FOR_UPDATE_NOWAIT, RELEASED, Busy, Lease, LeaseLost
 from ops_core.outcomes import ActionOutcome, EventRuleViolation, EventSource, EventType, ToolOutcome
+from ops_core.routing import RunManifest
 from ops_core.settings import Postgres, Profile
 from ops_core.states import AttemptState, IllegalTransition, Intent, Reason, RunState
 
@@ -1030,6 +1031,25 @@ async def release_model_permit(conn: Conn, *, slot: int, holder: str) -> None:
         "UPDATE app.model_permit SET holder = NULL, run_id = NULL, leased_until = '-infinity'"
         " WHERE slot = %s AND holder = %s",
         (slot, holder),
+    )
+
+
+async def insert_run_manifest(conn: Conn, *, tenant_id: UUID, manifest: RunManifest) -> None:
+    """The run's manifest (AM-80; revision 0014), as the worker under its own grant (INSERT, SELECT). The caller's
+    unit sets the tenant and holds the fence; a second manifest for the run fails on the primary key, so one run is
+    recorded once."""
+    await conn.execute(
+        "INSERT INTO app.run_manifests (run_id, tenant_id, model_route, model_digest, prompt_version, corpus_version,"
+        " retrieval_mode) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (
+            manifest.run_id,
+            tenant_id,
+            manifest.model_route.value,
+            manifest.model_digest,
+            manifest.prompt_version,
+            manifest.corpus_version,
+            manifest.retrieval_mode,
+        ),
     )
 
 

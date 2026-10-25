@@ -57,9 +57,20 @@ OWN_UNIT: Final = frozenset(
 # `document_states` or `chunks` row on its `documents` row, a version's `supersedes` on the earlier `documents` row);
 # that cannot deadlock, because nothing UPDATEs or DELETEs `documents` outside the live suite's test purge
 # (conftest `purge_corpus`). T18 (revision 0013): `embeddings` likewise; its insert takes FOR KEY SHARE on the
-# existing `chunks` row it names, which nothing updates or deletes either.
+# existing `chunks` row it names, which nothing updates or deletes either. T19 (revision 0014): `run_manifests` is
+# inserted once per run and never updated; its insert's FOR KEY SHARE on the run row comes after the same unit's
+# `transition_run` already holds that row FOR UPDATE, so it adds no wait.
 NEVER_LOCKED: Final = frozenset(
-    {"conversations", "transitions", "corpus_ingestions", "documents", "document_states", "chunks", "embeddings"}
+    {
+        "conversations",
+        "transitions",
+        "corpus_ingestions",
+        "documents",
+        "document_states",
+        "chunks",
+        "embeddings",
+        "run_manifests",
+    }
 )
 NOT_YET_CREATED: Final = frozenset({"operator_resolutions"})
 

@@ -158,6 +158,7 @@ async def _main() -> None:
     probe = await persistence.connect(settings.app_postgres(Role.WORKER))
     await persistence.assert_clock_profile(probe, settings.profile())
     await persistence.assert_relation(probe, "app.model_permit")  # revision 0007: the permit and the fenced functions
+    await persistence.assert_relation(probe, "app.run_manifests")  # revision 0014: every run's manifest (T19)
     liveness = Liveness()
     heartbeat = Heartbeat(connect=connector(settings.app_postgres(Role.WORKER)), settings=leases, liveness=liveness)
     deps = handlers.Deps(
