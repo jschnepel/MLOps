@@ -286,13 +286,15 @@ RETURNS TABLE (reason text, blocking_run_id uuid)
 {HELPER_HEADER} AS $fn$
 BEGIN
     -- AM-13 (SA:284-286), called under _asset_lock. Overlap is half-open: a < d and c < b (SA:283). Other runs of the
-    -- tenant in any conversation (SA:288). (a) An unresolved action: a grant whose latest attempt is not RESOLVED,
-    -- unless the operator acknowledged it (ABANDONED_UNVERIFIED, SA:130).
+    -- tenant in any conversation (SA:288). (a) An unresolved action: a grant whose latest attempt is not RESOLVED, or
+    -- a run in one of SA:284's three states (a CONFLICT resolves its attempt yet escalates the run, and the
+    -- destination may hold an incident), unless the operator acknowledged it (ABANDONED_UNVERIFIED, SA:130).
     SELECT r.run_id INTO blocking_run_id
     FROM runs r JOIN execution_grant g ON g.run_id = r.run_id CROSS JOIN LATERAL app._latest_attempt(g.action_id) la
     WHERE r.tenant_id = p_tenant_id AND r.asset_id = p_asset_id AND r.run_id <> p_run_id
       AND r.start_at < p_end_at AND p_start_at < r.end_at
-      AND la.state <> 'RESOLVED' AND r.state <> 'ABANDONED_UNVERIFIED'
+      AND (la.state <> 'RESOLVED' OR r.state IN ('EXECUTING', 'OUTCOME_UNKNOWN', 'ESCALATED'))
+      AND r.state <> 'ABANDONED_UNVERIFIED'
     ORDER BY r.run_id LIMIT 1;
     IF FOUND THEN
         reason := 'asset_action_unresolved';
@@ -841,10 +843,6 @@ BEGIN
        IS DISTINCT FROM v_payload->'source_snapshots' THEN
         RAISE EXCEPTION 'not_found' USING ERRCODE = 'OC002', DETAIL = 'evidence';
     END IF;
-    UPDATE runs SET authors = v_authors WHERE runs.run_id = p_run_id;
-    -- The draft row a frozen proposal references (ruling 7): the person's bytes, validated here, never the model's.
-    INSERT INTO drafts (id, tenant_id, run_id, draft_sha256, validated, kind, source)
-    VALUES (v_draft_id, p_tenant_id, p_run_id, v_sha, true, 'proposal', 'manual');
     SELECT g.reason, g.blocking_run_id INTO v_reason, v_blocking
     FROM app._asset_guard(p_tenant_id, v_run.asset_id, v_run.start_at, v_run.end_at, p_run_id,
                           v_run.supersedes_run_id) g;
@@ -860,6 +858,11 @@ BEGIN
         RETURN NEXT;
         RETURN;
     END IF;
+    -- Written only past the guard, as the freeze path does: a refusal commits the block and its event, nothing else.
+    UPDATE runs SET authors = v_authors WHERE runs.run_id = p_run_id;
+    -- The draft row a frozen proposal references (ruling 7): the person's bytes, validated here, never the model's.
+    INSERT INTO drafts (id, tenant_id, run_id, draft_sha256, validated, kind, created_at, source)
+    VALUES (v_draft_id, p_tenant_id, p_run_id, v_sha, true, 'proposal', app.current_time(), 'manual');
     v_proposal_id := (v_payload->>'proposal_id')::uuid;
     INSERT INTO proposals (proposal_id, tenant_id, run_id, revision, draft_id, payload, payload_canonical,
                            payload_sha256, canonicalization_version, authored_by, expires_at, frozen_at)
@@ -924,6 +927,14 @@ BEGIN
                                                 AND p.tenant_id = v_handle.tenant_id;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'PROPOSAL_NOT_IN_RUN';
+    END IF;
+    -- A retry after a committed verdict (its response lost) gets that verdict again, from the reason the run keeps.
+    IF v_run.state = 'BLOCKED_REVIEW' AND v_run.active_proposal_id IS NOT DISTINCT FROM p_proposal_id
+       AND v_run.reason IS NOT NULL
+       AND EXISTS (SELECT 1 FROM decisions d WHERE d.proposal_id = p_proposal_id AND d.decision = 'approve') THEN
+        RETURN QUERY SELECT NULL::uuid, v_handle.run_id, p_proposal_id, v_handle.tenant_id, v_handle.conversation_id,
+                            NULL::text, NULL::bytea, NULL::text, NULL::jsonb, v_run.reason;
+        RETURN;
     END IF;
     IF v_run.state <> 'APPROVED' OR v_run.active_proposal_id IS DISTINCT FROM p_proposal_id THEN
         RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'NOT_ACTIVE_APPROVED';

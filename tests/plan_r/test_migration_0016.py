@@ -58,7 +58,11 @@ def test_the_derived_bodies_change_only_what_the_revision_names() -> None:
         for old, new in changes:
             undone = undone.replace(new, old)
         assert undone == applied
-    # The cited-section check and the API's search reuse the search's own filters and query, byte for byte.
+    # The cited-section check and the API's search reuse the search's own filters and query, byte for byte. Both are
+    # interpolated, so the containment holds by construction; what can fail is the slice: each must still be exactly
+    # one stretch of the applied body (the fix round's review, Minor 4).
+    applied = module.REV0012.SEARCH_PROCEDURES_SCOPED
+    assert applied.count(module.FILTERS_0012) == 1 and applied.count(module.QUERY_0012) == 1
     assert module.FILTERS_0012 in module.CITED_PERMITTED and module.QUERY_0012 in module.SEARCH_PROCEDURES_API
 
 
@@ -74,10 +78,18 @@ def test_the_asset_lock_comes_before_every_row_lock(name: str) -> None:
 
 def test_the_guard_reads_both_sets_across_conversations() -> None:
     guard = rev0016().ASSET_GUARD
-    assert "la.state <> 'RESOLVED' AND r.state <> 'ABANDONED_UNVERIFIED'" in guard  # (a), SA:284 and SA:130
-    assert "r.state = 'SUCCEEDED'" in guard and "e.type = 'action.late_evidence'" in guard  # (b), late evidence too
-    assert "r.run_id IS DISTINCT FROM p_supersedes_run_id" in guard  # R125: only set (b) is excused
-    assert "r.start_at < p_end_at AND p_start_at < r.end_at" in guard  # SA:283: half-open overlap
+    set_a, _, set_b = guard.partition("-- (b)")
+    # (a), SA:284 and SA:130: an unresolved latest attempt, or a run in one of SA:284's three states (a CONFLICT
+    # resolves the attempt yet escalates the run), unless the operator acknowledged it.
+    assert (
+        "(la.state <> 'RESOLVED' OR r.state IN ('EXECUTING', 'OUTCOME_UNKNOWN', 'ESCALATED'))"
+        " AND r.state <> 'ABANDONED_UNVERIFIED'"
+    ) in re.sub(r"\s+", " ", set_a)
+    assert "r.state = 'SUCCEEDED'" in set_b and "e.type = 'action.late_evidence'" in set_b  # (b), late evidence too
+    # R125: only set (b) is excused, and by exactly one clause.
+    assert "IS DISTINCT FROM p_supersedes_run_id" not in set_a
+    assert set_b.count("r.run_id IS DISTINCT FROM p_supersedes_run_id") == 1
+    assert guard.count("r.start_at < p_end_at AND p_start_at < r.end_at") == 2  # SA:283: half-open, in both sets
     assert "conversation_id" not in guard  # SA:288: two conversations meet here
 
 
@@ -133,6 +145,9 @@ def test_the_grant_commits_its_review_refusals_and_raises_the_rest() -> None:
     committed = set(re.findall(r"v_reason := '([a-z_]+)'", grant))
     assert committed == {"expired", "authority_revoked", "stale_evidence"}  # plus the guard's two, from _asset_guard
     assert "'BLOCKED_REVIEW', 'grant_execution', v_reason" in grant and "refusal text" in grant
+    # The committed branch returns its verdict: no RAISE between the transition and the RETURN that ends the branch.
+    start = grant.index("PERFORM app._transition(v_handle.run_id, 'BLOCKED_REVIEW'")
+    assert "RAISE" not in grant[start : grant.index("RETURN;", start)]
     assert "interval '5 minutes'" in grant and "app._cited_permitted(" in grant  # R116, BS:425
     # The stale-sync deferral is raised before any committed transition of its branch can happen.
     assert grant.index("'MEMBERSHIP_STALE'") < grant.index("v_reason := 'stale_evidence'")
@@ -182,3 +197,35 @@ def test_downgrade_drops_what_it_created_and_restores_the_applied_bodies(monkeyp
         assert body in seen
     cells = privileges.grant_statements(("runs", "drafts"), module.RESTORED_CELLS, revokees=module.MAIN_GRANTEES_0016)
     assert seen[-len(module.DOWNGRADE_SCHEMA) - len(cells) :] == [*module.DOWNGRADE_SCHEMA, *cells]
+
+
+def test_a_retried_grant_after_a_committed_verdict_gets_the_verdict_back() -> None:
+    grant = rev0016().GRANT_EXECUTION
+    replay = grant.index("v_run.state = 'BLOCKED_REVIEW' AND v_run.active_proposal_id IS NOT DISTINCT FROM")
+    # The replay comes before the binding refusal it would otherwise trip, and answers with the run's own reason.
+    assert grant.index("PROPOSAL_NOT_IN_RUN") < replay < grant.index("DETAIL = 'NOT_ACTIVE_APPROVED'")
+    answer = grant[replay : grant.index("RETURN;", replay)]
+    assert "v_run.reason" in answer and "RAISE" not in answer and "NULL::uuid" in answer
+
+
+def test_a_blocked_manual_proposal_commits_only_the_block() -> None:
+    manual = bodies(rev0016())["create_manual_proposal"]
+    guarded = manual.index("app._asset_guard(")
+    # A refusal freezes nothing and keeps the author out of the run's author set (the freeze path's behaviour).
+    assert guarded < manual.index("UPDATE runs SET authors = v_authors")
+    assert guarded < manual.index("INSERT INTO drafts")
+    assert "app.current_time(), 'manual'" in re.sub(r"\s+", " ", manual[manual.index("INSERT INTO drafts") :])
+    assert "created_at, source" in manual  # the draft row is stamped on the application clock (SA:157)
+
+
+def test_the_downgrade_drops_every_column_and_table_the_upgrade_adds() -> None:
+    module = rev0016()
+    dropped = "\n".join(module.DOWNGRADE_SCHEMA)
+    for statement in module.SCHEMA_CHANGES:
+        table = re.match(r"ALTER TABLE app\.(\w+)", statement)
+        if table:
+            for column in re.findall(r"ADD COLUMN (\w+)", statement):
+                assert re.search(rf"ALTER TABLE app\.{table[1]} .*DROP COLUMN {column}\b", dropped), (table[1], column)
+        created = re.match(r"CREATE TABLE app\.(\w+)", statement)
+        if created:
+            assert f"DROP TABLE app.{created[1]}" in dropped, created[1]

@@ -52,6 +52,8 @@ STATES = [s.value for s in RunState]
 REASONS = [r.value for r in Reason]
 FAILED_REASONS = [r.value for r in Reason if r in FAILED_NO_COMMIT_REASONS]  # plan ruling 2 adds `expired`
 TOOL_OUTCOMES = [o.value for o in ToolOutcome]
+# T21: the feedback request's categories, which the feedback event and the request schema both name (contracts.py).
+FEEDBACK_CATEGORIES = ["wrong_evidence", "missing_evidence", "wrong_conclusion", "unclear", "other"]
 EVENT_TYPES = [e.value for e in EventType]
 DESTINATION_TYPES = [e.value for e in EventType if e in DESTINATION_EVIDENCE]
 OUTCOME_TYPES = [e.value for e in EventType if e in OUTCOME_EVENT_TYPES]  # the types that vouch for evidence
@@ -435,7 +437,7 @@ def event() -> Doc:
             # T21 (Plan R ruling 8, erratum 136): the feedback event's subject and category, never its text.
             "subject_kind": {"enum": ["run", "proposal", "event"]},
             "subject_id": UUID,
-            "category": {"enum": ["wrong_evidence", "missing_evidence", "wrong_conclusion", "unclear", "other"]},
+            "category": {"enum": FEEDBACK_CATEGORIES},
         },
         [],
     )
@@ -692,7 +694,7 @@ def feedback() -> Doc:
             {
                 "subject_kind": {"enum": ["run", "proposal", "event"]},
                 "subject_id": UUID,
-                "category": {"enum": ["wrong_evidence", "missing_evidence", "wrong_conclusion", "unclear", "other"]},
+                "category": {"enum": FEEDBACK_CATEGORIES},
                 "text": text(0, 2000),
             },
             ["subject_kind", "subject_id", "category"],
