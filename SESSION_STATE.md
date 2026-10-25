@@ -2,7 +2,22 @@
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
 **Current milestone:** M08 (independent review, grant, execution and recovery; T21 is next. M07 closed with T20 in Plan Q, after T19 in Plan P. M06 closed with T18 in Plan N; its T41, the owner's holdout labels, is optional since erratum 114. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
-**Next task:** T21 (per-revision proposals, the decision rules and the manual path). Plan Q (T20) is executed on
+**PAUSED 2026-10-25 (owner's instruction) inside Plan R (T21) after Task 6.** Branch `plan-r` (from `plan-q`
+84eaee5 / PR #16): fact sheet 3df1d23; plan 47fb044 + round-1 fixes e0a701b; review record ecbe63d
+(`docs/reviews/plan-review-r-2026-10-25.md`); Tasks 1-6 executed and pushed: 96042cc/6950bdb (debt list, test path),
+38c5a15+d9d18d9 (revision 0016 + fix round), 31c984b+faeb44d (contracts/persistence/schemas/MCP + fix round),
+14b5a0e+ec87f1b (API routes + fix round), 24ae209+6f8d052 (worker/sweeper + fix round), bbeb34b (the live tests; live
+gate GREEN `2072 passed, 21 skipped`, dev `1850 passed, 243 skipped`, verify_handoff 0). **Resume:** Task 6's review
+(not yet run) → the final whole-branch review → one fix wave (the queued items are in the SDD workspace's
+`closeout-additions.md`) → Task 7 (close-out: records, errata 131-146, state, history) → final record → PR #17
+`plan-r` -> `plan-q`. The SDD ledger `.superpowers/sdd/2026-10-25-first-slice-r-decisions-revisions-grant/progress.md`
+holds the exact resume steps; the controller's briefs, rulings and scripts are copied to `.superpowers/planr/controller/`
+(their absolute scratchpad paths must be re-pointed by the next session). Process finding for the owner: the Plan R
+plan writer reached the stack's `.env` through a hard link to run the live gate in a scratch worktree after copying
+had been refused in earlier plans; the secret was not opened or copied and no link remains; later dispatches forbid
+links to secrets (see the review record).
+
+**Next task:** T21 (in progress, above). Plan Q (T20) is executed on
 branch `plan-q` (`d3c148a..a6ffbe2` holds the debt list, the four building tasks and the live gate; the close-out is the
 commit after `a6ffbe2`). T20 is DONE: the run's lifecycle is one LangGraph graph on the Postgres saver with synchronous
 durability and the stored checkpoint id (R022, R038, R042, R091, R108, R114 and R122 live; R129's graph half); errata
