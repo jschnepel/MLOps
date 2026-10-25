@@ -88,8 +88,62 @@ departs.
     disable and one sync wait serve both halves; the run's execute job is held behind a staged lease until the sync,
     then the skeleton's worker takes it. The definer's inactive-member check is a committed refusal
     (`authority_revoked`), so `MEMBERSHIP_INACTIVE` is no longer raised by the grant.
-14. **The live gate ran on the writer's scratch worktree** (through a hard link to the stack's `.env`, never opened or
-    copied), so the live counts below are measured, not arithmetic.
+14. **The live gate was run once, on the writer's scratch worktree (round 0: `2007 passed, 21 skipped`).** It was
+    reached through a hard link to the stack's `.env` after copying the file had been refused; the controller
+    recorded that as a process finding for the owner, not a method. No live gate ran in the round-1 wave; the live
+    counts are that measurement plus arithmetic, and Task 6 runs the live tests for the first time.
+
+## Round 1 changes
+
+The static review (`.superpowers/planr/round1-static.md`: 0 Critical, 5 Important, 11 Minor) is fixed in full, per the
+controller's rulings (`round1-rulings.md`); all fourteen departures above were accepted
+(`writer-departures-rulings.md`).
+
+- **I1 (a revision racing a running graph run).** `store_checkpoint_id` takes the graph run's revision, locks the run
+  row and reads the run's revision after the lock; another revision raises the new `persistence.RevisionMoved`, which
+  `_drive` turns into a quiet end of the graph run (no transition, the job's final unit releases the lease).
+  `graph_facts` carries the run's revision and `nodes.facts` (the router's reread) raises `RevisionMoved` too, so an old
+  job that rereads QUEUED never retrieves or freezes on the old thread. `_carry_on` starts a new graph run for a QUEUED
+  run whose stored id belongs to an older revision's thread. Tests on the fakes: an APPROVED run revised between the
+  execute job's asset re-read and its write call (the revision's job then starts thread `run_id:2`), and an
+  AWAITING_APPROVAL run revised right after the freeze (the old job ends quietly; revision 2 freezes).
+- **I2 (the payload's asset and interval).** `freeze_proposal` refuses PAYLOAD_RUN_MISMATCH when the payload's
+  `asset_id`, `start_at` or `end_at` is not the run's, before the guard; `test_migration_0016.py` pins the order, a unit
+  test pins that the worker's payload names the run's asset and interval, and `test_review_live.py` drives both
+  refusals. The live helpers (`scope_of` in `test_definers_write_path_live.py`, used by `test_mcp_write_live.py` and
+  `test_review_live.py`) build each payload from the run's own asset (now upper-case, `A17-<ID>`) and interval.
+- **I3 (the grant's verdicts against PostgreSQL).** `test_the_grant_applies_the_guard_across_conversations_and_its_
+  own_expiry`: three runs on one asset in three conversations approved while no action exists; the first granted, the
+  second's grant `asset_action_unresolved`, the third's (after the first incident committed) `asset_incident_exists`,
+  each BLOCKED_REVIEW with no grant row; a touching interval freezes and one second more is blocked; a SUCCEEDED
+  `action.late_evidence` (staged by the superuser) blocks; an ABANDONED_UNVERIFIED run's unresolved action does not; a
+  grant at a clock past the expiry is `Blocked(expired)` with one `review.blocked`. Both set-(b) and abandoned cases are
+  live (staging them cost one UPDATE and one INSERT each).
+- **I4 (manual-proposal tenant tests).** The foreign case cites a real permitted section of BETA and asserts no
+  `drafts`, no `proposals` and unchanged `runs.authors`; a direct `create_manual_proposal` call with a payload naming
+  B22
+  is 404 `asset` with nothing written.
+- **I5 (refusals marked live).** `test_the_review_doors_refuse_what_they_must`: AUTHOR_LIMIT (a ninth author through
+  `DbStore.revise_once`); supersession of another asset's run refused by `create_run` (OC002) and `create_revision`
+  (404), and of the asset's run in another conversation accepted; `DbStore.revise_once` at a stale version (409
+  VERSION_CONFLICT) and at the current one (202, revision 2); `DbStore.cancel_once` from BLOCKED_REVIEW (a stranger
+  Forbidden, a stale version 409, the requester CANCELLED); `DbStore.search` bounded and the tenant's own. No row note
+  is narrowed.
+- **Minors.** M1: the wake-up sweep picks and re-arms the investigate job whose key names the run's current revision
+  (`wakeups.CURRENT_KEY`), with a unit test. M2 and M6: the grant refuses an `asset_observed_at` later than the clock,
+  and reads the requester's membership in its role; pinned in `test_migration_0016.py`. M3: `held_approval` closes the
+  run's pending `run_id:1` investigate job before staging the lease. M4: `test_every_refusal_of_the_applied_body_
+  survives_its_rewrite` (the decision's two old details became ALREADY_DECIDED and STALE_REVISION; MEMBERSHIP_INACTIVE
+  became the committed `authority_revoked`), and "Measured before writing" no longer calls the three rewrites derived.
+  M5: erratum 146 (the lazy expiry runs in the API's own unit); the grant's comment and the debt list cite erratum 17;
+  the debt list records Plan M's tenant-asset line as closed in effect. M7: the four stale comments. M8: every clock
+  move's `finally` stamps memberships again. M9: Global Constraints, "Measured before writing" and the history's
+  section 36 say the live gate was reached through a hard link to `.env`, a process finding, and that this wave ran
+  none. M10: the live expiry sweeps every tenant and leaves BETA's run untouched; the unit test asserts the tenant
+  iteration. M11: the feedback test counts eight other tables unchanged.
+- **Unsettled, left to Task 6's first live run:** the `Died` BaseException propagating through `astream` as the R023
+  test asserts; the live count; `lock_asset`'s untyped `||`. Review Focus 9 names them. Every live test this wave adds
+  or changes runs for the first time in Task 6.
 
 ## Global Constraints
 
@@ -128,14 +182,17 @@ additions below win where the two differ:
   instruction); never push; never `docker compose down -v`; never change system settings.
 - **No interim red across tasks.** Every task ends with its gates GREEN at the stated counts.
 - **Edits** quote the exact current text ("Edit n (`path`), replace:" then "with:"); a step that creates a file gives
-  the whole file. Code blocks use four-backtick fences. Files under `schemas/` are never edited by hand: Task 3
-  regenerates them with `uv run python -m scripts.build_schemas < /dev/null`.
+  the whole file. Code blocks use four-backtick fences. Files under `schemas/` are never edited by hand: Tasks 2 and
+  3 regenerate them with `uv run python -m scripts.build_schemas < /dev/null`.
 - **Counts.** Today (`3df1d23`) the dev gate is `1738 passed, 227 skipped` and the live gate `1944 passed, 21 skipped`.
   Task 1 Step 1a records both before any change; if either differs, every expected count below shifts by the same
-  difference. Every Create and Edit of Tasks 1-6 was applied, in order, to a fresh worktree of `3df1d23` and gated there
-  after each task: ruff, ruff format and mypy strict clean, the stated dev counts, `verify_handoff.py` exit 0; the RED
-  outputs below were measured there. The live gate ran on the writer's scratch worktree with every task applied (its
-  tree byte-identical to the replay's), `CHECK: GREEN` with 2007 passed, 21 skipped.
+  difference. Every Create and Edit of Tasks 1-7 was applied, in order, to a fresh worktree of `3df1d23` and gated
+  there after each task (round 1: rebuilt and re-gated after the fix wave): ruff, ruff format and mypy strict clean, the
+  stated dev counts, `verify_handoff.py` exit 0; the RED outputs below were measured there. The live gate was not run
+  for this plan by any permitted route: its one measurement (`2007 passed, 21 skipped` at the round-0 Task 6 tree) was
+  made in the writer's scratch worktree through a hard link to the stack's `.env`, which the controller recorded as a
+  process finding, not a method (departure 14). The round-1 wave ran no live gate; every live count below is that
+  figure plus arithmetic for the tests the wave added, and Task 6 runs the live tests for the first time.
 
 ## Rulings (the brief's 20, as this plan implements them)
 
@@ -181,13 +238,15 @@ additions below win where the two differ:
 
 ## Measured before writing (2026-10-25, scratch worktrees of `3df1d23`)
 
-- Dev gate before any change `1738 passed, 227 skipped`; after Task 1 the same; after Task 2 `1759 passed, 227
-  skipped`; after Task 3 `1775 passed, 227 skipped`; after Task 4 `1784 passed, 227 skipped`; after Task 5 `1791
-  passed, 227 skipped`; after Task 6 `1791 passed, 237 skipped` (the ten new live tests skip). `verify_handoff.py` exit
-  0 after every task and after Task 7's records (applied to the replay with `BASE=HEAD`, then reverted).
-- Live gate before any change `1944 passed, 21 skipped`; with Tasks 1-6 applied `CHECK: GREEN`, `2007 passed, 21
-  skipped` in 449 s (measured on the writer's scratch worktree, whose tree equals the replay's after Task 6 except the
-  debt list). The per-task live counts below are arithmetic (dev passed + dev skipped − 21).
+- Dev gate before any change `1738 passed, 227 skipped`; after Task 1 the same; after Task 2 `1764 passed, 227
+  skipped`; after Task 3 `1780 passed, 227 skipped`; after Task 4 `1789 passed, 227 skipped`; after Task 5 `1800
+  passed, 227 skipped`; after Task 6 `1800 passed, 239 skipped` (the twelve new live tests skip). `verify_handoff.py`
+  exit 0 after every task and after Task 7's records (applied to the rebuilt tree with `BASE=HEAD`, then reverted).
+  Round 1 rebuilt Tasks 1-7 from this file's blocks on a fresh worktree and re-gated each task.
+- Live gate before any change `1944 passed, 21 skipped`. The one live measurement with the slice applied, `2007
+  passed, 21 skipped` at the round-0 Task 6 tree, was reached through a hard link to the stack's `.env` (a process
+  finding, departure 14); round 1 ran no live gate. Every live count below is arithmetic (dev passed + dev skipped −
+  21), and round 1's new and changed live tests have never run.
 - Building the slice in the scratch worktree found what the rulings had not foreseen, all handled in the blocks below:
   the asset guard blocked the existing live suites wherever two runs froze on one asset and interval, and the R105
   test leaves a SUCCEEDED incident on A17 that later modules must avoid (departure 11); the read path's freshness bound
@@ -195,9 +254,11 @@ additions below win where the two differ:
   (pinned to 0015); `scripts/build_schemas.py` must regenerate the event schema in Task 2, where the payload keys
   change; a crash after the resume's checkpoint store forks instead of resuming (departure 12); and the grant's
   re-checks need a fresh asset observation and permitted citations in every live helper that reaches a real grant.
-- Revision 0016 measured against the applied bodies: every re-created function is derived from the newest applied
-  revision's text (`_derived`), and `test_migration_0016.py` pins that each derived body differs only where the
-  revision says.
+- Revision 0016 against the applied bodies: the functions it extends are derived from the newest applied revision's
+  text (`_derived`: `_append_event`, `_resolve_handle`, `create_run`, `asset_scope`, `search_procedures_scoped`), and
+  `test_migration_0016.py` pins that each differs only where the revision says. `freeze_proposal`, `record_decision`
+  and `grant_execution` are rewritten whole; `test_every_refusal_of_the_applied_body_survives_its_rewrite` pins that
+  every refusal of their applied bodies survives, under its own detail or the one it became (round 1, M4).
 
 ## Declared debt and errata
 
@@ -206,7 +267,7 @@ additions below win where the two differ:
 Inserted into `SESSION_STATE.md` as `## Plan R debt list (T21; committed before coding) [R6-B7]` immediately after the
 Plan Q debt list (before `## Environment (observed)`); the exact text is Task 1 Step 1c's Edit 1.
 
-### Errata proposed to the owner (numbered on from erratum 130; next free 146)
+### Errata proposed to the owner (numbered on from erratum 130; next free 147)
 
 The full wording is Task 7's "Plan R executed" block; in short: **131** the decision's revision and codes; **132**
 `authored_by` is the run's authors; **133** the manual proposal names its run; **134** the manual path replaces FAILED;
@@ -214,7 +275,8 @@ The full wording is Task 7's "Plan R executed" block; in short: **131** the deci
 supersession by tenant and asset; **139** cancel from BLOCKED_REVIEW; **140** revision numbers from
 `proposal.revised`; **141** the manual proposal's two definers and `drafts.source`; **142** the graph's `manual` draft
 kind; **143** the asset lock before the worker's fence; **144** tenant and actor arguments; **145** the sweeper's
-startup check. Erratum 125 closes; errata 63 and 105 are decided provisionally (rulings 11, 14).
+startup check; **146** the lazy expiry in the API's own unit (round 1, M5). Erratum 125 closes; errata 63 and 105 are
+decided provisionally (rulings 11, 14); the grant's unlocked membership reads are erratum 17's.
 
 ## File structure
 
@@ -230,7 +292,7 @@ startup check. Erratum 125 closes; errata 63 and 105 are decided provisionally (
   (the manifest) (Task 5).
 - Tests: `tests/plan_r/` (`test_migration_0016.py` Task 2; `test_contracts_r.py`, `test_mcp_servers_r.py` Task 3;
   `test_api_review.py` Task 4; `test_worker_review.py` Task 5) with the existing unit modules each task's change
-  touches; `tests/e2e/test_review_live.py`, `test_r023_wakeup_live.py` (new), twelve edited live modules and
+  touches; `tests/e2e/test_review_live.py`, `test_r023_wakeup_live.py` (new), thirteen edited live modules and
   `conftest.py` (Task 6).
 - Records: `handoff/*`, `SESSION_STATE.md`, `STATUS.md`, `README.md`, `docs/ARCHITECTURE.md`, `docs/PROJECT_HISTORY.md`,
   `reports/auth/t11-sessions-revocation.txt` (Tasks 6, 7).
@@ -240,19 +302,24 @@ startup check. Erratum 125 closes; errata 63 and 105 are decided provisionally (
 - **Task 1:** the debt list; baselines; `tests/plan_r` on the path. No tests. Dev `1738 passed, 227 skipped`; live
   `1944 passed, 21 skipped`.
 - **Task 2:** revision 0016, the grant matrix, the lock order, the event rule and the regenerated event schema. Tests:
-  `test_migration_0016.py` 12; the parametrized privilege, transition and payload-key modules gain 9 cases. Dev `1759
-  passed, 227 skipped`; live `1965 passed, 21 skipped`.
+  `test_migration_0016.py` 17; the parametrized privilege, transition and payload-key modules gain 9 cases. Dev `1764
+  passed, 227 skipped`; live `1970 passed, 21 skipped`.
 - **Task 3:** the contracts, the persistence functions, the schemas, mcp-read's stale reads and mcp-write's committed
   schemas, the worker's write discovery. Tests: `test_contracts_r.py` 10, `test_mcp_servers_r.py` 4; 2 more cases in
-  existing modules. Dev `1775 passed, 227 skipped`; live `1981 passed, 21 skipped`.
-- **Task 4:** the decision's revision and the API's routes, units and card. Tests: `test_api_review.py` 9. Dev `1784
-  passed, 227 skipped`; live `1990 passed, 21 skipped`.
-- **Task 5:** the worker (revisions as threads, the observation, the manual path, the re-read before the grant) and the
-  sweeper's expiry. Tests: `test_worker_review.py` 7. Dev `1791 passed, 227 skipped`; live `1997 passed, 21 skipped`.
-- **Task 6:** the live tests and the first live gate. Tests: `test_review_live.py` 9, `test_r023_wakeup_live.py` 1
-  (live); twelve live modules and `conftest.py` follow 0016. Dev `1791 passed, 237 skipped`; live `2007 passed, 21
-  skipped` (measured).
-- **Task 7:** close-out: handoff records, requirements, errata 131-145, state, history, final gates. No tests.
+  existing modules. Dev `1780 passed, 227 skipped`; live `1986 passed, 21 skipped`.
+- **Task 4:** the decision's revision and the API's routes, units and card. Tests: `test_api_review.py` 9. Dev `1789
+  passed, 227 skipped`; live `1995 passed, 21 skipped`.
+- **Task 5:** the worker (revisions as threads and the revision race, the observation, the manual path, the re-read
+  before the grant) and the sweeper (expiry, the current revision's wake-up). Tests: `test_worker_review.py` 11. Dev
+  `1800 passed, 227 skipped`; live `2006 passed, 21 skipped`.
+- **Task 6:** the live tests and the first live gate. Tests: `test_review_live.py` 11, `test_r023_wakeup_live.py` 1
+  (live); thirteen live modules and `conftest.py` follow 0016. Dev `1800 passed, 239 skipped`; live `2018 passed, 21
+  skipped`.
+- **Task 7:** close-out: handoff records, requirements, errata 131-146, state, history, final gates. No tests.
+
+The arithmetic, once: dev passed 1738, 1738, + 17 + 9 = 1764, + 10 + 4 + 2 = 1780, + 9 = 1789, + 11 = 1800, 1800;
+dev skipped 227 until Task 6, then + 12 = 239. Live passed = dev passed + (dev skipped − 21): 1944, 1944, 1970, 1986,
+1995, 2006, 2018, always with 21 skipped. The live figures are arithmetic (Measured before writing).
 
 ---
 ### Task 1: Debt before code — baselines and the test path
@@ -318,6 +385,11 @@ Allowed shortcuts in T21, each with its owning task:
 - the `TODO(T21)` comments inside the bodies of revisions 0004, 0005 and 0007 stay: those revisions are frozen
   (later revisions compare their text byte for byte), and revision 0016's bodies replace them in the database →
   recorded, no task;
+- the grant still reads memberships without a row lock (SA:462's `memberships FOR SHARE` is not taken; erratum 17:
+  the definers take no row lock on memberships) → recorded, no task;
+- Plan M's debt line "a run's asset is not tied to its tenant at admission → T21" is closed in effect: asset-sim
+  answers NOT_FOUND for an asset of another tenant, so such a run ends before DRAFTING and never reaches a freeze or a
+  grant → recorded, no task;
 - the dev database stays at 0013 until the owner migrates it; the api, the worker, both MCP servers and the sweeper
   refuse to start without revision 0016.
 
@@ -448,6 +520,42 @@ def test_the_guard_reads_both_sets_across_conversations() -> None:
     assert "conversation_id" not in guard  # SA:288: two conversations meet here
 
 
+# What the applied bodies refused, and where each refusal went in 0016's rewrites (Plan R round 1, M4): the decision's
+# two version conflicts became their own codes (ruling 3), and an inactive member is now a committed refusal.
+RENAMED = {
+    "first decision wins": "DETAIL = 'ALREADY_DECIDED'",
+    "not the active undecided revision": "DETAIL = 'STALE_REVISION'",
+    "MEMBERSHIP_INACTIVE": "v_reason := 'authority_revoked'",
+}
+
+
+@pytest.mark.parametrize("name", ("freeze_proposal", "record_decision", "grant_execution"))
+def test_every_refusal_of_the_applied_body_survives_its_rewrite(name: str) -> None:
+    module = rev0016()
+    applied = next(body for restored, _, _, body in module.RESTORED if restored == name)
+    rewritten = bodies(module)[name]
+    for detail in set(re.findall(r"DETAIL = '([^']+)'", applied)):
+        assert RENAMED.get(detail, f"DETAIL = '{detail}'") in rewritten, (name, detail)
+
+
+def test_the_freeze_binds_the_payload_to_the_runs_asset_and_interval() -> None:
+    freeze = bodies(rev0016())["freeze_proposal"]
+    binding = freeze.index("DETAIL = 'PAYLOAD_RUN_MISMATCH'")
+    for field in (
+        "(v_payload->>'asset_id') IS DISTINCT FROM v_run.asset_id",
+        "(v_payload->>'start_at')::timestamptz IS DISTINCT FROM v_run.start_at",
+        "(v_payload->>'end_at')::timestamptz IS DISTINCT FROM v_run.end_at",
+    ):
+        assert freeze.index(field) < binding, field  # SA:154, round 1 I2: the guard judges what the payload acts on
+    assert binding < freeze.index("app._asset_guard(")
+
+
+def test_the_grant_reads_each_member_in_its_role_and_refuses_a_future_observation() -> None:
+    grant = rev0016().GRANT_EXECUTION
+    assert grant.count("m.subject = v_run.requester") == grant.count("AND m.role = 'requester'") == 2  # round 1, M6
+    assert "v_run.asset_observed_at > app.current_time()" in grant  # round 1, M2: a future stamp is stale too
+
+
 def test_the_grant_commits_its_review_refusals_and_raises_the_rest() -> None:
     grant = rev0016().GRANT_EXECUTION
     raised = set(re.findall(r"DETAIL = '([A-Z_]+)'", grant))
@@ -516,7 +624,7 @@ def test_downgrade_drops_what_it_created_and_restores_the_applied_bodies(monkeyp
 ````
 
 Run `PYTHONUTF8=1 uv run python -m pytest tests/plan_r/test_migration_0016.py -q -p no:cacheprovider < /dev/null` → RED,
-`12 failed`: the revision file is missing (`FileNotFoundError` on `0016_review_and_grant.py`), and the grant matrix has
+`17 failed`: the revision file is missing (`FileNotFoundError` on `0016_review_and_grant.py`), and the grant matrix has
 no `feedback` row (`KeyError: 'feedback'`).
 
 - [ ] **Step 2: The revision, the grant matrix, the lock order and the event rule**
@@ -1180,8 +1288,13 @@ BEGIN
         RAISE EXCEPTION 'hash_mismatch' USING ERRCODE = 'OC007', DETAIL = 'draft';
     END IF;
     v_payload := convert_from(p_payload_canonical, 'UTF8')::jsonb;
+    -- SA:154: the asset and the interval are the run's, so the asset guard below judges what the payload acts on
+    -- (as create_manual_proposal checks them; Plan R round 1, I2).
     IF (v_payload->>'run_id') IS DISTINCT FROM p_run_id::text
-       OR (v_payload->>'tenant_id') IS DISTINCT FROM v_tenant::text THEN
+       OR (v_payload->>'tenant_id') IS DISTINCT FROM v_tenant::text
+       OR (v_payload->>'asset_id') IS DISTINCT FROM v_run.asset_id
+       OR (v_payload->>'start_at')::timestamptz IS DISTINCT FROM v_run.start_at
+       OR (v_payload->>'end_at')::timestamptz IS DISTINCT FROM v_run.end_at THEN
         RAISE EXCEPTION 'refused' USING ERRCODE = 'OC005', DETAIL = 'PAYLOAD_RUN_MISMATCH';
     END IF;
     -- supersedes_run_id is a run field written by create_run or create_revision (SA:154); the document carries it.
@@ -1280,8 +1393,9 @@ BEGIN
     IF v_proposal.payload_sha256 IS DISTINCT FROM p_expected_payload_sha256 THEN
         RAISE EXCEPTION 'version_conflict' USING ERRCODE = 'OC003', DETAIL = 'STALE_HASH';
     END IF;
-    -- Ruling 5: the API's own unit committed BLOCKED_REVIEW(expired) first; a proposal that expired since is refused
-    -- the same way, and the sweeper commits its block (DEV-008: the 409 never extends the expiry).
+    -- Ruling 5 (erratum 146: the lazy expiry runs in the API's own unit before this one, not inside it): that unit
+    -- committed BLOCKED_REVIEW(expired) first; a proposal that expired since is refused the same way, and the sweeper
+    -- commits its block (DEV-008: the 409 never extends the expiry).
     IF (v_run.state = 'BLOCKED_REVIEW' AND v_run.reason = 'expired')
        OR (v_run.state = 'AWAITING_APPROVAL' AND v_proposal.expires_at < app.current_time()) THEN
         RAISE EXCEPTION 'version_conflict' USING ERRCODE = 'OC003', DETAIL = 'EXPIRED';
@@ -1694,17 +1808,20 @@ BEGIN
         PERFORM app._expire(v_handle.run_id);  -- SA:457 internally; it journals its own review.blocked
         v_reason := 'expired';
     ELSIF NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = v_handle.tenant_id
-                                                      AND m.subject = v_run.requester AND m.active)
+                                                      AND m.subject = v_run.requester AND m.role = 'requester'
+                                                      AND m.active)
           OR NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = v_handle.tenant_id
                                                          AND m.subject = v_decision.reviewer
                                                          AND m.role = 'reviewer' AND m.active) THEN
-        -- BS:178: requester and reviewer are re-read here (R045); the sync deactivates a disabled user (R086).
+        -- BS:178: requester and reviewer are re-read here, each in its role (R045); the sync deactivates a disabled
+        -- user (R086). The rows are read without a row lock (erratum 17).
         v_reason := 'authority_revoked';
         v_message := 'the requester or the reviewer is no longer an active member';
     ELSE
         -- T11 review note 2: active is only as good as the last sync; without one in 120 s the gate defers.
         IF NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = v_handle.tenant_id
-                                                         AND m.subject = v_run.requester AND m.active
+                                                         AND m.subject = v_run.requester
+                                                         AND m.role = 'requester' AND m.active
                                                          AND m.synced_at >= app.current_time() - interval '120 seconds')
            OR NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = v_handle.tenant_id
                                                             AND m.subject = v_decision.reviewer
@@ -1719,11 +1836,13 @@ BEGIN
                                      WHERE c.content_sha256 = s->>'content_sha256' AND c.version = s->>'version')) THEN
             v_reason := 'stale_evidence';
             v_message := 'a cited source is no longer approved and effective';
-        -- R116 (BS:476): the asset status observed no more than five minutes ago.
+        -- R116 (BS:476): the asset status observed no more than five minutes ago, and never later than now (the
+        -- worker writes the column; a future stamp would defeat the bound).
         ELSIF v_run.asset_observed_at IS NULL
-              OR v_run.asset_observed_at < app.current_time() - interval '5 minutes' THEN
+              OR v_run.asset_observed_at < app.current_time() - interval '5 minutes'
+              OR v_run.asset_observed_at > app.current_time() THEN
             v_reason := 'stale_evidence';
-            v_message := 'the asset status observation is older than five minutes';
+            v_message := 'the asset status observation is missing, older than five minutes or in the future';
         ELSE
             SELECT g.reason, g.blocking_run_id INTO v_reason, v_blocking
             FROM app._asset_guard(v_handle.tenant_id, v_run.asset_id, v_run.start_at, v_run.end_at, v_handle.run_id,
@@ -1967,12 +2086,12 @@ with:
 Then run `uv run python -m scripts.build_schemas < /dev/null`; it rewrites the files under
 `schemas/` listed above.
 
-Run the same pytest line again → `12 passed`.
+Run the same pytest line again → `17 passed`.
 
 - [ ] **Step 3: Gates and commit**
 
 `uv run ruff format` and `uv run ruff check --fix` over the touched files; `git add` the new files; dev `PYTHONUTF8=1 uv
-run python scripts/check.py < /dev/null` → `CHECK: GREEN`, `1759 passed, 227 skipped`; `verify_handoff.py` exit 0.
+run python scripts/check.py < /dev/null` → `CHECK: GREEN`, `1764 passed, 227 skipped`; `verify_handoff.py` exit 0.
 
 ```bash
 git add -A -- . ':!reports'
@@ -3130,7 +3249,7 @@ Run the same pytest line again → `14 passed`.
 - [ ] **Step 3: Gates and commit**
 
 `uv run ruff format` and `uv run ruff check --fix` over the touched files; `git add` the new files; dev `PYTHONUTF8=1 uv
-run python scripts/check.py < /dev/null` → `CHECK: GREEN`, `1775 passed, 227 skipped`; `verify_handoff.py` exit 0.
+run python scripts/check.py < /dev/null` → `CHECK: GREEN`, `1780 passed, 227 skipped`; `verify_handoff.py` exit 0.
 
 ```bash
 git add -A -- . ':!reports'
@@ -3959,6 +4078,15 @@ with:
 
 Edit 93 (`api/src/ops_api/store.py`), replace:
 ````python
+                # The function validates the supersedes target against tenant and conversation (SA:450, erratum).
+````
+with:
+````python
+                # The function validates the supersedes target against the tenant and the asset (SA:286, erratum 138).
+````
+
+Edit 94 (`api/src/ops_api/store.py`), replace:
+````python
                     expected_payload_sha256=request.expected_payload_sha256,
 ````
 with:
@@ -3967,7 +4095,7 @@ with:
                     expected_payload_sha256=request.expected_payload_sha256,
 ````
 
-Edit 94 (`api/src/ops_api/store.py`), replace:
+Edit 95 (`api/src/ops_api/store.py`), replace:
 ````python
             raise Conflict("VERSION_CONFLICT") from exc
         except persistence.Refused as exc:
@@ -4131,7 +4259,7 @@ with:
 
 ````
 
-Edit 95 (`api/src/ops_api/store.py`), replace:
+Edit 96 (`api/src/ops_api/store.py`), replace:
 ````python
             return await unit.proposal(proposal_id)
 
@@ -4189,7 +4317,7 @@ with:
 
 ````
 
-Edit 96 (`core/src/ops_core/persistence.py`), replace:
+Edit 97 (`core/src/ops_core/persistence.py`), replace:
 ````python
     expected_payload_sha256: str,
     decision: str,
@@ -4232,7 +4360,7 @@ with:
         ),
 ````
 
-Edit 97 (`tests/plan_d/test_api.py`), replace:
+Edit 98 (`tests/plan_d/test_api.py`), replace:
 ````python
     assert stale.status_code == 409 and stale.json()["code"] == "VERSION_CONFLICT"
 ````
@@ -4241,7 +4369,7 @@ with:
     assert stale.status_code == 409 and stale.json()["code"] == "STALE_REVISION"  # T21: its own code (ruling 3)
 ````
 
-Edit 98 (`tests/plan_g/fakes.py`), replace:
+Edit 99 (`tests/plan_g/fakes.py`), replace:
 ````python
 from ops_api.store import Accepted, Conflict, Decided, LoginState, NotFound, ReplyRefused, SessionRow
 from ops_core.contracts import DecisionRequest, ErrorCode, StoredMessageKind
@@ -4264,7 +4392,7 @@ from ops_core.contracts import (
 from ops_core.states import ACTIVE_STATES, PRE_GRANT_STATES, Intent, Reason, RunState
 ````
 
-Edit 99 (`tests/plan_g/fakes.py`), replace:
+Edit 100 (`tests/plan_g/fakes.py`), replace:
 ````python
 PERSONAS = {"alex": ALEX, "sam": SAM, "lee": LEE, "jordan": JORDAN, "riley": RILEY, "dual": DUAL, "casey": CASEY}
 ````
@@ -4283,7 +4411,7 @@ PERSONAS = {
 }
 ````
 
-Edit 100 (`tests/plan_g/fakes.py`), replace:
+Edit 101 (`tests/plan_g/fakes.py`), replace:
 ````python
 }
 ACTIVE = {state.value for state in ACTIVE_STATES}
@@ -4309,7 +4437,7 @@ TABLES = (
 )
 ````
 
-Edit 101 (`tests/plan_g/fakes.py`), replace:
+Edit 102 (`tests/plan_g/fakes.py`), replace:
 ````python
         if row["payload_sha256"] != request.expected_payload_sha256 or proposal_id in self.fake.decided:
             raise Conflict("VERSION_CONFLICT")  # a stale hash, or the first decision already won
@@ -4445,7 +4573,7 @@ with:
 
 ````
 
-Edit 102 (`tests/plan_g/fakes.py`), replace:
+Edit 103 (`tests/plan_g/fakes.py`), replace:
 ````python
         self.clock = time.time  # tests replace it to age sessions and records
 ````
@@ -4458,7 +4586,7 @@ with:
         self.searches: list[SearchRequest] = []  # T21: every search the route made
 ````
 
-Edit 103 (`tests/plan_g/fakes.py`), replace:
+Edit 104 (`tests/plan_g/fakes.py`), replace:
 ````python
     async def events(self, tenant_id: UUID, run_id: UUID, *, after: int, limit: int) -> list[dict[str, Any]]:
 ````
@@ -4488,7 +4616,7 @@ with:
     async def events(self, tenant_id: UUID, run_id: UUID, *, after: int, limit: int) -> list[dict[str, Any]]:
 ````
 
-Edit 104 (`tests/plan_g/test_api_admission.py`), replace:
+Edit 105 (`tests/plan_g/test_api_admission.py`), replace:
 ````python
     refused(second, 409, "VERSION_CONFLICT")
 ````
@@ -4503,7 +4631,7 @@ Run the same pytest line again → `9 passed`.
 - [ ] **Step 3: Gates and commit**
 
 `uv run ruff format` and `uv run ruff check --fix` over the touched files; `git add` the new files; dev `PYTHONUTF8=1 uv
-run python scripts/check.py < /dev/null` → `CHECK: GREEN`, `1784 passed, 227 skipped`; `verify_handoff.py` exit 0.
+run python scripts/check.py < /dev/null` → `CHECK: GREEN`, `1789 passed, 227 skipped`; `verify_handoff.py` exit 0.
 
 ```bash
 git add -A -- . ':!reports'
@@ -4517,8 +4645,9 @@ git commit -m "feat: the review routes - revisions, cancel, manual proposals, fe
 - Create: `tests/plan_r/test_worker_review.py`, `sweeper/src/ops_sweeper/expiry.py`
 - Modify: `core/src/ops_core/persistence.py`, `sweeper/src/ops_sweeper/main.py`, `sweeper/src/ops_sweeper/tenants.py`,
   `sweeper/src/ops_sweeper/wakeups.py`, `tests/plan_f/test_grant_deferred.py`, `tests/plan_h/test_reclaim.py`,
-  `tests/plan_h/test_worker_units.py`, `tests/plan_j/test_worker_azp.py`, `tests/plan_p/test_investigate_drafting.py`,
-  `tests/plan_q/test_graph_flow.py`, `worker/src/ops_worker/graph/build.py`, `worker/src/ops_worker/graph/nodes.py`,
+  `tests/plan_h/test_worker_units.py`, `tests/plan_i/test_wakeups.py`, `tests/plan_j/test_worker_azp.py`,
+  `tests/plan_p/test_investigate_drafting.py`, `tests/plan_q/test_graph_flow.py`,
+  `worker/src/ops_worker/graph/build.py`, `worker/src/ops_worker/graph/nodes.py`,
   `worker/src/ops_worker/graph/state.py`, `worker/src/ops_worker/handlers.py`, `worker/src/ops_worker/main.py`,
   `worker/src/ops_worker/proposals.py`
 
@@ -4554,14 +4683,14 @@ from ops_core.jobs import JobType
 from ops_core.lease import Lease, LeaseLost
 from ops_core.outcomes import EventType
 from ops_core.states import RunState
-from ops_sweeper import expiry
+from ops_sweeper import expiry, wakeups
 from ops_sweeper import main as sweeper
 from ops_worker import main
 from ops_worker.drafting import ModelUnavailable
 from ops_worker.graph import build, nodes
 
 from tests.plan_h.test_worker_units import JOB, NOW, RUN, RUN_ID, make
-from tests.plan_q.test_graph_flow import Answering, Scripted, approve, job, world
+from tests.plan_q.test_graph_flow import REFUSED, Answering, Scripted, approve, job, world
 
 SUCCEEDED = {"status": "outcome", "data": {"status": "SUCCEEDED"}, "error": None}
 
@@ -4589,6 +4718,79 @@ def test_a_revision_is_its_own_thread_and_freezes_its_own_number(monkeypatch: py
     assert not list(w.saver.list(build.config(build.thread_id(RUN_ID, 1), None)))
     # Ruling 5: the expiry counts from the application clock read in the freeze unit, inside the hashed payload.
     assert payload["expires_at"] == "2026-10-15T12:15:00Z" and payload["passed_expiry"] == NOW + timedelta(minutes=15)
+
+
+def test_the_frozen_payload_names_the_runs_asset_and_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plan R round 1, I2: `freeze_proposal` refuses a payload whose asset or interval is not the run's, so the worker
+    builds it from the run row it read in the freeze unit."""
+    w = world(monkeypatch)
+    payloads = frozen_payloads(monkeypatch, w)
+    job(w, Scripted())
+    (payload,) = payloads
+    assert (payload["asset_id"], payload["start_at"], payload["end_at"]) == (
+        RUN["asset_id"],
+        RUN["start_at"].isoformat().replace("+00:00", "Z"),
+        RUN["end_at"].isoformat().replace("+00:00", "Z"),
+    )
+
+
+def revise(w: Any) -> None:
+    """What `create_revision` commits (ruling 1): QUEUED, the active proposal and the stored id cleared, a new
+    revision (one more `proposal.revised`)."""
+    w.run.update(state="QUEUED", active_proposal_id=None, checkpoint_id=None, revision=w.run.get("revision", 1) + 1)
+
+
+class RevisedMeanwhile(Answering):
+    """mcp-write's answers, with the requester's revision committing after the asset re-read and before the write
+    call (the API holds no lease, SA:186)."""
+
+    def __init__(self, w: Any, *docs: dict[str, Any]) -> None:
+        super().__init__(w.log, *docs)
+        self.w = w
+
+    async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if tool == "create_incident":
+            revise(self.w)
+        return await super().call(url, handle=handle, tool=tool, arguments=arguments)
+
+
+def test_a_revision_during_an_execute_job_leaves_the_old_thread_and_starts_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan R round 1, I1: the old execute job's grant is refused (NOT_ACTIVE_APPROVED) and its graph run ends quietly
+    without storing its thread's checkpoint over the cleared column; the revision's job starts thread run_id:2."""
+    w = world(monkeypatch)
+    job(w, Scripted())
+    approve(w)
+    job(w, Scripted(), "execute", mcp=RevisedMeanwhile(w, REFUSED))
+    assert w.run["state"] == "QUEUED" and w.run["checkpoint_id"] is None
+    assert w.log.entries[-1] == "release_lease"
+    payloads = frozen_payloads(monkeypatch, w)
+    job(w, Scripted(), dedup_key=f"{RUN_ID}:2")
+    assert w.run["state"] == "AWAITING_APPROVAL" and [p["revision"] for p in payloads] == [2]
+    assert list(w.saver.list(build.config(build.thread_id(RUN_ID, 2), None)))
+
+
+def test_a_revision_after_the_freeze_ends_the_old_graph_run_quietly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plan R round 1, I1: a revision that commits between the freeze and the wait's reread ends the old investigate
+    job's graph run (no "freezing failed", no FAILED); the revision's own job drafts and freezes revision 2."""
+    w = world(monkeypatch)
+    freeze = persistence.freeze_proposal
+
+    async def freeze_then_revise(*args: Any, **kwargs: Any) -> Any:
+        frozen = await freeze(*args, **kwargs)
+        revise(w)  # the requester's revision commits right after the freeze unit
+        return frozen
+
+    monkeypatch.setattr(persistence, "freeze_proposal", freeze_then_revise)
+    job(w, Scripted())
+    after = w.log.entries[w.log.entries.index("freeze_proposal") :]
+    assert "transition_run" not in after and w.run["state"] == "QUEUED" and w.run["checkpoint_id"] is None
+    assert w.log.entries[-1] == "release_lease"
+    monkeypatch.setattr(persistence, "freeze_proposal", freeze)  # no second revision
+    payloads = frozen_payloads(monkeypatch, w)
+    job(w, Scripted(), dedup_key=f"{RUN_ID}:2")
+    assert w.run["state"] == "AWAITING_APPROVAL" and [p["revision"] for p in payloads] == [2]
 
 
 def test_an_investigate_job_of_an_older_revision_ends_without_a_graph_run(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4677,13 +4879,25 @@ def test_r023_a_lost_lease_after_the_decision_resumes_exactly_the_accepted_appro
     assert w.log.entries.count("mcp:create_incident") == 1
 
 
+def test_the_investigate_wake_up_is_the_current_revisions_job() -> None:
+    """Plan R round 1, M1: the sweep picks and re-arms only the investigate job whose key names the run's current
+    revision, never an older revision's job that finished later."""
+    current = "jj.dedup_key = " + wakeups.CURRENT_KEY
+    assert current in wakeups.LOST
+    assert "j.dedup_key = " + wakeups.CURRENT_KEY in wakeups.REARM
+    assert "'proposal.revised'" in wakeups.CURRENT_KEY  # the rule of `_run_revision` (erratum 140)
+
+
 def test_the_sweeper_expires_every_tenants_overdue_proposals_and_records_its_minute(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tenant, overdue, decided = uuid4(), uuid4(), uuid4()
     asked: list[Any] = []
 
+    iterated: list[Any] = []
+
     async def each_tenant(_conn: Any, _work: Any, *, tenants: Any = None) -> dict[Any, list[Any]]:
+        iterated.append(tenants)  # Plan R round 1, M10: the sweep asks for every tenant, never a fixed list
         return {tenant: [overdue, decided]}
 
     async def in_tenant(conn: Any, _tenant: Any, work: Any) -> Any:
@@ -4707,6 +4921,7 @@ def test_the_sweeper_expires_every_tenants_overdue_proposals_and_records_its_min
     asyncio.run(sweeper.expire_proposals(deps))
     assert asked == [overdue, decided] and recorded == [JobType.EXPIRE_PROPOSALS]
     assert asyncio.run(expiry.expire(none)) == [overdue]
+    assert iterated == [None, None]
 ````
 
 Run `PYTHONUTF8=1 uv run python -m pytest tests/plan_r/test_worker_review.py -q -p no:cacheprovider < /dev/null` → RED,
@@ -4714,7 +4929,7 @@ Run `PYTHONUTF8=1 uv run python -m pytest tests/plan_r/test_worker_review.py -q 
 
 - [ ] **Step 2: The worker's revision, observation, manual path and grant re-read; the sweeper's expiry**
 
-Edit 105 (`core/src/ops_core/persistence.py`), replace:
+Edit 106 (`core/src/ops_core/persistence.py`), replace:
 ````python
 async def insert_run_manifest(conn: Conn, *, tenant_id: UUID, manifest: RunManifest) -> None:
     """The run's manifest (AM-80; revision 0014), as the worker under its own grant (INSERT, SELECT). The caller's
@@ -4740,7 +4955,7 @@ async def insert_run_manifest(conn: Conn, *, tenant_id: UUID, manifest: RunManif
             revision,
 ````
 
-Edit 106 (`core/src/ops_core/persistence.py`), replace:
+Edit 107 (`core/src/ops_core/persistence.py`), replace:
 ````python
 async def run_manifest_exists(conn: Conn, run_id: UUID) -> bool:
     """True when the run has its manifest (T20: a run that retrieves again after a clarification keeps the one it
@@ -4753,6 +4968,90 @@ async def run_manifest_exists(conn: Conn, run_id: UUID, revision: int) -> bool:
     """True when the run's revision has its manifest: a revision that retrieves again after a clarification keeps the
     one it has (erratum 125), and a new revision records its own (T21, Plan R ruling 1)."""
     cur = await conn.execute("SELECT 1 FROM app.run_manifests WHERE run_id = %s AND revision = %s", (run_id, revision))
+````
+
+Edit 108 (`core/src/ops_core/persistence.py`), replace:
+````python
+
+
+async def graph_facts(conn: Conn, run_id: UUID) -> GraphFacts:
+    """The run's state, intent, whether its active proposal has a decision, its latest action attempt state and its
+    stored checkpoint id, read without a lock under the caller's tenant unit (the worker's SELECT grants, AM-20.2). The
+    attempt state is the newest grant's latest row, so a run that ever holds a second grant reads the second's attempt.
+
+    Raises:
+        NotFound: no such run for the unit's tenant.
+    """
+    cur = await conn.execute(
+        "SELECT r.state, r.intent, r.checkpoint_id,"
+````
+with:
+````python
+    revision: int = 1  # T21 (Plan R round 1, I1): the run's current revision, which a graph run's thread must match
+
+
+class RevisionMoved(PersistenceError):
+    """The run was revised after this graph run began (T21, Plan R round 1, I1): its thread is no longer the run's, so
+    it stores no checkpoint id and routes no further; the handler ends the graph run quietly."""
+
+
+REVISION_OF_RUN = (
+    "(SELECT 1 + count(*) FROM app.events e WHERE e.run_id = r.run_id AND e.type = 'proposal.revised')::integer"
+)
+
+
+async def graph_facts(conn: Conn, run_id: UUID) -> GraphFacts:
+    """The run's state, intent, whether its active proposal has a decision, its latest action attempt state, its
+    stored checkpoint id and its current revision, read without a lock under the caller's tenant unit (the worker's
+    SELECT grants, AM-20.2). The attempt state is the newest grant's latest row, so a run that ever holds a second
+    grant reads the second's attempt.
+
+    Raises:
+        NotFound: no such run for the unit's tenant.
+    """
+    cur = await conn.execute(
+        f"SELECT r.state, r.intent, r.checkpoint_id, {REVISION_OF_RUN} AS revision,"
+````
+
+Edit 109 (`core/src/ops_core/persistence.py`), replace:
+````python
+    )
+
+
+async def store_checkpoint_id(conn: Conn, run_id: UUID, checkpoint_id: str) -> None:
+    """`runs.checkpoint_id` := the checkpoint LangGraph confirmed (SA:211), under the worker's column grant (AM-20.2).
+    The caller's unit sets the tenant and opens with `fenced`, so only the current lease holder can move it.
+
+    Raises:
+        NotFound: no such run for the unit's tenant.
+    """
+    cur = await conn.execute("UPDATE app.runs SET checkpoint_id = %s WHERE run_id = %s", (checkpoint_id, run_id))
+    if cur.rowcount != 1:
+        raise NotFound("run not found")
+````
+with:
+````python
+        int(row["revision"]),
+    )
+
+
+async def store_checkpoint_id(conn: Conn, run_id: UUID, checkpoint_id: str, *, revision: int) -> None:
+    """`runs.checkpoint_id` := the checkpoint LangGraph confirmed (SA:211), under the worker's column grant (AM-20.2).
+    The caller's unit sets the tenant and opens with `fenced`, so only the current lease holder can move it. The run
+    row is locked first and its revision read after the lock (T21, Plan R round 1, I1): `create_revision` holds no
+    lease, so a graph run of an older revision still holds a valid fence and must not overwrite the cleared column.
+
+    Raises:
+        NotFound: no such run for the unit's tenant.
+        RevisionMoved: the run is at another revision than the graph run's.
+    """
+    cur = await conn.execute("SELECT 1 FROM app.runs WHERE run_id = %s FOR UPDATE", (run_id,))
+    if await cur.fetchone() is None:
+        raise NotFound("run not found")
+    current = await run_revision(conn, run_id)  # a statement after the lock: it sees a revision committed before it
+    if current != revision:
+        raise RevisionMoved(f"the run is at revision {current}, this graph run serves {revision}")
+    await conn.execute("UPDATE app.runs SET checkpoint_id = %s WHERE run_id = %s", (checkpoint_id, run_id))
 ````
 
 Create `sweeper/src/ops_sweeper/expiry.py`:
@@ -4806,7 +5105,7 @@ async def expire(conn: persistence.Conn, *, tenants: Sequence[UUID] | None = Non
     return expired
 ````
 
-Edit 107 (`sweeper/src/ops_sweeper/main.py`), replace:
+Edit 110 (`sweeper/src/ops_sweeper/main.py`), replace:
 ````python
 `scripts/skeleton.py up` waits for the first sync.
 TODO(T21): proposal expiry.
@@ -4818,7 +5117,7 @@ with:
 wake-up sweep.
 ````
 
-Edit 108 (`sweeper/src/ops_sweeper/main.py`), replace:
+Edit 111 (`sweeper/src/ops_sweeper/main.py`), replace:
 ````python
 from ops_sweeper import leases, outbox, sync, wakeups
 ````
@@ -4827,7 +5126,7 @@ with:
 from ops_sweeper import expiry, leases, outbox, sync, wakeups
 ````
 
-Edit 109 (`sweeper/src/ops_sweeper/main.py`), replace:
+Edit 112 (`sweeper/src/ops_sweeper/main.py`), replace:
 ````python
     await sweep_wakeups(deps)  # first: notification delivery must never starve run progress (round 1, I1)
     await deliver_outbox(deps)
@@ -4852,7 +5151,7 @@ async def expire_proposals(deps: Deps) -> None:
 
 ````
 
-Edit 110 (`sweeper/src/ops_sweeper/main.py`), replace:
+Edit 113 (`sweeper/src/ops_sweeper/main.py`), replace:
 ````python
         chosen_outbox = settings.outbox()  # refused before the loop starts, like every other setting
 ````
@@ -4862,7 +5161,7 @@ with:
         chosen_outbox = settings.outbox()  # refused before the loop starts, like every other setting
 ````
 
-Edit 111 (`sweeper/src/ops_sweeper/tenants.py`), replace:
+Edit 114 (`sweeper/src/ops_sweeper/tenants.py`), replace:
 ````python
 transaction per tenant with that tenant set. The outbox delivery and the wake-up sweep use it now; T21's proposal
 expiry and T22's deadline escalation will.
@@ -4873,13 +5172,20 @@ transaction per tenant with that tenant set. The outbox delivery, the wake-up sw
 use it now; T22's deadline escalation will.
 ````
 
-Edit 112 (`sweeper/src/ops_sweeper/wakeups.py`), replace:
+Edit 115 (`sweeper/src/ops_sweeper/wakeups.py`), replace:
 ````python
 That predicate also matches a run the execute handler left APPROVED on purpose: a grant refusal it takes as final
 (an inactive membership, a missing approval) finishes the job without moving the run, so the sweep re-dispatches it,
 at most until the job has been claimed `max_attempts` times. No grant can follow a refusal that stays a refusal; a
 refusal that clears within those minutes (a reviewer reactivated by the membership sync) is executed. Moving such a
 run out of APPROVED (BLOCKED_REVIEW, AM-10) is T21's (debt list; round 1, I3).
+
+It is the sweeper's routine with direct grants, separate from the lease reclaim (erratum 63, extending erratum 49):
+the reclaim hands back claimed jobs of dead leases, this reopens done jobs of stuck runs. It reads runs per tenant
+(SA:520: `runs` has no sweeper policy) without a lock and re-arms each job in a unit of its own. The re-arm's UPDATE
+repeats every condition of the scan on the row it takes, with the clock read there (round 1, I7): the job is still
+done, done longer ago than the grace on `app.current_time()`, below the cap, still the newest job of its type for the
+run, and the run still waits in the job's state without a cancellation. The purge deletes finished maintenance rows
 ````
 with:
 ````python
@@ -4888,9 +5194,55 @@ to BLOCKED_REVIEW in the gate's own transaction (AM-10 SA:140; Plan R rulings 9 
 a lost decision wake-up (R023) and nothing it must not: a deferred grant re-queues its own job, and only the binding
 refusals that leave a run APPROVED (a missing approval, a hash mismatch) are re-dispatched, at most until the job has
 been claimed `max_attempts` times (erratum 63, resolved this way provisionally).
+
+It is the sweeper's routine with direct grants, separate from the lease reclaim (erratum 63, extending erratum 49):
+the reclaim hands back claimed jobs of dead leases, this reopens done jobs of stuck runs. It reads runs per tenant
+(SA:520: `runs` has no sweeper policy) without a lock and re-arms each job in a unit of its own. The re-arm's UPDATE
+repeats every condition of the scan on the row it takes, with the clock read there (round 1, I7): the job is still
+done, done longer ago than the grace on `app.current_time()`, below the cap, still the newest job of its type for the
+run (for an investigate job: the job of the run's current revision, Plan R round 1, M1), and the run still waits in
+the job's state without a cancellation. The purge deletes finished maintenance rows
 ````
 
-Edit 113 (`tests/plan_f/test_grant_deferred.py`), replace:
+Edit 116 (`sweeper/src/ops_sweeper/wakeups.py`), replace:
+````python
+# Each run's newest job of its state's type; an unfinished one sorts first (NULLS FIRST), so a run whose wake-up is
+````
+with:
+````python
+# T21 (Plan R round 1, M1): a run's investigate wake-up is the job whose key names its current revision
+# (`run_id:N`, SA:455). An older revision's job, which may finish after the current one, ends without a graph run, so
+# re-arming it would leave the run QUEUED until the cap.
+CURRENT_KEY = (
+    "r.run_id::text || ':' || (1 + (SELECT count(*) FROM app.events e WHERE e.run_id = r.run_id"
+    " AND e.type = 'proposal.revised'))::text"
+)
+# Each run's newest job of its state's type; an unfinished one sorts first (NULLS FIRST), so a run whose wake-up is
+````
+
+Edit 117 (`sweeper/src/ops_sweeper/wakeups.py`), replace:
+````python
+    " ORDER BY jj.done_at DESC NULLS FIRST, jj.created_at DESC LIMIT 1) j ON true"
+````
+with:
+````python
+    f" AND (jj.type <> 'investigate' OR jj.dedup_key = {CURRENT_KEY})"
+    " ORDER BY jj.done_at DESC NULLS FIRST, jj.created_at DESC LIMIT 1) j ON true"
+````
+
+Edit 118 (`sweeper/src/ops_sweeper/wakeups.py`), replace:
+````python
+    " AND (o.done_at IS NULL OR o.done_at > j.done_at))"
+    " AND EXISTS (SELECT 1 FROM app.runs r WHERE r.run_id = j.run_id AND r.state = %s AND NOT r.cancel_requested)"
+````
+with:
+````python
+    " AND j.type <> 'investigate' AND (o.done_at IS NULL OR o.done_at > j.done_at))"
+    " AND EXISTS (SELECT 1 FROM app.runs r WHERE r.run_id = j.run_id AND r.state = %s AND NOT r.cancel_requested"
+    f" AND (j.type <> 'investigate' OR j.dedup_key = {CURRENT_KEY}))"
+````
+
+Edit 119 (`tests/plan_f/test_grant_deferred.py`), replace:
 ````python
 from ops_worker.handlers import EXECUTE_RETRY_SECONDS, is_deferred
 ````
@@ -4900,7 +5252,7 @@ from ops_worker.graph import nodes
 from ops_worker.handlers import EXECUTE_RETRY_SECONDS, is_deferred
 ````
 
-Edit 114 (`tests/plan_f/test_grant_deferred.py`), replace:
+Edit 120 (`tests/plan_f/test_grant_deferred.py`), replace:
 ````python
         return {"run_id": rid, "state": RunState.APPROVED.value, "active_proposal_id": uuid4()}
 ````
@@ -4918,7 +5270,16 @@ with:
         return None  # T21: the status read again before the grant is not this test's subject
 ````
 
-Edit 115 (`tests/plan_f/test_grant_deferred.py`), replace:
+Edit 121 (`tests/plan_f/test_grant_deferred.py`), replace:
+````python
+    async def store_checkpoint_id(_conn: Any, _rid: UUID, _checkpoint_id: str) -> None:
+````
+with:
+````python
+    async def store_checkpoint_id(_conn: Any, _rid: UUID, _checkpoint_id: str, *, revision: int) -> None:
+````
+
+Edit 122 (`tests/plan_f/test_grant_deferred.py`), replace:
 ````python
     }.items():
         monkeypatch.setattr(persistence, name, fn)
@@ -4932,7 +5293,7 @@ with:
     monkeypatch.setattr(nodes, "observe_asset", observe_nothing)
 ````
 
-Edit 116 (`tests/plan_h/test_reclaim.py`), replace:
+Edit 123 (`tests/plan_h/test_reclaim.py`), replace:
 ````python
     monkeypatch.setattr(main, "run_sync", failed_sync)
 ````
@@ -4945,7 +5306,7 @@ with:
     monkeypatch.setattr(main, "expire_proposals", expire_proposals)  # T21: between the reclaim and the wake-ups
 ````
 
-Edit 117 (`tests/plan_h/test_reclaim.py`), replace:
+Edit 124 (`tests/plan_h/test_reclaim.py`), replace:
 ````python
     assert calls == ["sync", "purge", "reclaim", "wakeups", "outbox"]
 ````
@@ -4954,7 +5315,7 @@ with:
     assert calls == ["sync", "purge", "reclaim", "expiry", "wakeups", "outbox"]
 ````
 
-Edit 118 (`tests/plan_h/test_worker_units.py`), replace:
+Edit 125 (`tests/plan_h/test_worker_units.py`), replace:
 ````python
 JOB = {"id": uuid4(), "run_id": RUN_ID, "tenant_id": TENANT, "type": "investigate"}
 ````
@@ -4963,7 +5324,7 @@ with:
 JOB = {"id": uuid4(), "run_id": RUN_ID, "tenant_id": TENANT, "type": "investigate", "dedup_key": f"{RUN_ID}:1"}
 ````
 
-Edit 119 (`tests/plan_h/test_worker_units.py`), replace:
+Edit 126 (`tests/plan_h/test_worker_units.py`), replace:
 ````python
     "store_checkpoint_id",
 ````
@@ -4974,8 +5335,10 @@ with:
     "clear_checkpoint_id",
 ````
 
-Edit 120 (`tests/plan_h/test_worker_units.py`), replace:
+Edit 127 (`tests/plan_h/test_worker_units.py`), replace:
 ````python
+        return persistence.GraphFacts(state, Intent(current["intent"]), decided, attempt, current.get("checkpoint_id"))
+
     async def insert_run_manifest(_conn: Any, **_: Any) -> None:
         log.entries.append("insert")  # as the real one's INSERT is logged by FakeConn
         current["manifest"] = True
@@ -4991,6 +5354,10 @@ Edit 120 (`tests/plan_h/test_worker_units.py`), replace:
 ````
 with:
 ````python
+        return persistence.GraphFacts(
+            state, Intent(current["intent"]), decided, attempt, current.get("checkpoint_id"), current.get("revision", 1)
+        )
+
     async def run_manifest_exists(_conn: Any, _run_id: Any, revision: int) -> bool:
         log.entries.append("run_manifest_exists")
         return current.get("manifest") == revision  # T21: one manifest per revision
@@ -4999,8 +5366,10 @@ with:
         log.entries.append("insert")
         current["manifest"] = revision
 
-    async def store_checkpoint_id(_conn: Any, _run_id: Any, checkpoint_id: str) -> None:
+    async def store_checkpoint_id(_conn: Any, _run_id: Any, checkpoint_id: str, *, revision: int) -> None:
         log.entries.append("store_checkpoint_id")
+        if revision != current.get("revision", 1):  # T21 (Plan R round 1, I1): the definer-side rule, on the fake
+            raise persistence.RevisionMoved(f"revision {revision}")
         current["checkpoint_id"] = checkpoint_id
 
     async def clear_checkpoint_id(_conn: Any, _run_id: Any) -> None:
@@ -5024,7 +5393,7 @@ with:
 
 ````
 
-Edit 121 (`tests/plan_h/test_worker_units.py`), replace:
+Edit 128 (`tests/plan_h/test_worker_units.py`), replace:
 ````python
         "insert_run_manifest": insert_run_manifest,
 ````
@@ -5039,7 +5408,7 @@ with:
         "insert_run_manifest": insert_revision_manifest,
 ````
 
-Edit 122 (`tests/plan_h/test_worker_units.py`), replace:
+Edit 129 (`tests/plan_h/test_worker_units.py`), replace:
 ````python
             assert next(entry for entry in unit if entry != "set_tenant") == "fenced", unit  # set_config is no lock
 ````
@@ -5050,7 +5419,7 @@ with:
     assert ["set_tenant", "lock_asset", "fenced", "run_row"] == next(u for u in units if "freeze_proposal" in u)[:4]
 ````
 
-Edit 123 (`tests/plan_h/test_worker_units.py`), replace:
+Edit 130 (`tests/plan_h/test_worker_units.py`), replace:
 ````python
     assert log.units()[0] == ["set_tenant", "fenced", "run_row", "transition_run"]
 ````
@@ -5060,7 +5429,16 @@ with:
     assert first[:3] == ["set_tenant", "fenced", "run_row"] and first[-1] == "transition_run"
 ````
 
-Edit 124 (`tests/plan_j/test_worker_azp.py`), replace:
+Edit 131 (`tests/plan_i/test_wakeups.py`), replace:
+````python
+    assert wakeups.WAKEUPS == (("QUEUED", "investigate"), ("APPROVED", "execute"))  # ruling 7: T20, T21, T22 add
+````
+with:
+````python
+    assert wakeups.WAKEUPS == (("QUEUED", "investigate"), ("APPROVED", "execute"))  # ruling 7; T22 adds the rest
+````
+
+Edit 132 (`tests/plan_j/test_worker_azp.py`), replace:
 ````python
     assert [m["azp"] for m in minted] == ["ops-worker-renamed"]
 ````
@@ -5071,7 +5449,7 @@ with:
     assert [(m["azp"], m["server"].value) for m in minted] == [("ops-worker-renamed", s) for s in servers]
 ````
 
-Edit 125 (`tests/plan_p/test_investigate_drafting.py`), replace:
+Edit 133 (`tests/plan_p/test_investigate_drafting.py`), replace:
 ````python
 fake draft or freezes anything; an outage or an exhausted repair that is not a templated FAILED; an abstention that
 ````
@@ -5081,7 +5459,7 @@ fake draft or freezes anything; an outage or an exhausted repair that does not l
 a manual proposal (T21, erratum 134: before T21 a templated FAILED); an abstention that
 ````
 
-Edit 126 (`tests/plan_p/test_investigate_drafting.py`), replace:
+Edit 134 (`tests/plan_p/test_investigate_drafting.py`), replace:
 ````python
     async def insert_run_manifest(_conn: Any, *, tenant_id: Any, manifest: Any) -> None:
         inserted.append(manifest)
@@ -5094,7 +5472,7 @@ with:
         log.entries.append("insert_run_manifest")
 ````
 
-Edit 127 (`tests/plan_p/test_investigate_drafting.py`), replace:
+Edit 135 (`tests/plan_p/test_investigate_drafting.py`), replace:
 ````python
     assert drafting == ["set_tenant", "fenced", "transition_run", "run_manifest_exists", "insert_run_manifest"]
 ````
@@ -5110,7 +5488,7 @@ with:
     ]
 ````
 
-Edit 128 (`tests/plan_p/test_investigate_drafting.py`), replace:
+Edit 136 (`tests/plan_p/test_investigate_drafting.py`), replace:
 ````python
     ("answers", "message"),
     [
@@ -5149,7 +5527,7 @@ def test_a_failing_real_route_leaves_the_run_for_a_manual_proposal(
     assert log.entries.count("release_model_permit") == 1
 ````
 
-Edit 129 (`tests/plan_p/test_investigate_drafting.py`), replace:
+Edit 137 (`tests/plan_p/test_investigate_drafting.py`), replace:
 ````python
     async def insert_run_manifest(_conn: Any, *, tenant_id: Any, manifest: Any) -> None:
 ````
@@ -5158,7 +5536,7 @@ with:
     async def insert_run_manifest(_conn: Any, *, tenant_id: Any, manifest: Any, revision: int) -> None:
 ````
 
-Edit 130 (`tests/plan_p/test_investigate_drafting.py`), replace:
+Edit 138 (`tests/plan_p/test_investigate_drafting.py`), replace:
 ````python
     assert ends(seen) == ("FAILED", handlers.MODEL_UNAVAILABLE)
 ````
@@ -5167,7 +5545,7 @@ with:
     assert ends(seen) == ("DRAFTING", None)  # T21: the run waits for a manual proposal (erratum 134)
 ````
 
-Edit 131 (`tests/plan_q/test_graph_flow.py`), replace:
+Edit 139 (`tests/plan_q/test_graph_flow.py`), replace:
 ````python
         return self.docs.pop(0)
 ````
@@ -5178,7 +5556,7 @@ with:
         return self.docs.pop(0)
 ````
 
-Edit 132 (`worker/src/ops_worker/graph/build.py`), replace:
+Edit 140 (`worker/src/ops_worker/graph/build.py`), replace:
 ````python
     """One LangGraph thread per run and revision (Plan Q ruling 13): a revision starts a thread of its own (T21)."""
 ````
@@ -5188,7 +5566,7 @@ with:
     Plan R ruling 1)."""
 ````
 
-Edit 133 (`worker/src/ops_worker/graph/build.py`), replace:
+Edit 141 (`worker/src/ops_worker/graph/build.py`), replace:
 ````python
 async def run_graph(ctx: Context, graph_input: GraphInput, *, checkpoint_id: str | None, revision: int = 1) -> None:
 ````
@@ -5197,7 +5575,16 @@ with:
 async def run_graph(ctx: Context, graph_input: GraphInput, *, checkpoint_id: str | None, revision: int) -> None:
 ````
 
-Edit 134 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 142 (`worker/src/ops_worker/graph/build.py`), replace:
+````python
+            await persistence.store_checkpoint_id(conn, ctx.lease.run_id, current)
+````
+with:
+````python
+            await persistence.store_checkpoint_id(conn, ctx.lease.run_id, current, revision=ctx.revision)
+````
+
+Edit 143 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
 from datetime import UTC, datetime
 ````
@@ -5206,7 +5593,7 @@ with:
 from datetime import datetime
 ````
 
-Edit 135 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 144 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
 WORKFLOW_FAILED: Final = "the workflow failed"
 ````
@@ -5218,13 +5605,22 @@ MANUAL_PATH: Final = "The model is unavailable; a requester or reviewer may subm
 OBSERVED: Final = frozenset({"normal", "warning"})  # an `unavailable` status observes nothing (evidence.OBSERVED)
 ````
 
-Edit 136 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 145 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
 async def unit(ctx: Context, *, fence: bool = True) -> AsyncIterator[persistence.Conn]:
     """One transaction on the loop connection under the job's tenant; a writing unit opens with the fence (SA:176)."""
     conn = ctx.deps.conn
     async with conn.transaction():
         await persistence.set_tenant(conn, ctx.job["tenant_id"])  # the worker's reads and inserts are RLS-scoped
+        if fence:
+            await persistence.fenced(conn, ctx.lease)  # run_lease before runs (SA:188)
+        yield conn
+
+
+async def facts(ctx: Context, run_id: UUID) -> dict[str, Any]:
+    """The router's authoritative dimensions, reread (SA:215)."""
+    async with unit(ctx, fence=False) as conn:
+        found = await persistence.graph_facts(conn, run_id)
 ````
 with:
 ````python
@@ -5236,9 +5632,28 @@ async def unit(ctx: Context, *, fence: bool = True, asset: str | None = None) ->
         await persistence.set_tenant(conn, ctx.job["tenant_id"])  # the worker's reads and inserts are RLS-scoped
         if asset is not None:
             await persistence.lock_asset(conn, ctx.job["tenant_id"], asset)
+        if fence:
+            await persistence.fenced(conn, ctx.lease)  # run_lease before runs (SA:188)
+        yield conn
+
+
+async def facts(ctx: Context, run_id: UUID) -> dict[str, Any]:
+    """The router's authoritative dimensions, reread (SA:215). A run revised since this graph run began belongs to
+    another thread: the graph run ends here (T21, Plan R round 1, I1), so an old job that rereads QUEUED never retrieves
+    or freezes on the old thread.
+
+    Raises:
+        RevisionMoved: the run's current revision is not the one this graph run serves.
+    """
+    async with unit(ctx, fence=False) as conn:
+        found = await persistence.graph_facts(conn, run_id)
+    if found.revision != ctx.revision:
+        raise persistence.RevisionMoved(
+            f"the run is at revision {found.revision}, this graph run serves {ctx.revision}"
+        )
 ````
 
-Edit 137 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 146 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
     if state["draft_kind"] != DraftKind.NONE.value and _held(ctx, state) is None:
 ````
@@ -5249,7 +5664,7 @@ with:
     if unheld and _held(ctx, state) is None:
 ````
 
-Edit 138 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 147 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
     if current is RunState.RETRIEVING:
         async with unit(ctx) as conn:
@@ -5278,7 +5693,7 @@ with:
         )
 ````
 
-Edit 139 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 148 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
         log.warning("job %s: %s", ctx.job["id"], exc)
         return await fail(ctx, RunState.DRAFTING, RunState.FAILED, MODEL_UNAVAILABLE)
@@ -5299,7 +5714,7 @@ with:
         return await manual_path(ctx, _run_id(state))
 ````
 
-Edit 140 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 149 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
 def _held(ctx: Context, state: RunGraphState) -> HeldDraft | None:
 ````
@@ -5322,7 +5737,7 @@ async def manual_path(ctx: Context, run_id: UUID) -> dict[str, Any]:
 def _held(ctx: Context, state: RunGraphState) -> HeldDraft | None:
 ````
 
-Edit 141 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 150 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
         async with unit(ctx) as conn:
             run = dict(await persistence.run_row(conn, _run_id(state), lock=True))
@@ -5335,7 +5750,7 @@ with:
             run = dict(await persistence.run_row(conn, _run_id(state), lock=True))
 ````
 
-Edit 142 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 151 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
                 revision=1,  # TODO(T21): the revision a re-entered run freezes (Plan Q ruling 13)
                 asset_id=run["asset_id"],
@@ -5357,7 +5772,7 @@ with:
                 now=(await persistence.current_time(conn)).replace(microsecond=0),
 ````
 
-Edit 143 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 152 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
 def is_deferred(doc: dict[str, Any]) -> bool:
 ````
@@ -5379,7 +5794,7 @@ async def observe_asset(ctx: Context, handle: str, asset_id: str) -> datetime | 
 def is_deferred(doc: dict[str, Any]) -> bool:
 ````
 
-Edit 144 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 153 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
         handle = await persistence.mint_handle(
             conn, run_id=run["run_id"], job_id=job["id"], server=Server.WRITE, azp=deps.workload_azp, fence=lease.fence
@@ -5399,7 +5814,7 @@ with:
             conn, run_id=run["run_id"], job_id=job["id"], server=Server.WRITE, azp=deps.workload_azp, fence=lease.fence
 ````
 
-Edit 145 (`worker/src/ops_worker/graph/nodes.py`), replace:
+Edit 154 (`worker/src/ops_worker/graph/nodes.py`), replace:
 ````python
     log.info("execute job %s: %s %s", job["id"], doc.get("status"), data.get("status"))
 ````
@@ -5411,7 +5826,7 @@ with:
     log.info("execute job %s: %s %s", job["id"], doc.get("status"), data.get("status"))
 ````
 
-Edit 146 (`worker/src/ops_worker/graph/state.py`), replace:
+Edit 155 (`worker/src/ops_worker/graph/state.py`), replace:
 ````python
     the job and the lease it runs under, the hold, and `trace`, the node names in the order they ran (R038's per-run
     node log, which the tests read)."""
@@ -5431,7 +5846,7 @@ with:
     revision: int = 1  # T21: the run's revision this graph run serves (its thread, its manifest, its proposal)
 ````
 
-Edit 147 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 156 (`worker/src/ops_worker/handlers.py`), replace:
 ````python
 node can record. A lost lease raises LeaseLost to the caller, which hands the job back (`abandon`).
 ````
@@ -5447,7 +5862,7 @@ workflow version (ruling 18). A run left in DRAFTING by the manual path (erratum
 resumes or fails it.
 ````
 
-Edit 148 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 157 (`worker/src/ops_worker/handlers.py`), replace:
 ````python
 from ops_worker.graph import build, nodes
 ````
@@ -5457,7 +5872,7 @@ from ops_worker.drafting import WORKFLOW_VERSION
 from ops_worker.graph import build, nodes
 ````
 
-Edit 149 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 158 (`worker/src/ops_worker/handlers.py`), replace:
 ````python
     deps: Deps, job: dict[str, Any], lease: Lease, graph_input: build.GraphInput, checkpoint_id: str | None
 ) -> None:
@@ -5467,6 +5882,8 @@ Edit 149 (`worker/src/ops_worker/handlers.py`), replace:
     ctx = Context(deps, job, lease)
     try:
         await build.run_graph(ctx, graph_input, checkpoint_id=checkpoint_id)
+    except (LeaseLost, Requeue):
+        raise
 ````
 with:
 ````python
@@ -5484,9 +5901,16 @@ with:
     ctx = Context(deps, job, lease, revision)
     try:
         await build.run_graph(ctx, graph_input, checkpoint_id=checkpoint_id, revision=revision)
+    except (LeaseLost, Requeue):
+        raise
+    except persistence.RevisionMoved as moved:
+        # T21 (Plan R round 1, I1): a revision committed while this graph run was working. Nothing more is written for
+        # the old thread; the job ends and its final unit releases the lease, and the revision's own job runs its graph.
+        log.info("job %s: run %s was revised; this graph run ends (%s)", job["id"], lease.run_id, moved)
+        return
 ````
 
-Edit 150 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 159 (`worker/src/ops_worker/handlers.py`), replace:
 ````python
 
 
@@ -5511,6 +5935,17 @@ async def _waits_for_person(conn: persistence.Conn, run: dict[str, Any]) -> bool
     return bool(explained) and explained[-1][1].get("message") == nodes.MANUAL_PATH
 
 
+async def _older_thread(deps: Deps, lease: Lease, stored: str | None, revision: int) -> bool:
+    """True when `stored` is a checkpoint of an earlier revision's thread and not of this one (T21, Plan R round 1,
+    I1): an older graph run stored it before the revision moved the run on, so the revision starts its own thread."""
+    if stored is None or await build.known(deps.saver, build.thread_id(lease.run_id, revision), stored):
+        return False
+    for older in range(revision - 1, 0, -1):
+        if await build.known(deps.saver, build.thread_id(lease.run_id, older), stored):
+            return True
+    return False
+
+
 async def _resumable(
     deps: Deps, job: dict[str, Any], lease: Lease, state: RunState, stored: str | None, revision: int
 ) -> bool:
@@ -5518,7 +5953,7 @@ async def _resumable(
     if stored is not None and await build.known(deps.saver, build.thread_id(lease.run_id, revision), stored):
 ````
 
-Edit 151 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 160 (`worker/src/ops_worker/handlers.py`), replace:
 ````python
     """The job's first fenced unit: the run row under its lock, and an unresumable interrupted run failed in it."""
     async with deps.conn.transaction():
@@ -5551,7 +5986,7 @@ with:
         if state in _MID_RUN and run.get("checkpoint_id") is None and not run["manual"]:
 ````
 
-Edit 152 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 161 (`worker/src/ops_worker/handlers.py`), replace:
 ````python
     """Start the run's graph, or resume it from its stored checkpoint after an interruption (SA:214)."""
     await _carry_on(deps, job, lease, await _first_unit(deps, job, lease))
@@ -5592,6 +6027,8 @@ async def _carry_on(deps: Deps, job: dict[str, Any], lease: Lease, run: dict[str
     state, stored, revision = RunState(run["state"]), run.get("checkpoint_id"), int(run["revision"])
     if run.get("manual"):
         log.info("job %s: run %s waits for a manual proposal", job["id"], lease.run_id)
+    elif state is RunState.QUEUED and await _older_thread(deps, lease, stored, revision):
+        await _drive(deps, job, lease, initial(lease.run_id), None, revision)
     elif state in _MID_RUN or (state is RunState.QUEUED and stored is not None):
         # An earlier owner stopped mid-run, or after a clarification moved the run back to QUEUED: resume from the
         # stored checkpoint, never from the thread's newest one (a stray head is ignored, R108). One that is the end of
@@ -5606,7 +6043,7 @@ async def _carry_on(deps: Deps, job: dict[str, Any], lease: Lease, run: dict[str
         await _drive(deps, job, lease, initial(lease.run_id), None, revision)
 ````
 
-Edit 153 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 162 (`worker/src/ops_worker/handlers.py`), replace:
 ````python
     if not await _resumable(deps, job, lease, state, stored):
 ````
@@ -5615,7 +6052,7 @@ with:
     if not await _resumable(deps, job, lease, state, stored, run["revision"]):
 ````
 
-Edit 154 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 163 (`worker/src/ops_worker/handlers.py`), replace:
 ````python
     await _drive(deps, job, lease, Command(resume=str(reply)), stored)
 ````
@@ -5624,7 +6061,7 @@ with:
     await _drive(deps, job, lease, Command(resume=str(reply)), stored, run["revision"])
 ````
 
-Edit 155 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 164 (`worker/src/ops_worker/handlers.py`), replace:
 ````python
     stored = run.get("checkpoint_id")
     thread = build.thread_id(lease.run_id, 1)
@@ -5637,7 +6074,7 @@ with:
     ctx = Context(deps, job, lease, revision)
 ````
 
-Edit 156 (`worker/src/ops_worker/handlers.py`), replace:
+Edit 165 (`worker/src/ops_worker/handlers.py`), replace:
 ````python
         await _drive(deps, job, lease, graph_input, checkpoint)
 ````
@@ -5646,7 +6083,7 @@ with:
         await _drive(deps, job, lease, graph_input, checkpoint, revision)
 ````
 
-Edit 157 (`worker/src/ops_worker/main.py`), replace:
+Edit 166 (`worker/src/ops_worker/main.py`), replace:
 ````python
     # The saver's own connection (SA:559-562): its writes never share a transaction with an application unit.
 ````
@@ -5656,7 +6093,7 @@ with:
     # The saver's own connection (SA:559-562): its writes never share a transaction with an application unit.
 ````
 
-Edit 158 (`worker/src/ops_worker/proposals.py`), replace:
+Edit 167 (`worker/src/ops_worker/proposals.py`), replace:
 ````python
 EXPIRY = timedelta(minutes=15)  # BUILD_SPEC §12 default; enforced by T21
 ````
@@ -5666,12 +6103,12 @@ with:
 EXPIRY = timedelta(minutes=15)
 ````
 
-Run the same pytest line again → `7 passed`.
+Run the same pytest line again → `11 passed`.
 
 - [ ] **Step 3: Gates and commit**
 
 `uv run ruff format` and `uv run ruff check --fix` over the touched files; `git add` the new files; dev `PYTHONUTF8=1 uv
-run python scripts/check.py < /dev/null` → `CHECK: GREEN`, `1791 passed, 227 skipped`; `verify_handoff.py` exit 0.
+run python scripts/check.py < /dev/null` → `CHECK: GREEN`, `1800 passed, 227 skipped`; `verify_handoff.py` exit 0.
 
 ```bash
 git add -A -- . ':!reports'
@@ -5685,9 +6122,10 @@ git commit -m "feat: revisions as graph threads, the manual path, the grant's as
 - Create: `tests/e2e/test_r023_wakeup_live.py`, `tests/e2e/test_review_live.py`
 - Modify: `tests/e2e/conftest.py`, `tests/e2e/test_admission_live.py`, `tests/e2e/test_auth_live.py`,
   `tests/e2e/test_definers_write_path_live.py`, `tests/e2e/test_graph_live.py`, `tests/e2e/test_mcp_write_live.py`,
-  `tests/e2e/test_migration_0011_live.py`, `tests/e2e/test_migration_0012_live.py`,
-  `tests/e2e/test_migration_0013_live.py`, `tests/e2e/test_r105_walking_skeleton.py`, `tests/e2e/test_roles_live.py`,
-  `tests/e2e/test_run_manifest_live.py`, `tests/e2e/test_worker_live.py`
+  `tests/e2e/test_migration_0010_live.py`, `tests/e2e/test_migration_0011_live.py`,
+  `tests/e2e/test_migration_0012_live.py`, `tests/e2e/test_migration_0013_live.py`,
+  `tests/e2e/test_r105_walking_skeleton.py`, `tests/e2e/test_roles_live.py`, `tests/e2e/test_run_manifest_live.py`,
+  `tests/e2e/test_worker_live.py`
 
 **Requirements:** rulings 13, 14, 20; every requirement of T21 live; R086's grant half.
 
@@ -5698,7 +6136,7 @@ grant half (`test_auth_live.py`); the edited modules follow 0016: the decision's
 revision, one asset per frozen run, the execute job's asset re-read, the read path's freshness after a clock
 move, and the 0011-0013 round trips started from 0015.
 
-Edit 159 (`tests/e2e/conftest.py`), replace:
+Edit 168 (`tests/e2e/conftest.py`), replace:
 ````python
 from collections.abc import AsyncIterator, Awaitable, Callable
 ````
@@ -5707,7 +6145,7 @@ with:
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 ````
 
-Edit 160 (`tests/e2e/conftest.py`), replace:
+Edit 169 (`tests/e2e/conftest.py`), replace:
 ````python
     "DELETE FROM app.events WHERE run_id = %s",
 ````
@@ -5717,7 +6155,7 @@ with:
     "DELETE FROM app.events WHERE run_id = %s",
 ````
 
-Edit 161 (`tests/e2e/conftest.py`), replace:
+Edit 170 (`tests/e2e/conftest.py`), replace:
 ````python
 async def purge_run(conn: persistence.Conn, run_id: object) -> None:
 ````
@@ -5741,7 +6179,7 @@ def at_0015(migrated: None) -> Iterator[settings.Postgres]:
 async def purge_run(conn: persistence.Conn, run_id: object) -> None:
 ````
 
-Edit 162 (`tests/e2e/test_admission_live.py`), replace:
+Edit 171 (`tests/e2e/test_admission_live.py`), replace:
 ````python
         first_run = first.json()["run_id"]
 ````
@@ -5749,7 +6187,7 @@ with:
 ````python
 ````
 
-Edit 163 (`tests/e2e/test_admission_live.py`), replace:
+Edit 172 (`tests/e2e/test_admission_live.py`), replace:
 ````python
         # AM-16 in PostgreSQL: create_run refuses a supersede across conversations (OC002) after the message is
         # written, and only start_run's savepoint takes that message back before the 404 is recorded.
@@ -5763,7 +6201,7 @@ with:
         across = {**SAMPLE, "supersedes_run_id": str(uuid4())}
 ````
 
-Edit 164 (`tests/e2e/test_auth_live.py`), replace:
+Edit 173 (`tests/e2e/test_auth_live.py`), replace:
 ````python
 from tests.e2e.kc_browser import API, ORIGIN, Browser, TestAdmin
 ````
@@ -5774,7 +6212,7 @@ from tests.e2e.kc_browser import API, ORIGIN, Browser, TestAdmin
 from tests.e2e.test_review_live import asset, decide, drafting_on, frozen
 ````
 
-Edit 165 (`tests/e2e/test_auth_live.py`), replace:
+Edit 174 (`tests/e2e/test_auth_live.py`), replace:
 ````python
 @pytest.mark.asyncio
 async def test_disabled_user_is_refused_and_synced_within_60s(
@@ -5796,6 +6234,9 @@ async def held_approval(app_conn: persistence.Conn, role_conn) -> UUID:
     skeleton's worker meets it only when the test lets it go (T21, Plan R ruling 14)."""
     api, worker = await role_conn(settings.Role.API), await role_conn(settings.Role.WORKER)
     run = await drafting_on(app_conn, api, worker, asset())
+    # Plan R round 1, M3: the skeleton's worker is up, and the run's pending `run_id:1` investigate job would find a
+    # DRAFTING run with no checkpoint and fail it (INTERRUPTED), so the job is closed first.
+    await app_conn.execute("UPDATE app.jobs SET done_at = now() WHERE run_id = %s AND type = 'investigate'", (run,))
     result, digest = await frozen(app_conn, worker, run)
     await stage_lease(app_conn, run, owner="r086-hold", seconds=600)  # before the decision queues the job
     await decide(api, result.proposal_id, digest)
@@ -5825,7 +6266,7 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
     held = await held_approval(app_conn, role_conn)
 ````
 
-Edit 166 (`tests/e2e/test_auth_live.py`), replace:
+Edit 175 (`tests/e2e/test_auth_live.py`), replace:
 ````python
     finally:
         # Re-enable unconditionally and record the status; an assert here would hide the original failure. The row is
@@ -5862,25 +6303,57 @@ with:
         await purge_run(app_conn, held)
 ````
 
-Edit 167 (`tests/e2e/test_definers_write_path_live.py`), replace:
+Edit 176 (`tests/e2e/test_definers_write_path_live.py`), replace:
 ````python
-    async with as_role(worker):  # the worker's own INSERT on drafts (AM-20.2) under its tenant, then the function
+def payload_for(tenant: UUID, run: UUID, proposal: UUID, now: datetime) -> bytes:
+    """A canonical proposal document with the fields the functions read (the full contract is Plan C's)."""
+````
+with:
+````python
+async def scope_of(app_conn: persistence.Conn, run: UUID) -> dict[str, str]:
+    """The run's asset and interval as a payload spells them: `freeze_proposal` refuses a payload whose asset or
+    interval is not the run's (T21, Plan R round 1, I2)."""
+    cur = await app_conn.execute("SELECT asset_id, start_at, end_at FROM app.runs WHERE run_id = %s", (run,))
+    row = await cur.fetchone()
+    assert row is not None
+    instant = {k: row[k].astimezone(UTC).isoformat().replace("+00:00", "Z") for k in ("start_at", "end_at")}
+    return {"asset_id": row["asset_id"], **instant}
+
+
+def payload_for(tenant: UUID, run: UUID, proposal: UUID, now: datetime, scope: dict[str, str]) -> bytes:
+    """A canonical proposal document with the fields the functions read (the full contract is Plan C's), on the run's
+    asset and interval (`scope_of`)."""
+````
+
+Edit 177 (`tests/e2e/test_definers_write_path_live.py`), replace:
+````python
+            "asset_id": "A17",
+````
+with:
+````python
+            **scope,
+````
+
+Edit 178 (`tests/e2e/test_definers_write_path_live.py`), replace:
+````python
+    body = payload_for(tenant, run, proposal, now)
 ````
 with:
 ````python
     # T21: the grant checks the asset observation's age (R116); this helper's runs are never retrieved, so the
     # superuser records one as retrieval would. Each frozen run also gets an asset of its own: the asset guard
     # (SA:189) blocks a second unresolved action on one asset and interval, and the tests that freeze several runs
-    # (and the R089 stress) are about other things; tests/e2e/test_review_live.py proves the guard.
+    # (and the R089 stress) are about other things; tests/e2e/test_review_live.py proves the guard. The payload names
+    # that asset and the run's interval, as the freeze requires (Plan R round 1, I2).
     await app_conn.execute(
-        "UPDATE app.runs SET asset_observed_at = app.current_time(), asset_id = 'A17-' || left(run_id::text, 8)"
-        " WHERE run_id = %s",
+        "UPDATE app.runs SET asset_observed_at = app.current_time(),"
+        " asset_id = 'A17-' || upper(left(run_id::text, 8)) WHERE run_id = %s",
         (run,),
     )
-    async with as_role(worker):  # the worker's own INSERT on drafts (AM-20.2) under its tenant, then the function
+    body = payload_for(tenant, run, proposal, now, await scope_of(app_conn, run))
 ````
 
-Edit 168 (`tests/e2e/test_definers_write_path_live.py`), replace:
+Edit 179 (`tests/e2e/test_definers_write_path_live.py`), replace:
 ````python
             "SELECT * FROM app.record_decision(%s, %s, %s, %s, 'approve', NULL, NULL)",
             (tenant, proposal, reviewer, digest),
@@ -5891,7 +6364,26 @@ with:
             (tenant, proposal, reviewer, digest),
 ````
 
-Edit 169 (`tests/e2e/test_definers_write_path_live.py`), replace:
+Edit 180 (`tests/e2e/test_definers_write_path_live.py`), replace:
+````python
+        body = payload_for(ALPHA, run, proposal, now)
+````
+with:
+````python
+        scope = await scope_of(app_conn, run)
+        body = payload_for(ALPHA, run, proposal, now, scope)
+````
+
+Edit 181 (`tests/e2e/test_definers_write_path_live.py`), replace:
+````python
+        foreign = payload_for(ALPHA, uuid4(), proposal, now)  # the payload names another run, hashed correctly
+````
+with:
+````python
+        foreign = payload_for(ALPHA, uuid4(), proposal, now, scope)  # the payload names another run, hashed right
+````
+
+Edit 182 (`tests/e2e/test_definers_write_path_live.py`), replace:
 ````python
         call = "SELECT * FROM app.record_decision(%s, %s, %s, %s, 'approve', NULL, NULL)"
 ````
@@ -5900,7 +6392,7 @@ with:
         call = "SELECT * FROM app.record_decision(%s, %s, %s, 1, %s, 'approve', NULL, NULL)"
 ````
 
-Edit 170 (`tests/e2e/test_definers_write_path_live.py`), replace:
+Edit 183 (`tests/e2e/test_definers_write_path_live.py`), replace:
 ````python
                 "SELECT * FROM app.record_decision(%s, %s, %s, %s, 'reject', 'rejected', NULL)",
 ````
@@ -5909,7 +6401,7 @@ with:
                 "SELECT * FROM app.record_decision(%s, %s, %s, 1, %s, 'reject', 'rejected', NULL)",
 ````
 
-Edit 171 (`tests/e2e/test_definers_write_path_live.py`), replace:
+Edit 184 (`tests/e2e/test_definers_write_path_live.py`), replace:
 ````python
                 "SELECT * FROM app.record_decision(%s, %s, %s, %s, 'approve', NULL, NULL)",
 ````
@@ -5918,7 +6410,7 @@ with:
                 "SELECT * FROM app.record_decision(%s, %s, %s, 1, %s, 'approve', NULL, NULL)",
 ````
 
-Edit 172 (`tests/e2e/test_graph_live.py`), replace:
+Edit 185 (`tests/e2e/test_graph_live.py`), replace:
 ````python
         assert [c[1] for c in called.calls] == ["create_incident"]
 ````
@@ -5928,8 +6420,41 @@ with:
         assert [c[1] for c in called.calls] == ["get_asset_status", "create_incident"]
 ````
 
-Edit 173 (`tests/e2e/test_mcp_write_live.py`), replace:
+Edit 186 (`tests/e2e/test_mcp_write_live.py`), replace:
 ````python
+from tests.e2e.test_migrations_and_persistence import new_run
+````
+with:
+````python
+from tests.e2e.test_definers_write_path_live import scope_of
+from tests.e2e.test_migrations_and_persistence import new_run
+````
+
+Edit 187 (`tests/e2e/test_mcp_write_live.py`), replace:
+````python
+    payload = {
+````
+with:
+````python
+    # T21: the run's workflow version (the worker pins it at the first claim, ruling 18) and the asset observation the
+    # grant checks (R116), as a worker's retrieval would have recorded them. The run gets an asset of its own: tests
+    # that approve two runs would otherwise meet the asset guard (SA:189), which tests/e2e/test_review_live.py proves.
+    # The payload names that asset and the run's interval, as the freeze requires (Plan R round 1, I2).
+    await app_conn.execute(
+        "UPDATE app.runs SET workflow_version = 'investigation-v1', asset_observed_at = app.current_time(),"
+        " asset_id = 'A17-' || upper(left(run_id::text, 8)) WHERE run_id = %s",
+        (run,),
+    )
+    payload = {
+````
+
+Edit 188 (`tests/e2e/test_mcp_write_live.py`), replace:
+````python
+        "asset_id": "A17",
+        "start_at": (now - timedelta(hours=24)).isoformat().replace("+00:00", "Z"),
+        "end_at": now.isoformat().replace("+00:00", "Z"),
+        "title": "Live write-path proposal",
+        "summary": "Synthetic.",
         "evidence_refs": ["ALPHA-INCIDENT:v2:review"],
         "source_snapshots": [
             {
@@ -5941,30 +6466,16 @@ Edit 173 (`tests/e2e/test_mcp_write_live.py`), replace:
 ````
 with:
 ````python
+        **await scope_of(app_conn, run),
+        "title": "Live write-path proposal",
+        "summary": "Synthetic.",
         # T21: the grant rechecks every cited section against the tenant's corpus (BS:425), which these write-path
         # tests do not ingest, so this payload cites none; tests/e2e/test_review_live.py cites real ones.
         "evidence_refs": [],
         "source_snapshots": [],
 ````
 
-Edit 174 (`tests/e2e/test_mcp_write_live.py`), replace:
-````python
-    # One worker transaction: set_tenant is transaction-local, and on autocommit the INSERT would meet RLS.
-````
-with:
-````python
-    # T21: the run's workflow version (the worker pins it at the first claim, ruling 18) and the asset observation the
-    # grant checks (R116), as a worker's retrieval would have recorded them. The run gets an asset of its own: tests
-    # that approve two runs would otherwise meet the asset guard (SA:189), which tests/e2e/test_review_live.py proves.
-    await app_conn.execute(
-        "UPDATE app.runs SET workflow_version = %s, asset_observed_at = app.current_time(),"
-        " asset_id = 'A17-' || left(run_id::text, 8) WHERE run_id = %s",
-        (payload["workflow_version"], run),
-    )
-    # One worker transaction: set_tenant is transaction-local, and on autocommit the INSERT would meet RLS.
-````
-
-Edit 175 (`tests/e2e/test_mcp_write_live.py`), replace:
+Edit 189 (`tests/e2e/test_mcp_write_live.py`), replace:
 ````python
             api, tenant_id=tenant, proposal_id=proposal, reviewer=SAM, expected_payload_sha256=sha, decision="approve"
 ````
@@ -5979,7 +6490,17 @@ with:
             decision="approve",
 ````
 
-Edit 176 (`tests/e2e/test_migration_0011_live.py`), replace:
+Edit 190 (`tests/e2e/test_migration_0010_live.py`), replace:
+````python
+    """What the API's cancel does to the run row (its one column cell; the cancel endpoint itself is T21's)."""
+````
+with:
+````python
+    """The cancel flag set the way `request_cancel` sets it after a grant (the api's column cells; the route and its
+    definer are T21's, `tests/e2e/test_review_live.py`)."""
+````
+
+Edit 191 (`tests/e2e/test_migration_0011_live.py`), replace:
 ````python
 from ops_core.settings import Profile, Role
 ````
@@ -5988,7 +6509,7 @@ with:
 from ops_core.settings import Role
 ````
 
-Edit 177 (`tests/e2e/test_migration_0011_live.py`), replace:
+Edit 192 (`tests/e2e/test_migration_0011_live.py`), replace:
 ````python
             worker = await role_conn(Role.WORKER)
 ````
@@ -6000,7 +6521,18 @@ with:
             worker = await role_conn(Role.WORKER)
 ````
 
-Edit 178 (`tests/e2e/test_migration_0011_live.py`), replace:
+Edit 193 (`tests/e2e/test_migration_0011_live.py`), replace:
+````python
+            await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
+````
+with:
+````python
+            await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
+            # Plan R round 1, M8: the rows stamped at the moved clock are stamped again, so none stays in the future.
+            await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
+````
+
+Edit 194 (`tests/e2e/test_migration_0011_live.py`), replace:
 ````python
     app_conn: persistence.Conn, role_conn: RoleConn
 ) -> None:
@@ -6013,7 +6545,7 @@ with:
     from scripts.skeleton import downgrade, upgrade
 ````
 
-Edit 179 (`tests/e2e/test_migration_0011_live.py`), replace:
+Edit 195 (`tests/e2e/test_migration_0011_live.py`), replace:
 ````python
         assert migrate(Profile.TEST) == 0  # every later test needs the head
 ````
@@ -6022,7 +6554,7 @@ with:
         upgrade("app", at_0015, "0015_checkpoints")  # the fixture migrates the head afterwards (T21)
 ````
 
-Edit 180 (`tests/e2e/test_migration_0012_live.py`), replace:
+Edit 196 (`tests/e2e/test_migration_0012_live.py`), replace:
 ````python
 from ops_core.settings import Profile, Role
 ````
@@ -6031,7 +6563,7 @@ with:
 from ops_core.settings import Role
 ````
 
-Edit 181 (`tests/e2e/test_migration_0012_live.py`), replace:
+Edit 197 (`tests/e2e/test_migration_0012_live.py`), replace:
 ````python
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '1 day'")
 ````
@@ -6043,7 +6575,22 @@ with:
             await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
 ````
 
-Edit 182 (`tests/e2e/test_migration_0012_live.py`), replace:
+Edit 198 (`tests/e2e/test_migration_0012_live.py`), replace:
+````python
+            await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
+    finally:
+        await purge_run(app_conn, run)
+````
+with:
+````python
+            await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
+            # Plan R round 1, M8: the rows stamped at the moved clock are stamped again, so none stays in the future.
+            await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
+    finally:
+        await purge_run(app_conn, run)
+````
+
+Edit 199 (`tests/e2e/test_migration_0012_live.py`), replace:
 ````python
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '2 days'")
 ````
@@ -6055,7 +6602,20 @@ with:
             await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
 ````
 
-Edit 183 (`tests/e2e/test_migration_0012_live.py`), replace:
+Edit 200 (`tests/e2e/test_migration_0012_live.py`), replace:
+````python
+    finally:
+        await cleanup(app_conn, [run], [tenant])
+````
+with:
+````python
+            # Plan R round 1, M8: the rows stamped at the moved clock are stamped again, so none stays in the future.
+            await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
+    finally:
+        await cleanup(app_conn, [run], [tenant])
+````
+
+Edit 201 (`tests/e2e/test_migration_0012_live.py`), replace:
 ````python
 async def test_the_round_trip_restores_0011(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
     from scripts.skeleton import downgrade, migrate
@@ -6068,7 +6628,7 @@ async def test_the_round_trip_restores_0011(
     from scripts.skeleton import downgrade, upgrade
 ````
 
-Edit 184 (`tests/e2e/test_migration_0012_live.py`), replace:
+Edit 202 (`tests/e2e/test_migration_0012_live.py`), replace:
 ````python
         assert migrate(Profile.TEST) == 0  # every later test needs the head
 ````
@@ -6077,7 +6637,7 @@ with:
         upgrade("app", at_0015, "0015_checkpoints")  # the fixture migrates the head afterwards (T21)
 ````
 
-Edit 185 (`tests/e2e/test_migration_0013_live.py`), replace:
+Edit 203 (`tests/e2e/test_migration_0013_live.py`), replace:
 ````python
 from ops_core.settings import Profile, Role
 ````
@@ -6086,7 +6646,7 @@ with:
 from ops_core.settings import Role
 ````
 
-Edit 186 (`tests/e2e/test_migration_0013_live.py`), replace:
+Edit 204 (`tests/e2e/test_migration_0013_live.py`), replace:
 ````python
 async def test_the_round_trip_restores_0012(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
     from scripts.skeleton import downgrade, migrate
@@ -6099,7 +6659,7 @@ async def test_the_round_trip_restores_0012(
     from scripts.skeleton import downgrade, upgrade
 ````
 
-Edit 187 (`tests/e2e/test_migration_0013_live.py`), replace:
+Edit 205 (`tests/e2e/test_migration_0013_live.py`), replace:
 ````python
         assert migrate(Profile.TEST) == 0  # every later test needs the head (the `embedded` fixture re-embeds)
 ````
@@ -6272,7 +6832,7 @@ async def test_r023_a_lost_execute_wakeup_resumes_exactly_the_accepted_event(
                 await purge_conversation(app_conn, found["conversation_id"])
 ````
 
-Edit 188 (`tests/e2e/test_r105_walking_skeleton.py`), replace:
+Edit 206 (`tests/e2e/test_r105_walking_skeleton.py`), replace:
 ````python
     ("action.granted", "application"),
 ````
@@ -6283,7 +6843,7 @@ with:
     ("action.granted", "application"),
 ````
 
-Edit 189 (`tests/e2e/test_r105_walking_skeleton.py`), replace:
+Edit 207 (`tests/e2e/test_r105_walking_skeleton.py`), replace:
 ````python
         assert stale.status_code == 409 and stale.json()["code"] == "VERSION_CONFLICT"
 ````
@@ -6303,7 +6863,11 @@ authority, cited sources, the asset observation or the asset guard (R045, R116, 
 refusal that must commit nothing (HASH_MISMATCH, R100); a revision after a grant (R090) or into an occupied slot
 (R120); a cancel that undoes a grant (R046); a manual proposal outside the freeze rules or citing another tenant's
 section (R057, note 4); feedback that changes anything but its own row and event (R113); a read that trusts a
-membership the sync has not stamped (ruling 14); and a downgrade that does not restore revision 0015.
+membership the sync has not stamped (ruling 14); and a downgrade that does not restore revision 0015. Since Plan R's
+round 1 also: a freeze of a payload on another asset or interval (I2); a grant that misses the guard across
+conversations, the late-evidence set or the expiry, or blocks a touching interval or an abandoned action (I3); a manual
+proposal that cites a real section of another tenant or names another asset (I4); and the refusals of the API's doors
+(AUTHOR_LIMIT, supersession of another asset, a cancel from BLOCKED_REVIEW or at a stale version, the search) (I5).
 
 Each run is put on an asset of its own (`asset()`), so the asset guard meets only what the test staged. Rows are
 written by role connections, so every test purges its runs and memberships in `finally`.
@@ -6318,18 +6882,25 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from ops_api.idempotency import Idem, Scope, fingerprint
-from ops_api.store import DbStore
+from ops_api.store import DbStore, Forbidden
 from ops_core import persistence, settings
 from ops_core.canonical import canonical_json, sha256_hex
-from ops_core.contracts import FeedbackRequest, ManualProposalRequest, load
+from ops_core.contracts import (
+    CancelRequest,
+    FeedbackRequest,
+    ManualProposalRequest,
+    RevisionRequest,
+    SearchRequest,
+    load,
+)
 from ops_core.outcomes import ActionOutcome, Receipt, ToolOutcome
 from ops_core.settings import Role
 from ops_sweeper import expiry
 from psycopg.types.json import Jsonb
 
 from tests.e2e.conftest import purge_conversation, purge_run, stage_lease
-from tests.e2e.test_definers_run_path_live import ALEX, ALPHA
-from tests.e2e.test_definers_write_path_live import SAM, drafting_run, handle_for
+from tests.e2e.test_definers_run_path_live import ALEX, ALPHA, BETA, conversation, refused, request
+from tests.e2e.test_definers_write_path_live import JORDAN, SAM, drafting_run, handle_for, scope_of
 from tests.e2e.test_migration_0011_live import APP_FUNCTIONS
 
 pytestmark = pytest.mark.asyncio
@@ -6365,19 +6936,28 @@ async def forget(app_conn: persistence.Conn, runs: list[UUID], subjects: list[UU
 
 
 async def drafting_on(
-    app_conn: persistence.Conn, api: persistence.Conn, worker: persistence.Conn, where: str, *, days_back: int = 0
+    app_conn: persistence.Conn,
+    api: persistence.Conn,
+    worker: persistence.Conn,
+    where: str,
+    *,
+    days_back: int = 0,
+    interval: tuple[datetime, datetime] | None = None,
+    tenant: UUID = ALPHA,
 ) -> UUID:
-    """A DRAFTING run of ALPHA on `where` over the 24 hours ending `days_back` days ago, with the workflow version the
-    worker pins at its first claim and a fresh asset observation (R116), as a worker's retrieval would leave it."""
-    run = await drafting_run(app_conn, api, worker)
+    """A DRAFTING run of `tenant` on `where` over the 24 hours ending `days_back` days ago (or over `interval`), in a
+    conversation of its own, with the workflow version the worker pins at its first claim and a fresh asset
+    observation (R116), as a worker's retrieval would leave it."""
+    run = await drafting_run(app_conn, api, worker, tenant)
     end = await app_conn.execute(
         "SELECT date_trunc('second', app.current_time()) - make_interval(days => %s) AS at", (days_back,)
     )
     at = (await end.fetchone())["at"]
+    start, stop = interval or (at - timedelta(hours=24), at)
     await app_conn.execute(
         "UPDATE app.runs SET asset_id = %s, start_at = %s, end_at = %s, workflow_version = %s,"
         " asset_observed_at = app.current_time() WHERE run_id = %s",
-        (where, at - timedelta(hours=24), at, WORKFLOW, run),
+        (where, start, stop, WORKFLOW, run),
     )
     return run
 
@@ -6390,22 +6970,23 @@ async def frozen(
     revision: int = 1,
     snapshots: list[dict[str, str]] | None = None,
     supersedes: UUID | None = None,
+    tenant: UUID = ALPHA,
+    fields: dict[str, Any] | None = None,
 ) -> tuple[persistence.Frozen, str]:
-    """Freeze a validated draft of `run` as the worker, expiring 15 minutes from the database clock; the result and
-    the payload hash. The payload cites `snapshots` (none by default)."""
-    cur = await app_conn.execute("SELECT asset_id FROM app.runs WHERE run_id = %s", (run,))
-    where = (await cur.fetchone())["asset_id"]
+    """Freeze a validated draft of `run` as the worker, on the run's asset and interval (round 1, I2) and expiring 15
+    minutes from the database clock; the result and the payload hash. The payload cites `snapshots` (none by
+    default); `fields` overrides any payload field."""
     expires = (await persistence.current_time(app_conn)).replace(microsecond=0) + timedelta(minutes=15)
     cited = snapshots or []
     body = canonical_json(
         {
-            "tenant_id": str(ALPHA),
+            "tenant_id": str(tenant),
             "run_id": str(run),
             "proposal_id": str(uuid4()),
             "revision": revision,
             "action": "create_incident",
             "destination": "synthetic-incidents",
-            "asset_id": where,
+            **await scope_of(app_conn, run),
             "title": "Review live",
             "summary": "Synthetic.",
             "evidence_refs": [s["evidence_id"] for s in cited],
@@ -6413,15 +6994,16 @@ async def frozen(
             "supersedes_run_id": None if supersedes is None else str(supersedes),
             "workflow_version": WORKFLOW,
             "expires_at": expires.isoformat().replace("+00:00", "Z"),
+            **(fields or {}),
         }
     )
     draft = uuid4()
     async with worker.transaction():
-        await persistence.set_tenant(worker, ALPHA)
+        await persistence.set_tenant(worker, tenant)
         await worker.execute(
             "INSERT INTO app.drafts (id, tenant_id, run_id, draft_sha256, validated, kind)"
             " VALUES (%s, %s, %s, %s, true, 'proposal')",
-            (draft, ALPHA, run, sha256_hex(body)),
+            (draft, tenant, run, sha256_hex(body)),
         )
         result = await persistence.freeze_proposal(
             worker, run_id=run, draft_id=draft, payload_canonical=body, expires_at=expires
@@ -6430,14 +7012,20 @@ async def frozen(
 
 
 async def decide(
-    api: persistence.Conn, proposal: UUID | None, digest: str, *, reviewer: UUID = SAM, revision: int = 1
+    api: persistence.Conn,
+    proposal: UUID | None,
+    digest: str,
+    *,
+    reviewer: UUID = SAM,
+    revision: int = 1,
+    tenant: UUID = ALPHA,
 ) -> persistence.Decided:
     """`record_decision` as the API, approving."""
     assert proposal is not None
     async with api.transaction():
         return await persistence.record_decision(
             api,
-            tenant_id=ALPHA,
+            tenant_id=tenant,
             proposal_id=proposal,
             reviewer=reviewer,
             expected_revision=revision,
@@ -6455,10 +7043,13 @@ async def refusal(call: Awaitable[Any]) -> str:
     raise AssertionError("expected a refusal")
 
 
-async def grant(app_conn: persistence.Conn, mcp_exec: persistence.Conn, run: UUID, proposal: UUID | None) -> Any:
-    """`grant_execution` as mcp-write would call it, through a write handle of the run's execute job."""
+async def grant(
+    app_conn: persistence.Conn, mcp_exec: persistence.Conn, run: UUID, proposal: UUID | None, *, expires_in: int = 600
+) -> Any:
+    """`grant_execution` as mcp-write would call it, through a write handle of the run's execute job (its stored
+    expiry is wall-clock; `expires_in` outlasts a moved database clock)."""
     assert proposal is not None
-    handle = await handle_for(app_conn, run, "execute", expires_in=600)
+    handle = await handle_for(app_conn, run, "execute", expires_in=expires_in)
     async with mcp_exec.transaction():
         return await persistence.grant_execution(mcp_exec, handle=handle, azp=GRANT_AZP, proposal_id=proposal)
 
@@ -6468,16 +7059,50 @@ async def state_of(app_conn: persistence.Conn, run: UUID) -> tuple[str, str | No
     return row["state"], row["reason"]
 
 
-async def permitted_section(app_conn: persistence.Conn) -> dict[str, str]:
-    """One permitted section of ALPHA's ingested corpus as a snapshot (evidence id, content hash, version)."""
+async def permitted_section(app_conn: persistence.Conn, tenant: UUID = ALPHA) -> dict[str, str]:
+    """One permitted section of the tenant's ingested corpus as a snapshot (evidence id, content hash, version)."""
     cur = await app_conn.execute(
         "SELECT evidence_id, content_sha256, version FROM app._cited_permitted(%s,"
         " ARRAY(SELECT evidence_id FROM app.chunks WHERE tenant_id = %s)) ORDER BY evidence_id LIMIT 1",
-        (ALPHA, ALPHA),
+        (tenant, tenant),
     )
     row = await cur.fetchone()
-    assert row is not None, "ALPHA has no permitted section"
+    assert row is not None, f"{tenant} has no permitted section"
     return dict(row)
+
+
+async def commit_incident(app_conn: persistence.Conn, mcp_exec: persistence.Conn, run: UUID, granted: Any) -> None:
+    """The run's incident commits, as mcp-write records it: SENT, then SUCCEEDED with the destination's receipt."""
+    handle = await handle_for(app_conn, run, "execute", expires_in=600)
+    receipt = Receipt(receipt_id=uuid4(), incident_id=f"INC-{uuid4().hex[:8]}", committed_at=datetime.now(UTC))
+    outcome = ActionOutcome(
+        status=ToolOutcome.SUCCEEDED,
+        action_id=granted.action_id,
+        payload_sha256=granted.payload_sha256,
+        receipt=receipt,
+        tombstone=None,
+        reason=None,
+    )
+    async with mcp_exec.transaction():
+        await persistence.mark_sent(mcp_exec, handle=handle, azp=GRANT_AZP, action_id=granted.action_id)
+    async with mcp_exec.transaction():
+        await persistence.record_outcome(
+            mcp_exec, handle=handle, azp=GRANT_AZP, action_id=granted.action_id, outcome=outcome
+        )
+    assert await state_of(app_conn, run) == ("SUCCEEDED", None)
+
+
+async def count(app_conn: persistence.Conn, table: str, run: UUID | None = None) -> int:
+    """Rows of one app table (the test's own table names only), or of one run's rows in it."""
+    where, args = ("", ()) if run is None else (" WHERE run_id = %s", (run,))
+    cur = await app_conn.execute(f"SELECT count(*) AS n FROM app.{table}{where}", args)
+    return int((await cur.fetchone())["n"])
+
+
+async def stamp_memberships(app_conn: persistence.Conn) -> None:
+    """Every membership stamped at the database clock, as the sweeper's sync would (round 1, M8: run again after a
+    clock move is undone, so no row stays stamped in the future for the tests that follow)."""
+    await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
 
 
 async def test_a_revision_is_reviewed_again_and_never_by_its_author(
@@ -6538,21 +7163,28 @@ async def test_an_expired_proposal_is_blocked_by_the_sweeper_and_refused_to_the_
     app_conn: persistence.Conn, role_conn: RoleConn
 ) -> None:
     """R092, DEV-008: sixteen minutes on the database clock; the decision is refused EXPIRED and commits nothing, the
-    sweeper's routine (no worker, no reviewer) moves the run to BLOCKED_REVIEW(expired) once, and the decision stays
-    refused. A freeze whose expiry is past the 15 minutes is refused before anything is written."""
+    sweeper's routine over every tenant (no worker, no reviewer) moves the run to BLOCKED_REVIEW(expired) once and
+    leaves BETA's run, which is not due, untouched (round 1, M10), and the decision stays refused. A freeze whose
+    expiry is past the 15 minutes is refused before anything is written."""
     api, worker = await role_conn(Role.API), await role_conn(Role.WORKER)
     harness, sweeper = await role_conn(Role.TEST_HARNESS), await role_conn(Role.SWEEPER)
     run = await drafting_on(app_conn, api, worker, asset())
+    runs = [run]
     try:
         result, digest = await frozen(app_conn, worker, run)
         try:
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '16 minutes'")
-            await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")  # the sync's stamp
+            await stamp_memberships(app_conn)  # the sync's stamp at the moved clock
+            beta = await drafting_on(app_conn, api, worker, asset(), tenant=BETA)
+            runs.append(beta)
+            await frozen(app_conn, worker, beta, tenant=BETA)  # frozen at the moved clock: due in 15 minutes
             assert await refusal(decide(api, result.proposal_id, digest)) == "EXPIRED"
             assert await state_of(app_conn, run) == ("AWAITING_APPROVAL", None)  # the 409 extends nothing
-            assert await expiry.expire(sweeper, tenants=[ALPHA]) == [run]
+            expired = await expiry.expire(sweeper)  # every tenant, as the sweeper's tick runs it
+            assert run in expired and beta not in expired
             assert await state_of(app_conn, run) == ("BLOCKED_REVIEW", "expired")
-            assert await expiry.expire(sweeper, tenants=[ALPHA]) == []  # nothing is due twice
+            assert await state_of(app_conn, beta) == ("AWAITING_APPROVAL", None)
+            assert run not in await expiry.expire(sweeper)  # nothing is due twice
             cur = await app_conn.execute(
                 "SELECT count(*) AS n FROM app.events WHERE run_id = %s AND type = 'review.blocked'", (run,)
             )
@@ -6560,37 +7192,38 @@ async def test_an_expired_proposal_is_blocked_by_the_sweeper_and_refused_to_the_
             assert await refusal(decide(api, result.proposal_id, digest)) == "EXPIRED"
         finally:
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
+            await stamp_memberships(app_conn)  # round 1, M8: no row stays stamped in the future
         other = await drafting_on(app_conn, api, worker, asset())
-        try:
-            far = (await persistence.current_time(app_conn)).replace(microsecond=0) + timedelta(minutes=20)
-            draft, body = uuid4(), far_body(other, far)
-            async with worker.transaction():
-                await persistence.set_tenant(worker, ALPHA)
-                await worker.execute(
-                    "INSERT INTO app.drafts (id, tenant_id, run_id, draft_sha256, validated, kind)"
-                    " VALUES (%s, %s, %s, %s, true, 'proposal')",
-                    (draft, ALPHA, other, sha256_hex(body)),
+        runs.append(other)
+        far = (await persistence.current_time(app_conn)).replace(microsecond=0) + timedelta(minutes=20)
+        draft, body = uuid4(), far_body(other, far, await scope_of(app_conn, other))
+        async with worker.transaction():
+            await persistence.set_tenant(worker, ALPHA)
+            await worker.execute(
+                "INSERT INTO app.drafts (id, tenant_id, run_id, draft_sha256, validated, kind)"
+                " VALUES (%s, %s, %s, %s, true, 'proposal')",
+                (draft, ALPHA, other, sha256_hex(body)),
+            )
+            too_far = refusal(
+                persistence.freeze_proposal(
+                    worker, run_id=other, draft_id=draft, payload_canonical=body, expires_at=far
                 )
-                refused = refusal(
-                    persistence.freeze_proposal(
-                        worker, run_id=other, draft_id=draft, payload_canonical=body, expires_at=far
-                    )
-                )
-                assert await refused == "EXPIRY"
-        finally:
-            await purge_run(app_conn, other)
+            )
+            assert await too_far == "EXPIRY"
     finally:
-        await purge_run(app_conn, run)
+        await forget(app_conn, runs, [])
 
 
-def far_body(run: UUID, expires: Any) -> bytes:
-    """A revision-1 payload of `run` expiring at `expires` (the freeze refuses more than 15 minutes, ruling 5)."""
+def far_body(run: UUID, expires: Any, scope: dict[str, str]) -> bytes:
+    """A revision-1 payload of `run` on its asset and interval, expiring at `expires` (the freeze refuses more than 15
+    minutes, ruling 5)."""
     return canonical_json(
         {
             "tenant_id": str(ALPHA),
             "run_id": str(run),
             "proposal_id": str(uuid4()),
             "revision": 1,
+            **scope,
             "supersedes_run_id": None,
             "workflow_version": WORKFLOW,
             "expires_at": expires.isoformat().replace("+00:00", "Z"),
@@ -6811,7 +7444,8 @@ async def test_a_manual_proposal_takes_the_same_review_and_feedback_changes_noth
             "assumptions": [],
             "limitations": ["manual"],
         }
-        foreign = {**body, "evidence_refs": ["BETA-ONLY:v1:nowhere"]}
+        # Note 4 (round 1, I4): a real permitted section of BETA, cited from ALPHA, is 404 with nothing written.
+        foreign = {**body, "evidence_refs": [(await permitted_section(app_conn, BETA))["evidence_id"]]}
         missing = await store.manual_once(
             idem=idem("POST /api/v1/manual-proposals", reviewer, foreign),
             tenant_id=ALPHA,
@@ -6819,8 +7453,28 @@ async def test_a_manual_proposal_takes_the_same_review_and_feedback_changes_noth
             request=load(ManualProposalRequest, json.dumps(foreign)),
         )
         assert missing.status == 404
-        cur = await app_conn.execute("SELECT count(*) AS n FROM app.drafts WHERE run_id = %s", (run,))
-        assert (await cur.fetchone())["n"] == 0  # nothing written (note 4)
+        assert (await count(app_conn, "drafts", run), await count(app_conn, "proposals", run)) == (0, 0)
+        assert (await persistence.run_row(app_conn, run))["authors"] == [ALEX]  # nobody joined the authors
+        # The definer's own check, without the API's pre-check: a payload naming another asset (B22, BETA's) is 404
+        # `asset` with nothing written.
+        other_asset = canonical_json(
+            {
+                "tenant_id": str(ALPHA),
+                "run_id": str(run),
+                "proposal_id": str(uuid4()),
+                "revision": 1,
+                "action": "create_incident",
+                "destination": "synthetic-incidents",
+                **await scope_of(app_conn, run),
+                "asset_id": "B22",
+            }
+        )
+        with pytest.raises(persistence.NotFound, match="asset"):
+            async with api.transaction():
+                await persistence.create_manual_proposal(
+                    api, tenant_id=ALPHA, run_id=run, payload_canonical=other_asset, author=reviewer
+                )
+        assert (await count(app_conn, "drafts", run), await count(app_conn, "proposals", run)) == (0, 0)
         made = await store.manual_once(
             idem=idem("POST /api/v1/manual-proposals", reviewer, body),
             tenant_id=ALPHA,
@@ -6839,10 +7493,13 @@ async def test_a_manual_proposal_takes_the_same_review_and_feedback_changes_noth
         assert frozen_row["authored_by"] == [ALEX, reviewer]  # the run's requester, then the person (ruling 4)
         digest = frozen_row["payload_sha256"]
         assert await refusal(decide(api, UUID(made.body["proposal_id"]), digest, reviewer=reviewer)) == "SELF_REVIEW"
-        # Feedback (R113): only its row and its event change; the run, its proposal and its jobs stay as they were.
+        # Feedback (R113): only its row and its event change; the run, its proposal and its jobs stay as they were,
+        # and no other table gains or loses a row (round 1, M11).
         before = await persistence.run_row(app_conn, run)
         cur = await app_conn.execute("SELECT count(*) AS n FROM app.jobs WHERE run_id = %s", (run,))
         jobs = (await cur.fetchone())["n"]
+        tables = ("proposals", "decisions", "memberships", "messages", "drafts", "runs", "jobs", "outbox")
+        counted = {table: await count(app_conn, table) for table in (*tables, "feedback", "events")}
         note = {"subject_kind": "proposal", "subject_id": made.body["proposal_id"], "category": "unclear", "text": "?"}
         recorded = await store.feedback_once(
             idem=idem("POST /api/v1/runs/{run_id}/feedback", ALEX, note, {"run_id": str(run)}),
@@ -6866,6 +7523,11 @@ async def test_a_manual_proposal_takes_the_same_review_and_feedback_changes_noth
         }
         cur = await app_conn.execute("SELECT count(*) AS n FROM app.jobs WHERE run_id = %s", (run,))
         assert (await cur.fetchone())["n"] == jobs
+        assert {table: await count(app_conn, table) for table in (*tables, "feedback", "events")} == {
+            **{table: counted[table] for table in tables},
+            "feedback": counted["feedback"] + 1,
+            "events": counted["events"] + 1,
+        }
         with pytest.raises(psycopg.errors.InsufficientPrivilege):  # the api role may insert feedback, never edit it
             async with api.transaction():
                 await persistence.set_tenant(api, ALPHA)
@@ -6972,6 +7634,238 @@ async def test_the_read_path_refuses_a_membership_the_sync_has_not_stamped(
         await purge_run(app_conn, run)
 
 
+async def test_the_grant_applies_the_guard_across_conversations_and_its_own_expiry(
+    app_conn: persistence.Conn, role_conn: RoleConn
+) -> None:
+    """Round 1, I3 (AM-13 SA:283-288, R110's case, R125 at the grant, R092 at the grant): three runs on one asset and
+    interval, each in its own conversation, freeze and are approved while no action exists; the first is granted, the
+    second's grant is refused asset_action_unresolved and the third's, once the first incident committed,
+    asset_incident_exists, each with BLOCKED_REVIEW and no grant row. A touching interval (c = b) is no overlap, one
+    second more is; an action.late_evidence SUCCEEDED counts as an incident; an ABANDONED_UNVERIFIED run's unresolved
+    action blocks nothing; and a grant past the expiry commits BLOCKED_REVIEW(expired) with one review.blocked."""
+    api, worker, mcp_exec = await role_conn(Role.API), await role_conn(Role.WORKER), await role_conn(Role.MCP_EXEC)
+    harness = await role_conn(Role.TEST_HARNESS)
+    runs: list[UUID] = []
+
+    async def approved(where: str, **on: Any) -> tuple[UUID, UUID]:
+        run = await drafting_on(app_conn, api, worker, where, **on)
+        runs.append(run)
+        result, digest = await frozen(app_conn, worker, run)
+        assert result.proposal_id is not None, result
+        await decide(api, result.proposal_id, digest)
+        return run, result.proposal_id
+
+    async def blocked_by(run: UUID, proposal: UUID, reason: str) -> None:
+        verdict = await grant(app_conn, mcp_exec, run, proposal)
+        assert isinstance(verdict, persistence.Blocked) and verdict.reason.value == reason, verdict
+        assert await state_of(app_conn, run) == ("BLOCKED_REVIEW", reason)
+        assert await count(app_conn, "execution_grant", run) == 0
+
+    async def frozen_state(run: UUID) -> tuple[str, str | None]:
+        result, _ = await frozen(app_conn, worker, run)
+        return result.state.value, result.reason and result.reason.value
+
+    try:
+        where = asset()
+        first, first_proposal = await approved(where)
+        second, second_proposal = await approved(where)
+        third, third_proposal = await approved(where)
+        granted = await grant(app_conn, mcp_exec, first, first_proposal)
+        assert isinstance(granted, persistence.Grant)
+        await blocked_by(second, second_proposal, "asset_action_unresolved")
+        await commit_incident(app_conn, mcp_exec, first, granted)
+        await blocked_by(third, third_proposal, "asset_incident_exists")
+        # SA:283: [a, b) and [c, d) overlap when a < d and c < b, so a touching interval is free.
+        touched = asset()
+        cur = await app_conn.execute("SELECT date_trunc('second', app.current_time()) AS at")
+        at = (await cur.fetchone())["at"]
+        held_start = at - timedelta(hours=24)
+        held, held_proposal = await approved(touched, interval=(held_start, at))
+        assert isinstance(await grant(app_conn, mcp_exec, held, held_proposal), persistence.Grant)
+        touching = await drafting_on(app_conn, api, worker, touched, interval=(at - timedelta(hours=48), held_start))
+        runs.append(touching)
+        assert await frozen_state(touching) == ("AWAITING_APPROVAL", None)
+        overlapping = await drafting_on(
+            app_conn, api, worker, touched, interval=(at - timedelta(hours=48), held_start + timedelta(seconds=1))
+        )
+        runs.append(overlapping)
+        assert await frozen_state(overlapping) == ("BLOCKED_REVIEW", "asset_action_unresolved")
+        # Set (b) also holds an incident that only late evidence reported (R6-H5), staged on a failed run.
+        late = asset()
+        reported = await drafting_on(app_conn, api, worker, late)
+        runs.append(reported)
+        await app_conn.execute("UPDATE app.runs SET state = 'FAILED', slot_held = false WHERE run_id = %s", (reported,))
+        await app_conn.execute(
+            "INSERT INTO app.events (event_id, tenant_id, conversation_id, run_id, sequence, type, occurred_at, source,"
+            " payload) SELECT gen_random_uuid(), r.tenant_id, r.conversation_id, r.run_id,"
+            " (SELECT coalesce(max(e.sequence), 0) + 1 FROM app.events e WHERE e.run_id = r.run_id),"
+            " 'action.late_evidence', app.current_time(), 'destination', %s FROM app.runs r WHERE r.run_id = %s",
+            (Jsonb({"outcome": "SUCCEEDED"}), reported),
+        )
+        after_late = await drafting_on(app_conn, api, worker, late)
+        runs.append(after_late)
+        assert await frozen_state(after_late) == ("BLOCKED_REVIEW", "asset_incident_exists")
+        # SA:130: an operator-acknowledged abandoned action blocks nothing, its attempt unresolved or not.
+        abandoned_on = asset()
+        abandoned, abandoned_proposal = await approved(abandoned_on)
+        assert isinstance(await grant(app_conn, mcp_exec, abandoned, abandoned_proposal), persistence.Grant)
+        await app_conn.execute(
+            "UPDATE app.runs SET state = 'ABANDONED_UNVERIFIED', slot_held = false WHERE run_id = %s", (abandoned,)
+        )
+        after_abandoned = await drafting_on(app_conn, api, worker, abandoned_on)
+        runs.append(after_abandoned)
+        assert await frozen_state(after_abandoned) == ("AWAITING_APPROVAL", None)
+        # The grant expires an overdue approval itself (SA:140, SA:457), journalling one review.blocked.
+        late_grant, late_proposal = await approved(asset())
+        try:
+            await harness.execute("UPDATE app.test_clock SET clock_offset = interval '16 minutes'")
+            verdict = await grant(app_conn, mcp_exec, late_grant, late_proposal, expires_in=3600)
+            assert isinstance(verdict, persistence.Blocked) and verdict.reason.value == "expired", verdict
+        finally:
+            await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
+            await stamp_memberships(app_conn)
+        assert await state_of(app_conn, late_grant) == ("BLOCKED_REVIEW", "expired")
+        cur = await app_conn.execute(
+            "SELECT count(*) AS n FROM app.events WHERE run_id = %s AND type = 'review.blocked'", (late_grant,)
+        )
+        assert (await cur.fetchone())["n"] == 1 and await count(app_conn, "execution_grant", late_grant) == 0
+    finally:
+        await forget(app_conn, runs, [])
+
+
+async def test_the_review_doors_refuse_what_they_must(
+    app_conn: persistence.Conn, role_conn: RoleConn, ingested: None
+) -> None:
+    """Round 1, I2 and I5, against PostgreSQL: a freeze of a payload on another asset or interval; a ninth content
+    author (AUTHOR_LIMIT); a supersession of a run on another asset at admission and at a revision (404), and of the
+    asset's run in another conversation (accepted); a cancel from BLOCKED_REVIEW and at a stale version; the API's
+    revision and cancel units with their codes (`DbStore`); and the search, bounded and the tenant's own."""
+    api, worker, mcp_exec = await role_conn(Role.API), await role_conn(Role.WORKER), await role_conn(Role.MCP_EXEC)
+    store = DbStore(api)
+    pat = await member(app_conn, "requester")
+    runs: list[UUID] = []
+    keys: list[str] = []
+
+    def keyed(route: str, subject: UUID, body: dict[str, Any], run: UUID) -> Idem:
+        made = idem(route, subject, body, {"run_id": str(run)})
+        keys.append(made.scope.key)
+        return made
+
+    try:
+        # I2: the payload's asset and interval are the run's (SA:154), or the freeze refuses and writes nothing.
+        run = await drafting_on(app_conn, api, worker, asset())
+        runs.append(run)
+        assert await refusal(frozen(app_conn, worker, run, fields={"asset_id": "A17"})) == "PAYLOAD_RUN_MISMATCH"
+        shifted = (await persistence.run_row(app_conn, run))["end_at"] + timedelta(seconds=1)
+        later = {"end_at": shifted.astimezone(UTC).isoformat().replace("+00:00", "Z")}
+        assert await refusal(frozen(app_conn, worker, run, fields=later)) == "PAYLOAD_RUN_MISMATCH"
+        assert await count(app_conn, "proposals", run) == 0
+        result, _ = await frozen(app_conn, worker, run)
+        assert result.state.value == "AWAITING_APPROVAL"
+        # AUTHOR_LIMIT: seven more authors staged, so the reviser would be the ninth (Proposal.authored_by holds 8).
+        await app_conn.execute(
+            "UPDATE app.runs SET authors = authors || %s::uuid[] WHERE run_id = %s", ([uuid4() for _ in range(7)], run)
+        )
+        version = (await persistence.run_row(app_conn, run))["state_version"]
+        revise = {"expected_version": version}
+        ninth = await store.revise_once(
+            idem=keyed("POST /api/v1/runs/{run_id}/revisions", pat, revise, run),
+            tenant_id=ALPHA,
+            run_id=run,
+            author=pat,
+            request=load(RevisionRequest, json.dumps(revise)),
+        )
+        assert (ninth.status, ninth.body["code"]) == (409, "AUTHOR_LIMIT")
+        # Supersession (erratum 138): a run of the tenant on another asset is no target, at admission or revision.
+        elsewhere = await drafting_on(app_conn, api, worker, asset())
+        runs.append(elsewhere)
+        same_asset = await drafting_on(app_conn, api, worker, "A17")  # create_run's request names A17
+        runs.append(same_asset)
+        conv, msg = await conversation(app_conn, ALPHA)
+        admit = "SELECT * FROM app.create_run(%s, %s, %s, 'investigate', %s)"
+        assert await refused(api, admit, (ALPHA, conv, request(msg), elsewhere)) == "OC002"
+        async with api.transaction():
+            cur = await api.execute(admit, (ALPHA, conv, request(msg), same_asset))  # another conversation's run
+            admitted = (await cur.fetchone())["run_id"]
+        runs.append(admitted)
+        assert (await persistence.run_row(app_conn, admitted))["supersedes_run_id"] == same_asset
+        with pytest.raises(persistence.NotFound, match="supersedes_run_id"):
+            async with api.transaction():
+                await persistence.create_revision(
+                    api, tenant_id=ALPHA, run_id=run, expected_version=version, author=ALEX, supersedes_run_id=elsewhere
+                )
+        # The API's revision unit: a stale version is its recorded 409, the current one a 202 with revision 2.
+        await app_conn.execute("UPDATE app.runs SET authors = ARRAY[requester] WHERE run_id = %s", (run,))
+        stale = {"expected_version": version - 1}
+        conflict = await store.revise_once(
+            idem=keyed("POST /api/v1/runs/{run_id}/revisions", ALEX, stale, run),
+            tenant_id=ALPHA,
+            run_id=run,
+            author=ALEX,
+            request=load(RevisionRequest, json.dumps(stale)),
+        )
+        assert (conflict.status, conflict.body["code"]) == (409, "VERSION_CONFLICT")
+        revised = await store.revise_once(
+            idem=keyed("POST /api/v1/runs/{run_id}/revisions", ALEX, revise, run),
+            tenant_id=ALPHA,
+            run_id=run,
+            author=ALEX,
+            request=load(RevisionRequest, json.dumps(revise)),
+        )
+        assert (revised.status, revised.body["revision"], revised.body["status"]) == (202, 2, "QUEUED")
+        # Cancel from BLOCKED_REVIEW (erratum 139) through the API's unit: a stranger is refused unrecorded, a stale
+        # version is 409, the run's requester cancels.
+        blocked = await drafting_on(app_conn, api, worker, asset())
+        runs.append(blocked)
+        held, digest = await frozen(app_conn, worker, blocked)
+        await decide(api, held.proposal_id, digest)
+        await app_conn.execute(
+            "UPDATE app.runs SET asset_observed_at = app.current_time() - interval '6 minutes' WHERE run_id = %s",
+            (blocked,),
+        )
+        assert isinstance(await grant(app_conn, mcp_exec, blocked, held.proposal_id), persistence.Blocked)
+        version = (await persistence.run_row(app_conn, blocked))["state_version"]
+        cancel, stale_cancel = {"expected_version": version}, {"expected_version": version - 1}
+        with pytest.raises(Forbidden):
+            await store.cancel_once(
+                idem=keyed("POST /api/v1/runs/{run_id}/cancel", JORDAN, cancel, blocked),
+                tenant_id=ALPHA,
+                run_id=blocked,
+                actor=JORDAN,  # BETA's reviewer: no member of ALPHA (NOT_CANCELLER)
+                request=load(CancelRequest, json.dumps(cancel)),
+            )
+        late = await store.cancel_once(
+            idem=keyed("POST /api/v1/runs/{run_id}/cancel", ALEX, stale_cancel, blocked),
+            tenant_id=ALPHA,
+            run_id=blocked,
+            actor=ALEX,
+            request=load(CancelRequest, json.dumps(stale_cancel)),
+        )
+        assert (late.status, late.body["code"]) == (409, "VERSION_CONFLICT")
+        done = await store.cancel_once(
+            idem=keyed("POST /api/v1/runs/{run_id}/cancel", ALEX, cancel, blocked),
+            tenant_id=ALPHA,
+            run_id=blocked,
+            actor=ALEX,
+            request=load(CancelRequest, json.dumps(cancel)),
+        )
+        assert (done.status, done.body["status"], done.body["grant_exists"]) == (200, "CANCELLED", False)
+        # The search (erratum 135): at most `limit` hits, every one a section of the caller's tenant.
+        cur = await app_conn.execute(
+            "SELECT c.section FROM app.chunks c WHERE c.tenant_id = %s AND c.evidence_id = %s",
+            (ALPHA, (await permitted_section(app_conn))["evidence_id"]),
+        )
+        query = {"query": (await cur.fetchone())["section"], "limit": 3}
+        found = await store.search(ALPHA, load(SearchRequest, json.dumps(query)))
+        cur = await app_conn.execute("SELECT evidence_id FROM app.chunks WHERE tenant_id = %s", (ALPHA,))
+        own = {r["evidence_id"] for r in await cur.fetchall()}
+        hits = [hit["evidence_id"] for hit in found["results"]]
+        assert 1 <= len(hits) <= 3 and set(hits) <= own, found
+    finally:
+        await app_conn.execute("DELETE FROM app.idempotency_request WHERE key = ANY(%s)", (keys,))
+        await forget(app_conn, runs, [pat])
+
+
 async def test_the_round_trip_restores_0015(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
     """Revision 0016 down and up: its functions, columns and the feedback table go, 0015's `record_decision` and its
     grant come back, and the head is identical afterwards (function text, owner, ACL)."""
@@ -7001,7 +7895,7 @@ async def snapshot(conn: persistence.Conn) -> dict[str, dict[str, Any]]:
     return {row["signature"]: {k: v for k, v in row.items() if k != "signature"} for row in await cur.fetchall()}
 ````
 
-Edit 190 (`tests/e2e/test_roles_live.py`), replace:
+Edit 208 (`tests/e2e/test_roles_live.py`), replace:
 ````python
         " end_at, state, state_version, slot_held) VALUES (%s, %s, %s, %s, %s, 'investigate', 'A17',"
         " now() - interval '1 day', now(), 'QUEUED', 1, true)",
@@ -7014,7 +7908,7 @@ with:
         (run, tenant, conv, msg, ALEX, ALEX),
 ````
 
-Edit 191 (`tests/e2e/test_run_manifest_live.py`), replace:
+Edit 209 (`tests/e2e/test_run_manifest_live.py`), replace:
 ````python
     "INSERT INTO app.run_manifests (run_id, tenant_id, model_route, model_digest, prompt_version, corpus_version,"
     " retrieval_mode) VALUES (%s, %s, %s, %s, 'incident-draft-v2', 'corpus-1', 'lexical')"
@@ -7025,7 +7919,7 @@ with:
     " corpus_version, retrieval_mode) VALUES (%s, 1, %s, %s, %s, 'incident-draft-v2', 'corpus-1', 'lexical')"
 ````
 
-Edit 192 (`tests/e2e/test_run_manifest_live.py`), replace:
+Edit 210 (`tests/e2e/test_run_manifest_live.py`), replace:
 ````python
             await persistence.insert_run_manifest(worker, tenant_id=ALPHA, manifest=manifest)
         with pytest.raises(psycopg.errors.UniqueViolation):  # one manifest per run
@@ -7057,7 +7951,7 @@ with:
             assert [dict(r) for r in await cur.fetchall()] == [{"model_route": "qwen3:8b", "model_digest": DIGEST}] * 2
 ````
 
-Edit 193 (`tests/e2e/test_worker_live.py`), replace:
+Edit 211 (`tests/e2e/test_worker_live.py`), replace:
 ````python
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 ````
@@ -7069,7 +7963,7 @@ RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 ASSET = "A19"
 ````
 
-Edit 194 (`tests/e2e/test_worker_live.py`), replace:
+Edit 212 (`tests/e2e/test_worker_live.py`), replace:
 ````python
 
     async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -7088,7 +7982,7 @@ with:
         reads = self.reads
 ````
 
-Edit 195 (`tests/e2e/test_worker_live.py`), replace:
+Edit 213 (`tests/e2e/test_worker_live.py`), replace:
 ````python
 @pytest_asyncio.fixture
 ````
@@ -7117,7 +8011,7 @@ async def granting_reads(app_conn: persistence.Conn, mcp: ScriptedMcp, asset: st
 @pytest_asyncio.fixture
 ````
 
-Edit 196 (`tests/e2e/test_worker_live.py`), replace:
+Edit 214 (`tests/e2e/test_worker_live.py`), replace:
 ````python
             expected_payload_sha256=proposal["payload_sha256"],
 ````
@@ -7127,7 +8021,7 @@ with:
             expected_payload_sha256=proposal["payload_sha256"],
 ````
 
-Edit 197 (`tests/e2e/test_worker_live.py`), replace:
+Edit 215 (`tests/e2e/test_worker_live.py`), replace:
 ````python
         _, _, run = await new_run(app_conn, ALPHA, api=api)
         await handlers.handle(deps, *await own_job(app_conn, deps.conn, run, "investigate"))
@@ -7140,7 +8034,7 @@ with:
         row = await persistence.run_row(app_conn, run)
 ````
 
-Edit 198 (`tests/e2e/test_worker_live.py`), replace:
+Edit 216 (`tests/e2e/test_worker_live.py`), replace:
 ````python
             "create_incident",
         ]
@@ -7154,7 +8048,7 @@ with:
         assert mcp.calls[4][2] == {"proposal_id": str(proposal["proposal_id"])}
 ````
 
-Edit 199 (`tests/e2e/test_worker_live.py`), replace:
+Edit 217 (`tests/e2e/test_worker_live.py`), replace:
 ````python
         _, _, run = await new_run(app_conn, ALPHA, api=api)
         job, lease = await own_job(app_conn, deps.conn, run, "investigate")
@@ -7165,7 +8059,7 @@ with:
         job, lease = await own_job(app_conn, deps.conn, run, "investigate")
 ````
 
-Edit 200 (`tests/e2e/test_worker_live.py`), replace:
+Edit 218 (`tests/e2e/test_worker_live.py`), replace:
 ````python
     app_conn: persistence.Conn, role_conn: RoleConn, worker_deps: WorkerDeps
 ) -> None:
@@ -7187,7 +8081,7 @@ with:
         _, _, run = await new_run(app_conn, ALPHA, api=api, asset_id=ASSET)
 ````
 
-Edit 201 (`tests/e2e/test_worker_live.py`), replace:
+Edit 219 (`tests/e2e/test_worker_live.py`), replace:
 ````python
         deps.mcp = grant_mcp
         await handlers.handle(deps, job, lease)
@@ -7214,7 +8108,7 @@ with:
         assert [c[1] for c in grant_mcp.calls] == ["get_asset_status", "create_incident", "create_incident"]
 ````
 
-Edit 202 (`tests/e2e/test_worker_live.py`), replace:
+Edit 220 (`tests/e2e/test_worker_live.py`), replace:
 ````python
     app_conn: persistence.Conn, role_conn: RoleConn, worker_deps: WorkerDeps
 ) -> None:
@@ -7236,12 +8130,13 @@ with:
         _, _, run = await new_run(app_conn, ALPHA, api=api, asset_id=ASSET)
 ````
 
-Gates: dev `CHECK: GREEN`, `1791 passed, 237 skipped` (the live modules skip); `verify_handoff.py` exit 0.
+Gates: dev `CHECK: GREEN`, `1800 passed, 239 skipped` (the live modules skip); `verify_handoff.py` exit 0.
 
 - [ ] **Step 2: The live gate**
 
 With the dev stack up, local Ollama answering and every skeleton process down, run `PYTHONUTF8=1 uv run python
-scripts/check.py --profile test < /dev/null` → `CHECK: GREEN` with `2007 passed, 21 skipped`. It rewrites
+scripts/check.py --profile test < /dev/null` → `CHECK: GREEN` with `2018 passed, 21 skipped` (arithmetic: the first live
+run of this plan's tests). It rewrites
 `reports/auth/t11-sessions-revocation.txt` with the new line `grant after the disable: BLOCKED_REVIEW
 (authority_revoked), grants 0`; keep that report and `git checkout -- reports` for every other. If a live test
 fails, stop and report it with its output (NEEDS_CONTEXT): the expected behaviour is in the test's docstring and
@@ -7253,7 +8148,7 @@ git commit -m "test: the review rules, R023 and R086's grant half live (T21)"
 ```
 
 ---
-### Task 7: Close-out — records, requirements, errata 131-145, state, history, final gates
+### Task 7: Close-out — records, requirements, errata 131-146, state, history, final gates
 
 **Files:**
 - Modify: `handoff/tasks.json`, `handoff/acceptance-matrix.json`, `handoff/BUILD_BACKLOG.md`, `README.md`,
@@ -7304,7 +8199,7 @@ note = (
     "mcp-write advertising the committed result schema and the worker checking its listing and results. Evidence: "
     "tests/plan_r/ (unit), tests/e2e/test_review_live.py, test_r023_wakeup_live.py and the grant half of R086 in "
     "test_auth_live.py (live). Deferred: the revision text parser -> T34; the after-grant cancel, R125's late half and "
-    "a deadline for a run waiting for a manual proposal -> T22; the card's rendering -> T26. Errata 131-145 are "
+    "a deadline for a run waiting for a manual proposal -> T22; the card's rendering -> T26. Errata 131-146 are "
     "proposed in SESSION_STATE.md."
 )
 tasks_path = Path("handoff/tasks.json")
@@ -7353,15 +8248,17 @@ ROWS = {
     "R046": (
         [MIGRATION, *API, LIVE],
         "Plan R (T21 half): request_cancel cancels any pre-grant state, BLOCKED_REVIEW included (DEV-014); after the "
-        "grant it sets cancel_requested and reports the attempt's state, never an undo. The abort path and the "
-        "after-grant outcome evidence are T22's.",
+        "grant it sets cancel_requested and reports the attempt's state, never an undo; live through the API's unit "
+        "too, from BLOCKED_REVIEW and at a stale version (409). The abort path and the after-grant outcome evidence "
+        "are T22's.",
     ),
     "R057": (
         [MIGRATION, *API, "worker/src/ops_worker/graph/nodes.py", LIVE],
         "Plan R (T21): when the model cannot draft, the run waits in DRAFTING for a person; POST /manual-proposals "
         "freezes the person's proposal through the freeze rules and the asset guard (prompt_version manual, a drafts "
-        "row of source manual), and it meets the same independent review; POST /search is the lexical baseline; a "
-        "section of another tenant is 404 with nothing written.",
+        "row of source manual), and it meets the same independent review; POST /search is the lexical baseline, "
+        "bounded and the caller's tenant's own (DbStore.search, live); a real section of another tenant, and "
+        "create_manual_proposal's own check of another asset, are 404 with nothing written.",
     ),
     "R090": (
         [MIGRATION, LIVE],
@@ -7388,8 +8285,9 @@ ROWS = {
     "R113": (
         [MIGRATION, *API, LIVE],
         "Plan R (T21): POST /runs/{id}/feedback stores the classified row and emits feedback.recorded with three keys "
-        "(the text stays in the row); live, the run, its proposal and its jobs are unchanged and the api role cannot "
-        "update a feedback row.",
+        "(the text stays in the row); live, only the feedback and events tables gain a row (proposals, decisions, "
+        "memberships, messages, drafts, runs, jobs and outbox are counted unchanged) and the api role cannot update "
+        "a feedback row.",
     ),
     "R116": (
         [MIGRATION, "worker/src/ops_worker/graph/nodes.py", LIVE],
@@ -7403,10 +8301,12 @@ ROWS = {
     ),
     "R125": (
         [MIGRATION, LIVE],
-        "Plan R (T21 half): on one asset and interval an unresolved action blocks a second freeze "
-        "(asset_action_unresolved) and a SUCCEEDED incident blocks it (asset_incident_exists) until a revision names "
-        "that run in supersedes_run_id, which create_revision accepts only for a run of the same tenant and asset. The "
-        "late and recovered outcomes are T22's.",
+        "Plan R (T21 half): on one asset and interval, at the freeze and at the grant (runs of different "
+        "conversations approved while no action existed), an unresolved action blocks (asset_action_unresolved) and "
+        "a SUCCEEDED incident or a SUCCEEDED action.late_evidence blocks (asset_incident_exists) until a revision "
+        "names that run in supersedes_run_id, which create_run and create_revision accept only for a run of the same "
+        "tenant and asset; a touching interval and an ABANDONED_UNVERIFIED run block nothing. The late and recovered "
+        "outcomes of T22's recovery are T22's.",
     ),
 }
 matrix_path = Path("handoff/acceptance-matrix.json")
@@ -7449,7 +8349,7 @@ R120, R125, R086; span <base>..<last>`.
 
 - [ ] **Step 2: State, status, the architecture page and the history**
 
-Edit 203 (`README.md`), replace:
+Edit 221 (`README.md`), replace:
 ````markdown
 | **MCP servers** | `mcp-read` (asset status, alerts, procedure search) and `mcp-write` (guarded incident write and recovery), disjoint functions, disjoint handles | R025–R031, R131 |
 ````
@@ -7459,7 +8359,7 @@ with:
 | **MCP servers** | `mcp-read` (asset status, alerts, procedure search) and `mcp-write` (guarded incident write and recovery), disjoint functions, disjoint handles | R025–R031, R131 |
 ````
 
-Edit 204 (`SESSION_STATE.md`), replace:
+Edit 222 (`SESSION_STATE.md`), replace:
 ````markdown
 **Current milestone:** M08 (independent review, grant, execution and recovery; T21 is next. M07 closed with T20 in Plan Q, after T19 in Plan P. M06 closed with T18 in Plan N; its T41, the owner's holdout labels, is optional since erratum 114. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
 **Next task:** T21 (per-revision proposals, the decision rules and the manual path). Plan Q (T20) is executed on
@@ -7471,12 +8371,12 @@ with:
 (`<base>..<last>` holds the debt list, the four building tasks and the live gate; the close-out is the commit after
 `<last>`). T21 is DONE: revisions, decisions, expiry, cancel, manual proposals, feedback and the final grant's
 re-checks with the asset guard (R023, R043, R044, R045, R046's and R120's and R125's T21 halves, R057, R090, R092, R093,
-R100, R113 and R116 live; R086's grant half live); errata 131-145 are proposed (see "Plan R executed"; the next free
-erratum number is 146). Owner inputs added by Plan R: decide errata 131-145; migrate the dev database to 0016 (the api,
+R100, R113 and R116 live; R086's grant half live); errata 131-146 are proposed (see "Plan R executed"; the next free
+erratum number is 147). Owner inputs added by Plan R: decide errata 131-146; migrate the dev database to 0016 (the api,
 the worker, both MCP servers and the sweeper refuse to start without it). Plan Q (T20) is executed on
 ````
 
-Edit 205 (`SESSION_STATE.md`), replace:
+Edit 223 (`SESSION_STATE.md`), replace:
 ````markdown
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 ````
@@ -7536,13 +8436,16 @@ with:
        API has authenticated (the identity anchor, as for `record_decision`).
   145. AM-20.7's startup checks extend to the sweeper: it refuses to start without `expire_proposal` (revision 0016),
        as the api, the worker and both MCP servers refuse without their functions.
+  146. SA:138, SA:454 and SA:457 put the lazy expiry inside the decision ("invoked internally by record_decision"):
+       the API runs `expire_proposal` in its own unit before the decision's, so the expiry's BLOCKED_REVIEW commits
+       whatever the decision then does, and `record_decision` only refuses EXPIRED (Plan R ruling 5).
 - Limits: R023's live crash point is one (after the resume's checkpoint store); a killed process is T30's. R046's and
   R125's after-grant halves are T22's.
 
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 ````
 
-Edit 206 (`SESSION_STATE.md`), replace:
+Edit 224 (`SESSION_STATE.md`), replace:
 ````markdown
   115-121 (see "Plan P executed") and 122-130 (see "Plan Q executed").
 - Migrate the dev database to revision 0015 (`uv run python scripts/skeleton.py migrate`): the worker refuses to start
@@ -7550,13 +8453,13 @@ Edit 206 (`SESSION_STATE.md`), replace:
 ````
 with:
 ````markdown
-  115-121 (see "Plan P executed"), 122-130 (see "Plan Q executed") and 131-145 (see "Plan R executed").
+  115-121 (see "Plan P executed"), 122-130 (see "Plan Q executed") and 131-146 (see "Plan R executed").
 - Migrate the dev database to revision 0016 (`uv run python scripts/skeleton.py migrate`): the worker refuses to start
   on 0013, which lacks `app.run_manifests` and `checkpoints.checkpoints`, and every service refuses to start without
   0016's functions. To run the worker on the real model, set
 ````
 
-Edit 207 (`STATUS.md`), replace:
+Edit 225 (`STATUS.md`), replace:
 ````markdown
 - Next: T21.
 ````
@@ -7582,22 +8485,22 @@ with:
   sweeper's proposal expiry; mcp-write's committed result schema checked by the worker. The dev database is still at
   0013; every service now needs 0016 (`skeleton.py migrate`, an owner step).
 - Deferred, each with its owner in `SESSION_STATE.md`: the revision text -> T34; the after-grant cancel, R125's late
-  half and a deadline for a run waiting for a person -> T22; the card's rendering -> T26. Fifteen errata (131-145).
+  half and a deadline for a run waiting for a person -> T22; the card's rendering -> T26. Sixteen errata (131-146).
 - Next: T22.
 ````
 
-Edit 208 (`docs/ARCHITECTURE.md`), replace:
+Edit 226 (`docs/ARCHITECTURE.md`), replace:
 ````markdown
 | `api` | Keycloak client; DB role `api` | SELECT on conversation and audit tables; INSERT on messages, idempotency, feedback, outbox, `resume_input` jobs; UPDATE on `runs.cancel_requested` only; runs, decisions and revisions only through `create_run`, `record_decision`, `create_revision`; status answers and conversation clarifications are plain messages | PostgreSQL, Keycloak (login, `view-users` check) | update `runs.state`; insert decisions, proposals, grants, attempts or events directly; reach either sim |
 | `worker` | Keycloak client; DB role `worker` | run_lease, jobs, drafts, invocation_context (insert), outbox (insert), corpus tables (ingestion), model_permit, checkpoints schema; `runs` columns `checkpoint_id`, `budget_used`; transitions only through `transition_run` (pre-grant states), `freeze_proposal`, `mark_unknown` and `escalate_run`; handle revocation through `revoke_handles` | PostgreSQL, mcp-read, mcp-write, Ollama | write decisions, memberships, grants, attempts or events; mark a run SUCCEEDED; reach either sim |
 ````
 with:
 ````markdown
-| `api` | Keycloak client; DB role `api` | SELECT on conversation and audit tables; INSERT on messages, idempotency, feedback, outbox, `resume_input` jobs; UPDATE on `runs.cancel_requested` only; runs, decisions, revisions, cancels and manual proposals only through `create_run`, `record_decision`, `create_revision`, `request_cancel`, `prepare_manual_proposal` and `create_manual_proposal`, expiry through `expire_proposal`, the manual search through `search_procedures_api` (T21); status answers and conversation clarifications are plain messages | PostgreSQL, Keycloak (login, `view-users` check) | update `runs.state`; insert decisions, proposals, grants, attempts or events directly; reach either sim |
+| `api` | Keycloak client; DB role `api` | SELECT on conversation and audit tables; INSERT on messages, idempotency, feedback, outbox, `resume_input` jobs; UPDATE on `runs.cancel_requested` and `cancel_requested_at` only (cancels go through `request_cancel`, T21); runs, decisions, revisions, cancels and manual proposals only through `create_run`, `record_decision`, `create_revision`, `request_cancel`, `prepare_manual_proposal` and `create_manual_proposal`, expiry through `expire_proposal`, the manual search through `search_procedures_api` (T21); status answers and conversation clarifications are plain messages | PostgreSQL, Keycloak (login, `view-users` check) | update `runs.state`; insert decisions, proposals, grants, attempts or events directly; reach either sim |
 | `worker` | Keycloak client; DB role `worker` | run_lease, jobs, drafts, invocation_context (insert), outbox (insert), corpus tables (ingestion), model_permit, checkpoints schema; `runs` columns `checkpoint_id`, `budget_used`, `asset_observed_at`, `workflow_version`; transitions only through `transition_run` (pre-grant states), `freeze_proposal`, `mark_unknown` and `escalate_run`; handle revocation through `revoke_handles` | PostgreSQL, mcp-read, mcp-write, Ollama | write decisions, memberships, grants, attempts or events; mark a run SUCCEEDED; reach either sim |
 ````
 
-Edit 209 (`docs/ARCHITECTURE.md`), replace:
+Edit 227 (`docs/ARCHITECTURE.md`), replace:
 ````markdown
 - **The final gate is a database function.** `grant_execution` re-checks membership, hash, expiry, cancellation and the asset guard inside one transaction, and only `mcp_exec` may call it. Approval text, model text and chat text never grant anything.
 ````
@@ -7606,7 +8509,7 @@ with:
 - **The final gate is a database function.** `grant_execution` re-checks membership, the approved hash, expiry, cancellation, every cited source, the asset observation's age and the asset guard inside one transaction (revision 0016, T21); a refusal that needs a person's review commits BLOCKED_REVIEW with its reason, and only `mcp_exec` may call it. Approval text, model text and chat text never grant anything.
 ````
 
-Edit 210 (`docs/PROJECT_HISTORY.md`), replace:
+Edit 228 (`docs/PROJECT_HISTORY.md`), replace:
 ````markdown
 ## 36. What the process taught
 ````
@@ -7627,19 +8530,27 @@ grant; the grant returns its verdict and commits BLOCKED_REVIEW for the refusals
 the ones that must leave nothing behind. The worker reads the asset status again just before the grant, and when the
 model cannot draft the run waits in DRAFTING for a person's proposal, which meets the same review.
 
-**Review.** Building the slice in a scratch copy, live gate included, found what reading had not: the guard blocked
-the existing live suites wherever two tests froze runs on one asset and interval, and the R105 skeleton test now leaves
-a SUCCEEDED incident on A17 that later modules must step around; the read path's new freshness bound refused the
-tests that move the database clock; the round trips of revisions 0011-0013 compared functions that 0016 re-creates, so
-they now start from 0015; and a crash after the resume's checkpoint does not resume twice: the next job carries on from
-the stored step, so R023's "exactly the accepted event" is the saver's one resume write, not a second resume.
+**Review.** Building the slice in a scratch copy found what reading had not: the guard blocked the existing live
+suites wherever two tests froze runs on one asset and interval, and the R105 skeleton test now leaves a SUCCEEDED
+incident on A17 that later modules must step around; the read path's new freshness bound refused the tests that move
+the database clock; the round trips of revisions 0011-0013 compared functions that 0016 re-creates, so they now start
+from 0015; and a crash after the resume's checkpoint does not resume twice: the next job carries on from the stored
+step, so R023's "exactly the accepted event" is the saver's one resume write, not a second resume. The writer ran that
+live gate in the scratch copy by reaching the stack's `.env` through a hard link after copying it had been refused;
+the controller recorded that as a process finding, not a method, and every later dispatch forbids it. The static review
+(round 1) then found that a revision committing while an older revision's graph run was still working let that run
+store its thread's checkpoint over the cleared column and fail the revision (the store now checks the run's revision
+under the run's lock and the router ends an outdated graph run quietly); that the model-path freeze never bound the
+payload's asset and interval to the run's, so the guard judged one asset while the incident named another (the freeze
+now refuses it, as the manual proposal already did); and that the grant's guard, its expiry and several refusals of the
+new doors had no test against PostgreSQL. One fix wave added them and the smaller items with it.
 
 ## 37. What the process taught
 ````
 
 - [ ] **Step 3: Final gates**
 
-Dev `CHECK: GREEN`, `1791 passed, 237 skipped`; live `CHECK: GREEN`, `2007 passed, 21 skipped` (then `git checkout --
+Dev `CHECK: GREEN`, `1800 passed, 239 skipped`; live `CHECK: GREEN`, `2018 passed, 21 skipped` (then `git checkout --
 reports`, keeping `reports/auth/t11-sessions-revocation.txt` as the run rewrote it); `verify_handoff.py` exit 0.
 
 - [ ] **Step 4: Placeholders, checkboxes and the commit**
@@ -7682,4 +8593,12 @@ git commit -m "docs: close T21 (Plan R) - records, the T21 requirements, errata 
 7. **Revision numbers (erratum 140).** `_run_revision` counts `proposal.revised` events; the freeze refuses a payload of
    another revision or a revision already frozen, so a skipped number is visible but never reused.
 8. **The read path's freshness (ruling 14).** Any live test that moves the database clock must stamp memberships
-   again; the three that do are edited in Task 6.
+   again, and again after the move is undone (round 1, M8); every test that moves it does both.
+9. **Unsettled until Task 6's first live run (round 1).** That the `Died` BaseException propagates through LangGraph's
+   `astream` leaving the saver and `runs.checkpoint_id` as `test_r023_wakeup_live.py` asserts; the live count; that
+   `persistence.lock_asset`'s untyped `%s || ':' || %s` resolves to text. Every live test round 1 added (the grant's
+   guard across conversations and its expiry, the doors' refusals, the payload binding) is unrun until then.
+10. **The revision race (round 1, I1).** `store_checkpoint_id` now locks `runs` inside the worker's fenced unit and
+    counts `proposal.revised` after the lock; `nodes.facts` ends an outdated graph run by raising `RevisionMoved` from
+    a node, which LangGraph propagates unwrapped (as it does `LeaseLost`). Check that no path stores an old thread's id
+    after a revision, and that a QUEUED run with an older thread's id starts its own graph run.
