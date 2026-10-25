@@ -439,8 +439,16 @@ GRAPH_ROUTES: Final[tuple[GraphRule, ...]] = (
         draft_kind=DraftKind.PROPOSAL,
     ),
     GraphRule("answer", frozenset({_RS.DRAFTING}), GraphRoute.ANSWER_ONLY, draft_kind=DraftKind.ANSWER),
-    # T21 (erratum 134): the graph run ends with the run in DRAFTING; a person's proposal moves it on (ruling 7).
-    GraphRule("manual", frozenset({_RS.DRAFTING}), GraphRoute.PUBLISH, draft_kind=DraftKind.MANUAL),
+    # T21 (erratum 134): the graph run ends with the run in DRAFTING; a person's proposal moves it on (ruling 7). Only
+    # an investigate run takes this path: revision 0016 refuses a manual proposal on any other intent, so an
+    # answer_only run whose model failed has no row and fails as it did before.
+    GraphRule(
+        "manual",
+        frozenset({_RS.DRAFTING}),
+        GraphRoute.PUBLISH,
+        intent=Intent.INVESTIGATE,
+        draft_kind=DraftKind.MANUAL,
+    ),
     GraphRule("question", frozenset({_RS.DRAFTING}), GraphRoute.CLARIFY, draft_kind=DraftKind.QUESTION),
     GraphRule("abstention", frozenset({_RS.DRAFTING}), GraphRoute.ABSTAIN, draft_kind=DraftKind.ABSTAIN),
     GraphRule(

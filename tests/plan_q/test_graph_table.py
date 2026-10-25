@@ -75,7 +75,9 @@ def produced() -> list[GraphKey]:
         keys.append(GraphKey(state, intent, False, Evidence.UNKNOWN, DraftKind.NONE, False, None))  # asset unknown
         keys.append(GraphKey(state, intent, True, Evidence.INSUFFICIENT, DraftKind.NONE, False, None))
     for intent, kind in product(Intent, DraftKind):
-        if (intent, kind) != (Intent.ANSWER_ONLY, DraftKind.PROPOSAL):  # validation refuses that pair (SA:453)
+        # Validation refuses a proposal for an answer_only run (SA:453), and only an investigate run takes the manual
+        # path (T21: 0016 refuses a manual proposal on any other intent, so such a run fails as it always did).
+        if (intent, kind) not in ((Intent.ANSWER_ONLY, DraftKind.PROPOSAL), (Intent.ANSWER_ONLY, DraftKind.MANUAL)):
             keys.append(GraphKey(RunState.DRAFTING, intent, True, Evidence.SUFFICIENT, kind, False, None))
     return keys
 
@@ -109,3 +111,5 @@ def test_a_draft_kind_selects_only_abstain_clarify_answer_or_freeze() -> None:
     assert routes == {GraphRoute.ABSTAIN, GraphRoute.CLARIFY, GraphRoute.ANSWER_ONLY, GraphRoute.FREEZE}
     manual = GraphKey(RunState.DRAFTING, Intent.INVESTIGATE, True, Evidence.SUFFICIENT, DraftKind.MANUAL, False, None)
     assert route_graph(manual) is GraphRoute.PUBLISH
+    with pytest.raises(LookupError):  # an answer_only run has no manual path: no row routes it (the worker fails it)
+        route_graph(GraphKey(**{**manual.__dict__, "intent": Intent.ANSWER_ONLY}))

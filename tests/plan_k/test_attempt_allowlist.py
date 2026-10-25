@@ -32,10 +32,12 @@ def test_the_attempt_rules_are_the_rulings() -> None:
         (JobType.RECOVER, Tool.CREATE_INCIDENT): {A.INTENT},  # SA:345 over SA:334
         (JobType.RECOVER, Tool.GET_INCIDENT_RECEIPT): {A.SENT, A.ABORT_REQUESTED, A.RESOLVED},
         (JobType.RECOVER, Tool.ABORT_INCIDENT): {A.INTENT, A.SENT, A.ABORT_REQUESTED},
+        # T21 (erratum 137): the one read tool with a rule; the asset status is read again only before the grant.
+        (JobType.EXECUTE, Tool.GET_ASSET_STATUS): {None},
     }
-    # Every write tool a job type may call has a rule; no read tool has one.
+    # Every write tool a job type may call has a rule; no read tool has one but the execute job's pre-grant status.
     governed = {(t, tool) for t in HANDLE_JOBS for tool in JOB_RULES[t].allowed_tools if tool in WRITE}
-    assert governed == set(ATTEMPT_STATES)
+    assert governed | {(JobType.EXECUTE, Tool.GET_ASSET_STATUS)} == set(ATTEMPT_STATES)
 
 
 @pytest.mark.parametrize("job_type", HANDLE_JOBS, ids=[t.value for t in HANDLE_JOBS])

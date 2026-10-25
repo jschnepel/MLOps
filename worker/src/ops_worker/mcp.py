@@ -227,11 +227,16 @@ class HttpMcpCaller:
                         raise transport_failure(tool, statuses, read=True) from group
                     raise McpCallFailed(f"{tool}: the session failed ({type(found[0]).__name__})") from group
                 raise
-            leaf = failure_leaf(group)
-            if isinstance(leaf, McpCallFailed):  # a failed write-listing check: the client's task group wraps it
-                raise leaf from None
-            if isinstance(leaf, TRANSPORT_FAILURES):
-                raise transport_failure(tool, statuses, read=False) from leaf
+            # Every leaf, as the read path does: a failed write-listing check or a transport failure may be any of
+            # them. Only a group of plain Exceptions is converted; a cancellation among them goes on propagating.
+            found = leaves(group)
+            if all(isinstance(leaf, Exception) for leaf in found):
+                failed = next((leaf for leaf in found if isinstance(leaf, McpCallFailed)), None)
+                if failed is not None:  # a failed write-listing check: the client's task group wraps it
+                    raise failed from None
+                transport = next((leaf for leaf in found if isinstance(leaf, TRANSPORT_FAILURES)), None)
+                if transport is not None:
+                    raise transport_failure(tool, statuses, read=False) from transport
             raise
         except Exception as exc:
             if read is None:

@@ -19,10 +19,13 @@ from ops_core import persistence, tool_contracts
 from ops_core.jobs import Tool
 from ops_core.states import Reason
 from ops_mcp_read import server as read_server
+from ops_mcp_write import destination
+from ops_worker import mcp as worker_mcp
 from ops_worker.mcp import WRITE_TOOLS, HttpMcpCaller, McpCallFailed, check_listing
 
 from tests.plan_k.test_recovery_tools import PROPOSAL
 from tests.plan_k.test_write_tools_server import BASE, TOOL_RESULT, client, write_app
+from tests.plan_l.test_mcp_read_corpus import Database, UnitConn, call
 
 pytestmark = pytest.mark.asyncio
 
@@ -49,8 +52,20 @@ def blocked(monkeypatch: pytest.MonkeyPatch, reason: Reason) -> None:
 
 async def test_a_committed_refusal_is_a_final_grant_refused_with_its_reason(monkeypatch: pytest.MonkeyPatch) -> None:
     blocked(monkeypatch, Reason.ASSET_INCIDENT_EXISTS)
+    reached: list[str] = []  # anything after the grant: the SENT mark or a request to the destination
+
+    async def mark_sent(_conn: Any, **_: Any) -> str:
+        reached.append("mark_sent")
+        return "sent"
+
+    async def send(*_: Any, **__: Any) -> None:
+        reached.append("destination request")
+
+    monkeypatch.setattr(persistence, "mark_sent", mark_sent)
+    monkeypatch.setattr(destination, "_send", send)
     async with client(write_app()) as mcp:
         doc = (await mcp.call_tool("create_incident", {"proposal_id": str(PROPOSAL)})).structured_content
+    assert reached == []  # a committed refusal sends nothing (SA:355)
     assert isinstance(doc, dict) and doc["status"] == "error" and doc["data"] is None
     assert doc["error"] == {
         "code": "GRANT_REFUSED",
@@ -84,6 +99,85 @@ async def test_the_worker_checks_mcp_writes_listing_and_result(monkeypatch: pyte
         check_listing(ListToolsResult(tools=altered), Tool(tools[-1].name), WRITE_TOOLS)
     with pytest.raises(McpCallFailed, match="unexpected tool set"):
         check_listing(ListToolsResult(tools=tools[:2]), Tool.CREATE_INCIDENT, WRITE_TOOLS)
+
+
+def grant_spy(monkeypatch: pytest.MonkeyPatch, reason: Reason) -> list[str]:
+    """`blocked`, recording every definer the server reaches; empty means nothing past discovery ran."""
+    reached: list[str] = []
+
+    async def resolve(_conn: Any, **_: Any) -> None:
+        reached.append("resolve_invocation")
+
+    async def grant(_conn: Any, **_: Any) -> persistence.Blocked:
+        reached.append("grant_execution")
+        return persistence.Blocked(uuid4(), PROPOSAL, reason)
+
+    monkeypatch.setattr(persistence, "resolve_invocation", resolve)
+    monkeypatch.setattr(persistence, "grant_execution", grant)
+    return reached
+
+
+async def test_a_write_listing_that_drifts_is_refused_before_the_tool_is_called(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reached = grant_spy(monkeypatch, Reason.STALE_EVIDENCE)
+    committed = tool_contracts.input_schema
+
+    def drifted(tool: Tool) -> dict[str, Any]:
+        schema = committed(tool)
+        return {**schema, "title": "drifted"} if tool is Tool.CREATE_INCIDENT else schema
+
+    monkeypatch.setattr(tool_contracts, "input_schema", drifted)  # the server's side only: the worker compares files
+    app = write_app()
+    async with app.router.lifespan_context(app):
+        caller = HttpMcpCaller(Good(), transport=httpx2.ASGITransport(app=app))
+        with pytest.raises(McpCallFailed, match="not the committed one"):
+            await caller.call(
+                f"{BASE}/mcp", handle="h", tool="create_incident", arguments={"proposal_id": str(PROPOSAL)}
+            )
+    assert reached == []  # the tool never ran: no handle resolved and no grant
+
+
+async def test_a_write_result_outside_the_committed_schema_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `rejected` is a run reason, but not one a refused grant records: the server's envelope fails the reason enum.
+    reached = grant_spy(monkeypatch, Reason.REJECTED)
+    app = write_app()
+    async with app.router.lifespan_context(app):
+        caller = HttpMcpCaller(Good(), transport=httpx2.ASGITransport(app=app))
+        with pytest.raises(McpCallFailed, match="the result fails the contract"):
+            await caller.call(
+                f"{BASE}/mcp", handle="h", tool="create_incident", arguments={"proposal_id": str(PROPOSAL)}
+            )
+    assert reached == ["resolve_invocation", "grant_execution"]  # the tool did run: only its answer is refused
+
+
+async def test_a_failed_write_check_is_found_among_every_leaf_of_the_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*_: Any) -> None:
+        raise ExceptionGroup("session", [OSError("closed"), McpCallFailed("create_incident: the second leaf")])
+
+    monkeypatch.setattr(worker_mcp, "check_listing", refuse)
+    app = write_app()
+    async with app.router.lifespan_context(app):
+        caller = HttpMcpCaller(Good(), transport=httpx2.ASGITransport(app=app))
+        with pytest.raises(McpCallFailed, match="the second leaf"):  # not the first leaf's transport failure
+            await caller.call(
+                f"{BASE}/mcp", handle="h", tool="create_incident", arguments={"proposal_id": str(PROPOSAL)}
+            )
+
+
+STALE = persistence.Refused("MEMBERSHIP_STALE")
+READ_QUERY = {"query": "seal", "limit": 3, "mode": "lexical"}
+
+
+@pytest.mark.parametrize("where", ["scope", "search"])
+async def test_a_stale_sync_in_either_read_unit_is_a_retryable_envelope(
+    monkeypatch: pytest.MonkeyPatch, where: str
+) -> None:
+    db = Database(UnitConn(), **{where: STALE})  # the scope unit's refusal, then the third unit's
+    result = await call(monkeypatch, db, READ_QUERY)
+    doc = result.structured_content
+    assert doc is not None and doc["status"] == "error" and doc["data"] is None
+    assert doc["error"]["code"] == "MEMBERSHIP_STALE" and doc["error"]["retryable"] is True
 
 
 async def test_a_stale_read_is_a_retryable_deferral_and_any_other_refusal_is_not() -> None:

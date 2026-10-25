@@ -125,6 +125,9 @@ ATTEMPT_STATES: Final[dict[tuple[JobType, Tool], frozenset[AttemptState | None]]
     (JobType.RECOVER, Tool.CREATE_INCIDENT): frozenset({_A.INTENT}),
     (JobType.RECOVER, Tool.GET_INCIDENT_RECEIPT): frozenset({_A.SENT, _A.ABORT_REQUESTED, _A.RESOLVED}),
     (JobType.RECOVER, Tool.ABORT_INCIDENT): frozenset({_A.INTENT, _A.SENT, _A.ABORT_REQUESTED}),
+    # T21 (erratum 137): the one read tool with a rule. An execute job reads the asset status again only BEFORE its
+    # grant, so any attempt (which exists only after the grant) refuses it.
+    (JobType.EXECUTE, Tool.GET_ASSET_STATUS): frozenset({None}),
 }
 
 RECOVER_CADENCE: Final = (300, 3600, 48)  # every 5 min for the first hour, then hourly, 48 attempts (AM-20.4)

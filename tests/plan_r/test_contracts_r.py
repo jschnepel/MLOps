@@ -22,7 +22,7 @@ from ops_core import persistence
 from ops_core.jobs import JOB_RULES, JobType, Tool
 from ops_core.outcomes import EventRuleViolation, EventSource, EventType, event_rules_ok
 from ops_core.routing import DraftKind, Evidence, GraphKey, GraphRoute, route_graph
-from ops_core.states import GRANT_REFUSALS, TRANSITIONS, Intent, Performer, Reason, RunState
+from ops_core.states import GRANT_REFUSALS, TRANSITIONS, AttemptState, Intent, Performer, Reason, RunState
 from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +42,13 @@ def test_each_decision_conflict_keeps_its_code(code: str) -> None:
     mapped = refusal("OC003", code)
     assert isinstance(mapped, persistence.VersionConflict) and mapped.code == code
     assert c.ErrorCode(code).value == code  # the API answers it under its own name (ruling 3)
+
+
+@pytest.mark.parametrize("detail", ["revision", "run 7 is DRAFTING at version 3", "already_decided", ""])
+def test_a_conflict_detail_that_is_not_a_decision_code_has_no_code(detail: str) -> None:
+    mapped = refusal("OC003", detail)  # `code` feeds ErrorCode(...): only the four decision codes may reach it
+    assert isinstance(mapped, persistence.VersionConflict) and mapped.code is None
+    assert persistence.DECISION_CONFLICTS == {"ALREADY_DECIDED", "STALE_REVISION", "STALE_HASH", "EXPIRED"}
 
 
 def test_the_new_codes_are_in_the_error_schema() -> None:
@@ -113,6 +120,9 @@ def test_only_feedback_recorded_names_a_subject_and_a_category() -> None:
 
 def test_an_execute_job_reads_the_asset_status_and_a_manual_run_ends_its_graph_run() -> None:
     persistence.allowed_tool(JobType.EXECUTE, RunState.APPROVED, None, Tool.GET_ASSET_STATUS)
+    for attempt in AttemptState:  # only before the grant: any attempt means the grant exists (erratum 137)
+        with pytest.raises(persistence.HandleRejected):
+            persistence.allowed_tool(JobType.EXECUTE, RunState.EXECUTING, attempt, Tool.GET_ASSET_STATUS)
     assert Tool.GET_RECENT_ALERTS not in JOB_RULES[JobType.EXECUTE].allowed_tools  # only the status (erratum 137)
     key = GraphKey(RunState.DRAFTING, Intent.INVESTIGATE, True, Evidence.SUFFICIENT, DraftKind.MANUAL, False, None)
     assert route_graph(key) is GraphRoute.PUBLISH  # never `draft` again: the run waits for a person

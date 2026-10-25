@@ -46,9 +46,14 @@ class NotFound(PersistenceError):
     """The row is absent or belongs to another tenant; the two cases are indistinguishable on purpose (SA:357)."""
 
 
+# The decision definer's DETAIL for each way a decision can conflict (T21, Plan R ruling 3); the API answers each
+# under its own `ErrorCode`. Any other conflict (a state or version mismatch) carries no code.
+DECISION_CONFLICTS: Final = frozenset({"ALREADY_DECIDED", "STALE_REVISION", "STALE_HASH", "EXPIRED"})
+
+
 class VersionConflict(PersistenceError):
-    """A stale state, version or hash: the caller's view of the run is out of date. `code` is the function's DETAIL
-    when it names one (T21's decision rules: ALREADY_DECIDED, STALE_REVISION, STALE_HASH, EXPIRED)."""
+    """A stale state, version or hash: the caller's view of the run is out of date. `code` is one of
+    `DECISION_CONFLICTS` when the function's DETAIL names it (T21's decision rules), otherwise None."""
 
     def __init__(self, message: str, code: str | None = None) -> None:
         super().__init__(message)
@@ -98,10 +103,10 @@ def translate(exc: psycopg.Error) -> Exception | None:
         return Refused(detail or "REFUSED")
     if cls is HandleRejected:
         return HandleRejected("invocation handle rejected")  # one message for every refusal (SA:357)
+    message = f"{exc.diag.message_primary}: {detail}" if detail else str(exc.diag.message_primary)
     if cls is VersionConflict:
-        message = f"{exc.diag.message_primary}: {detail}" if detail else str(exc.diag.message_primary)
-        return VersionConflict(message, code=detail or None)
-    return cls(f"{exc.diag.message_primary}: {detail}" if detail else str(exc.diag.message_primary))
+        return VersionConflict(message, code=detail if detail in DECISION_CONFLICTS else None)
+    return cls(message)
 
 
 async def _call(conn: Conn, query: str, params: tuple[object, ...]) -> DictRow | None:
