@@ -51,4 +51,7 @@ def test_a_minted_handle_carries_the_workload_client(
 
 
 def test_the_model_request_has_no_field_for_a_handle() -> None:
-    assert [f.name for f in fields(DraftRequest)] == ["asset_id", "text", "start_at", "end_at"]
+    # T19 added two worker-computed fields the payload never carries: `answer_only`, a bool (the router's verdict), and
+    # `remaining_seconds`, a float (the run's budget left); neither can carry a handle.
+    fields_now = [f.name for f in fields(DraftRequest)]
+    assert fields_now == ["asset_id", "text", "start_at", "end_at", "answer_only", "remaining_seconds"]

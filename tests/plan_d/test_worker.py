@@ -1,9 +1,9 @@
 """The worker's model-free parts (AM-16 model router, BUILD_SPEC §6 canonical proposal, §12 draft validation).
 
-Catches: a model mode other than `fake` silently falling back (R130), a fake draft that is not a valid ModelDraft, a
-proposal whose hash is not the hash of the canonical bytes stored (the decision would bind to the wrong content),
-evidence refs out of order (the contract requires sorted refs with matching snapshots), a search result accepted
-without the fields the proposal needs, and a manifest claiming a digest for the fake route.
+Catches: a model mode other than `fake` or `qwen3:8b` silently falling back (R130), a fake draft that is not a valid
+ModelDraft, a proposal whose hash is not the hash of the canonical bytes stored (the decision would bind to the wrong
+content), evidence refs out of order (the contract requires sorted refs with matching snapshots), a search result
+accepted without the fields the proposal needs, and a fake route claiming a digest.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -28,9 +28,13 @@ EV = [
 ]
 
 
-def test_model_router_has_one_route_and_no_fallback():
+def test_model_router_has_two_routes_and_no_fallback():
+    from ops_worker.ollama_drafting import OllamaDraftGenerator
+
     assert isinstance(drafting.make_generator("fake"), drafting.FakeDraftGenerator)
-    for mode in ("ollama", "qwen3:8b", "", "FAKE"):
+    real = drafting.make_generator("qwen3:8b")  # reads the committed pin; no network until start()
+    assert isinstance(real, OllamaDraftGenerator) and real.route is ModelRoute.QWEN3_8B and real.digest
+    for mode in ("ollama", "qwen3", "", "FAKE", "QWEN3:8B"):  # the 1.0 spelling `ollama` is not a route (ruling 2)
         with pytest.raises(drafting.ModelRouteError):
             drafting.make_generator(mode)
 
@@ -78,7 +82,7 @@ async def test_build_proposal_binds_hash_to_canonical_bytes():
     )
     assert frozen.payload.expires_at == NOW + timedelta(minutes=15)
     assert (
-        frozen.payload.prompt_version == "incident-draft-v1" and frozen.payload.workflow_version == "investigation-v1"
+        frozen.payload.prompt_version == "incident-draft-v2" and frozen.payload.workflow_version == "investigation-v1"
     )
     assert frozen.manifest.model_route is ModelRoute.FAKE and frozen.manifest.model_digest is None
     assert frozen.manifest.corpus_version == "handoff-1" and frozen.manifest.retrieval_mode == "lexical"
