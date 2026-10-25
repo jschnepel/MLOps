@@ -2,8 +2,10 @@
 
 Routing is deterministic-first: model output may hint, never select (SA:362, SA:375). The admission table (T12) is
 `ADMISSION_RULES`, evaluated first match wins over facts the API gathered inside its admission unit; it is pure, so
-a test walks every row (R129). The graph table arrives with T20 and the model table with T19; this module fixes the
-vocabularies so every table, schema and event spells them the same way.
+a test walks every row (R129). The graph table (T20) is `GRAPH_ROUTES`, in the same style over the worker graph's
+`GraphKey` (SA:377's seven dimensions); the worker builds `route_request`'s conditional edges from it, so the table is
+the only place a route is chosen. The model table is T19's; this module fixes the vocabularies so every table, schema
+and event spells them the same way.
 
 Text versus fields (BS:297, Plan G ruling 12): structured fields win only when the text agrees with them, so a
 small deterministic parser reads asset ids and "last N seconds/minutes/hours/days/weeks/fortnights/months/years"
@@ -24,6 +26,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ops_core.contracts import MessageKind
+from ops_core.states import TERMINAL_STATES, AttemptState, Intent, RunState
 
 
 class AdmissionRoute(StrEnum):
@@ -345,6 +348,130 @@ def route_admission(facts: AdmissionFacts) -> AdmissionDecision:
 def route_reply(facts: AdmissionFacts) -> AdmissionDecision:
     """The clarifications route's decision: a bound reply is the clarification_reply route."""
     return _first(REPLY_RULES, facts, resolution_for(facts))
+
+
+class Evidence(StrEnum):
+    """ "Evidence sufficient?" (SA:377) as the graph knows it: not judged yet in this graph run, or the code rule's
+    verdict (`ops_worker.evidence.sufficient`)."""
+
+    UNKNOWN = "unknown"
+    SUFFICIENT = "sufficient"
+    INSUFFICIENT = "insufficient"
+
+
+class DraftKind(StrEnum):
+    """ "Validated draft kind" (SA:377): the draft after structural validation, an abstention with a question being
+    its own kind because it routes to `clarify` (SA:147); NONE before a draft exists in this graph run."""
+
+    NONE = "none"
+    PROPOSAL = "proposal"
+    ANSWER = "answer"
+    ABSTAIN = "abstain"
+    QUESTION = "question"
+
+
+@dataclass(frozen=True)
+class GraphKey:
+    """What `route_request` routes on, SA:377's seven dimensions in its order. Every value is the worker's own reading
+    of authoritative state or of a validated draft; nothing here is model text (SA:362)."""
+
+    state: RunState
+    intent: Intent
+    context_resolved: bool
+    evidence: Evidence
+    draft_kind: DraftKind
+    decision_present: bool
+    attempt_state: AttemptState | None  # the latest action attempt's state; None before a grant (AM-13)
+
+
+@dataclass(frozen=True)
+class GraphRule:
+    """One row of the graph table: the run states it covers, the other dimensions it requires (None: any value), and
+    the route. The first row that matches decides, as in `ADMISSION_RULES`."""
+
+    name: str
+    states: frozenset[RunState]
+    route: GraphRoute
+    intent: Intent | None = None
+    context_resolved: bool | None = None
+    evidence: Evidence | None = None
+    draft_kind: DraftKind | None = None
+    decision_present: bool | None = None
+    attempt_states: frozenset[AttemptState | None] | None = None
+
+    def matches(self, key: GraphKey) -> bool:
+        """True when every dimension the row names has the key's value."""
+        return (
+            key.state in self.states
+            and self.intent in (None, key.intent)
+            and self.context_resolved in (None, key.context_resolved)
+            and self.evidence in (None, key.evidence)
+            and self.draft_kind in (None, key.draft_kind)
+            and self.decision_present in (None, key.decision_present)
+            and (self.attempt_states is None or key.attempt_state in self.attempt_states)
+        )
+
+
+_RS = RunState
+_PRE_DRAFT: Final = frozenset({_RS.RETRIEVING, _RS.DRAFTING})
+# The rows the worker can reach (Plan Q ruling 2), first match wins. "Context resolved?" is decided in retrieval
+# (contract erratum 4): an asset the asset service does not know abstains, because a reply cannot change the run's
+# fixed asset (SA:154). A proposal on an answer_only run matches no row: validation refuses it before the router sees
+# it (`draft_validation`, SA:453), and should one ever arrive the graph run fails instead of freezing it. A run whose
+# held evidence was lost (a new process resumed it) retrieves again before it drafts (BS:423).
+GRAPH_ROUTES: Final[tuple[GraphRule, ...]] = (
+    GraphRule("queued", frozenset({_RS.QUEUED}), GraphRoute.RETRIEVE),
+    GraphRule("waiting_for_input", frozenset({_RS.AWAITING_INPUT}), GraphRoute.CLARIFY),
+    GraphRule("context_missing", _PRE_DRAFT, GraphRoute.ABSTAIN, context_resolved=False),
+    GraphRule("evidence_insufficient", _PRE_DRAFT, GraphRoute.ABSTAIN, evidence=Evidence.INSUFFICIENT),
+    GraphRule("evidence_unread", _PRE_DRAFT, GraphRoute.RETRIEVE, evidence=Evidence.UNKNOWN),
+    GraphRule(
+        "draft", frozenset({_RS.DRAFTING}), GraphRoute.DRAFT, evidence=Evidence.SUFFICIENT, draft_kind=DraftKind.NONE
+    ),
+    GraphRule(
+        "freeze",
+        frozenset({_RS.DRAFTING}),
+        GraphRoute.FREEZE,
+        intent=Intent.INVESTIGATE,
+        draft_kind=DraftKind.PROPOSAL,
+    ),
+    GraphRule("answer", frozenset({_RS.DRAFTING}), GraphRoute.ANSWER_ONLY, draft_kind=DraftKind.ANSWER),
+    GraphRule("question", frozenset({_RS.DRAFTING}), GraphRoute.CLARIFY, draft_kind=DraftKind.QUESTION),
+    GraphRule("abstention", frozenset({_RS.DRAFTING}), GraphRoute.ABSTAIN, draft_kind=DraftKind.ABSTAIN),
+    GraphRule(
+        "awaiting_decision", frozenset({_RS.AWAITING_APPROVAL}), GraphRoute.AWAIT_DECISION, decision_present=False
+    ),
+    GraphRule(
+        "approved",
+        frozenset({_RS.APPROVED}),
+        GraphRoute.EXECUTE,
+        decision_present=True,
+        attempt_states=frozenset({None}),
+    ),
+    # The execute job's re-send after a lost reply (Plan E ruling 6): the same action id, never a new grant.
+    GraphRule(
+        "executing",
+        frozenset({_RS.EXECUTING}),
+        GraphRoute.EXECUTE,
+        decision_present=True,
+        attempt_states=frozenset({AttemptState.INTENT, AttemptState.SENT, AttemptState.ABORT_REQUESTED}),
+    ),
+    GraphRule("outcome_unknown", frozenset({_RS.OUTCOME_UNKNOWN, _RS.ESCALATED}), GraphRoute.RECOVER),
+    GraphRule("settled", TERMINAL_STATES | {_RS.BLOCKED_REVIEW}, GraphRoute.PUBLISH),
+)
+
+
+def route_graph(key: GraphKey) -> GraphRoute:
+    """The graph router's decision (`route_request`, SA:377).
+
+    Raises:
+        LookupError: no row matches; the graph run fails rather than guess (a test enumerates the keys the worker
+            produces and walks every row, R129).
+    """
+    for rule in GRAPH_ROUTES:
+        if rule.matches(key):
+            return rule.route
+    raise LookupError(f"no graph rule matched state {key.state.value} with draft kind {key.draft_kind.value}")
 
 
 class RunManifest(BaseModel):

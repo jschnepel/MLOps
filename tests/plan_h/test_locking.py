@@ -14,10 +14,11 @@ from ops_core import locking, privileges
 def test_every_table_is_placed_exactly_once() -> None:
     ordered = {locking.table_of(entry) for entry in locking.LOCK_ORDER} - {None}
     groups = (ordered, set(locking.OWN_UNIT), set(locking.NEVER_LOCKED))
-    for table in privileges.GRANTS:
+    tables = set(privileges.GRANTS) | set(privileges.CHECKPOINT_GRANTS)  # T20: the checkpoint schema's tables too
+    for table in tables:
         assert sum(table in group for group in groups) == 1, table
     named = ordered | locking.OWN_UNIT | locking.NEVER_LOCKED
-    assert named - set(privileges.GRANTS) <= locking.NOT_YET_CREATED, sorted(named - set(privileges.GRANTS))
+    assert named - tables <= locking.NOT_YET_CREATED, sorted(named - tables)
 
 
 def test_the_order_starts_with_the_advisory_locks_and_ends_with_the_record() -> None:

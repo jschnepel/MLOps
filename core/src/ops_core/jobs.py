@@ -79,7 +79,9 @@ JOB_RULES: Final[dict[JobType, JobRule]] = {
     JobType.RESUME_INPUT: JobRule(
         JobType.RESUME_INPUT,
         _READ,
-        frozenset({_S.AWAITING_INPUT, _S.QUEUED}),
+        # T20 (Plan Q ruling 7, erratum 127): the job that resumes a clarified run carries it on through retrieval and
+        # drafting under the same lease, so its read handle works in those states too, as an investigate job's does.
+        frozenset({_S.AWAITING_INPUT, _S.QUEUED, _S.RETRIEVING, _S.DRAFTING}),
         Server.READ,
         ("api",),
         "run_id:clarification_event_id",

@@ -195,6 +195,15 @@ NO_RLS: Final = (
     "model_permit",
 )
 AUDIT_TABLES: Final = ("run_state_history", "action_attempt_state", "events")  # AM-20 principle 2
+# T20 (revision 0015; SA:434, SA:559-562; R122): LangGraph's checkpoint tables, in schema `checkpoints` outside the
+# `app` matrix above. Only the worker's saver reads and writes them, by thread id; no other role has any privilege on
+# the schema, and there is no RLS (they are not tenant rows, erratum 123). `checkpoint_migrations` is the library's
+# own bookkeeping, written by the revision only, so it has no cell.
+CHECKPOINT_SCHEMA: Final = "checkpoints"
+CHECKPOINT_GRANTS: Final[dict[str, dict[str, Grant]]] = {
+    table: {"worker": Grant(sel=True, ins=True, upd=True, dele=True)}
+    for table in ("checkpoints", "checkpoint_blobs", "checkpoint_writes")
+}
 
 # The policy expression (SA:446's NULLIF form, not SA:512's bare cast: '' raises 22P02, measured in the spike), and
 # the text PostgreSQL stores for it in pg_policies.qual, which R106 compares.
