@@ -53,6 +53,7 @@ __all__ = [
 
 log = logging.getLogger("ops_worker")
 EXECUTE_RETRY_SECONDS = 30  # how long an execute job waits after mcp-write could not be reached
+FAILURE_RETRY_SECONDS = 30  # how long a job waits after a failure no node recorded (it is re-queued, not done)
 # A run found RETRIEVING or DRAFTING with no stored checkpoint (it stopped before its first checkpoint was stored, or
 # before T20) cannot be resumed; it is failed, which frees its conversation slot.
 INTERRUPTED: Final = "interrupted; the run was not resumed"
@@ -63,8 +64,8 @@ async def _drive(
     deps: Deps, job: dict[str, Any], lease: Lease, graph_input: build.GraphInput, checkpoint_id: str | None
 ) -> None:
     """One graph run. A failure no node recorded fails a run still RETRIEVING or DRAFTING, so its slot is freed (as
-    Plan P's "drafting failed"); any other failure propagates as before T20 (the job stays claimed, its lease lapses
-    and the sweeper hands it back)."""
+    Plan P's "drafting failed"); any other failure propagates to `handle`, which releases the lease and re-queues
+    the job."""
     ctx = Context(deps, job, lease)
     try:
         await build.run_graph(ctx, graph_input, checkpoint_id=checkpoint_id)
@@ -217,9 +218,10 @@ async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
 
 
 async def handle(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
-    """Dispatch a claimed job by type under its lease; the final unit closes the job and releases the lease, after a
-    failure too: the failure is re-raised for the poll loop to log, but no lease is left to lapse (a lost lease is not
-    released again; `main.run_job` hands that job back)."""
+    """Dispatch a claimed job by type under its lease; the final unit closes the job and releases the lease. After a
+    failure no node recorded, the lease is released and the job re-queued, never finished (the job may be the only wake-up
+    its run has; bounded retries are T22's); the failure is re-raised for the poll loop to log. A lost lease is
+    not released again: `main.run_job` hands that job back."""
     kind = JobType(job["type"])
     try:
         if kind is JobType.INVESTIGATE:
@@ -239,12 +241,16 @@ async def handle(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
 
 
 async def _release_after_failure(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
-    """The final unit for a job that failed: skipped when the lease is already lost (the loop hands the job back), and
-    a failure of its own is logged, never allowed to replace the one being raised."""
+    """The final unit for a job that failed: it releases the lease and re-queues the job after FAILURE_RETRY_SECONDS.
+    Skipped when the lease is already lost (the loop hands the job back); a lease found lost only now (a refusal that
+    did not mark it, as `mint_handle`'s) is one INFO line; any other failure of its own is logged, and none replaces the
+    failure being raised."""
     if lease.lost is not None:
         return
     try:
-        await persistence.release_lease(deps.conn, lease, job=job)
+        await persistence.release_lease(deps.conn, lease, job=job, requeue_seconds=FAILURE_RETRY_SECONDS)
+    except LeaseLost:
+        log.info("job %s: the lease was already lost; the loop hands the job back", job["id"])
     except Exception:
         log.exception("job %s: the lease could not be released after the failure", job["id"])
 

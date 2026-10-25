@@ -501,12 +501,28 @@ def test_an_investigate_job_never_calls_the_write_tool(monkeypatch: pytest.Monke
     assert w.log.entries.count("mcp:create_incident") == 1
 
 
-def test_a_failure_in_a_state_the_graph_does_not_fail_still_releases_the_lease(
+def releases(monkeypatch: pytest.MonkeyPatch, w: World) -> list[int | None]:
+    """The final unit as the handler calls it: logged like Plan H's recorder, with the `requeue_seconds` it was given
+    (None: the job is finished)."""
+    seen: list[int | None] = []
+
+    async def release_lease(
+        _conn: Any, lease: Lease, *, job: dict[str, Any], requeue_seconds: int | None = None
+    ) -> None:
+        w.log.entries.append("release_lease")
+        seen.append(requeue_seconds)
+
+    monkeypatch.setattr(persistence, "release_lease", release_lease)
+    return seen
+
+
+def test_a_failure_in_a_state_the_graph_does_not_fail_releases_the_lease_and_requeues_the_job(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Review round 1, M2: an unexpected failure with the run APPROVED is re-raised for the poll loop, but only after
-    the lease is released and the job closed; the sweeper re-arms the run."""
+    """Review round 1, M2 and round 2, R1: an unexpected failure with the run APPROVED is re-raised for the poll loop,
+    but only after the lease is released and the job re-queued (never finished), so the job itself retries."""
     w = world(monkeypatch, {**RUN, "state": "APPROVED"})
+    seen = releases(monkeypatch, w)
 
     class Crashing:
         async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -515,6 +531,46 @@ def test_a_failure_in_a_state_the_graph_does_not_fail_still_releases_the_lease(
     with pytest.raises(RuntimeError):
         job(w, Scripted(), "execute", mcp=Crashing())
     assert w.run["state"] == "APPROVED" and w.log.entries[-1] == "release_lease"
+    assert seen == [handlers.FAILURE_RETRY_SECONDS]
+
+
+def test_a_resume_that_fails_unexpectedly_keeps_its_job_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 2, R1: the reply was taken (the API refuses a second one) and nothing but this job wakes a run in
+    AWAITING_INPUT, so a resume_input job that fails unexpectedly is re-queued, not finished."""
+    w = world(monkeypatch)
+    job(w, Scripted(QUESTION))
+    key = reply(w)
+    seen = releases(monkeypatch, w)
+
+    async def saver_read_failed(*_: Any, **__: Any) -> bool:
+        raise RuntimeError("the saver could not be read")
+
+    monkeypatch.setattr(build, "known", saver_read_failed)
+    with pytest.raises(RuntimeError):
+        job(w, Scripted(), "resume_input", dedup_key=key)
+    assert w.run["state"] == "AWAITING_INPUT" and seen == [handlers.FAILURE_RETRY_SECONDS]
+
+
+def test_a_lease_lost_without_being_marked_is_not_released_with_an_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Review round 2, R3: mint_handle raises LeaseLost without marking the lease lost; the release after the failure
+    meets the lost lease too, which is one INFO line, never a second error with a traceback."""
+    w = world(monkeypatch, {**RUN, "state": "APPROVED"})
+
+    async def no_live_lease(*_: Any, **__: Any) -> str:
+        raise LeaseLost("no live lease at this fence")
+
+    async def release_finds_it_lost(_conn: Any, lease: Lease, **_: Any) -> None:
+        w.log.entries.append("release_lease")
+        lease.mark_lost("another owner holds the lease, or it lapsed")
+        raise LeaseLost("run lease lost")
+
+    monkeypatch.setattr(persistence, "mint_handle", no_live_lease)
+    monkeypatch.setattr(persistence, "release_lease", release_finds_it_lost)
+    with caplog.at_level("INFO", logger="ops_worker"), pytest.raises(LeaseLost):
+        job(w, Scripted(), "execute")
+    assert not [r for r in caplog.records if r.levelno >= 40 or r.exc_info]
 
 
 def test_a_lost_lease_is_not_released_again(monkeypatch: pytest.MonkeyPatch) -> None:

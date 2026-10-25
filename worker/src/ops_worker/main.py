@@ -65,7 +65,7 @@ async def run_job(deps: handlers.Deps, claimed: persistence.Claimed) -> None:
     an effect the heartbeat cancelled (`Lease.effect`), hands the job back instead of failing the run (ruling 19 as
     amended in review round 1, B1: only effects are cancelled, never a database unit, so the loop connection is idle
     when `abandon` runs, and `abandon` checks that). Anything else propagates after `handle` released the lease and
-    closed the job (T20 review, M2): the poll loop logs it, and the sweeper re-arms a run still waiting."""
+    re-queued the job (T20 review): the poll loop logs it, and the job is retried (unbounded until T22)."""
     job, lease = dict(claimed.job), claimed.lease
     if deps.heartbeat is not None:
         deps.heartbeat.hold(lease)
@@ -80,8 +80,8 @@ async def run_job(deps: handlers.Deps, claimed: persistence.Claimed) -> None:
 
 
 async def run_forever(deps: handlers.Deps, stop: asyncio.Event) -> None:
-    """Claim, handle, repeat. A crashed handler is logged and keeps its job claimed until the lease lapses and the
-    sweeper reclaims it; a broken connection ends the loop, and readiness follows it (see health_app)."""
+    """Claim, handle, repeat. A crashed handler is logged; `handle` has released its lease and re-queued its job, which
+    is retried (unbounded until T22). A broken connection ends the loop, and readiness follows it (see health_app)."""
     polls = 0
     while not stop.is_set():
         try:
@@ -96,7 +96,7 @@ async def run_forever(deps: handlers.Deps, stop: asyncio.Event) -> None:
                 log.exception("database connection lost; the poll loop stops and the process exits non-zero")
                 raise
             log.exception("transient database error (deadlock, serialization); the loop continues")
-        except Exception:  # a crashed handler keeps its job until the lease lapses and the sweeper reclaims it
+        except Exception:  # a crashed handler's job was re-queued by `handle`, and is retried
             log.exception("poll iteration failed")
         try:
             await asyncio.wait_for(stop.wait(), timeout=POLL_SECONDS)
