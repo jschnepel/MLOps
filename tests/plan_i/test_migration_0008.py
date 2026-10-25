@@ -54,7 +54,10 @@ def test_the_frozen_cells_are_the_live_matrix() -> None:
 
 def test_the_frozen_rule_literals_are_the_live_vocabulary() -> None:
     module = revision()
-    assert set(module.PAYLOAD_KEYS_0008) == PAYLOAD_KEYS and len(module.PAYLOAD_KEYS_0008) == len(PAYLOAD_KEYS)
+    # Revision 0016 (T21) extends the frozen list with the feedback keys; it carries 0008's own, in order.
+    newest = revision("0016_review_and_grant").PAYLOAD_KEYS_0016
+    assert newest[: len(module.PAYLOAD_KEYS_0008)] == module.PAYLOAD_KEYS_0008
+    assert set(newest) == PAYLOAD_KEYS and len(newest) == len(PAYLOAD_KEYS)
     assert set(module.NOTIFY_TYPES_0008) <= {t.value for t in EventType}
     assert set(module.NOTIFY_TYPES_0008) == {
         "action.confirmed",

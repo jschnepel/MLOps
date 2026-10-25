@@ -432,6 +432,10 @@ def event() -> Doc:
             "question_id": UUID,
             "message_id": UUID,
             "outbox_id": UUID,
+            # T21 (Plan R ruling 8, erratum 136): the feedback event's subject and category, never its text.
+            "subject_kind": {"enum": ["run", "proposal", "event"]},
+            "subject_id": UUID,
+            "category": {"enum": ["wrong_evidence", "missing_evidence", "wrong_conclusion", "unclear", "other"]},
         },
         [],
     )
@@ -544,6 +548,21 @@ def event() -> Doc:
                 when(
                     {"not": props(type={"enum": DESTINATION_TYPES})},
                     props(payload={"not": {"required": ["status"]}}),
+                ),
+                # (10) T21: only feedback.recorded names a feedback subject and category (event_rules_ok, 0016).
+                when(
+                    {"not": props(type={"const": EventType.FEEDBACK_RECORDED.value})},
+                    props(
+                        payload={
+                            "not": {
+                                "anyOf": [
+                                    {"required": ["subject_kind"]},
+                                    {"required": ["subject_id"]},
+                                    {"required": ["category"]},
+                                ]
+                            }
+                        }
+                    ),
                 ),
             ],
         ),

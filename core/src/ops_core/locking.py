@@ -28,7 +28,7 @@ from typing import Final
 
 LOCK_ORDER: Final = (
     "advisory:idempotency",  # erratum 37: pg_advisory_xact_lock(1, hashtext(scope)), the API's units only
-    "advisory:asset",  # SA:189: pg_advisory_xact_lock(hashtextextended(tenant || ':' || asset, 0)); taken by T21
+    "advisory:asset",  # SA:189: pg_advisory_xact_lock(hashtextextended(tenant || ':' || asset, 0)) (T21)
     "advisory:notification",  # T14: pg_advisory_xact_lock(2, hashtext(outbox_id)), a dead letter's announcement
     "jobs:claim",  # SKIP LOCKED only (Plan H ruling 3)
     "run_lease",
@@ -73,7 +73,9 @@ OWN_UNIT: Final = frozenset(
 # (conftest `purge_corpus`). T18 (revision 0013): `embeddings` likewise; its insert takes FOR KEY SHARE on the
 # existing `chunks` row it names, which nothing updates or deletes either. T19 (revision 0014): `run_manifests` is
 # inserted once per run and never updated; its insert's FOR KEY SHARE on the run row comes after the same unit's
-# `transition_run` already holds that row FOR UPDATE, so it adds no wait.
+# `transition_run` already holds that row FOR UPDATE, so it adds no wait. T21 (revision 0016): `feedback` is inserted
+# and read, never updated; its insert's FOR KEY SHARE on the run row comes after the same API unit's event append
+# holds that row FOR UPDATE.
 NEVER_LOCKED: Final = frozenset(
     {
         "conversations",
@@ -84,6 +86,7 @@ NEVER_LOCKED: Final = frozenset(
         "chunks",
         "embeddings",
         "run_manifests",
+        "feedback",
     }
 )
 NOT_YET_CREATED: Final = frozenset({"operator_resolutions"})
@@ -94,7 +97,11 @@ OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "worker tool event (append_event)": ("run_lease", "runs"),
     "worker failure (transition_run)": ("run_lease", "runs"),
     "worker drafting start (transition_run, run manifest)": ("run_lease", "runs"),  # T19: the manifest's FK share
-    "worker draft and freeze": ("run_lease", "runs"),
+    # T21: the freeze unit takes the asset guard's lock before its fence (SA:189); freeze_proposal takes it again.
+    "worker draft and freeze": ("advisory:asset", "run_lease", "runs"),
+    # T21: the worker's column UPDATEs on its own run row (the workflow version at the first claim, the asset
+    # observation after a status read).
+    "worker run columns (workflow_version, asset_observed_at)": ("run_lease", "runs"),
     # T20: the graph's units. The checkpoint id is the worker's column UPDATE on its own run row (SA:211); the answer,
     # the clarification and the abstention insert their drafts row, whose foreign key takes a key share on the run row
     # (`await_clarification`'s DRAFTING branch takes it before `transition_run` locks the row, an upgrade of the
@@ -114,15 +121,31 @@ OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "mcp-read search_procedures_scoped": ("run_lease",),  # T17: the handle's lease FOR SHARE, then plain reads
     # T16 (revision 0012): the same lease FOR SHARE; the run and its requester's membership are plain reads.
     "mcp-read asset_scope": ("run_lease",),
-    "mcp-write grant_execution": ("run_lease", "runs"),
+    # T21: the asset guard's lock first, after plain reads of the handle's run (SA:462).
+    "mcp-write grant_execution": ("advisory:asset", "run_lease", "runs"),
     "mcp-write mark_sent": ("run_lease", "runs"),
     "mcp-write record_outcome": ("run_lease", "runs"),
     "api admission (create_run)": ("advisory:idempotency", "runs", "idempotency_request"),
     "api clarification reply": ("advisory:idempotency", "runs", "idempotency_request"),
     "api decision (record_decision)": ("advisory:idempotency", "runs", "idempotency_request"),
+    # T21. The lazy expiry is its own unit before the decision's (Plan R ruling 5); the revision, the cancel and the
+    # feedback lock the run and append their events; the manual proposal's two definer calls take the asset guard's
+    # lock before the run's; the search reads only.
+    "api lazy expiry (expire_proposal)": ("runs",),
+    "api revision (create_revision)": ("advisory:idempotency", "runs", "idempotency_request"),
+    "api cancel (request_cancel)": ("advisory:idempotency", "runs", "idempotency_request"),
+    "api manual proposal (prepare_manual_proposal, create_manual_proposal)": (
+        "advisory:idempotency",
+        "advisory:asset",
+        "runs",
+        "idempotency_request",
+    ),
+    "api feedback (feedback.recorded, feedback)": ("advisory:idempotency", "runs", "idempotency_request"),
+    "api search (search_procedures_api)": (),
     "sweeper membership sync": ("memberships",),
     "sweeper reclaim (leases.reclaim)": ("jobs:finish",),
     "sweeper sync job record": ("jobs:claim",),
+    "sweeper proposal expiry (expire_proposal)": ("runs",),  # T21: one unit per run, under its tenant (SA:520)
     # T14 (Plan I ruling 22). Every event append writes its notification intent last: the runs row lock, the event,
     # then the outbox row (revision 0008's _append_event; a fresh row, its unique key serialised by the runs lock).
     "event append with notification intent (_append_event)": ("runs", "events", "outbox"),

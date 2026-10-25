@@ -34,7 +34,8 @@ def test_audit_tables_are_append_only_and_only_the_definer_writes_them() -> None
 
 def test_runtime_roles_never_write_state_or_events_directly() -> None:
     assert p.GRANTS["runs"]["api"].upd == ("cancel_requested", "cancel_requested_at")
-    assert p.GRANTS["runs"]["worker"].upd == ("checkpoint_id", "budget_used")
+    # T21: the worker also records the asset observation and the run's workflow version, never a state column.
+    assert p.GRANTS["runs"]["worker"].upd == ("checkpoint_id", "budget_used", "asset_observed_at", "workflow_version")
     assert "state" in p.GRANTS["runs"][p.DEFINER_ROLE].upd
     for table in ("events", "decisions", "proposals", "execution_grant", "action_attempt_state"):
         assert [r for r, g in p.GRANTS[table].items() if g.ins] == [p.DEFINER_ROLE], table

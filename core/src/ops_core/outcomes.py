@@ -185,7 +185,8 @@ OUTCOME_EVENT_TYPES: Final = frozenset(
 
 # The event schema's payload keys (its payload object is closed). T14 added the clarification reply's
 # `question_id`/`message_id` and the dead letter's `outbox_id`, the keys today's writers already use (Plan I
-# ruling 4, erratum 65); revision 0008's `_append_event` refuses any other key, and so does `event_rules_ok`.
+# ruling 4, erratum 65); T21 added the feedback event's three (FEEDBACK_KEYS). Revision 0016's `_append_event` refuses
+# any other key, and so does `event_rules_ok`.
 PAYLOAD_KEYS: Final = frozenset(
     {
         "message",
@@ -201,8 +202,14 @@ PAYLOAD_KEYS: Final = frozenset(
         "question_id",
         "message_id",
         "outbox_id",
+        "subject_kind",
+        "subject_id",
+        "category",
     }
 )
+# T21 (Plan R ruling 8, erratum 136): what a feedback.recorded event names, and no other type may carry. Its text
+# stays in the feedback row, never in an event.
+FEEDBACK_KEYS: Final = frozenset({"subject_kind", "subject_id", "category"})
 # A `status` is the destination's assertion about the run (AM-14), so only the four destination-evidence types carry
 # one, and they come only from record_outcome (T14 review note 2: never from api, worker or sweeper).
 STATUS_EVENT_TYPES: Final = DESTINATION_EVIDENCE
@@ -239,6 +246,8 @@ def event_rules_ok(event_type: EventType, source: EventSource, payload: Mapping[
     if not set(payload) <= PAYLOAD_KEYS:
         # The message never repeats the key: a caller's key is caller text, and this message reaches logs.
         raise EventRuleViolation("the payload carries a key the event schema does not define")
+    if event_type is not EventType.FEEDBACK_RECORDED and not FEEDBACK_KEYS.isdisjoint(payload):
+        raise EventRuleViolation("only feedback.recorded names a feedback subject and category")
     if source is EventSource.MODEL_SUMMARY:
         # The schema's closed summary_payload, mirrored: a non-empty message, optional evidence_refs, nothing else
         # (so no status, AM-14).

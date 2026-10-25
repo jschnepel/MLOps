@@ -4,8 +4,8 @@ function's callers (SPEC_AMENDMENTS AM-20.1, AM-20.2, AM-20.3, AM-20.5).
 One source of truth for two consumers: the migrations render GRANT, REVOKE and POLICY statements from it for the
 tables each revision creates or changes (never for "every table": an applied revision must not change when a row is
 added here), and the R124/R106 tests enumerate the catalogs against it, so an extra or missing grant fails a test
-instead of hiding. Rows exist only for tables that exist; the owners of later tables (feedback → T21,
-operator_resolutions → T22) add their rows; T18 added `embeddings`. Ten departures from the printed
+instead of hiding. Rows exist only for tables that exist; the owner of a later table (operator_resolutions → T22)
+adds its rows; T18 added `embeddings`, T21 `feedback`. Ten departures from the printed
 table, each a proposed erratum (Plan E rulings 6, 10, 17, 23; Plan F rulings 2, 3 and 17 with erratum 25; Plan G
 ruling 4; Plan H rulings 1 and 12; Plan I rulings 12 and 20): the worker (not the sweeper) may UPDATE
 jobs.available_at (re-queue after a transport failure), app_definer may UPDATE runs.updated_at, app_definer may
@@ -19,7 +19,10 @@ WHERE reads the row), login_state and logout_jti are rows the printed table lack
 restrictive policy, SWEEPER_PURGE, erratum 61). Plan L (T17) adds the corpus: AM-20.2's corpus row on `documents` and
 `chunks`, and the same cells on the two append-only tables the printed table lacks, `document_states` and
 `corpus_ingestions` (erratum 95). Plan P (T19) adds `run_manifests`, a row the printed table lacks (worker INSERT and
-SELECT, api SELECT; erratum 120). `test_harness` exists only in the test profile: the main-line revisions grant it
+SELECT, api SELECT; erratum 120). Plan R (T21, revision 0016) adds `feedback` (SA:428: api INSERT and SELECT), the
+worker's UPDATE on `runs.asset_observed_at` and `runs.workflow_version`, app_definer's UPDATE on `runs.authors`,
+`checkpoint_id`, `cancel_requested` and `cancel_requested_at`, and app_definer's INSERT on `drafts` (the manual
+proposal's own draft row). `test_harness` exists only in the test profile: the main-line revisions grant it
 nothing; the testclock branch grants it schema USAGE, EXECUTE on current_time() and its test_clock cells.
 """
 
@@ -92,7 +95,8 @@ GRANTS: Final[dict[str, dict[str, Grant]]] = {
     "messages": {"api": _SI, "worker": _S, DEFINER_ROLE: _S},
     "runs": {
         "api": Grant(sel=True, upd=("cancel_requested", "cancel_requested_at")),
-        "worker": Grant(sel=True, upd=("checkpoint_id", "budget_used")),
+        # T21: the asset observation the grant checks (R116) and the run's workflow version (BS:342).
+        "worker": Grant(sel=True, upd=("checkpoint_id", "budget_used", "asset_observed_at", "workflow_version")),
         "sweeper": _S,
         DEFINER_ROLE: Grant(
             ins=True,
@@ -106,6 +110,10 @@ GRANTS: Final[dict[str, dict[str, Grant]]] = {
                 "slot_held",
                 "supersedes_run_id",
                 "updated_at",
+                "authors",  # T21: create_revision and create_manual_proposal append an author (SA:453)
+                "checkpoint_id",  # T21: a revision starts a new graph thread (Plan R ruling 1)
+                "cancel_requested",  # T21: request_cancel sets the flag (SA:458)
+                "cancel_requested_at",
             ),
         ),
     },
@@ -125,7 +133,7 @@ GRANTS: Final[dict[str, dict[str, Grant]]] = {
         DEFINER_ROLE: _SI,
     },
     "invocation_context": {"worker": _INS, "sweeper": _S, DEFINER_ROLE: Grant(sel=True, upd=("revoked_at",))},
-    "drafts": {"worker": _SI, DEFINER_ROLE: _S},
+    "drafts": {"worker": _SI, DEFINER_ROLE: _SI},  # T21: create_manual_proposal inserts its own draft row
     "proposals": {"api": _S, "worker": _S, "sweeper": _S, DEFINER_ROLE: _SI},
     "decisions": {"api": _S, "worker": _S, DEFINER_ROLE: _SI},
     "execution_grant": {"api": _S, "worker": _S, "sweeper": _S, DEFINER_ROLE: _SI},
@@ -152,6 +160,8 @@ GRANTS: Final[dict[str, dict[str, Grant]]] = {
     # T19 (revision 0014, erratum 120): a row AM-20.2 lacks (AM-80 names the manifest, no table); the worker writes each
     # run's manifest once and reads it, the api reads it, and nobody updates it.
     "run_manifests": {"worker": _SI, "api": _S},
+    # T21 (revision 0016; SA:428, R113): classified feedback; nobody updates it (`reviewed` has no writer in v1).
+    "feedback": {"api": _SI},
 }
 
 # AM-20.5 tenant tables (of those that exist); FORCE applies to the owner, who is exempt only through BYPASSRLS.
@@ -176,6 +186,7 @@ RLS_TABLES: Final = (
     "chunks",
     "embeddings",  # T18: SA:510 names it
     "run_manifests",  # T19: a tenant's runs' manifests, as its runs
+    "feedback",  # T21: SA:510 names it
 )
 SWEEPER_ALL: Final = ("memberships", "jobs")  # SA:520: the permissive policies besides tenant_isolation
 # T14 (Plan I round 1, I6; erratum 61): a restrictive DELETE policy keeps the sweeper's purge to finished maintenance
@@ -220,7 +231,15 @@ DEFINER_FUNCTIONS: Final[dict[str, tuple[str, tuple[str, ...]]]] = {
     "append_event": ("uuid, text, jsonb, text", ("api", "worker", "sweeper")),
     "revoke_handles": ("uuid, bigint", ("worker",)),
     "freeze_proposal": ("uuid, uuid, bytea, timestamptz", ("worker",)),
-    "record_decision": ("uuid, uuid, uuid, text, text, text, text", ("api",)),
+    # T21 (erratum 131): the expected revision is checked under the runs lock with everything else.
+    "record_decision": ("uuid, uuid, uuid, integer, text, text, text, text", ("api",)),
+    "expire_proposal": ("uuid", ("sweeper", "api")),  # T21: SA:457, the scheduled job and the API's own unit
+    "create_revision": ("uuid, uuid, integer, uuid, uuid", ("api",)),  # T21: SA:455 with the tenant first
+    "request_cancel": ("uuid, uuid, integer, uuid", ("api",)),  # T21: SA:458 with the tenant and the actor
+    # T21 (Plan R ruling 7): the manual proposal in two calls of one API unit, the canonical bytes built between them.
+    "prepare_manual_proposal": ("uuid, uuid, uuid, text[]", ("api",)),
+    "create_manual_proposal": ("uuid, uuid, bytea, uuid", ("api",)),
+    "search_procedures_api": ("uuid, text, integer", ("api",)),  # T21: BS:280's search, lexical only (erratum 135)
     "resolve_invocation": ("text, text", ("mcp_read", "mcp_exec")),
     # T17 (Plan L ruling 1): SA:461 with the caller's azp second, as the write path since T47 (erratum 93).
     "search_procedures_scoped": ("text, text, text, public.vector, text, integer, text", ("mcp_read",)),
@@ -248,6 +267,13 @@ HELPER_FUNCTIONS: Final[dict[str, str]] = {
     "_dispatch_seconds": "",  # T47: the dispatch deadline, 300 s (Plan K ruling 17)
     "_min_rank": "",  # T17: the search's minimum rank, 0.25 (Plan L ruling 18, round 1)
     "_min_similarity": "",  # T18: the vector branch's minimum cosine similarity (Plan N ruling 6)
+    # T21 (revision 0016): a run's current revision, the asset guard's lock and its two sets, the cited sections still
+    # permitted, and the expiry every caller shares.
+    "_run_revision": "uuid",
+    "_asset_lock": "uuid, text",
+    "_asset_guard": "uuid, text, timestamptz, timestamptz, uuid, uuid",
+    "_cited_permitted": "uuid, text[]",
+    "_expire": "uuid",
 }
 
 

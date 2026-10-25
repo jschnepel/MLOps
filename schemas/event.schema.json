@@ -220,6 +220,26 @@
         "outbox_id": {
           "type": "string",
           "format": "uuid"
+        },
+        "subject_kind": {
+          "enum": [
+            "run",
+            "proposal",
+            "event"
+          ]
+        },
+        "subject_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "category": {
+          "enum": [
+            "wrong_evidence",
+            "missing_evidence",
+            "wrong_conclusion",
+            "unclear",
+            "other"
+          ]
         }
       },
       "required": []
@@ -543,6 +563,42 @@
             "not": {
               "required": [
                 "status"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "type": {
+              "const": "feedback.recorded"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "subject_kind"
+                  ]
+                },
+                {
+                  "required": [
+                    "subject_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "category"
+                  ]
+                }
               ]
             }
           }
