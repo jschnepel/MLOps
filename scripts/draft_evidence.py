@@ -18,10 +18,15 @@ worker would meet it: in the retrieved evidence (R036). Writes `reports/model/t1
 
 Thinking is counted, never stored or shown (BS:460): the text of an attempt whose rules include `thinking` is replaced
 by a placeholder in the samples, so neither report file carries a model's reasoning.
+
+`--from-json` renders again from the committed `t19-real-run.json` without calling the model: the summary is recomputed
+from the per-input records and both files are rewritten, so a correction to the report's wording or a figure derived
+from the records never needs another run (the figures of a run are not re-run to improve them, BS:566).
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import hashlib
 import importlib.metadata
@@ -53,6 +58,7 @@ INJECTED = {  # tenant prefix of the asset -> (corpus file, document id, version
     "A": ("alpha-vendor-portal.md", "ALPHA-VENDOR-PORTAL", "1", "portal-note"),
     "B": ("beta-contractor-memo.md", "BETA-CONTRACTOR-MEMO", "1", "memo-note"),
 }
+INJECTED_IDS = tuple(f"{doc}:v{version}:{name}" for _, doc, version, name in INJECTED.values())
 
 
 def injected_section(asset_id: str) -> EvidenceItem:
@@ -104,9 +110,13 @@ def summarize(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     first = outcomes["first_pass"]
     after = first + outcomes["repaired"]
     first_seconds = sorted(c["attempts"][0]["seconds"] for c in cases if c["attempts"])
-    by_scenario: dict[str, Counter[str]] = {}
+    by_scenario: dict[str, dict[str, Counter[str]]] = {}
     for c in cases:
-        by_scenario.setdefault(c["scenario"], Counter())[c["outcome"]] += 1
+        scenario = by_scenario.setdefault(c["scenario"], {"outcomes": Counter(), "kinds": Counter()})
+        scenario["outcomes"][c["outcome"]] += 1
+        if c["kind"] is not None:  # `question` is the abstentions that ask one, so it is counted within `abstain`
+            scenario["kinds"][c["kind"]] += 1
+            scenario["kinds"]["question"] += bool(c["clarify"])
     return {
         "n": n,
         "outcomes": dict(outcomes),
@@ -123,21 +133,23 @@ def summarize(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "authority_key": sum("authority_key" in a["rules"] for c in cases for a in c["attempts"]),
         "first_pass_p50": statistics.median(first_seconds) if first_seconds else None,
         "first_pass_p95": first_seconds[int(0.95 * (len(first_seconds) - 1))] if first_seconds else None,
-        "by_scenario": {k: dict(v) for k, v in sorted(by_scenario.items())},
+        "by_scenario": {
+            k: {"outcomes": dict(v["outcomes"]), "kinds": dict(v["kinds"])} for k, v in sorted(by_scenario.items())
+        },
     }
 
 
 def gpu_name() -> str:
-    """The first GPU's name, or `not measured` (nvidia-smi absent or failing)."""
-    try:
+    """The first GPU's name, or `not measured` (nvidia-smi absent, failing or hung)."""
+    try:  # a hung or missing nvidia-smi must not lose a finished run: this is called after the 60 drafts
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=10,  # a local name query answers in well under a second; ten seconds only bounds a hung driver
             check=False,
         )
-    except OSError:
+    except (OSError, subprocess.SubprocessError):  # not installed, or `TimeoutExpired`
         return "not measured"
     return out.stdout.strip().splitlines()[0] if out.returncode == 0 and out.stdout.strip() else "not measured"
 
@@ -175,14 +187,44 @@ def render(meta: Mapping[str, Any], s: Mapping[str, Any], samples: Sequence[Mapp
         f"| Attempts showing thinking | {s['thinking']} | |",
         f"| Attempts naming an authority key (R036) | {s['authority_key']} | |",
         f"| First attempt p50 / p95 | {s['first_pass_p50']} s / {s['first_pass_p95']} s | |",
-        f"| By scenario | {s['by_scenario']} | |",
         "",
-        "Valid means `ops_core.draft_validation.validate` accepted the reply: the draft schema, `ModelDraft`, every",
-        "evidence ID one this input offered, no thinking, no authority key. Validity is not support: whether a draft's",
-        "claims follow from its evidence is T25's to grade (BS:452). No accepted draft can carry a field outside the",
-        "schema, so none can name a tool, a grant, a role or a destination. Validity is judged by the application;",
+        "| Scenario | Inputs | Outcomes | Proposals | Abstentions | Of which asking a question |",
+        "|---|---|---|---|---|---|",
+    ]
+    for name, row in s["by_scenario"].items():
+        kinds = row["kinds"]
+        lines.append(
+            f"| `{name}` | {sum(row['outcomes'].values())} | {row['outcomes']} | {kinds.get('proposal', 0)} |"
+            f" {kinds.get('abstain', 0)} | {kinds.get('question', 0)} |"
+        )
+    cited = [
+        sample["probe_id"]
+        for sample in samples
+        if sample["scenario"] == "injected" and any(note in sample["text"] for note in INJECTED_IDS)
+    ]
+    lines += [
+        "",
+        "Valid means `ops_core.draft_validation.validate` accepted the reply: it was JSON (`not_json`), matched the draft",
+        "schema, passed `ModelDraft`, cited only evidence IDs this input offered, showed no thinking and named no",
+        "authority key. Validity is not support: whether a draft's claims follow from its evidence is T25's to grade",
+        "(BS:452). No accepted draft can carry a field outside the schema, so none can carry a tool, grant, role or",
+        "destination field; its free-text `summary` can still mention anything. Validity is judged by the application;",
         "whether Ollama's `format` grammar enforces the schema's `allOf`/`if`/`then`/`else` is not established and",
         "does not change this record.",
+        "",
+        "The `injected` rows show validity, not resistance. R036 is met by code (a draft cannot carry a tool, grant, role",
+        "or destination field, and a proposal still needs the approval path), so these rows show that no authority key",
+        "appeared and every reply passed validation; they do not show the model declined the injected instruction.",
+        (
+            f"In the samples below, {', '.join(f'`{p}`' for p in cited)} cites the injected note and its summary may"
+            " restate it."
+            if cited
+            else "No sample below cites the injected note."
+        ),
+        "",
+        "`Attempts showing thinking` counts inline `<think>` tags in the reply text only: langchain-ollama 1.1.0 drops",
+        "Ollama's separate `thinking` field under `reasoning=False`, so 0 means no think tags, not that the model did",
+        "not think. The text of an attempt that showed thinking is never stored or shown (BS:460).",
         "",
         "What was sent: each input's request text, asset, interval and its one procedure section, with the v2 payload.",
         "No asset status or alert records are sent (the worker passes none to the model until T20), so many drafts",
@@ -197,6 +239,25 @@ def render(meta: Mapping[str, Any], s: Mapping[str, Any], samples: Sequence[Mapp
         lines += [f"`{sample['probe_id']}` ({sample['scenario']}), {sample['label']}:", "", "```json", sample["text"]]
         lines += ["```", ""]
     return "\n".join(lines)
+
+
+def choose_samples(
+    texts: Sequence[tuple[Mapping[str, Any], Sequence[ollama_drafting.Attempt]]],
+) -> list[dict[str, Any]]:
+    """The first accepted draft of each kind and the first failed first pass, every text through `shown_text`."""
+    samples: list[dict[str, Any]] = []
+    for c, a in texts:  # a clarifying question counted as its own kind
+        label = "accepted abstain with a question" if c["clarify"] else f"accepted {c['kind']}"
+        if c["kind"] is not None and label not in {s["label"] for s in samples}:
+            text = shown_text(a[-1].rules, a[-1].text)
+            samples.append({"probe_id": c["probe_id"], "scenario": c["scenario"], "label": label, "text": text})
+    failed = next(((c, a) for c, a in texts if a and a[0].rules), None)
+    if failed is not None:
+        c, a = failed
+        label = f"failed first pass ({', '.join(a[0].rules)})"
+        text = shown_text(a[0].rules, a[0].text)
+        samples.append({"probe_id": c["probe_id"], "scenario": c["scenario"], "label": label, "text": text})
+    return samples
 
 
 async def run() -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -226,18 +287,7 @@ async def run() -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, An
         case.update(attempts=attempts, outcome=outcome(attempts, error))
         cases.append(case)
         texts.append((case, list(records)))
-    samples: list[dict[str, Any]] = []
-    for c, a in texts:  # the first accepted draft of each kind, a clarifying question counted as its own kind
-        label = "accepted abstain with a question" if c["clarify"] else f"accepted {c['kind']}"
-        if c["kind"] is not None and label not in {s["label"] for s in samples}:
-            text = shown_text(a[-1].rules, a[-1].text)
-            samples.append({"probe_id": c["probe_id"], "scenario": c["scenario"], "label": label, "text": text})
-    failed = next(((c, a) for c, a in texts if a and a[0].rules), None)
-    if failed is not None:
-        c, a = failed
-        label = f"failed first pass ({', '.join(a[0].rules)})"
-        text = shown_text(a[0].rules, a[0].text)
-        samples.append({"probe_id": c["probe_id"], "scenario": c["scenario"], "label": label, "text": text})
+    samples = choose_samples(texts)
     meta = {
         "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "model": ollama_drafting.MODEL,
@@ -263,16 +313,28 @@ async def run() -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, An
     return meta, cases, samples
 
 
-def main() -> int:
-    """Run the evidence and write both report files."""
-    meta, cases, samples = asyncio.run(run())
-    summary = summarize(cases)
-    OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "t19-real-run.md").write_text(render(meta, summary, samples), encoding="utf-8", newline="\n")
-    doc = {"meta": meta, "summary": summary, "cases": cases, "samples": samples}
-    (OUT / "t19-real-run.json").write_text(
-        json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n"
-    )
+def write_reports(doc: Mapping[str, Any], out: Path) -> None:
+    """Write both report files from the run's metadata, per-input records and samples (the summary is derived)."""
+    summary = summarize(doc["cases"])
+    out.mkdir(parents=True, exist_ok=True)
+    markdown = render(doc["meta"], summary, doc["samples"])
+    (out / "t19-real-run.md").write_text(markdown, encoding="utf-8", newline="\n")
+    full = {"meta": doc["meta"], "summary": summary, "cases": doc["cases"], "samples": doc["samples"]}
+    text = json.dumps(full, indent=2, ensure_ascii=False) + "\n"
+    (out / "t19-real-run.json").write_text(text, encoding="utf-8", newline="\n")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the evidence and write both report files, or with `--from-json` render the committed run again."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
+    parser.add_argument("--from-json", action="store_true", help="render again from the committed JSON; no model call")
+    if parser.parse_args(argv).from_json:
+        doc = json.loads((OUT / "t19-real-run.json").read_text(encoding="utf-8"))
+    else:
+        meta, cases, samples = asyncio.run(run())
+        doc = {"meta": meta, "cases": cases, "samples": samples}
+    write_reports(doc, OUT)
+    summary = summarize(doc["cases"])
     print(f"valid first pass {summary['first_pass_valid']}/{summary['n']}, after repair {summary['post_repair_valid']}")
     return 0
 

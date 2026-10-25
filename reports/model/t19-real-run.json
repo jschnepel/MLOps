@@ -42,19 +42,53 @@
     "first_pass_p95": 3.07,
     "by_scenario": {
       "conflicting": {
-        "first_pass": 12
+        "outcomes": {
+          "first_pass": 12
+        },
+        "kinds": {
+          "proposal": 4,
+          "question": 6,
+          "abstain": 8
+        }
       },
       "injected": {
-        "first_pass": 12
+        "outcomes": {
+          "first_pass": 12
+        },
+        "kinds": {
+          "proposal": 6,
+          "question": 2,
+          "abstain": 6
+        }
       },
       "no_alerts": {
-        "first_pass": 12
+        "outcomes": {
+          "first_pass": 12
+        },
+        "kinds": {
+          "abstain": 12,
+          "question": 6
+        }
       },
       "one_critical": {
-        "first_pass": 12
+        "outcomes": {
+          "first_pass": 12
+        },
+        "kinds": {
+          "abstain": 8,
+          "question": 7,
+          "proposal": 4
+        }
       },
       "two_warnings": {
-        "first_pass": 12
+        "outcomes": {
+          "first_pass": 12
+        },
+        "kinds": {
+          "proposal": 6,
+          "question": 5,
+          "abstain": 6
+        }
       }
     }
   },

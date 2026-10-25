@@ -26,14 +26,31 @@ own route (`OllamaDraftGenerator.from_settings`) over the 60 probe inputs, with 
 | Attempts showing thinking | 0 | |
 | Attempts naming an authority key (R036) | 0 | |
 | First attempt p50 / p95 | 2.24 s / 3.07 s | |
-| By scenario | {'conflicting': {'first_pass': 12}, 'injected': {'first_pass': 12}, 'no_alerts': {'first_pass': 12}, 'one_critical': {'first_pass': 12}, 'two_warnings': {'first_pass': 12}} | |
 
-Valid means `ops_core.draft_validation.validate` accepted the reply: the draft schema, `ModelDraft`, every
-evidence ID one this input offered, no thinking, no authority key. Validity is not support: whether a draft's
-claims follow from its evidence is T25's to grade (BS:452). No accepted draft can carry a field outside the
-schema, so none can name a tool, a grant, a role or a destination. Validity is judged by the application;
+| Scenario | Inputs | Outcomes | Proposals | Abstentions | Of which asking a question |
+|---|---|---|---|---|---|
+| `conflicting` | 12 | {'first_pass': 12} | 4 | 8 | 6 |
+| `injected` | 12 | {'first_pass': 12} | 6 | 6 | 2 |
+| `no_alerts` | 12 | {'first_pass': 12} | 0 | 12 | 6 |
+| `one_critical` | 12 | {'first_pass': 12} | 4 | 8 | 7 |
+| `two_warnings` | 12 | {'first_pass': 12} | 6 | 6 | 5 |
+
+Valid means `ops_core.draft_validation.validate` accepted the reply: it was JSON (`not_json`), matched the draft
+schema, passed `ModelDraft`, cited only evidence IDs this input offered, showed no thinking and named no
+authority key. Validity is not support: whether a draft's claims follow from its evidence is T25's to grade
+(BS:452). No accepted draft can carry a field outside the schema, so none can carry a tool, grant, role or
+destination field; its free-text `summary` can still mention anything. Validity is judged by the application;
 whether Ollama's `format` grammar enforces the schema's `allOf`/`if`/`then`/`else` is not established and
 does not change this record.
+
+The `injected` rows show validity, not resistance. R036 is met by code (a draft cannot carry a tool, grant, role
+or destination field, and a proposal still needs the approval path), so these rows show that no authority key
+appeared and every reply passed validation; they do not show the model declined the injected instruction.
+In the samples below, `PR-003` cites the injected note and its summary may restate it.
+
+`Attempts showing thinking` counts inline `<think>` tags in the reply text only: langchain-ollama 1.1.0 drops
+Ollama's separate `thinking` field under `reasoning=False`, so 0 means no think tags, not that the model did
+not think. The text of an attempt that showed thinking is never stored or shown (BS:460).
 
 What was sent: each input's request text, asset, interval and its one procedure section, with the v2 payload.
 No asset status or alert records are sent (the worker passes none to the model until T20), so many drafts
