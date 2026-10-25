@@ -1645,6 +1645,46 @@ Allowed shortcuts in T20, each with its owning task:
   exception message could carry a tool's error text → T26 (R055 display) / T38;
 - the dev database stays at 0013 until the owner migrates it; the worker now needs revision 0015 as well.
 
+## Plan R debt list (T21; committed before coding) [R6-B7]
+
+Allowed shortcuts in T21, each with its owning task:
+- a revision carries no instruction text: `RevisionRequest` is `{expected_version, supersedes_run_id}` and the worker
+  drafts the revision from the run's own request again; a requester's revision text and its parser → T34 (Plan R
+  ruling 2);
+- a revision's number is one more than the run's `proposal.revised` events, so a revision that never freezes (blocked,
+  failed or cancelled first) still uses its number, and a run's frozen revisions can skip one (erratum 140) →
+  recorded, no task;
+- a cancel after the grant only sets `cancel_requested` and reports the attempt; `mark_sent`'s re-check decides, and
+  the abort path with R046's after-grant evidence → T22 (R118);
+- R125's other half (an outcome that arrives late or through recovery after a second run froze) and R110's
+  two-conversation live test → T22;
+- R023 is evidenced live at one crash point (after the resume's checkpoint store, before the execute job's final unit)
+  and on the fakes at the others; a killed worker process → T30;
+- a run left in DRAFTING for a manual proposal has no deadline: it keeps its conversation's slot until a person
+  proposes or cancels, and the sweeper does not re-arm DRAFTING (erratum 134) → T22 (deadline escalation);
+- `POST /api/v1/search` is lexical only, at most 10 results, writes nothing and so takes no Idempotency-Key, and has
+  no request schema file (erratum 135) → T25 (vector search for people) and T26 (the workspace that calls it);
+- feedback is stored and never reviewed: `reviewed` has no route and the categories are a project choice → T34 (a
+  stated limitation);
+- the approval card is an API payload (`GET /api/v1/proposals/{id}`); rendering it, the referenced incident included,
+  → T26;
+- a read refused `MEMBERSHIP_STALE` (the read path's 120 s bound, ruling 14) is a failed read for the worker, which
+  retries it within the retrieval budget and then ends the run FAILED; a re-queue instead → T22;
+- an asset the asset service does not know observes nothing, so the grant judges the observation retrieval recorded
+  and refuses it once five minutes have passed (R116) → recorded, no task;
+- `runs.workflow_version` is pinned at the run's first claim and the freeze compares it; routing a run across a
+  version bump → T36;
+- the `TODO(T21)` comments inside the bodies of revisions 0004, 0005 and 0007 stay: those revisions are frozen
+  (later revisions compare their text byte for byte), and revision 0016's bodies replace them in the database →
+  recorded, no task;
+- the grant still reads memberships without a row lock (SA:462's `memberships FOR SHARE` is not taken; erratum 17:
+  the definers take no row lock on memberships) → recorded, no task;
+- Plan M's debt line "a run's asset is not tied to its tenant at admission → T21" is closed in effect: asset-sim
+  answers NOT_FOUND for an asset of another tenant, so such a run ends before DRAFTING and never reaches a freeze or a
+  grant → recorded, no task;
+- the dev database stays at 0013 until the owner migrates it; the api, the worker, both MCP servers and the sweeper
+  refuse to start without revision 0016.
+
 ## Environment (observed)
 
 | Item | Observed |
