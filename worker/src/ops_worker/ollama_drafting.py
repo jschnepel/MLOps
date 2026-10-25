@@ -3,17 +3,25 @@
 One draft is at most two model attempts inside a 90-second budget (BS:443, BS:554-555): the first pass, and one repair
 only when the reply failed structural validation (`ops_core.draft_validation`). Each attempt gets the 60-second cap
 clipped to what is left of the draft's 90 s and of the run's own compute budget (`DraftRequest.remaining_seconds`,
-which the handler measures from the claim, as the heartbeat does), enforced by `asyncio.wait_for` around the call and by
-the HTTP client's own timeout. A timeout or an unreachable model is `ModelUnavailable` and is never repaired (there is
-no output to repair); an invalid repair is `ModelOutputInvalid`. Both end the run FAILED (`handlers.investigate`);
-nothing here retries, falls back to the fake, or calls another model (R041). Bounded retries of an outage are T22's
-and T29's.
+which the handler measures from the claim, as the heartbeat does). `asyncio.wait_for` around the call is what bounds
+an attempt; the HTTP client's own 60 s timeout is only a per-read backstop (on the streaming path it limits the wait
+for each chunk, not the attempt). A timeout or an unreachable model is `ModelUnavailable` and is never repaired
+(there is no output to repair); an invalid repair is `ModelOutputInvalid`. Both end the run FAILED
+(`handlers.investigate`); nothing here retries, falls back to the fake, or calls another model (R041). Bounded retries
+of an outage are T22's and T29's.
 
 The model is asked through a `Chat` callable, so the unit tests script every reply without a model or a network;
 `ollama_chat` is the real one: `ChatOllama(reasoning=False, num_ctx=16384, num_predict=1000, temperature=0)` wrapped
 in `with_structured_output(<model-draft schema>, method="json_schema", include_raw=True)` (SA:596), exactly the probe's
 configuration, plus `keep_alive` so the warm model stays loaded. The wrapper's own parse is ignored: validation reads
-the raw text and the raw reasoning metadata, because what the model emitted is what is judged.
+the raw message text, because what the model emitted is what is judged.
+
+Thinking is kept out by asking Ollama not to think (`reasoning=False` sends `think=false`) and is detected only as
+inline `<think>` tags in that raw text. langchain-ollama 1.1.0 copies Ollama's separate `thinking` field into
+`reasoning_content` only when `reasoning` is truthy (chat_models.py:1263-1268 and :1345-1350), so under AM-31's
+setting the library drops that field before this route sees it. `Reply.reasoning` is therefore always None on the
+real route; the channel is a defensive check that fires only for a `Chat` that supplies it, as the unit tests do.
+The route relies on Ollama honouring `think=false` (erratum 121).
 
 `start` runs once, before the worker claims a job (SA:597-598, R127): the installed digest from `/api/tags` must be the
 pin's (`/api/show` carries none; erratum 115), then one warm-up call loads the model with its own 180-second budget (the
@@ -70,7 +78,9 @@ WARM_UP_REQUEST: Final = "Warm-up call at worker start; no evidence is supplied,
 
 @dataclass(frozen=True)
 class Reply:
-    """What the model emitted: its text and any reasoning metadata, unmodified."""
+    """What the model emitted: its message text, unmodified, and any reasoning metadata the `Chat` supplies. The real
+    `ollama_chat` never supplies it (langchain-ollama drops Ollama's `thinking` field when `reasoning=False`), so on
+    the real route only inline `<think>` tags in `text` are caught."""
 
     text: str
     reasoning: object = None
@@ -224,13 +234,15 @@ class OllamaDraftGenerator:
 
     async def start(self) -> None:
         """Verify the installed digest against the pin, then warm the model; ModelStartError on any failure."""
+        asking = "the installed models"
         try:
             if self.pins.model != MODEL:
                 raise ModelStartError(f"data/model-pins.json pins {self.pins.model!r}, not this route's {MODEL}")
             installed = await self._tags.installed_digest(MODEL)
+            asking = "its version"
             self.ollama_version = await self._tags.version()
         except EmbeddingError as exc:
-            raise ModelStartError(f"Ollama could not be asked for the installed models ({exc.code})") from exc
+            raise ModelStartError(f"Ollama could not be asked for {asking} ({exc.code})") from exc
         finally:
             await self._tags.aclose()
         if installed is None:

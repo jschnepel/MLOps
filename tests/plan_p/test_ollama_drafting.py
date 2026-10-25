@@ -11,11 +11,14 @@ ModelUnavailable; the router accepting `ollama`; and a missing pin that lets the
 import asyncio
 import dataclasses
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import ollama
 import pytest
+from langchain_ollama import ChatOllama
 from ops_core import prompts
 from ops_core.embeddings import OllamaEmbedder, Unavailable
 from ops_core.model_pins import ModelPins
@@ -65,8 +68,10 @@ class Script:
     def __init__(self, *answers: Reply | Exception | float) -> None:
         self.answers = list(answers)
         self.calls: list[tuple[str, dict[str, Any] | str, float]] = []
+        self.events: list[str] = []  # shared with a `Tags` when a test needs the order of the two
 
     async def __call__(self, system: str, user: str, seconds: float) -> Reply:
+        self.events.append("generate")
         try:
             body: dict[str, Any] | str = json.loads(user)
         except ValueError:
@@ -84,15 +89,27 @@ class Script:
 class Tags:
     """`/api/tags` and `/api/version` as a test scripts them."""
 
-    def __init__(self, digest: str | None = DIGEST, version: str = "0.40.4", error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        digest: str | None = DIGEST,
+        version: str = "0.40.4",
+        error: Exception | None = None,
+        version_error: Exception | None = None,
+    ) -> None:
         self.digest, self.version_text, self.error, self.closed = digest, version, error, False
+        self.version_error = version_error
+        self.events: list[str] = []
 
     async def installed_digest(self, model: str) -> str | None:
+        self.events.append("tags")
         if self.error is not None:
             raise self.error
         return self.digest if model == "qwen3:8b" else None
 
     async def version(self) -> str:
+        self.events.append("version")
+        if self.version_error is not None:
+            raise self.version_error
         return self.version_text
 
     async def aclose(self) -> None:
@@ -166,7 +183,9 @@ def test_a_second_invalid_reply_ends_the_draft_with_no_third_attempt() -> None:
     assert caught.value.rules == ("schema",) and len(chat.calls) == 2  # R040: one repair, then a controlled failure
 
 
-def test_a_reply_that_thought_is_repaired_without_showing_its_text() -> None:
+def test_a_chat_that_supplies_reasoning_is_repaired_without_showing_its_text() -> None:
+    """The defensive path: the real `ollama_chat` never supplies reasoning (langchain-ollama drops Ollama's `thinking`
+    field when `reasoning=False`), so this exercises the channel with a scripted `Chat` that does."""
     chat = Script(Reply(GOOD, reasoning="secret plan"), Reply(GOOD))
     assert run(generator(chat).generate(REQUEST, EVIDENCE)).kind == "proposal"
     body = chat.calls[1][1]
@@ -180,6 +199,22 @@ def test_a_timeout_is_unavailable_and_never_repaired(monkeypatch: pytest.MonkeyP
     with pytest.raises(ModelUnavailable, match="attempt 1"):
         run(generator(chat).generate(REQUEST, EVIDENCE))
     assert len(chat.calls) == 1 and chat.calls[0][2] == 0.05
+
+
+def test_a_timeout_of_the_repair_is_unavailable_and_ends_the_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ollama_drafting, "ATTEMPT_SECONDS", 0.05)
+    chat = Script(Reply(WITH_QUESTION), 5.0)
+    with pytest.raises(ModelUnavailable, match="attempt 2"):
+        run(generator(chat).generate(REQUEST, EVIDENCE))
+    assert len(chat.calls) == 2  # the repair was tried once and cut off; there is no third attempt
+
+
+def test_a_run_budget_already_spent_gives_the_attempt_no_time() -> None:
+    chat = Script(1.0)  # would hang; with nothing left it is never allowed to start
+    request = dataclasses.replace(REQUEST, remaining_seconds=0.0)
+    with pytest.raises(ModelUnavailable, match="attempt 1 passed its 0 s"):
+        run(generator(chat).generate(request, EVIDENCE))
+    assert chat.calls == []  # with 0 s the call is cut off before it starts
 
 
 def test_an_outage_is_unavailable_and_never_repaired_or_replaced() -> None:
@@ -205,10 +240,12 @@ def test_injected_text_cannot_buy_authority_through_the_reply() -> None:
 
 def test_start_checks_the_digest_before_warming_the_model() -> None:
     chat, tags = Script(Reply(GOOD)), Tags()
+    chat.events = tags.events = []  # one ordered log for both
     gen = generator(chat, tags)
     run(gen.start())
     assert tags.closed and gen.ollama_version == "0.40.4" and len(chat.calls) == 1
     assert chat.calls[0][2] == ollama_drafting.WARMUP_SECONDS == 180.0
+    assert tags.events == ["tags", "version", "generate"]  # R127: both questions are answered before the warm-up
 
 
 @pytest.mark.parametrize(
@@ -227,6 +264,14 @@ def test_start_fails_closed_before_any_generation(tags: Tags, pins: ModelPins, m
     assert chat.calls == []  # R127: nothing is drafted, or warmed, on an unverified model
 
 
+def test_a_failed_version_question_is_named_as_such_and_fails_the_start() -> None:
+    chat = Script(Reply(GOOD))
+    tags = Tags(version_error=Unavailable("down"))
+    with pytest.raises(ModelStartError, match="could not be asked for its version"):
+        run(OllamaDraftGenerator(PINS, chat, tags).start())
+    assert chat.calls == [] and tags.closed
+
+
 def test_another_ollama_version_is_logged_not_fatal(caplog: pytest.LogCaptureFixture) -> None:
     gen = generator(Script(Reply(GOOD)), Tags(version="0.41.0"))
     run(gen.start())
@@ -237,6 +282,12 @@ def test_another_ollama_version_is_logged_not_fatal(caplog: pytest.LogCaptureFix
 def test_a_failed_warm_up_fails_the_start(failure: Exception) -> None:
     with pytest.raises(ModelStartError, match="warm-up"):
         run(generator(Script(failure)).start())
+
+
+def test_a_warm_up_that_hangs_is_cut_off_at_its_own_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ollama_drafting, "WARMUP_SECONDS", 0.05)  # shrunk so the hung call is cut off fast
+    with pytest.raises(ModelStartError, match="warm-up"):
+        run(generator(Script(5.0)).start())
 
 
 def test_an_unreachable_ollama_fails_the_start() -> None:
@@ -279,3 +330,34 @@ def test_the_real_chat_turns_a_refused_connection_into_unavailable() -> None:
     chat = ollama_drafting.ollama_chat("http://127.0.0.1:9")
     with pytest.raises(ModelUnavailable, match="ConnectError"):
         run(chat("system", "user", 5.0))
+
+
+def stream_that(monkeypatch: pytest.MonkeyPatch, *, error: Exception | None = None) -> None:
+    """Replace the library's stream with one that yields nothing or raises, so the real langchain path runs up to the
+    real exception (the only test that would notice a library upgrade changing what it raises or says)."""
+
+    async def stream(self: Any, messages: Any, stop: Any = None, **kwargs: Any) -> AsyncIterator[Any]:
+        if error is not None:
+            raise error
+        return
+        yield  # an async generator that yields nothing
+
+    monkeypatch.setattr(ChatOllama, "_acreate_chat_stream", stream)
+
+
+def test_the_real_chat_turns_an_empty_stream_into_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    stream_that(monkeypatch)
+    with pytest.raises(ModelUnavailable, match="empty stream"):
+        run(ollama_drafting.ollama_chat("http://127.0.0.1:9")("system", "user", 5.0))
+
+
+def test_the_real_chat_turns_an_ollama_error_status_into_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    stream_that(monkeypatch, error=ollama.ResponseError("model runner has unexpectedly stopped", 500))
+    with pytest.raises(ModelUnavailable, match="ResponseError"):
+        run(ollama_drafting.ollama_chat("http://127.0.0.1:9")("system", "user", 5.0))
+
+
+def test_the_real_chat_lets_any_other_value_error_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    stream_that(monkeypatch, error=ValueError("a bug, not an outage"))
+    with pytest.raises(ValueError, match="a bug, not an outage"):
+        run(ollama_drafting.ollama_chat("http://127.0.0.1:9")("system", "user", 5.0))
