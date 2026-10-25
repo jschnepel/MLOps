@@ -49,7 +49,7 @@ Each place where this plan does something other than, or more than, a ruling say
 departs.
 
 1. **The live gate was not run on the scratch copy (constraints).** The permission system refused to copy `.env`
-   into the scratch tree again, so every live count below is arithmetic (dev passed + dev skipped − 21). The four
+   into the scratch tree again, so every live count below is arithmetic (dev passed + dev skipped − 21). The five
    new database live tests (`tests/e2e/test_graph_live.py`) and the live tests this plan changes have never run;
    Task 5 runs them first, and Review Focus 1 names them.
 2. **The proposal is frozen in `validate_and_freeze`, not in the drafting node (ruling 4).** Freezing inside
@@ -89,6 +89,36 @@ departs.
     row and the transition it belongs to commit in one unit, so a run still in DRAFTING never has one.
 12. **`uv lock` also adds `psycopg-pool` 3.3.3 (ruling 16: "no psycopg-pool unless the saver requires it").** It is a
     declared dependency of `langgraph-checkpoint-postgres`; the worker opens no pool.
+13. **The execute job resumes the reviewer wait (ruling 14 had it start the graph at `route_request` on APPROVED).**
+    `await_independent_decision` interrupts with the proposal id (AM-12: both waits are ID-only interrupts after which
+    the job releases the lease); the execute job resumes it with `Command(resume=<approval.recorded id>)`, after
+    checking that the run's latest decision event is an approval of its active proposal (round 1, M1). A re-queued
+    execute job forks from the stored checkpoint to re-run the execute node; a run with no stored checkpoint starts a
+    graph run whose router reads APPROVED. Accepted as the design by the controller.
+
+## Round 1 changes
+
+The static review (`.superpowers/planq/round1-static.md`: 0 Critical, 2 Important, 7 Minor) is fixed in full, per
+the controller's rulings (`round1-rulings.md`):
+
+- **I1.** `route_request` rereads the run's state, intent, decision and attempt (`nodes.facts`) on every hop, so the
+  router never routes on dimensions an earlier node or a forked checkpoint left stale; the critic's scenario (the
+  freeze commits, the lease is lost at the next checkpoint store, the approved run forks from before its freeze) is
+  `test_an_approved_run_resumed_from_before_its_freeze_executes`, and `test_the_router_rereads_the_runs_dimensions`
+  pins the reread. The walk patches the reread with its witness; Plan M's two worker tests now keep the run row
+  through Plan H's recorder.
+- **I2.** `test_r108_each_step_finds_the_previous_checkpoint_stored` (live, Postgres saver): a stub node at step N+1
+  finds step N's state already stored. The R108 note and STATUS say which test evidences what.
+- **Minors.** M1: `handlers._approval` checks the resume value (the latest decision event is an `approval.recorded`
+  of the active proposal; otherwise the job ends with no graph run, a logged error and a debt line → T22), with
+  `test_an_execute_job_with_a_decision_for_another_proposal_runs_nothing`. M2: a debt line and erratum 128 say a
+  rejected run's thread ends at the wait. M3: erratum 126 names `checkpoint_migrations`; new erratum 130 (SA:136).
+  M4: the debt line → T29, erratum 128 names BS:554/555, and `test_a_hold_lost_after_a_completed_draft_is_drafted_
+  again`. M5: the plan's lines over 120 characters are wrapped and Edit 55's wording corrected. M6: revision 0015 says
+  why it has no per-table REVOKE. M7: `await_clarification`'s QUEUED branch also records the round it answered.
+- The counts move: `test_graph_flow.py` 21 (17); dev after Task 4 `1721 passed, 222 skipped` (1717), after Task 5
+  `1721 passed, 227 skipped` (1717, 226); live `1927 passed, 21 skipped` (1922, arithmetic). The plan's blocks were
+  re-applied to a fresh worktree of `6466b8c` and every task re-gated there.
 
 ## Global Constraints
 
@@ -96,12 +126,12 @@ Carried from Plan P's header (its text applies with "Plan P"/"T19" read as the p
 additions below win where the two differ:
 
 - **Debt before code (SA:698).** The Plan Q debt list is committed in Task 1 Step 1c before any code changes.
-- **Authority boundaries stay where the spec puts them.** Graph state is never the authority: every node rereads the
-  run before it acts (SA:215, BS:305) and every state change goes through `transition_run`, `freeze_proposal` or
-  `mark_unknown` as role `worker`; a checkpoint can approve or execute nothing. Interrupts carry an event or proposal
-  id only (SA:563); a resume value is checked against the database, never trusted. The model sees no tool; only
-  `retrieve_evidence` calls mcp-read and only `execute_approved_proposal` calls mcp-write. **Nothing here sends
-  anything to an external system or a person** (BS:730).
+- **Authority boundaries stay where the spec puts them.** Graph state is never the authority: every node rereads the run
+  before it acts, and the router rereads its dimensions on every hop (SA:215, BS:305) and every state change goes
+  through `transition_run`, `freeze_proposal` or `mark_unknown` as role `worker`; a checkpoint can approve or execute
+  nothing. Interrupts carry an event or proposal id only (SA:563); a resume value is checked against the database, never
+  trusted. The model sees no tool; only `retrieve_evidence` calls mcp-read and only `execute_approved_proposal` calls
+  mcp-write. **Nothing here sends anything to an external system or a person** (BS:730).
 - **Never touch the dev databases.** Nobody runs `scripts/skeleton.py migrate`, `ingest`, `embed` or `up`, or
   connects to `ops`/`incident`, in this plan. After Task 4 the worker refuses to start without
   `checkpoints.checkpoints` (revision 0015), which is the intended guard.
@@ -116,12 +146,12 @@ additions below win where the two differ:
 - **Stage before the gate.** `tests/plan_a/test_verify_handoff.py` copies the files `git ls-files` lists; every step
   that creates a file runs `git add <the new files>` before the gate.
 - **Gates:** `uv run ruff format <files> && uv run ruff check --fix <files>`, `PYTHONUTF8=1 uv run python
-  scripts/check.py < /dev/null` GREEN after every task and `uv run python -I scripts/verify_handoff.py
-  --reference-code --manifest --contracts < /dev/null` exit 0 after every task. Run mypy only through `check.py`: a
-  by-hand mypy over one package pollutes `.mypy_cache` (seen while writing this plan; delete `.mypy_cache` if it
-  happens). The live gate, `PYTHONUTF8=1 uv run python scripts/check.py --profile test < /dev/null` (dev stack up,
-  local Ollama on 127.0.0.1:11434, `uv run python scripts/skeleton.py status` showing every process down), runs in
-  Task 1 Step 1a, in Task 5 and in Task 6. After a live run: `git checkout -- reports`, except the report a step commits.
+  scripts/check.py < /dev/null` GREEN after every task and `uv run python -I scripts/verify_handoff.py --reference-code
+  --manifest --contracts < /dev/null` exit 0 after every task. Run mypy only through `check.py`: a by-hand mypy over one
+  package pollutes `.mypy_cache` (seen while writing this plan; delete `.mypy_cache` if it happens). The live gate,
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test < /dev/null` (dev stack up, local Ollama on
+  127.0.0.1:11434, `uv run python scripts/skeleton.py status` showing every process down), runs in Task 1 Step 1a, in
+  Task 5 and in Task 6. After a live run: `git checkout -- reports`, except the report a step commits.
 - **Toolchain:** everything through the locked environment from the repository root. Task 1 changes `uv.lock` once
   (`uv lock`, then `uv sync --locked --all-packages`); nothing else touches it. Never start an interactive interpreter,
   never feed a script to an interpreter on standard input (`python -`, `python -c`), never end a process by image
@@ -157,8 +187,9 @@ additions below win where the two differ:
 5. **`runs.checkpoint_id`** — thread `run_id:revision`; `astream(stream_mode="checkpoints", durability="sync")`; each id
    confirmed by `aget_tuple`, stored in its own fenced unit; the lock-order entries; a missing id fails the run (Tasks
    2, 4; departure 9).
-6. **Durability** — `durability="sync"` on every invocation, spied in a unit test; the stored id is the head that holds
-   the interrupt, read back live (Tasks 4, 5).
+6. **Durability** — `durability="sync"` on every invocation, spied in a unit test (the argument); live, a stub node at
+   step N+1 finds step N's checkpoint already stored (the behaviour); the stored id is the head that holds the
+   interrupt, read back live (Tasks 4, 5).
 7. **Interrupts and resume** — the question in `clarification.requested`; `interrupt(event_id)`; resume with the
    `clarification.received` event id; the resumed node checks it is the latest answer to the latest question, rereads
    the reply, moves the run to QUEUED and the graph retrieves and drafts again; rounds from the database (Tasks 2, 4;
@@ -173,18 +204,19 @@ additions below win where the two differ:
     `tool.*` events repeat; the stray head test; two crashes in a row (Task 4; departure 11).
 13. **Revision re-entry** — thread per run and revision, revision 1 today; the manifest one per run (erratum 125);
     `workflow_version` in checkpoint metadata (Task 4).
-14. **Execute and recover** — the execute job resumes the reviewer wait with the decision's event id (or re-runs the
-    execute node after a re-queue); `reconcile_outcome` logs and ends; recover jobs stay unhandled (Task 4; departure
-    4, 6).
+14. **Execute and recover** — the execute job resumes the reviewer wait with the decision's event id, checked first
+    (or re-runs the execute node after a re-queue); `reconcile_outcome` logs and ends; recover jobs stay unhandled
+    (Task 4; departures 4, 6, 13).
 15. **Tests** — as listed in the task overview; the live report `reports/graph/t20-graph-live.md` (Tasks 2-5).
 16. **Dependencies** — both pins in `ops-worker`, one `uv lock` (Task 1; departure 12).
-17. **Records** — Task 1's debt list; Task 6's records, errata 122-129, history section 35.
+17. **Records** — Task 1's debt list; Task 6's records, errata 122-130, history section 35.
 
 ## Measured before writing (2026-10-24/25, scratch copies of `6466b8c`)
 
 - Dev gate before any change `1629 passed, 222 skipped`; after Task 1 the same; after Task 2 `1667 passed, 222
-  skipped`; after Task 3 `1672 passed, 222 skipped`; after Task 4 `1717 passed, 222 skipped`; after Task 5 `1717
-  passed, 226 skipped`. `verify_handoff.py` exit 0 after every task (30 JSON Schema documents).
+  skipped`; after Task 3 `1672 passed, 222 skipped`; after Task 4 `1721 passed, 222 skipped`; after Task 5 `1721
+  passed, 227 skipped` (round 1: re-measured on a fresh worktree after the fixes). `verify_handoff.py` exit 0 after
+  every task (30 JSON Schema documents).
 - `uv lock` (`Resolved 96 packages`) adds 7 packages and removes none: langgraph 1.2.14, langgraph-checkpoint 4.3.0,
   langgraph-checkpoint-postgres 3.1.2, langgraph-prebuilt 1.1.1, langgraph-sdk 0.4.9, ormsgpack 1.13.0, psycopg-pool
   3.3.3. They resolve beside `langchain-core` 1.7.0 and `psycopg` 3.3.6 (no change to either). The resolver may pick
@@ -209,7 +241,9 @@ additions below win where the two differ:
 - Building the slice in the scratch copy found three faults the design had not foreseen, all fixed in the code below:
   a clarified run retrieving again would hit `run_manifests`' primary key (now kept once, erratum 125); a
   `resume_input` job's read handle was refused in RETRIEVING (erratum 127); and crash recovery resumes at the next
-  node, which may be the consumer of a lost hold (now routed back through retrieval).
+  node, which may be the consumer of a lost hold (now routed back through retrieval). Round 1's static review found a
+  fourth: a node's early return left the router's decision and attempt dimensions stale, so an approved run that had
+  forked from before its freeze could never execute; the router now rereads them on every hop.
 
 ## Declared debt and errata
 
@@ -218,14 +252,15 @@ additions below win where the two differ:
 Inserted into `SESSION_STATE.md` as `## Plan Q debt list (T20; committed before coding) [R6-B7]` immediately after the
 Plan P debt list (before `## Environment (observed)`); the exact text is Task 1 Step 1c's Edit 1.
 
-### Errata proposed to the owner (numbered on from erratum 121)
+### Errata proposed to the owner (numbered on from erratum 121; next free 131)
 
 The spec text stays authoritative until the owner decides; the full wording is Task 6's "Plan Q executed" block; in
 short: **122** SA:377's sufficiency rule as built (5-minute freshness; the search's rank threshold is v1's relevance
 criterion); **123** no RLS on the checkpoint tables; **124** the question and the answer ride in their events;
 **125** one manifest per run across a clarification; **126** the saver's `setup()` frozen inside revision 0015;
 **127** `resume_input` read handles in RETRIEVING and DRAFTING; **128** the in-memory hold between nodes and the two
-graph exits; **129** an unresumable waiting run's path to FAILED.
+graph exits; **129** an unresumable waiting run's path to FAILED; **130** SA:136's RETRIEVING → AWAITING_INPUT is not
+taken in v1.
 
 ## File structure
 
@@ -256,15 +291,15 @@ graph exits; **129** an unresumable waiting run's path to FAILED.
   units. Dev `1667 passed, 222 skipped`; live `1868 passed, 21 skipped`.
 - **Task 3:** the evidence bundle, the sufficiency rule, the payload and the read failures. Tests: `test_evidence.py`
   5. Dev `1672 passed, 222 skipped`; live `1873 passed, 21 skipped`.
-- **Task 4:** the graph and the handlers. Tests: `test_graph_routes.py` 28 (26 walk cases), `test_graph_flow.py` 17;
-  Plan H's fakes keep the run row and its events; five existing unit modules follow the graph. Dev `1717 passed, 222
-  skipped`; live `1918 passed, 21 skipped`.
-- **Task 5:** the live tests and the first live gate of the plan. Tests: `test_graph_live.py` 4 (live); four live
-  modules follow the graph. Dev `1717 passed, 226 skipped`; live `1922 passed, 21 skipped`.
-- **Task 6:** close-out: handoff records, requirements, errata 122-129, state, history, final gates. No tests.
+- **Task 4:** the graph and the handlers. Tests: `test_graph_routes.py` 28 (26 walk cases), `test_graph_flow.py` 21;
+  Plan H's fakes keep the run row and its events; six existing unit modules follow the graph. Dev `1721 passed, 222
+  skipped`; live `1922 passed, 21 skipped`.
+- **Task 5:** the live tests and the first live gate of the plan. Tests: `test_graph_live.py` 5 (live); four live
+  modules follow the graph. Dev `1721 passed, 227 skipped`; live `1927 passed, 21 skipped`.
+- **Task 6:** close-out: handoff records, requirements, errata 122-130, state, history, final gates. No tests.
 
-The arithmetic, once: dev passed 1629, + 30 + 3 + 1 + 4 = 1667, + 5 = 1672, + 28 + 17 = 1717, 1717; dev skipped 222,
-222, 222, 222, + 4 = 226. Live passed = dev passed + (dev skipped − 21): 1830, 1868, 1873, 1918, 1922, always with 21
+The arithmetic, once: dev passed 1629, + 30 + 3 + 1 + 4 = 1667, + 5 = 1672, + 28 + 21 = 1721, 1721; dev skipped 222,
+222, 222, 222, + 5 = 227. Live passed = dev passed + (dev skipped − 21): 1830, 1868, 1873, 1922, 1927, always with 21
 skipped. Every dev figure was measured on the scratch copy; the live ones are arithmetic.
 
 ---
@@ -318,7 +353,8 @@ Allowed shortcuts in T20, each with its owning task:
 - R042's restart is a new graph instance on a new saver connection inside one test process; a killed worker process
   is not tested → T30 (the `docker kill` recovery demo); SIGTERM is still not drained (T30's marker);
 - crash recovery repeats the reads and their `tool.*` events, and a draft held in memory when the process stopped is
-  drafted again (a second model call; nothing text-bearing was persisted, SA:496) → recorded, no task;
+  drafted again (nothing text-bearing was persisted, SA:496): a run recovered after a completed draft can make more
+  than BS:554's two generation attempts, and its next job counts BS:555's 90 s from its own claim → T29 (erratum 128);
 - a transient read is retried at most twice inside the retrieval node (BS:552) and then the run ends FAILED, and a
   401 to the worker's token ends FAILED with its own message; a bounded re-queue of the job instead → T22;
 - the read path has no membership freshness bound (erratum 105) → the owner's decision on erratum 105, then T21;
@@ -331,6 +367,11 @@ Allowed shortcuts in T20, each with its owning task:
   `runs.checkpoint_id` is per run, and the manifest stays one per run (erratum 125) → T21;
 - `workflow_version` lives only in the checkpoint metadata → T21 (a column) and T36 (routing across a bump);
 - `recover` jobs are closed unhandled and `reconcile_outcome` only logs → T22;
+- an execute job whose run's latest decision is not an approval of its active proposal ends without a graph run, logs
+  the three ids and leaves the run APPROVED (the worker may not move it, SA:451); recovering such a run → T22;
+- a rejected run's graph thread ends at the reviewer wait: `record_decision` queues no job on a rejection, so
+  `publish_state` never runs for it in v1; the run's REJECTED state is the API's and is authoritative → recorded
+  (erratum 128), no task;
 - the worker's write tool keeps T47's result check: no discovery listing and no result-schema check for
   `create_incident` (Plan Q departure 4) → T21;
 - a human wait is not excluded from the compute budget, and `runs.budget_used` is not written → T29;
@@ -500,7 +541,8 @@ DECIDED = frozenset(
 
 def produced() -> list[GraphKey]:
     """Every key the worker's nodes can leave behind (Plan Q ruling 2): what load_run and the other rereads see in each
-    state, and what retrieval and drafting return."""
+    state, and what retrieval and drafting return. The decision and attempt dimensions are always the database's,
+    because `route_request` rereads them on every hop (round 1, I1; `test_graph_flow.test_the_router_rereads_...`)."""
     keys: list[GraphKey] = []
     for state, intent in product(RunState, Intent):
         attempts = (
@@ -1220,6 +1262,8 @@ def statements() -> list[str]:
     numbers = ", ".join(f"({v})" for v in range(len(CHECKPOINT_DDL_0015)))
     out.append(f"INSERT INTO checkpoints.checkpoint_migrations (v) VALUES {numbers}")
     out.extend(f"ALTER TABLE checkpoints.{table} OWNER TO migrator" for table in TABLES_0015)
+    # No REVOKE ALL per table, unlike 0011-0014: the schema is new, PUBLIC is revoked at the schema above and no
+    # default privileges exist to revoke; `privileges.grant_statements` is fixed to schema `app`.
     out.append("GRANT USAGE ON SCHEMA checkpoints TO worker")
     for table, cells in CHECKPOINT_GRANTS_0015.items():
         for role, grant in cells.items():
@@ -2058,8 +2102,9 @@ git commit -m "feat: the evidence bundle with status and alerts, SA:377's suffic
 - Create: `worker/src/ops_worker/deps.py`, `worker/src/ops_worker/graph/__init__.py`, `state.py`, `nodes.py`,
   `build.py`, `tests/plan_q/test_graph_routes.py`, `tests/plan_q/test_graph_flow.py`
 - Modify: `worker/src/ops_worker/handlers.py` (replaced), `main.py`, `sweeper/src/ops_sweeper/wakeups.py` (docstring),
-  `tests/plan_h/test_worker_units.py`, `tests/plan_p/test_investigate_drafting.py`, `tests/plan_p/test_worker_startup.py`,
-  `tests/plan_j/test_worker_azp.py`, `tests/plan_f/test_grant_deferred.py`
+  `tests/plan_h/test_worker_units.py`, `tests/plan_p/test_investigate_drafting.py`,
+  `tests/plan_p/test_worker_startup.py`, `tests/plan_j/test_worker_azp.py`, `tests/plan_f/test_grant_deferred.py`,
+  `tests/plan_m/test_worker_r029.py`
 
 **Requirements:** rulings 1-15; SA:201, SA:207, SA:209-218, SA:563, BS:330, BS:423; R022, R038, R042, R091, R108, R114,
 R129 (DoD 1-4 on the in-memory saver); errata 124, 125, 127-129.
@@ -2498,6 +2543,7 @@ def test_a_stale_fence_at_mark_unknown_is_a_lost_lease(monkeypatch: pytest.Monke
         # it the fence holds, so the refusal was the run's own state and is raised as it came.
         with pytest.raises(raised):
             asyncio.run(handlers.execute(deps, {**JOB, "type": "execute"}, lease))
+        assert (lease.fence, lease.refencing) == (3, False)
 ````
 
 with:
@@ -2514,10 +2560,11 @@ def test_a_stale_fence_at_mark_unknown_is_a_lost_lease(monkeypatch: pytest.Monke
             raise persistence.VersionConflict("version_conflict: stale fence")
 
         monkeypatch.setattr(persistence, "mark_unknown", refused)
-        # Losing after the call, the fresh fence check after the refusal fails: the fence was stale, a lost lease. Without
-        # it the fence holds, so the refusal was the run's own state and is raised as it came.
+        # Losing after the call, the fresh fence check after the refusal fails: the fence was stale, a lost lease.
+        # Without it the fence holds, so the refusal was the run's own state and is raised as it came.
         with pytest.raises(raised):
             asyncio.run(handlers.execute(deps, {**JOB, "type": "execute"}, lease))
+        assert (lease.fence, lease.refencing) == (3, False)
 ````
 
 Edit 43 (`tests/plan_h/test_worker_units.py`), replace:
@@ -2633,6 +2680,7 @@ from uuid import uuid4
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
+from ops_core import persistence
 from ops_core.contracts import ModelDraft
 from ops_core.routing import (
     GRAPH_ROUTES,
@@ -2694,7 +2742,7 @@ def test_every_route_has_one_node_and_some_row() -> None:
 
 
 @pytest.mark.parametrize(("name", "witness"), WALK, ids=[f"{n}-{w.state.value}" for n, w in WALK])
-def test_each_row_routes_its_key_to_its_node(name: str, witness: GraphKey) -> None:
+def test_each_row_routes_its_key_to_its_node(name: str, witness: GraphKey, monkeypatch: pytest.MonkeyPatch) -> None:
     rule = next(r for r in GRAPH_ROUTES if r.name == name)
     draft, bundle = held()
     state = {
@@ -2712,6 +2760,16 @@ def test_each_row_routes_its_key_to_its_node(name: str, witness: GraphKey) -> No
 
     async def load_run(_state: Any, runtime: Any) -> dict[str, Any]:
         return state
+
+    async def graph_facts(_conn: Any, _run_id: Any) -> persistence.GraphFacts:  # what route_request rereads
+        facts = (witness.state, witness.intent, witness.decision_present, witness.attempt_state, None)
+        return persistence.GraphFacts(*facts)
+
+    async def set_tenant(_conn: Any, _tenant: Any) -> None:
+        return None
+
+    monkeypatch.setattr(persistence, "graph_facts", graph_facts)
+    monkeypatch.setattr(persistence, "set_tenant", set_tenant)
 
     stubs = {n: stub(n) for n in build.NODES if n not in ("load_run", "route_request")}
     graph = build.build_graph(InMemorySaver(), {**stubs, "load_run": load_run})
@@ -2735,13 +2793,17 @@ stored outside the fence, or a stored id that is not the checkpoint holding the 
 cited summary; a question that does not release the lease, or a reply that does not resume the run where it waited;
 a third question that waits again; a reply that is not the latest that is still taken; a stray newer head that a
 resume follows; a crash (twice) that is not resumed from the stored checkpoint, or that writes a second manifest; a
-missing stored checkpoint that leaves a run active; model or evidence text inside a checkpoint; and a transient
+missing stored checkpoint that leaves a run active; model or evidence text inside a checkpoint; a router that routes
+on dimensions an earlier node left stale (an approved run that forked from before its freeze could then never
+execute); an execute job that resumes with a decision that is not the run's approval of its active proposal; a lost
+hold after a completed draft that is not drafted again; and a transient
 read that is not retried, a read retried past BS:552's budget, a refused token that is retried or reported as an
 ordinary failure, or an unknown asset that is not the "context missing" abstention.
 """
 
 import asyncio
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -2754,7 +2816,7 @@ from ops_core.outcomes import EventType
 from ops_worker import handlers, main
 from ops_worker.drafting import DraftRequest, EvidenceItem, FakeDraftGenerator
 from ops_worker.graph import build, nodes
-from ops_worker.graph.state import Context
+from ops_worker.graph.state import Context, initial
 from ops_worker.mcp import TRANSPORT, UNAUTHENTICATED, McpCallFailed
 
 from tests.plan_h.test_worker_units import JOB, RUN, RUN_ID, SEARCH, Log, make, patch
@@ -2824,6 +2886,36 @@ def transitions(w: World) -> list[str]:
     return [e for e in w.log.entries if e == "transition_run"]
 
 
+def approve(w: World, proposal: Any = None) -> None:
+    """What record_decision commits for an approval (0004): APPROVED and `approval.recorded {proposal_id}`."""
+    w.run["state"] = "APPROVED"
+    chosen = str(RUN["active_proposal_id"] if proposal is None else proposal)
+    w.run["events"][EventType.APPROVAL_RECORDED] = [(uuid4(), {"proposal_id": chosen})]
+
+
+def lose_once_after(monkeypatch: pytest.MonkeyPatch, w: World, entry: str) -> None:
+    """The next fence check after `entry` is logged finds the fence moved, once (a lost lease or a stopped process
+    between two units); later checks pass."""
+    armed = [True]
+
+    async def fenced(_conn: Any, lease: Lease) -> None:
+        w.log.entries.append("fenced")
+        if armed[0] and entry in w.log.entries:
+            armed[0] = False
+            lease.mark_lost("the fence moved")
+            raise LeaseLost("run lease lost")
+
+    monkeypatch.setattr(persistence, "fenced", fenced)
+
+
+def handed_back(w: World, generator: Any) -> None:
+    """One investigate job that loses its lease and is handed back (`main.run_job` → `abandon`)."""
+    deps, lease = make(w.log)
+    deps.saver, deps.generator = w.saver, generator
+    asyncio.run(main.run_job(deps, persistence.Claimed(dict(JOB), lease)))
+    assert w.log.units()[-1] == ["set_tenant", "revoke_handles", "unclaim_job"]
+
+
 def snapshot(w: World, checkpoint_id: str | None) -> Any:
     graph = build.build_graph(w.saver)
     return asyncio.run(graph.aget_state(build.config(THREAD, checkpoint_id)))
@@ -2885,8 +2977,7 @@ def test_every_invocation_is_sync_and_streams_checkpoints(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(build, "build_graph", lambda *a, **k: Spy(real(*a, **k)))
     job(w, Scripted())
-    w.run["state"] = "APPROVED"
-    w.run["events"][EventType.APPROVAL_RECORDED] = [(uuid4(), {})]
+    approve(w)
     job(w, Scripted(), "execute")
     assert len(seen) == 2 and all(s["durability"] == "sync" and s["stream_mode"] == "checkpoints" for s in seen)
     assert "mcp:create_incident" in w.log.entries  # the decision's resume reached the execute node (ruling 14)
@@ -2988,8 +3079,7 @@ def test_a_stray_newer_head_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     stray = asyncio.run(graph.aupdate_state(build.config(THREAD, None), {"run_state": "FAILED"}))
     stray_id = stray["configurable"]["checkpoint_id"]
     assert snapshot(w, None).values["run_state"] == "FAILED"  # the thread's head is the stray now
-    w.run["state"] = "APPROVED"
-    w.run["events"][EventType.APPROVAL_RECORDED] = [(uuid4(), {})]
+    approve(w)
     job(w, Scripted(), "execute")
     assert "mcp:create_incident" in w.log.entries  # the stray's FAILED would have published instead
     assert w.run["checkpoint_id"] not in (stored, stray_id)
@@ -3004,15 +3094,13 @@ def test_a_run_interrupted_twice_mid_draft_resumes_from_the_stored_checkpoint(mo
     from the stored checkpoint, retrieves again (its holds are gone, BS:423) and drafts; one manifest in all."""
     w = world(monkeypatch)
     for _ in range(2):
-        deps, lease = make(w.log)
-        deps.saver, deps.generator = w.saver, Scripted(LeaseLost("lost mid-draft"))
-        asyncio.run(main.run_job(deps, persistence.Claimed(dict(JOB), lease)))
-        assert w.run["state"] == "DRAFTING" and w.log.units()[-1] == ["set_tenant", "revoke_handles", "unclaim_job"]
-    first = len(w.log.entries)
+        handed_back(w, Scripted(LeaseLost("lost mid-draft")))
+        assert w.run["state"] == "DRAFTING"
+    before = len(transitions(w))
     job(w, Scripted())
     assert w.run["state"] == "AWAITING_APPROVAL"
     assert w.contexts[-1].trace[:3] == ["draft_with_langchain", "route_request", "retrieve_evidence"]
-    assert transitions(w)[first:] == []  # RETRIEVING -> DRAFTING is not repeated (only the freeze moved it)
+    assert len(transitions(w)) == before  # RETRIEVING -> DRAFTING is not repeated (only the freeze moved it)
     assert w.log.entries.count("insert") == 2  # one manifest (the first job's) and one drafts row (the freeze)
     sources = {c.metadata.get("source") for c in w.saver.list(build.config(THREAD, None))}
     assert "fork" in sources  # crash recovery forks (SA:214)
@@ -3085,6 +3173,65 @@ def test_reads_retry_transient_failures_only(
     assert w.run["state"] == state and caller.calls.count("get_asset_status") == status_calls
     if message is not None:
         assert moves[-1] == (state, message)
+
+
+def test_the_router_rereads_the_runs_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 1, I1: route_request routes on the database's state, intent, decision and attempt, never on what an
+    earlier node or a forked checkpoint left in the graph state."""
+    w = world(monkeypatch, {**RUN, "state": "EXECUTING"})
+    deps, lease = make(w.log)
+    ctx = Context(deps, dict(JOB), lease)
+    stale = {**initial(RUN_ID), "run_state": "QUEUED", "decision_present": False, "attempt_state": None}
+    update = asyncio.run(nodes.route_request(stale, SimpleNamespace(context=ctx)))
+    assert {k: update[k] for k in ("run_state", "intent", "decision_present", "attempt_state")} == {
+        "run_state": "EXECUTING",
+        "intent": "investigate",
+        "decision_present": True,
+        "attempt_state": "SENT",
+    }
+    assert "graph_facts" in w.log.entries
+
+
+def test_an_approved_run_resumed_from_before_its_freeze_executes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 1, I1's scenario: the freeze commits, the lease is lost at the next checkpoint store, so the stored id is
+    the checkpoint before validate_and_freeze (no interrupt). After the approval, the execute job forks from it; the
+    lost hold sends the run back to the router, which rereads APPROVED with its decision, and the proposal runs."""
+    w = world(monkeypatch)
+    lose_once_after(monkeypatch, w, "freeze_proposal")
+    handed_back(w, Scripted())
+    assert w.run["state"] == "AWAITING_APPROVAL"
+    assert snapshot(w, w.run["checkpoint_id"]).next == ("validate_and_freeze",)
+    approve(w)
+    job(w, Scripted(), "execute")
+    assert w.log.entries.count("mcp:create_incident") == 1 and w.log.entries[-1] == "release_lease"
+
+
+def test_an_execute_job_with_a_decision_for_another_proposal_runs_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 1, M1: the resume value is checked against the database first; a latest approval that names another
+    proposal than the run's active one ends the job with no graph run, no transition and no write call."""
+    w = world(monkeypatch)
+    job(w, Scripted())
+    approve(w, proposal=uuid4())
+    moves = len(transitions(w))
+    start = len(w.log.entries)
+    job(w, Scripted(), "execute")
+    assert "mcp:create_incident" not in w.log.entries and len(transitions(w)) == moves
+    assert "store_checkpoint_id" not in w.log.entries[start:] and w.log.entries[-1] == "release_lease"
+
+
+def test_a_hold_lost_after_a_completed_draft_is_drafted_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 1, M4: the draft completed, the lease was lost at the next checkpoint store, so the stored id is still the
+    checkpoint before the draft node; the next owner resumes there with no hold, retrieves again and asks the route a
+    second time (a second generation for the run: BS:554/555, debt -> T29)."""
+    w = world(monkeypatch)
+    lose_once_after(monkeypatch, w, "release_model_permit")
+    first = Scripted()
+    handed_back(w, first)
+    assert w.run["state"] == "DRAFTING" and len(first.requests) == 1
+    second = Scripted()
+    job(w, second)
+    assert len(second.requests) == 1 and w.run["state"] == "AWAITING_APPROVAL"
+    assert w.contexts[-1].trace[:3] == ["draft_with_langchain", "route_request", "retrieve_evidence"]
 ````
 
 Edit 46 (`tests/plan_p/test_investigate_drafting.py`), replace:
@@ -3393,6 +3540,7 @@ record a manifest for. The check is read off the order of `assert_relation` call
 and an unset MODEL_MODE ending in a traceback instead of the logged refusal to start.
 """
 
+from types import SimpleNamespace
 ````
 
 with:
@@ -3401,10 +3549,12 @@ with:
 """The worker's start-up relation checks (T19; revision 0014), without a database.
 
 Catches: the worker starting on a database that lacks `app.run_manifests`, which would claim jobs it could not
-record a manifest for, or `checkpoints.checkpoints` (revision 0015, T20), whose graph could not persist. The check is read off the order of `assert_relation` calls, stopped at the manifest table;
-and an unset MODEL_MODE ending in a traceback instead of the logged refusal to start.
+record a manifest for, or `checkpoints.checkpoints` (revision 0015, T20), whose graph could not persist. The check is
+read off the order of `assert_relation` calls, stopped at the checkpoint table, the last one asked for; and an unset
+MODEL_MODE ending in a traceback instead of the logged refusal to start.
 """
 
+from types import SimpleNamespace
 ````
 
 Edit 56 (`tests/plan_p/test_worker_startup.py`), replace:
@@ -3584,6 +3734,68 @@ with:
     assert EXECUTE_RETRY_SECONDS == 30 and calls["mark_unknown"] == []
 ````
 
+Edit 63 (`tests/plan_m/test_worker_r029.py`), replace:
+
+````python
+    log = Log()
+    patch(monkeypatch, log)
+    moves: list[tuple[Any, Any, Any]] = []
+
+    async def transition_run(_conn: Any, *, run_id: Any, src: Any, dst: Any, detail: Any = None) -> int:
+        moves.append((src, dst, detail))
+        return 2
+
+    class Refusing:
+        async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+````
+
+with:
+
+````python
+    log = Log()
+    patch(monkeypatch, log)
+    moves: list[tuple[Any, Any, Any]] = []
+    kept = persistence.transition_run  # Plan H's recorder keeps the run row, which the graph's router rereads (T20)
+
+    async def transition_run(_conn: Any, *, run_id: Any, src: Any, dst: Any, detail: Any = None) -> int:
+        moves.append((src, dst, detail))
+        return int(await kept(_conn, run_id=run_id, src=src, dst=dst, detail=detail))
+
+    class Refusing:
+        async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+````
+
+Edit 64 (`tests/plan_m/test_worker_r029.py`), replace:
+
+````python
+    log = Log()
+    patch(monkeypatch, log)
+    moves: list[tuple[Any, Any, Any]] = []
+
+    async def transition_run(_conn: Any, *, run_id: Any, src: Any, dst: Any, detail: Any = None) -> int:
+        moves.append((src, dst, detail))
+        return 2
+
+    monkeypatch.setattr(persistence, "transition_run", transition_run)
+    db = Database(UnitConn())
+````
+
+with:
+
+````python
+    log = Log()
+    patch(monkeypatch, log)
+    moves: list[tuple[Any, Any, Any]] = []
+    kept = persistence.transition_run  # Plan H's recorder keeps the run row, which the graph's router rereads (T20)
+
+    async def transition_run(_conn: Any, *, run_id: Any, src: Any, dst: Any, detail: Any = None) -> int:
+        moves.append((src, dst, detail))
+        return int(await kept(_conn, run_id=run_id, src=src, dst=dst, detail=detail))
+
+    monkeypatch.setattr(persistence, "transition_run", transition_run)
+    db = Database(UnitConn())
+````
+
 Run `PYTHONUTF8=1 uv run python -m pytest tests/plan_q/test_graph_routes.py tests/plan_q/test_graph_flow.py
 tests/plan_h/test_worker_units.py -q -p no:cacheprovider < /dev/null` → RED, `2 errors during collection`, both
 `ModuleNotFoundError: No module named 'ops_worker.graph'`.
@@ -3716,7 +3928,8 @@ def key(state: RunGraphState) -> GraphKey:
 
 @dataclass
 class HeldDraft:
-    """A validated draft between `draft_with_langchain` and the node its kind routes to; its id is the `drafts` row's."""
+    """A validated draft between `draft_with_langchain` and the node its kind routes to; its id becomes the
+    `drafts` row's."""
 
     draft_id: UUID
     draft: ModelDraft
@@ -3896,7 +4109,8 @@ async def fail_from(conn: persistence.Conn, run_id: UUID, current: RunState, mes
 async def insert_draft(conn: persistence.Conn, run: dict[str, Any], held: HeldDraft, sha256: str) -> None:
     """The `drafts` row (AM-20.2 drafts: ins): the draft's id, kind and hash, never its text (SA:496)."""
     await conn.execute(
-        "INSERT INTO app.drafts (id, tenant_id, run_id, draft_sha256, validated, kind) VALUES (%s, %s, %s, %s, true, %s)",
+        "INSERT INTO app.drafts (id, tenant_id, run_id, draft_sha256, validated, kind)"
+        " VALUES (%s, %s, %s, %s, true, %s)",
         (held.draft_id, run["tenant_id"], run["run_id"], sha256, held.draft.kind),
     )
 
@@ -3918,13 +4132,15 @@ async def load_run(state: RunGraphState, runtime: Runtime[Context]) -> dict[str,
 
 async def route_request(state: RunGraphState, runtime: Runtime[Context]) -> dict[str, Any]:
     """The graph router's node (AM-16). The route itself is `ops_core.routing.route_graph`, read by the conditional
-    edges `build.py` generates from the table; this node only drops a draft kind or an evidence verdict whose hold this
-    graph run does not have (a resumed run in a new process), so the run retrieves again before it drafts (BS:423)."""
+    edges `build.py` generates from the table. This node rereads the run's state, intent, decision and attempt on every
+    hop (BS:305, SA:215: the router routes on authoritative dimensions only, whatever an earlier node or a forked
+    checkpoint left in state; Plan Q round 1, I1), and drops a draft kind or an evidence verdict whose hold this graph
+    run does not have (a resumed run in a new process), so the run retrieves again before it drafts (BS:423)."""
     ctx = runtime.context
     ctx.trace.append("route_request")
-    update: dict[str, Any] = {}
+    update: dict[str, Any] = await facts(ctx, _run_id(state))
     if state["draft_kind"] != DraftKind.NONE.value and _held(ctx, state) is None:
-        update = dict(LOST)
+        update |= LOST
     if state["evidence"] == Evidence.SUFFICIENT.value and ctx.held.bundle is None:
         update["evidence"] = Evidence.UNKNOWN.value
     return update
@@ -4183,7 +4399,16 @@ async def await_clarification(state: RunGraphState, runtime: Runtime[Context]) -
         ctx.held.draft = None
         current = RunState.AWAITING_INPUT
     if current is RunState.QUEUED:  # a resumed run whose reply was already taken: retrieve again
-        return {"run_state": current.value, "evidence": Evidence.UNKNOWN.value, "draft_kind": DraftKind.NONE.value}
+        async with unit(ctx, fence=False) as conn:  # the round it answered still counts (round 1, M7)
+            requested = await persistence.run_events(conn, run_id, EventType.CLARIFICATION_REQUESTED)
+        latest = [str(requested[-1][0])] if requested else []
+        asked = state["asked"] + [q for q in latest if q not in state["asked"]]
+        return {
+            "run_state": current.value,
+            "asked": asked,
+            "evidence": Evidence.UNKNOWN.value,
+            "draft_kind": DraftKind.NONE.value,
+        }
     if current is not RunState.AWAITING_INPUT:
         return {"run_state": current.value}
     async with unit(ctx, fence=False) as conn:
@@ -4724,20 +4949,37 @@ async def resume_input(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
     await _drive(deps, job, lease, Command(resume=str(reply)), stored)
 
 
-async def _approval(deps: Deps, job: dict[str, Any], lease: Lease) -> UUID | None:
-    """The run's latest `approval.recorded` event, the decision's committed event (the resume value, SA:213)."""
+async def _approval(deps: Deps, job: dict[str, Any], lease: Lease, run: dict[str, Any]) -> UUID | None:
+    """The decision's committed event, the resume value (SA:213), checked against the database first: the run's
+    latest decision event is an `approval.recorded` (no `run.rejected`) whose `proposal_id` is the run's active
+    proposal (record_decision's payload, 0004). None when it is not, with the three ids logged (round 1, M1)."""
     async with nodes.unit(Context(deps, job, lease), fence=False) as conn:
-        recorded = await persistence.run_events(conn, lease.run_id, EventType.APPROVAL_RECORDED)
-    return recorded[-1][0] if recorded else None
+        approved = await persistence.run_events(conn, lease.run_id, EventType.APPROVAL_RECORDED)
+        rejected = await persistence.run_events(conn, lease.run_id, EventType.RUN_REJECTED)
+    event_id, payload = approved[-1] if approved else (None, {})
+    active = str(run["active_proposal_id"])
+    if event_id is None or rejected or payload.get("proposal_id") != active:
+        log.error(
+            "execute job %s: run %s has no approval of its active proposal to resume with (event %s for proposal %s,"
+            " active proposal %s); the job ends without a graph run",
+            job["id"],
+            lease.run_id,
+            event_id,
+            payload.get("proposal_id"),
+            active,
+        )
+        return None
+    return event_id
 
 
 async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
     """Run the approved run's graph to `create_incident` (ruling 14); True when the job is finished by `handle`, False
     when it was re-queued (its final unit already ran and released the lease).
 
-    The stored checkpoint is the reviewer wait: resumed with the decision's event id, the waiting node rereads the
-    decision. After a re-queue it is the checkpoint before the execute node, which runs again (a fork, SA:214). A run
-    with no stored checkpoint (approved before T20) starts a graph run, whose router reads APPROVED."""
+    The stored checkpoint is the reviewer wait: resumed with the decision's event id, checked first (`_approval`),
+    the waiting node rereads the decision. After a re-queue it is the checkpoint before the execute node, which runs
+    again (a fork, SA:214). A run with no stored checkpoint (approved before T20) starts a graph run, whose router reads
+    APPROVED."""
     run = await _first_unit(deps, job, lease)
     # APPROVED or EXECUTING (JOB_RULES[EXECUTE].run_states): after a transport failure past the grant, the re-queued
     # job resends under the same action id (grant_execution's replay rule; Plan E ruling 6).
@@ -4752,9 +4994,12 @@ async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
         checkpoint = stored
         graph_input = None
         if await build.interrupted(Context(deps, job, lease), thread, stored):
-            approval = await _approval(deps, job, lease)
-            graph_input = Command(resume=str(approval)) if approval is not None else initial(lease.run_id)
-            checkpoint = stored if approval is not None else None
+            approval = await _approval(deps, job, lease, run)
+            if approval is None:
+                # No transition (the worker may not move an APPROVED run, SA:451) and no retry for ever: the job is
+                # closed by `handle`'s final unit. TODO(T22): recovery of a run approved without a matching decision.
+                return True
+            graph_input = Command(resume=str(approval))
     try:
         await _drive(deps, job, lease, graph_input, checkpoint)
     except Requeue:
@@ -4800,7 +5045,7 @@ async def abandon(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
         await persistence.unclaim_job(deps.conn, job["id"], worker_name=deps.worker_name)
 ````
 
-Edit 63 (`worker/src/ops_worker/main.py`), replace:
+Edit 65 (`worker/src/ops_worker/main.py`), replace:
 
 ````python
 """The worker process: a polling loop beside a health server and the lease heartbeat thread, three connections (the
@@ -4823,7 +5068,7 @@ Each poll claims the next job together with its run's lease (`persistence.claim_
 handler under that lease while the heartbeat renews it; a lost lease cancels the job's effects in flight and hands the
 ````
 
-Edit 64 (`worker/src/ops_worker/main.py`), replace:
+Edit 66 (`worker/src/ops_worker/main.py`), replace:
 
 ````python
 
@@ -4846,7 +5091,7 @@ from ops_worker.mcp import HttpMcpCaller
 
 ````
 
-Edit 65 (`worker/src/ops_worker/main.py`), replace:
+Edit 67 (`worker/src/ops_worker/main.py`), replace:
 
 ````python
     await persistence.assert_clock_profile(probe, settings.profile())
@@ -4871,7 +5116,7 @@ with:
     deps = handlers.Deps(
 ````
 
-Edit 66 (`worker/src/ops_worker/main.py`), replace:
+Edit 68 (`worker/src/ops_worker/main.py`), replace:
 
 ````python
         workload_azp=tokens.client_id,
@@ -4894,7 +5139,7 @@ with:
     stamps_stop = asyncio.Event()  # its own event: the stamps must outlive the job a shutdown lets finish
 ````
 
-Edit 67 (`worker/src/ops_worker/main.py`), replace:
+Edit 69 (`worker/src/ops_worker/main.py`), replace:
 
 ````python
         await asyncio.to_thread(heartbeat.join, 5.0)  # off the loop: the thread ends its tick and closes its connection
@@ -4917,7 +5162,7 @@ with:
         if task.done() and not task.cancelled() and task.exception() is not None:
 ````
 
-Edit 68 (`sweeper/src/ops_sweeper/wakeups.py`), replace:
+Edit 70 (`sweeper/src/ops_sweeper/wakeups.py`), replace:
 
 ````python
 execute job with the approving decision. The worker consumes a job only in its final unit, after the handler
@@ -4943,18 +5188,19 @@ wake-up's identity, so the same row is re-armed (`done_at`, `claimed_by`, `claim
 never a new one inserted (erratum 62). A run whose cancellation was requested is never re-armed. A job claimed
 ````
 
-Run `PYTHONUTF8=1 uv run python -m pytest tests/plan_q tests/plan_h tests/plan_p tests/plan_j tests/plan_f -q -p
-no:cacheprovider < /dev/null` → `497 passed, 2 skipped` (the two skips are Plan P's Ollama route tests).
+Run `PYTHONUTF8=1 uv run python -m pytest tests/plan_q tests/plan_h tests/plan_m tests/plan_p tests/plan_j
+tests/plan_f -q -p no:cacheprovider < /dev/null` → `600 passed, 2 skipped` (the two skips are Plan P's Ollama route
+tests).
 
 - [ ] **Step 3: Gates and commit**
 
-`git add` the seven new files; dev `CHECK: GREEN`, `1717 passed, 222 skipped`; `verify_handoff.py` exit 0.
+`git add` the seven new files; dev `CHECK: GREEN`, `1721 passed, 222 skipped`; `verify_handoff.py` exit 0.
 `git grep -n "TODO(T20)" -- '*.py' ':!*holdout*' ':!*seal*' ':!*.sha256'` prints nothing.
 
 ```bash
 git add worker/src/ops_worker sweeper/src/ops_sweeper/wakeups.py tests/plan_q tests/plan_h/test_worker_units.py \
   tests/plan_p/test_investigate_drafting.py tests/plan_p/test_worker_startup.py tests/plan_j/test_worker_azp.py \
-  tests/plan_f/test_grant_deferred.py
+  tests/plan_f/test_grant_deferred.py tests/plan_m/test_worker_r029.py
 git commit -m "feat: the LangGraph workflow - sync durability, stored checkpoint ids, ID-only interrupts, ANSWERED (T20)"
 ```
 
@@ -4963,8 +5209,8 @@ git commit -m "feat: the LangGraph workflow - sync durability, stored checkpoint
 
 **Files:**
 - Create: `tests/e2e/test_graph_live.py`; `reports/graph/t20-graph-live.md` (written by the live run, committed)
-- Modify: `tests/e2e/test_worker_live.py`, `tests/e2e/test_heartbeat_live.py`, `tests/e2e/test_r105_walking_skeleton.py`,
-  `tests/e2e/test_admission_live.py` (a comment)
+- Modify: `tests/e2e/test_worker_live.py`, `tests/e2e/test_heartbeat_live.py`,
+  `tests/e2e/test_r105_walking_skeleton.py`, `tests/e2e/test_admission_live.py` (a comment)
 
 **Requirements:** rulings 6, 9, 12, 15; R022, R038, R042, R091, R108, R114, R122 live; DoD 1-3 on the Postgres saver.
 
@@ -4982,7 +5228,8 @@ checkpoint id that is not the thread's checkpoint holding the interrupt (R108); 
 a model permit held while the run waits (R022); proposal, answer, question or alert text inside a checkpoint row, blob
 or pending write (R091); a clarification that does not survive a restart, a new graph instance on a new saver
 connection resuming from the stored id with the reply's event (R042; a killed process is the limit, Plan Q); and an
-answer_only run that freezes a proposal instead of ending ANSWERED with its cited answer (R114).
+answer_only run that freezes a proposal instead of ending ANSWERED with its cited answer (R114); and a graph whose
+step N+1 starts before step N's checkpoint is in the Postgres saver (R108's synchronous persistence, ruling 6).
 
 Writes `reports/graph/t20-graph-live.md` (the node order and end states) when every test of the module passed.
 """
@@ -4991,7 +5238,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -5003,7 +5250,7 @@ from ops_core.settings import Role
 from ops_worker import handlers
 from ops_worker.drafting import FakeDraftGenerator
 from ops_worker.graph import build
-from ops_worker.graph.state import Context
+from ops_worker.graph.state import Context, initial
 
 from tests.e2e.conftest import purge_run
 from tests.e2e.test_migrations_and_persistence import ALEX, new_run
@@ -5013,7 +5260,7 @@ from tests.plan_q.test_graph_flow import QUESTION, Scripted
 pytestmark = pytest.mark.asyncio
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 EVIDENCE = Path("reports/graph/t20-graph-live.md")
-EXPECTED_LINES = 4
+EXPECTED_LINES = 5
 ALERT_TEXT = "Bearing temperature above the warning threshold."  # the scripted alert's message
 
 
@@ -5097,6 +5344,39 @@ async def forget(app: persistence.Conn, run: UUID) -> None:
     await purge_run(app, run)
 
 
+async def test_r108_each_step_finds_the_previous_checkpoint_stored(lines: list[str]) -> None:
+    """Ruling 6: with durability="sync" a stub node running step N+1 reads the thread's newest checkpoint from the
+    Postgres saver and finds step N's state in it (the value `load_run`'s stub wrote), before anything else runs."""
+    conn, saver = await build.open_saver(settings.app_postgres(Role.WORKER))
+    thread = f"r108:{uuid4()}"
+    seen: dict[str, Any] = {}
+
+    class Reached(Exception):
+        """The stub at step N+1 stops the graph run once it has looked."""
+
+    async def load_run(_state: Any, runtime: Any) -> dict[str, Any]:
+        return {"intent": "answer_only", "run_state": "DRAFTING"}  # step N's writes
+
+    async def route_request(_state: Any, runtime: Any) -> dict[str, Any]:
+        stored = await saver.aget_tuple({"configurable": {"thread_id": thread, "checkpoint_ns": ""}})
+        seen["values"] = None if stored is None else dict(stored.checkpoint["channel_values"])
+        seen["step"] = None if stored is None else stored.metadata.get("step")
+        raise Reached
+
+    try:
+        graph = build.build_graph(saver, {"load_run": load_run, "route_request": route_request})
+        with pytest.raises(Reached):
+            await graph.ainvoke(initial(uuid4()), {"configurable": {"thread_id": thread}}, durability="sync")
+        assert seen["values"] is not None and seen["values"]["intent"] == "answer_only"  # step N, already stored
+        assert seen["values"]["run_state"] == "DRAFTING" and seen["step"] == 0
+        lines.append(
+            "- R108: a step-N+1 node found step N's checkpoint already in the Postgres saver (durability=sync)"
+        )
+    finally:
+        await saver.adelete_thread(thread)
+        await conn.close()
+
+
 async def test_r122_the_checkpoint_schema_is_the_workers_alone(
     app_conn: persistence.Conn, role_conn: RoleConn, lines: list[str]
 ) -> None:
@@ -5133,7 +5413,8 @@ async def test_a_run_waits_for_its_reviewer_at_the_stored_checkpoint(
         assert len(reads) == 3 and max(reads) < drafted  # R038: every read completed before the draft was recorded
         head = await stored(app_conn, run)
         cur = await app_conn.execute(
-            "SELECT checkpoint_id FROM checkpoints.checkpoints WHERE thread_id = %s ORDER BY checkpoint_id DESC LIMIT 1",
+            "SELECT checkpoint_id FROM checkpoints.checkpoints WHERE thread_id = %s"
+            " ORDER BY checkpoint_id DESC LIMIT 1",
             (build.thread_id(run, 1),),
         )
         assert (await cur.fetchone())["checkpoint_id"] == head  # R108: the stored id is the confirmed head
@@ -5249,7 +5530,7 @@ async def test_r114_an_answer_only_run_ends_answered(
             await forget(app_conn, run)
 ````
 
-Edit 69 (`tests/e2e/test_worker_live.py`), replace:
+Edit 71 (`tests/e2e/test_worker_live.py`), replace:
 
 ````python
 """The two handlers as role `worker` against the real database with a scripted MCP caller (OPS_LIVE=1): the state
@@ -5274,7 +5555,7 @@ Rows are written by role connections, so nothing here can roll back: every test 
 seeded tenant ALPHA is used because `record_decision` needs SAM's reviewer membership."""
 ````
 
-Edit 70 (`tests/e2e/test_worker_live.py`), replace:
+Edit 72 (`tests/e2e/test_worker_live.py`), replace:
 
 ````python
 
@@ -5297,7 +5578,7 @@ pytestmark = pytest.mark.asyncio
 
 ````
 
-Edit 71 (`tests/e2e/test_worker_live.py`), replace:
+Edit 73 (`tests/e2e/test_worker_live.py`), replace:
 
 ````python
     async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5332,7 +5613,7 @@ with:
             "data": {
 ````
 
-Edit 72 (`tests/e2e/test_worker_live.py`), replace:
+Edit 74 (`tests/e2e/test_worker_live.py`), replace:
 
 ````python
         assert proposal["payload"]["evidence_refs"] == ["ALPHA-INCIDENT:v2:review"]
@@ -5357,7 +5638,7 @@ with:
         ]
 ````
 
-Edit 73 (`tests/e2e/test_worker_live.py`), replace:
+Edit 75 (`tests/e2e/test_worker_live.py`), replace:
 
 ````python
         assert (await event_types(app_conn, run))[-1] == ("approval.recorded", "application")
@@ -5388,7 +5669,7 @@ with:
     finally:
 ````
 
-Edit 74 (`tests/e2e/test_worker_live.py`), replace:
+Edit 76 (`tests/e2e/test_worker_live.py`), replace:
 
 ````python
         cur = await app_conn.execute("SELECT type FROM app.events WHERE run_id = %s ORDER BY sequence", (run,))
@@ -5413,7 +5694,7 @@ with:
         cur = await app_conn.execute(
 ````
 
-Edit 75 (`tests/e2e/test_heartbeat_live.py`), replace:
+Edit 77 (`tests/e2e/test_heartbeat_live.py`), replace:
 
 ````python
         row = await cur.fetchone()
@@ -5451,7 +5732,7 @@ with:
         await purge_run(app_conn, run)
 ````
 
-Edit 76 (`tests/e2e/test_r105_walking_skeleton.py`), replace:
+Edit 78 (`tests/e2e/test_r105_walking_skeleton.py`), replace:
 
 ````python
 EVIDENCE = Path("reports/skeleton/r105-walking-skeleton.txt")
@@ -5476,7 +5757,7 @@ EXPECTED_EVENTS = [
     ("approval.recorded", "application"),
 ````
 
-Edit 77 (`tests/e2e/test_admission_live.py`), replace:
+Edit 79 (`tests/e2e/test_admission_live.py`), replace:
 
 ````python
             messages(await conversation(c, created)), headers=h(), json={"kind": "clarification", "text": "A17"}
@@ -5500,20 +5781,20 @@ with:
         async with worker.transaction():
 ````
 
-Gates: `git add tests/e2e/test_graph_live.py`; dev `CHECK: GREEN`, `1717 passed, 226 skipped` (the four new live
+Gates: `git add tests/e2e/test_graph_live.py`; dev `CHECK: GREEN`, `1721 passed, 227 skipped` (the five new live
 tests skip without `OPS_LIVE=1`); `verify_handoff.py` exit 0.
 
 - [ ] **Step 2: The live gate (these database tests have never run, departure 1)**
 
 With the dev stack up, local Ollama answering and every skeleton process down, run `PYTHONUTF8=1 uv run python
-scripts/check.py --profile test < /dev/null` → `CHECK: GREEN` with `1922 passed, 21 skipped` (arithmetic). It writes
-`reports/graph/t20-graph-live.md`: a title line, then four lines — R122, the proposal path's node order (`load_run →
-route_request → retrieve_evidence → route_request → draft_with_langchain → route_request → validate_and_freeze →
-route_request → await_independent_decision`), the clarification's state history across the restart (`QUEUED →
-RETRIEVING → DRAFTING → AWAITING_INPUT → QUEUED → RETRIEVING → DRAFTING → AWAITING_APPROVAL`) and the answer_only path
-ending ANSWERED. If a live test fails, stop and report it with its output (NEEDS_CONTEXT): the expected behaviour is
-in the test's docstring and Review Focus 1, and a fix is a review decision, not an improvisation. Then `git checkout --
-reports` for every other rewritten report and keep the new one.
+scripts/check.py --profile test < /dev/null` → `CHECK: GREEN` with `1927 passed, 21 skipped` (arithmetic). It writes
+`reports/graph/t20-graph-live.md`: a title line, then five lines — R108's stub, R122, the proposal path's node order
+(`load_run → route_request → retrieve_evidence → route_request → draft_with_langchain → route_request →
+validate_and_freeze → route_request → await_independent_decision`), the clarification's state history across the restart
+(`QUEUED → RETRIEVING → DRAFTING → AWAITING_INPUT → QUEUED → RETRIEVING → DRAFTING → AWAITING_APPROVAL`) and the
+answer_only path ending ANSWERED. If a live test fails, stop and report it with its output (NEEDS_CONTEXT): the expected
+behaviour is in the test's docstring and Review Focus 1, and a fix is a review decision, not an improvisation. Then `git
+checkout -- reports` for every other rewritten report and keep the new one.
 
 ```bash
 git add tests/e2e reports/graph/t20-graph-live.md
@@ -5521,12 +5802,12 @@ git commit -m "test: the graph on the Postgres saver, live (T20: R022, R038, R04
 ```
 
 ---
-### Task 6: Close-out — records, requirements, errata 122-129, state, history, final gates
+### Task 6: Close-out — records, requirements, errata 122-130, state, history, final gates
 
 **Files:**
 - Modify: `handoff/tasks.json` (T20 → `DONE` with a review note; M07 → `DONE`; `current_milestone` → `M08`),
   `handoff/acceptance-matrix.json` (R022, R038, R042, R091, R108, R114, R122, R129), `handoff/BUILD_BACKLOG.md` (T20
-  checked; its note), `SESSION_STATE.md` (the milestone, the next task, a "Plan Q executed" section with errata 122-129,
+  checked; its note), `SESSION_STATE.md` (the milestone, the next task, a "Plan Q executed" section with errata 122-130,
   the owner inputs), `STATUS.md` (the LangGraph row; an update section), `README.md` (the Orchestrator row),
   `docs/ARCHITECTURE.md` (§3's diagram and text; "Where the code will live"), `docs/PROJECT_HISTORY.md` (a new section
   35; "What the process taught" becomes 36), this plan (its checkboxes); the files the final live run rewrites
@@ -5573,11 +5854,12 @@ note = (
     "SA:377's sufficiency rule (erratum 122); questions interrupt with the event id, release the lease and resume with "
     "Command(resume=clarification.received id) in the resume_input job; answers end ANSWERED with the cited summary in "
     "explanation.ready (erratum 124); the reviewer wait interrupts with the proposal id and the execute job resumes it; "
-    "crash recovery forks from the stored id; a missing stored id fails the run. DoD 1: tests/plan_q/test_graph_flow.py "
+    "crash recovery forks from the stored id; the router rereads the run's dimensions on every hop; a missing stored "
+    "id fails the run. DoD 1: tests/plan_q/test_graph_flow.py "
     "and tests/e2e/test_graph_live.py (every read before the draft). DoD 2: the restart test and the stray-head test. "
     "DoD 3: R091's grep of the checkpoint rows, blobs and writes. DoD 4: tests/plan_q/test_graph_routes.py (every row "
     "walked to its node). Deferred: the fenced saver -> T38; revision re-entry -> T21; recover jobs and re-queued reads "
-    "-> T22; the budget's human-wait exclusion -> T29. Errata 122-129 are proposed in SESSION_STATE.md."
+    "-> T22; the budget's human-wait exclusion -> T29. Errata 122-130 are proposed in SESSION_STATE.md."
 )
 tasks_path = Path("handoff/tasks.json")
 tasks = json.loads(tasks_path.read_text(encoding="utf-8"))
@@ -5621,9 +5903,11 @@ ROWS = {
     ),
     "R108": (
         ["worker/src/ops_worker/graph/build.py", "worker/src/ops_worker/handlers.py", FLOW, *LIVE],
-        "Plan Q (T20): every invocation passes durability='sync' and streams checkpoints (a spy on the call); each "
-        "announced checkpoint is confirmed by aget_tuple and stored under the fence; resumes name the stored id, and a "
-        "newer head written after it is ignored (the stray-head test); crash recovery forks and stores the fork.",
+        "Plan Q (T20): every invocation passes durability='sync' and streams checkpoints (a spy on the call pins the "
+        "argument); live, a stub node at step N+1 finds step N's checkpoint already in the Postgres saver (the "
+        "behaviour); each announced checkpoint is confirmed by aget_tuple and stored under the fence; resumes name the "
+        "stored id, and a newer head written after it is ignored (the stray-head test); crash recovery forks and stores "
+        "the fork.",
     ),
     "R114": (
         [*GRAPH, FLOW, *LIVE],
@@ -5679,7 +5963,7 @@ Expected: `T20 DONE; M07 DONE; current milestone M08; rows R022, R038, R042, R09
 
 - [ ] **Step 2: State, status, the architecture page and the history**
 
-Edit 78 (`SESSION_STATE.md`), replace:
+Edit 80 (`SESSION_STATE.md`), replace:
 
 ````markdown
 **Current milestone:** M07 (the LangChain draft node and the LangGraph workflow; T19 is DONE in Plan P and T20 is next. M06 closed with T18 in Plan N; its T41, the owner's holdout labels, is optional since erratum 114. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
@@ -5694,12 +5978,12 @@ with:
 branch `plan-q` (`<base>..<last>` holds the debt list, the four building tasks and the live gate; the close-out is the
 commit after `<last>`). T20 is DONE: the run's lifecycle is one LangGraph graph on the Postgres saver with synchronous
 durability and the stored checkpoint id (R022, R038, R042, R091, R108, R114 and R122 live; R129's graph half); errata
-122-129 are proposed (see "Plan Q executed"). Owner inputs added by Plan Q: decide errata 122-129; migrate the dev
+122-130 are proposed (see "Plan Q executed"). Owner inputs added by Plan Q: decide errata 122-130; migrate the dev
 database to 0015 (the worker refuses to start without `checkpoints.checkpoints`). Plan P (T19) is executed on branch
 `plan-p` (`ee2729d..737d1ab` holds the
 ````
 
-Edit 79 (`SESSION_STATE.md`), replace:
+Edit 81 (`SESSION_STATE.md`), replace:
 
 ````markdown
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
@@ -5739,23 +6023,30 @@ with:
        revision records its own is T21's decision.
   126. SA:559 (the migrator runs `PostgresSaver.setup()`): revision 0015 runs the same statements, frozen with the
        schema named and `CONCURRENTLY` dropped (Alembic runs one transaction), and records the version rows `setup()`
-       writes, so a later `setup()` applies nothing.
+       writes, so a later `setup()` applies nothing. SA:434's "worker: all DML" on schema `checkpoints` excludes
+       `checkpoint_migrations`, the library's bookkeeping, which only the revision writes.
   127. AM-15 (SA:343) and `JOB_RULES`: a `resume_input` job's read handle also works in RETRIEVING and DRAFTING, because
        the resumed graph carries the run through retrieval and drafting under the same lease.
   128. SA:207, SA:496 ("one node") and `docs/ARCHITECTURE.md` §3 ("every node returns to route_request"): the validated
        draft is held in the worker's memory between `draft_with_langchain` and the node its kind routes to, within one
        graph run (a resumed graph run without the hold retrieves and drafts again); `publish_state` ends the graph run
        when the table routes `publish` and otherwise returns to the router; `execute_approved_proposal` hands over to
-       `reconcile_outcome`, which ends the execute job's graph run.
+       `reconcile_outcome`, which ends the execute job's graph run. A run recovered after a completed draft drafts
+       again, so it can exceed BS:554's two generation attempts and BS:555's 90 s per run, bounded only by each job's
+       own budget (T29). The graph thread of a rejected run ends at the reviewer wait: `record_decision` queues no job
+       on a rejection, `publish_state` does not run for it in v1, and the run's REJECTED state is the API's.
   129. SA:451: a run that waits in AWAITING_INPUT and cannot be resumed (no stored checkpoint, or a reply that is not
        the latest) walks AWAITING_INPUT -> QUEUED -> RETRIEVING -> FAILED in one unit, the worker's only path to FAILED.
+  130. SA:136 (RETRIEVING -> AWAITING_INPUT when required context is missing or ambiguous) is not taken in v1: an asset
+       the asset service does not know ends INSUFFICIENT_EVIDENCE, because the run's asset is fixed (SA:154) and a reply
+       could not change it.
 - Limits: the database live tests were first run in execution (the plan writer could not reach the stack's `.env`);
   R042's restart is a new graph instance on a new saver connection in one process, not a killed process (T30).
 
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 ````
 
-Edit 80 (`SESSION_STATE.md`), replace:
+Edit 82 (`SESSION_STATE.md`), replace:
 
 ````markdown
   executed"), 103-106 (see "Plan M executed"), 107-111 (see "Plan N executed"), 112-113 (see "Plan O executed") and
@@ -5768,13 +6059,13 @@ with:
 
 ````markdown
   executed"), 103-106 (see "Plan M executed"), 107-111 (see "Plan N executed"), 112-113 (see "Plan O executed"),
-  115-121 (see "Plan P executed") and 122-129 (see "Plan Q executed").
+  115-121 (see "Plan P executed") and 122-130 (see "Plan Q executed").
 - Migrate the dev database to revision 0015 (`uv run python scripts/skeleton.py migrate`): the worker refuses to start
   on 0013, which lacks `app.run_manifests` and `checkpoints.checkpoints`. To run the worker on the real model, set
   `MODEL_MODE=qwen3:8b`; the
 ````
 
-Edit 81 (`STATUS.md`), replace:
+Edit 83 (`STATUS.md`), replace:
 
 ````markdown
 | LangGraph | Historical integration example only | Wire persistent/fenced graph, durable pauses and versioned recovery |
@@ -5786,7 +6077,7 @@ with:
 | LangGraph | One explicit graph on the Postgres saver (T20): sync durability, stored checkpoint ids, durable pauses | Fenced saver (T38, M15) and versioned recovery (T36) |
 ````
 
-Edit 82 (`STATUS.md`), replace:
+Edit 84 (`STATUS.md`), replace:
 
 ````markdown
 - Next: T20 (the LangGraph workflow).
@@ -5805,7 +6096,8 @@ with:
   scripts/check.py --profile test` is `CHECK: GREEN`: pytest `<live>`. `verify_handoff.py` exits 0.
 - **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`, `RECORDED_LOCALLY_LIVE`): R022 (the waits release the lease, no open
   worker transaction, the permit free), R038 (every read before the draft), R042 (a clarification across a restart),
-  R091 (no text in checkpoint rows, blobs or writes), R108 (sync durability, the stored id, a stray head ignored),
+  R091 (no text in checkpoint rows, blobs or writes), R108 (the `durability="sync"` argument pinned by a spy, a live
+  stub finding the previous step's checkpoint stored, the stored id, a stray head ignored),
   R114 (ANSWERED with the cited answer, no proposal), R122 (schema `checkpoints` the worker's alone; owner T09); R129's
   graph half (every row walked to its node).
 - Built: `GRAPH_ROUTES` in `ops_core.routing`; `worker/src/ops_worker/graph/` (ten nodes, edges generated from the
@@ -5813,11 +6105,11 @@ with:
   `resume_input` handler; crash recovery from `runs.checkpoint_id`. The dev database is still at 0013; the worker needs
   0014 and 0015 (`skeleton.py migrate`, an owner step).
 - Deferred, each with its owner in `SESSION_STATE.md`: the fenced saver -> T38; revision re-entry and the write-tool
-  discovery -> T21; recover jobs and re-queued reads -> T22; the human-wait budget -> T29. Eight errata (122-129).
+  discovery -> T21; recover jobs and re-queued reads -> T22; the human-wait budget -> T29. Nine errata (122-130).
 - Next: T21.
 ````
 
-Edit 83 (`README.md`), replace:
+Edit 85 (`README.md`), replace:
 
 ````markdown
 | **Orchestrator** | One explicit LangGraph graph: evidence before drafting, durable pauses, synchronous checkpoints, never the authority | R038, R042, R108, R091 |
@@ -5829,7 +6121,7 @@ with:
 | **Orchestrator** | One explicit LangGraph graph: evidence before drafting, durable pauses, synchronous checkpoints, never the authority | R038, R042, R108, R091, R022, R114 |
 ````
 
-Edit 84 (`docs/ARCHITECTURE.md`), replace:
+Edit 86 (`docs/ARCHITECTURE.md`), replace:
 
 ````markdown
   R -->|publish| P
@@ -5861,7 +6153,7 @@ with:
 The working nodes and the two waiting nodes return to `route_request`, and every labelled edge out of it is generated from the AM-16 route table (`ops_core.routing.GRAPH_ROUTES`, built by T20; ten routes). The two waiting nodes interrupt, which ends the graph run and releases the lease; the committed human event's wake-up job (`resume_input`, or `execute` after a decision) resumes the graph from the stored checkpoint with `Command(resume=<event id>)`. `publish_state` ends the graph run once the table routes the run to `publish` (erratum 128), and in v1 `execute_approved_proposal` hands over to `reconcile_outcome`, which ends it (recovery is T22's). Nodes are deterministic Python; only `draft_with_langchain` calls the model, and only `retrieve_evidence` and `execute_approved_proposal` call MCP servers (`reconcile_outcome`'s calls arrive with T22).
 ````
 
-Edit 85 (`docs/ARCHITECTURE.md`), replace:
+Edit 87 (`docs/ARCHITECTURE.md`), replace:
 
 ````markdown
 | `worker/graph/` | the orchestrator's nodes and edges |
@@ -5873,7 +6165,7 @@ with:
 | `worker/src/ops_worker/graph/` | the orchestrator's nodes and edges (written by T20) |
 ````
 
-Edit 86 (`docs/PROJECT_HISTORY.md`), replace:
+Edit 88 (`docs/PROJECT_HISTORY.md`), replace:
 
 ````markdown
 ## 35. What the process taught
@@ -5904,15 +6196,19 @@ would have hit the manifest's primary key; a `resume_input` job could not read i
 AWAITING_INPUT and QUEUED only); a crash resumes at the node that was next, which may be the one that needs the lost
 draft, so every consumer routes a missing hold back through retrieval and `publish_state` leaves the graph only when
 the table says the run is settled; and the MCP SDK reports every non-2xx answer the same way, so the worker's client
-records HTTP statuses itself to tell a refused token from a transport failure. The database live tests were written
-blind (the scratch copy could not reach the stack's `.env`) and first ran in execution.
+records HTTP statuses itself to tell a refused token from a transport failure. The static review then found that a
+node's early return left the router's decision dimensions stale, so an approved run that had forked from before its
+freeze could never execute; the router now rereads them on every hop. It also found R108's synchronous persistence
+evidenced only by an argument spy (a live stub test now shows a step finding the previous checkpoint stored), and an
+execute job's resume value used unchecked (now checked against the run's latest decision). The database live tests
+were written blind (the scratch copy could not reach the stack's `.env`) and first ran in execution.
 
 ## 36. What the process taught
 ````
 
 - [ ] **Step 3: Final gates**
 
-Dev `CHECK: GREEN`, `1717 passed, 226 skipped`; live `CHECK: GREEN`, `1922 passed, 21 skipped` (then `git checkout --
+Dev `CHECK: GREEN`, `1721 passed, 227 skipped`; live `CHECK: GREEN`, `1927 passed, 21 skipped` (then `git checkout --
 reports`, keeping `reports/graph/t20-graph-live.md` as the run rewrote it); `verify_handoff.py` exit 0.
 
 - [ ] **Step 4: Placeholders, checkboxes and the commit**
@@ -5925,12 +6221,13 @@ when the controller writes it.
 ```bash
 git add handoff SESSION_STATE.md STATUS.md README.md docs/ARCHITECTURE.md docs/PROJECT_HISTORY.md \
   docs/superpowers/plans/2026-10-25-first-slice-q-langgraph-workflow.md reports/graph/t20-graph-live.md
-git commit -m "docs: close T20 (Plan Q) - records, R022/R038/R042/R091/R108/R114/R122, errata 122-129, state and history"
+git commit -m "docs: close T20 (Plan Q) - records, R022/R038/R042/R091/R108/R114/R122, errata 122-130, state and history"
 ```
 
 ## Review Focus
 
-1. **The live tests have never run (departure 1).** `tests/e2e/test_graph_live.py` (R122's refusals and version rows;
+1. **The live tests have never run (departure 1).** `tests/e2e/test_graph_live.py` (R108's step-N+1 stub; R122's
+   refusals and version rows;
    the stored head with its `__interrupt__` write; R022's lease, `pg_stat_activity` and permit checks; R091's grep;
    the clarification across a restart through the API's own `DbUnit.record_reply`; the answer_only run) and the edited
    `test_worker_live.py` (three reads before the draft), `test_heartbeat_live.py` (the re-run now resumes and ends
@@ -5948,4 +6245,6 @@ git commit -m "docs: close T20 (Plan Q) - records, R022/R038/R042/R091/R108/R114
    with the reply's event; any other active state carries on as investigate would. Execute: the reviewer wait is
    resumed with `approval.recorded`'s id; a re-queued execute forks to re-run the execute node.
 5. **The router table's reachable rows** (`test_graph_table.produced`): a key a node can produce with no row fails the
-   graph run with `LookupError`, which `_drive` turns into FAILED only for a run in RETRIEVING or DRAFTING.
+   graph run with `LookupError`, which `_drive` turns into FAILED only for a run in RETRIEVING or DRAFTING. Since round
+   1 `route_request` rereads the decision and attempt dimensions on every hop (one unlocked SELECT), so a node's early
+   return can no longer leave them stale (`test_the_router_rereads_the_runs_dimensions`).
