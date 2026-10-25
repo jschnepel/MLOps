@@ -82,7 +82,10 @@ def produced() -> list[GraphKey]:
 
 def test_every_key_the_worker_produces_has_a_route() -> None:
     for produced_key in produced():
-        assert route_graph(produced_key) in set(GraphRoute), produced_key  # LookupError would fail the graph run
+        try:
+            route_graph(produced_key)  # the only way to fail is the LookupError that would fail the graph run
+        except LookupError:
+            pytest.fail(f"no graph route for {produced_key}")
 
 
 def test_freeze_is_gated_by_intent_and_an_answer_is_answered_on_any_run() -> None:

@@ -196,9 +196,9 @@ def patch(
             asked.append((uuid4(), dict(detail or {})))
         return 2
 
-    async def run_events(_conn: Any, _run_id: Any, type: EventType) -> list[tuple[Any, dict[str, Any]]]:
+    async def run_events(_conn: Any, _run_id: Any, event_type: EventType) -> list[tuple[Any, dict[str, Any]]]:
         log.entries.append("run_events")
-        return list(current["events"].get(type, []))
+        return list(current["events"].get(event_type, []))
 
     async def message_text(_conn: Any, message_id: Any) -> str:
         log.entries.append("message_text")

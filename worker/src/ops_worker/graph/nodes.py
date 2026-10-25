@@ -42,7 +42,7 @@ from ops_worker import evidence, permit, proposals
 from ops_worker.drafting import PROMPT_VERSION, DraftRequest, ModelOutputInvalid, ModelUnavailable
 from ops_worker.evidence import Bundle
 from ops_worker.graph.state import Context, HeldDraft, RunGraphState, key
-from ops_worker.mcp import UNAUTHENTICATED, McpCallFailed
+from ops_worker.mcp import TRANSPORT, UNAUTHENTICATED, McpCallFailed
 
 log = logging.getLogger("ops_worker")
 QUERY_CHARS: Final = 500  # schemas/tools/search_procedures.input.schema.json maxLength
@@ -194,6 +194,8 @@ async def read(ctx: Context, handle: str, tool: Tool, arguments: dict[str, Any],
     await event(ctx, EventType.TOOL_STARTED, {"message": tool.value})
     retries = 0
     while True:
+        if calls[0] <= 0:  # before every call, the first of a read included: the seventh call is never made
+            raise McpCallFailed(f"{tool.value}: the run's {READ_CALLS}-call read budget is spent", code=TRANSPORT)
         calls[0] -= 1
         try:
             doc = await ctx.lease.effect(
@@ -202,7 +204,7 @@ async def read(ctx: Context, handle: str, tool: Tool, arguments: dict[str, Any],
             break
         except McpCallFailed as exc:
             if not exc.retryable or retries >= READ_RETRIES or calls[0] <= 0:
-                raise
+                raise  # with the budget spent, the failure itself is what is reported, without a back-off first
             retries += 1
             log.info("read %s failed (%s); retry %s", tool.value, exc.code, retries)
             await ctx.lease.effect(asyncio.sleep(RETRY_SECONDS * 2 ** (retries - 1) * random.uniform(0.5, 1.0)))

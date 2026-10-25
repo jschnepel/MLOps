@@ -134,7 +134,9 @@ async def _carry_on(deps: Deps, job: dict[str, Any], lease: Lease, run: dict[str
 async def resume_input(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
     """Resume a run waiting for a clarification with the reply's `clarification.received` event id (SA:213). The
     job's key names the question it answers (`run_id:clarification_event_id`, SA:501), so a replay is a duplicate
-    the queue refuses, and a reply that is not the latest is refused by the resumed node (RESUME_REFUSED)."""
+    the queue refuses, and a reply that is not the latest is refused by the resumed node (RESUME_REFUSED). A job
+    whose question is no longer the run's newest is stale (its own graph run asked the next one before the job ran
+    again): it ends without a graph run, and the newer reply's job resumes the run."""
     run = await _first_unit(deps, job, lease)
     state, stored = RunState(run["state"]), run.get("checkpoint_id")
     if state is not RunState.AWAITING_INPUT:
@@ -142,9 +144,23 @@ async def resume_input(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
         # as an investigate job would; any other state has nothing left for this job.
         await _carry_on(deps, job, lease, run)
         return
+    question = str(job["dedup_key"]).partition(":")[2]
+    async with nodes.unit(Context(deps, job, lease), fence=False) as conn:
+        requested = await persistence.run_events(conn, lease.run_id, EventType.CLARIFICATION_REQUESTED)
+    newest = str(requested[-1][0]) if requested else None
+    if newest is not None and newest != question:
+        # No transition and no checkpoint: resuming the newer question with this job's older reply would fail the
+        # run, which is legitimately waiting (the API refuses a reply to the superseded question).
+        log.info(
+            "job %s: run %s waits on question %s; this job answers the earlier question %s and ends",
+            job["id"],
+            lease.run_id,
+            newest,
+            question,
+        )
+        return
     if not await _resumable(deps, job, lease, state, stored):
         return
-    question = str(job["dedup_key"]).partition(":")[2]
     async with nodes.unit(Context(deps, job, lease), fence=False) as conn:
         received = await persistence.run_events(conn, lease.run_id, EventType.CLARIFICATION_RECEIVED)
     reply = next((event_id for event_id, p in reversed(received) if p.get("question_id") == question), None)
@@ -219,9 +235,9 @@ async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
 
 async def handle(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
     """Dispatch a claimed job by type under its lease; the final unit closes the job and releases the lease. After a
-    failure no node recorded, the lease is released and the job re-queued, never finished (the job may be the only wake-up
-    its run has; bounded retries are T22's); the failure is re-raised for the poll loop to log. A lost lease is
-    not released again: `main.run_job` hands that job back."""
+    failure no node recorded, the lease is released and the job re-queued, never finished (the job may be the only
+    wake-up its run has; bounded retries are T22's); the failure is re-raised for the poll loop to log. A lost lease
+    is not released again: `main.run_job` hands that job back."""
     kind = JobType(job["type"])
     try:
         if kind is JobType.INVESTIGATE:

@@ -10,12 +10,16 @@ resume follows; a crash (twice) that is not resumed from the stored checkpoint, 
 missing stored checkpoint that leaves a run active; model or evidence text inside a checkpoint; a router that routes
 on dimensions an earlier node left stale (an approved run that forked from before its freeze could then never
 execute); an execute job that resumes with a decision that is not the run's approval of its active proposal; a lost
-hold after a completed draft that is not drafted again; and a transient
-read that is not retried, a read retried past BS:552's budget, a refused token that is retried or reported as an
-ordinary failure, or an unknown asset that is not the "context missing" abstention.
+hold after a completed draft that is not drafted again; a lost hold in publish_state that leaves the run
+unsettled (an answer) or leaves a drafts row for an abstention that was never stored; a reply job that runs again
+after its own graph run asked the next question and fails the waiting run; a checkpoint id stored before the saver
+returns it, or a checkpoint without the workflow version; and a transient read that is not retried, a read made
+past BS:552's six-call budget (the first call of a read included), a refused token that is retried or reported as
+an ordinary failure, or an unknown asset that is not the "context missing" abstention.
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -168,6 +172,7 @@ def test_every_checkpoint_is_stored_under_the_fence_and_the_last_holds_the_wait(
     stored = w.run["checkpoint_id"]
     waiting = snapshot(w, stored)
     assert waiting.next == ("await_independent_decision",) and len(waiting.interrupts) == 1  # SA:211
+    assert waiting.metadata["workflow_version"] == build.WORKFLOW_VERSION  # BS:342: every checkpoint says which
     assert waiting.interrupts[0].value == str(RUN["active_proposal_id"])  # an id, never the proposal (SA:563)
     assert len(stores) == len(list(w.saver.list(build.config(THREAD, None))))  # every checkpoint, once each
     assert w.log.entries[-1] == "release_lease"  # the wait holds no lease (R022)
@@ -349,15 +354,16 @@ def test_no_checkpoint_holds_model_or_evidence_text(monkeypatch: pytest.MonkeyPa
 
 
 class Failing:
-    """mcp-read failing the status read `times` times with `failure`, then answering as Plan H's caller does."""
+    """mcp-read failing each of `tools` (the status read by default) `times` times with `failure`, then answering as
+    Plan H's caller does."""
 
-    def __init__(self, failure: McpCallFailed, times: int) -> None:
-        self.failure, self.times, self.calls = failure, times, []
+    def __init__(self, failure: McpCallFailed, times: int, tools: tuple[str, ...] = ("get_asset_status",)) -> None:
+        self.failure, self.left, self.calls = failure, dict.fromkeys(tools, times), []
 
     async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(tool)
-        if tool == "get_asset_status" and self.times:
-            self.times -= 1
+        if self.left.get(tool):
+            self.left[tool] -= 1
             raise self.failure
         return {"get_asset_status": STATUS, "get_recent_alerts": ALERTS, "search_procedures": SEARCH}[tool]
 
@@ -571,6 +577,8 @@ def test_a_lease_lost_without_being_marked_is_not_released_with_an_error(
     with caplog.at_level("INFO", logger="ops_worker"), pytest.raises(LeaseLost):
         job(w, Scripted(), "execute")
     assert not [r for r in caplog.records if r.levelno >= 40 or r.exc_info]
+    told = [r for r in caplog.records if r.levelno == logging.INFO and "already lost" in r.getMessage()]
+    assert len(told) == 1  # the single INFO line: removing `log.info` in `_release_after_failure` fails this
 
 
 def test_a_lost_lease_is_not_released_again(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -612,3 +620,144 @@ def test_a_resume_with_no_reply_to_its_question_fails_the_run(monkeypatch: pytes
     job(w, Scripted(), "resume_input", dedup_key=f"{RUN_ID}:{question}")
     assert moves == [("QUEUED", None), ("RETRIEVING", None), ("FAILED", nodes.RESUME_REFUSED)]
     assert not [e for e in w.log.entries[start:] if e.startswith("mcp:")] and w.log.entries[-1] == "release_lease"
+
+
+class LaggingSaver(InMemorySaver):
+    """A saver whose write is not yet readable: each checkpoint, asked for by id, is missing for its first `lag`
+    polls (the in-memory saver itself writes at once, so it cannot show a race)."""
+
+    def __init__(self, lag: int) -> None:
+        super().__init__()
+        self.lag = lag
+        self.polls: dict[str, int] = {}
+
+    async def aget_tuple(self, config: Any) -> Any:
+        wanted = config["configurable"].get("checkpoint_id")
+        if wanted is not None:
+            self.polls[wanted] = self.polls.get(wanted, 0) + 1
+            if self.polls[wanted] <= self.lag:
+                return None
+        return await super().aget_tuple(config)
+
+
+def test_a_checkpoint_id_is_stored_only_after_the_saver_returns_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review of T20, note 2 and final review M1: the store waits for `aget_tuple` to confirm the id. Deleting
+    `confirm` leaves the saver unpolled and fails this."""
+    w = world(monkeypatch)
+    w.saver = LaggingSaver(lag=3)
+    monkeypatch.setattr(build, "CONFIRM_SECONDS", 0.0)
+    job(w, Scripted())
+    assert w.run["state"] == "AWAITING_APPROVAL" and w.run["checkpoint_id"] in w.saver.polls
+    assert w.saver.polls and set(w.saver.polls.values()) == {4}  # three misses, then the poll that confirmed it
+
+
+def test_a_checkpoint_the_saver_never_returns_is_not_stored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same rule when the saver never returns the id: `CheckpointNotStored`, and nothing is stored."""
+    w = world(monkeypatch)
+    w.saver = LaggingSaver(lag=10**9)
+    monkeypatch.setattr(build, "CONFIRM_TRIES", 3)
+    monkeypatch.setattr(build, "CONFIRM_SECONDS", 0.0)
+    with pytest.raises(build.CheckpointNotStored):
+        job(w, Scripted())
+    assert "store_checkpoint_id" not in w.log.entries and w.run.get("checkpoint_id") is None
+    assert set(w.saver.polls.values()) == {3}  # the first announced checkpoint, polled CONFIRM_TRIES times
+
+
+def test_the_seventh_read_call_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Final review I2 (BS:552: at most six calls, retries included): the status and the alerts each fail twice and
+    then answer (six calls), so the search, a read's first call, is refused with the retrieval-failed template."""
+    w = world(monkeypatch)
+    moves: list[Any] = []
+    move = persistence.transition_run
+
+    async def keep(*args: Any, **kwargs: Any) -> Any:
+        moves.append((kwargs["dst"].value, (kwargs.get("detail") or {}).get("message")))
+        return await move(*args, **kwargs)
+
+    monkeypatch.setattr(persistence, "transition_run", keep)
+    caller = Failing(McpCallFailed("x", code=TRANSPORT, retryable=True), 2, ("get_asset_status", "get_recent_alerts"))
+    job(w, FakeDraftGenerator(), mcp=caller)
+    assert caller.calls == ["get_asset_status"] * 3 + ["get_recent_alerts"] * 3  # six calls; search_procedures none
+    assert w.run["state"] == "FAILED" and moves[-1] == ("FAILED", nodes.RETRIEVAL_FAILED)
+
+
+ABSTENTION = ModelDraft(**{**DRAFT, "kind": "abstain", "evidence_refs": [], "summary": "s"})
+
+
+def lose_in_publish_state(monkeypatch: pytest.MonkeyPatch, w: World) -> None:
+    """The next fence check made while `publish_state` runs finds the fence moved, once: the lease is lost in that
+    node's own unit, so the stored checkpoint is the one whose next node is `publish_state`."""
+    armed = [True]
+
+    async def fenced(_conn: Any, lease: Lease) -> None:
+        w.log.entries.append("fenced")
+        if armed[0] and any(c.trace[-1:] == ["publish_state"] for c in w.contexts):
+            armed[0] = False
+            lease.mark_lost("the fence moved")
+            raise LeaseLost("run lease lost")
+
+    monkeypatch.setattr(persistence, "fenced", fenced)
+
+
+def test_an_answer_whose_hold_is_lost_in_publish_state_returns_to_the_router(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Final review M2: the next owner forks from the checkpoint before `publish_state` with no hold, so the node
+    answers LOST and `after_publish` must send the run back to the router (retrieve and draft again, then settle it).
+    Always ending there would leave the run DRAFTING with its job finished, which nothing wakes."""
+    w = world(monkeypatch)
+    lose_in_publish_state(monkeypatch, w)
+    handed_back(w, Scripted(ANSWER))
+    assert w.run["state"] == "DRAFTING" and snapshot(w, w.run["checkpoint_id"]).next == ("publish_state",)
+    second = Scripted(ANSWER)
+    job(w, second)
+    assert w.run["state"] == "ANSWERED" and len(second.requests) == 1
+    assert w.contexts[-1].trace[:4] == ["publish_state", "route_request", "retrieve_evidence", "route_request"]
+    assert w.contexts[-1].trace[-1] == "publish_state" and w.log.entries.count("insert") == 2  # manifest, one answer
+
+
+def test_an_abstention_whose_hold_is_lost_in_publish_state_ends_without_a_drafts_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Final review M2: an abstention needs no text, so the lost hold still ends INSUFFICIENT_EVIDENCE; only its
+    `drafts` row is missing, and the model is not asked again."""
+    w = world(monkeypatch)
+    lose_in_publish_state(monkeypatch, w)
+    handed_back(w, Scripted(ABSTENTION))
+    assert w.run["state"] == "DRAFTING" and snapshot(w, w.run["checkpoint_id"]).next == ("publish_state",)
+    moves: list[Any] = []
+    move = persistence.transition_run
+
+    async def keep(*args: Any, **kwargs: Any) -> Any:
+        moves.append((kwargs["dst"].value, (kwargs.get("detail") or {}).get("message")))
+        return await move(*args, **kwargs)
+
+    monkeypatch.setattr(persistence, "transition_run", keep)
+    second = Scripted()
+    job(w, second)
+    assert w.run["state"] == "INSUFFICIENT_EVIDENCE" and moves == [("INSUFFICIENT_EVIDENCE", nodes.ABSTAINED)]
+    assert not second.requests and w.log.entries.count("insert") == 1  # the manifest only: no drafts row
+
+
+def test_a_reply_job_that_runs_again_after_a_second_question_leaves_the_run_waiting(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Final review I1: the first reply's job resumed the run, its graph asked a second question, and the job runs
+    again (handed back or re-queued). Its reply answers the superseded question, so it ends without a graph run: the
+    run stays AWAITING_INPUT (not RESUME_REFUSED) and the second reply resumes it."""
+    w = world(monkeypatch)
+    job(w, Scripted(QUESTION))
+    first = reply(w)
+    job(w, Scripted(QUESTION), "resume_input", dedup_key=first)  # the first job's graph asks the second question
+    assert w.run["state"] == "AWAITING_INPUT" and len(w.run["events"][EventType.CLARIFICATION_REQUESTED]) == 2
+    seen = releases(monkeypatch, w)
+    moves, start = len(transitions(w)), len(w.log.entries)
+    with caplog.at_level("INFO", logger="ops_worker"):
+        job(w, Scripted(), "resume_input", dedup_key=first)  # the same job, again
+    assert w.run["state"] == "AWAITING_INPUT" and len(transitions(w)) == moves
+    assert "store_checkpoint_id" not in w.log.entries[start:] and not [e for e in w.log.entries[start:] if "mcp:" in e]
+    assert seen == [None]  # finished, not re-queued
+    older, newer = (str(e[0]) for e in w.run["events"][EventType.CLARIFICATION_REQUESTED])
+    (told,) = [r.getMessage() for r in caplog.records if "ends" in r.getMessage() and older in r.getMessage()]
+    assert newer in told  # both ids are logged
+    generator = Scripted(None)
+    job(w, generator, "resume_input", dedup_key=reply(w))
+    assert w.run["state"] == "AWAITING_APPROVAL" and len(generator.requests) == 1

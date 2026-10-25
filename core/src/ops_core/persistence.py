@@ -1073,7 +1073,8 @@ class GraphFacts:
 
 async def graph_facts(conn: Conn, run_id: UUID) -> GraphFacts:
     """The run's state, intent, whether its active proposal has a decision, its latest action attempt state and its
-    stored checkpoint id, read without a lock under the caller's tenant unit (the worker's SELECT grants, AM-20.2).
+    stored checkpoint id, read without a lock under the caller's tenant unit (the worker's SELECT grants, AM-20.2). The
+    attempt state is the newest grant's latest row, so a run that ever holds a second grant reads the second's attempt.
 
     Raises:
         NotFound: no such run for the unit's tenant.
@@ -1082,7 +1083,8 @@ async def graph_facts(conn: Conn, run_id: UUID) -> GraphFacts:
         "SELECT r.state, r.intent, r.checkpoint_id,"
         " EXISTS (SELECT 1 FROM app.decisions d WHERE d.proposal_id = r.active_proposal_id) AS decided,"
         " (SELECT s.state FROM app.action_attempt_state s JOIN app.execution_grant g ON g.action_id = s.action_id"
-        "  WHERE g.run_id = r.run_id ORDER BY s.attempt_no DESC, s.seq DESC LIMIT 1) AS attempt_state"
+        "  WHERE g.run_id = r.run_id"
+        "  ORDER BY g.granted_at DESC, s.attempt_no DESC, s.seq DESC LIMIT 1) AS attempt_state"
         " FROM app.runs r WHERE r.run_id = %s",
         (run_id,),
     )
@@ -1111,11 +1113,11 @@ async def store_checkpoint_id(conn: Conn, run_id: UUID, checkpoint_id: str) -> N
         raise NotFound("run not found")
 
 
-async def run_events(conn: Conn, run_id: UUID, type: EventType) -> list[tuple[UUID, dict[str, Any]]]:
+async def run_events(conn: Conn, run_id: UUID, event_type: EventType) -> list[tuple[UUID, dict[str, Any]]]:
     """The run's events of one type as (event_id, payload), in sequence order, under the caller's tenant unit."""
     cur = await conn.execute(
         "SELECT event_id, payload FROM app.events WHERE run_id = %s AND type = %s ORDER BY sequence",
-        (run_id, type.value),
+        (run_id, event_type.value),
     )
     return [(UUID(str(row["event_id"])), dict(row["payload"])) for row in await cur.fetchall()]
 

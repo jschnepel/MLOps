@@ -51,14 +51,18 @@ def observations(status: dict[str, Any], alerts: dict[str, Any]) -> tuple[Observ
     shown = [
         Observation("asset status", str(data["revision"]), f"{data['state']} at {data['observed_at']}"),
     ]
-    rows = sorted(alerts["data"]["alerts"], key=lambda alert: str(alert["occurred_at"]), reverse=True)
+    # By instant, not by text: `...:00.5Z`, `...:00Z` and `+00:00` spellings of instants do not sort as they occurred.
+    rows = sorted(alerts["data"]["alerts"], key=lambda alert: _instant(alert["occurred_at"]), reverse=True)
     shown.extend(
         Observation("alert", str(a["revision"]), f"{a['occurred_at']} {a['code']}: {a['message']}")
         for a in rows[:ALERTS_SHOWN]
     )
     left, more = max(0, len(rows) - ALERTS_SHOWN), alerts["data"]["next_cursor"] is not None
     if left or more:
-        notice = f"{left} more alert records were not shown" + ("; further pages were not read" if more else "")
+        if left:
+            notice = f"{left} more alert records were not shown" + ("; further pages were not read" if more else "")
+        else:  # every record in hand is shown, but the page says more exist
+            notice = "further alert records exist and were not read"
         shown.append(Observation("alerts not shown", "0", notice))
     return tuple(shown)
 
@@ -69,6 +73,8 @@ def sufficient(status: dict[str, Any], search: dict[str, Any]) -> bool:
     if data["state"] not in OBSERVED:
         return False
     answered = _instant(status["observed_at"])
+    # Live, this status check cannot fire: mcp-read refuses a status whose observed_at differs from the scope's as_of
+    # and stamps the envelope with the same instant. The bound that binds is the search's retrieved_at against it.
     if abs(answered - _instant(data["observed_at"])) > FRESHNESS:
         return False
     rows = search["data"]["results"]

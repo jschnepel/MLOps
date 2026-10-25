@@ -7,8 +7,10 @@ checkpoint id that is not the thread's checkpoint holding the interrupt (R108); 
 a model permit held while the run waits (R022); proposal, answer, question or alert text inside a checkpoint row, blob
 or pending write (R091); a clarification that does not survive a restart, a new graph instance on a new saver
 connection resuming from the stored id with the reply's event (R042; a killed process is the limit, Plan Q); and an
-answer_only run that freezes a proposal instead of ending ANSWERED with its cited answer (R114); and a graph whose
-step N+1 starts before step N's checkpoint is in the Postgres saver (R108's synchronous persistence, ruling 6).
+answer_only run that freezes a proposal instead of ending ANSWERED with its cited answer (R114); a read that is
+still to complete when the model is called (R038); and, on the real saver and wiring, a step whose values are not
+yet stored when the next step runs (R108). The R108 stub does not show the async race: whether `durability="sync"`
+is what makes it hold is the unit spy's evidence (`plan_q/test_graph_flow`), not this module's.
 
 Writes `reports/graph/t20-graph-live.md` (the node order and end states) when every test of the module passed.
 """
@@ -34,13 +36,15 @@ from ops_worker.graph.state import Context, initial
 from tests.e2e.conftest import purge_conversation
 from tests.e2e.test_migrations_and_persistence import ALEX, new_run
 from tests.e2e.test_worker_live import ALPHA, ScriptedMcp, approve, event_types, own_job, proposal_of
+from tests.plan_q.fixtures import ALERTS
 from tests.plan_q.test_graph_flow import QUESTION, Scripted
 
 pytestmark = pytest.mark.asyncio
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
 EVIDENCE = Path("reports/graph/t20-graph-live.md")
 EXPECTED_LINES = 5
-ALERT_TEXT = "Bearing temperature above the warning threshold."  # the scripted alert's message
+ALERT_TEXT = ALERTS["data"]["alerts"][0]["message"]  # the scripted alert's message
+REPLY = "Clarification: asset A17, hours 24"
 
 
 @pytest.fixture(scope="module")
@@ -55,7 +59,8 @@ def lines() -> Iterator[list[str]]:
 
 @pytest.fixture
 def traces(monkeypatch: pytest.MonkeyPatch) -> list[Context]:
-    """Every graph run's context, so a test can read its node log."""
+    """Every `Context` the handlers build (a graph run's, and the ones the handlers' own checks build, which have an
+    empty node log), in order, so a test can read a graph run's node log."""
     seen: list[Context] = []
     real = handlers.Context
 
@@ -129,8 +134,11 @@ async def forget(app: persistence.Conn, run: UUID) -> None:
 
 
 async def test_r108_each_step_finds_the_previous_checkpoint_stored(lines: list[str]) -> None:
-    """Ruling 6: with durability="sync" a stub node running step N+1 reads the thread's newest checkpoint from the
-    Postgres saver and finds step N's state in it (the value `load_run`'s stub wrote), before anything else runs."""
+    """Ruling 6, as far as this stub shows it: on the real Postgres saver and wiring, under durability="sync", a stub
+    node running step N+1 reads the thread's newest checkpoint and finds step N's values in it (what `load_run`'s
+    stub wrote). It passes `durability="sync"` itself, so it does not show that `run_graph` sets it (the unit spy
+    does), nor that "async" would fail it: the async write is a background task, so whether this read would see
+    step N is a matter of timing, and the race is not shown."""
     conn, saver = await build.open_saver(settings.app_postgres(Role.WORKER))
     thread = f"r108:{uuid4()}"
     seen: dict[str, Any] = {}
@@ -142,9 +150,9 @@ async def test_r108_each_step_finds_the_previous_checkpoint_stored(lines: list[s
         return {"intent": "answer_only", "run_state": "DRAFTING"}  # step N's writes
 
     async def route_request(_state: Any, runtime: Any) -> dict[str, Any]:
-        stored = await saver.aget_tuple({"configurable": {"thread_id": thread, "checkpoint_ns": ""}})
-        seen["values"] = None if stored is None else dict(stored.checkpoint["channel_values"])
-        seen["step"] = None if stored is None else stored.metadata.get("step")
+        newest = await saver.aget_tuple({"configurable": {"thread_id": thread, "checkpoint_ns": ""}})
+        seen["values"] = None if newest is None else dict(newest.checkpoint["channel_values"])
+        seen["step"] = None if newest is None else newest.metadata.get("step")
         raise Reached
 
     try:
@@ -155,7 +163,8 @@ async def test_r108_each_step_finds_the_previous_checkpoint_stored(lines: list[s
         assert seen["values"]["run_state"] == "DRAFTING"
         assert seen["step"] == 1  # LangGraph numbers `__start__`'s superstep 0, so the first node's is 1 (input: -1)
         lines.append(
-            "- R108: a step-N+1 node found step N's checkpoint already in the Postgres saver (durability=sync)"
+            "- R108: step N's values were stored when step N+1 ran, on the Postgres saver under sync durability;"
+            " the async race is not shown"
         )
     finally:
         await saver.adelete_thread(thread)
@@ -177,18 +186,36 @@ async def test_r122_the_checkpoint_schema_is_the_workers_alone(
     assert [r["v"] for r in await cur.fetchall()] == list(range(10))  # the migrator ran setup()'s statements
     cur = await app_conn.execute("SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'checkpoints'")
     assert [r["tableowner"] for r in await cur.fetchall()] == ["migrator"]
-    lines.append("- R122: api, sweeper and mcp_read refused at schema `checkpoints`; worker DML; versions 0-9 recorded")
+    lines.append(
+        "- R122: api, sweeper and mcp_read refused at schema `checkpoints`; worker selects from `checkpoint_writes`"
+        " but not the bookkeeping table (its writes are shown by the other tests); versions 0-9 recorded"
+    )
 
 
 async def test_a_run_waits_for_its_reviewer_at_the_stored_checkpoint(
     app_conn: persistence.Conn, role_conn: RoleConn, worker: Worker, traces: list[Context], lines: list[str]
 ) -> None:
-    deps = await worker(FakeDraftGenerator())
+    current: list[UUID] = []
+    completed_at_call: list[int] = []
+
+    class Counting(FakeDraftGenerator):
+        """Counts the run's `tool.completed` events at the moment the model is called (R038)."""
+
+        async def generate(self, request: Any, evidence: Any) -> Any:
+            cur = await app_conn.execute(
+                "SELECT count(*) AS n FROM app.events WHERE run_id = %s AND type = 'tool.completed'", (current[0],)
+            )
+            completed_at_call.append((await cur.fetchone())["n"])
+            return await super().generate(request, evidence)
+
+    deps = await worker(Counting())
     run = None
     try:
         _, _, run = await new_run(app_conn, ALPHA, api=await role_conn(Role.API))
+        current.append(run)
         await handlers.handle(deps, *await own_job(app_conn, deps.conn, run, "investigate"))
         assert (await persistence.run_row(app_conn, run))["state"] == "AWAITING_APPROVAL"
+        assert completed_at_call == [3]  # R038: all three reads had completed when the model was called
         cur = await app_conn.execute(
             "SELECT type, sequence FROM app.events WHERE run_id = %s ORDER BY sequence", (run,)
         )
@@ -229,6 +256,9 @@ async def test_a_run_waits_for_its_reviewer_at_the_stored_checkpoint(
         assert traces[-1].trace[0] == "await_independent_decision"  # resumed with the decision's event (SA:213)
         called: Any = restarted.mcp
         assert [c[1] for c in called.calls] == ["create_incident"]
+        blobs = await checkpoint_bytes(app_conn, run)  # the execute resume wrote checkpoints too (R091)
+        for text in (proposal["payload"]["title"], proposal["payload"]["summary"][:60], ALERT_TEXT):
+            assert text.encode() not in blobs, text
         lines.append(f"- proposal path: {' → '.join(traces[0].trace)}; ends AWAITING_APPROVAL, lease released")
     finally:
         if run is not None:
@@ -263,7 +293,7 @@ async def test_r042_a_clarification_survives_a_restart(
                 requester=UUID(ALEX),
                 question_id=asked["event_id"],
                 expected_version=row["state_version"],
-                text="Clarification: asset A17, hours 24",
+                text=REPLY,
                 context={"asset_id": "A17", "hours": 24},
             )
         restarted = await worker(FakeDraftGenerator())
@@ -281,6 +311,10 @@ async def test_r042_a_clarification_survives_a_restart(
         )
         history = [r["to_state"] for r in await cur.fetchall()]
         assert history[3:6] == ["AWAITING_INPUT", "QUEUED", "RETRIEVING"]
+        blobs = await checkpoint_bytes(app_conn, run)  # ids only cross the interrupt, so neither text is in the saver
+        second = await proposal_of(app_conn, run)
+        for text in (REPLY, second["payload"]["title"], second["payload"]["summary"][:60]):
+            assert text.encode() not in blobs, text  # R042, R091: the reply and the second draft
         lines.append(f"- clarification across a restart: {' → '.join(history)}")
     finally:
         if run is not None:

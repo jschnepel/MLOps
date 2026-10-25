@@ -5,7 +5,8 @@ worker's token and never with the invocation handle; the only context it forward
 the handle: the run's tenant (`X-Ops-Tenant-Id`) and the database instant to answer at (`X-Ops-As-Of`), with the
 run's asset in the path and, for alerts, the run's interval. Each call happens outside any database transaction, with
 a 10-second timeout and no retry here (the worker's graph retries a `retryable` read at most twice, T20, and fails
-the run on any other failed read). Failures map to one exception each, which the tools turn into
+the run on any other failed read, except an unknown asset: a 404 ends the run INSUFFICIENT_EVIDENCE as "context
+missing", not FAILED). Failures map to one exception each, which the tools turn into
 envelope codes (ruling 15): a transport error, a timeout or a 5xx is `Unavailable` (retryable), a 404 is `AssetMissing`
 (an unknown asset and another tenant's alike), a 400 to a request that carried a cursor is `CursorRejected`, and
 anything else, or a body that is not a JSON object, is `UpstreamInvalid`. A 401 also drops the cached token, so the

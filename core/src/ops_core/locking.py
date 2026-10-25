@@ -96,8 +96,10 @@ OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "worker drafting start (transition_run, run manifest)": ("run_lease", "runs"),  # T19: the manifest's FK share
     "worker draft and freeze": ("run_lease", "runs"),
     # T20: the graph's units. The checkpoint id is the worker's column UPDATE on its own run row (SA:211); the answer,
-    # the clarification and the abstention insert their drafts row (a key share on the run row the same unit's
-    # transition_run already holds) and transition the run; the stale-reply failure walks three transitions in one unit.
+    # the clarification and the abstention insert their drafts row, whose foreign key takes a key share on the run row
+    # (`await_clarification`'s DRAFTING branch takes it before `transition_run` locks the row, an upgrade of the
+    # same entry, so the order holds) and transition the run; the stale-reply failure walks three transitions in
+    # one unit.
     "worker checkpoint id (store_checkpoint_id)": ("run_lease", "runs"),
     "worker answer, question or abstention (drafts, transition_run)": ("run_lease", "runs"),
     "worker unresumable run (fail_from)": ("run_lease", "runs"),

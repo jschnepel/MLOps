@@ -32,9 +32,12 @@ READ_TOOLS: Final = JOB_RULES[JobType.INVESTIGATE].allowed_tools
 class McpCallFailed(Exception):
     """The call did not produce a tool result: transport, protocol or tool-level refusal, or a failed check.
 
-    `code` and `retryable` say what the graph's retrieval node may do about it (T20, BS:552): a tool's error envelope
-    carries both (`NOT_FOUND`, `UNAVAILABLE` and so on); a transport failure is `TRANSPORT` and retryable; a 401 to the
-    worker's own token is `UNAUTHENTICATED` and not retryable, because another try would carry the same token."""
+    `code` and `retryable` say what the graph's retrieval node may do about it (T20, BS:552); they are read on the read
+    path only, and a write tool's failure never sets `retryable` (a write whose outcome is unknown is never a simple
+    retry). A tool's error envelope carries both (`NOT_FOUND`, `UNAVAILABLE` and so on); a connection failure, a
+    timeout or a 5xx is `TRANSPORT` and retryable; a 401 to the worker's own token is `UNAUTHENTICATED` and not
+    retryable, because another try would carry the same token; any other 4xx is `HTTP_REJECTED` and not retryable,
+    because the same request meets the same refusal (BS:552: validation and authorization failures are not retried)."""
 
     def __init__(self, message: str, *, code: str | None = None, retryable: bool = False) -> None:
         super().__init__(message)
@@ -44,15 +47,23 @@ class McpCallFailed(Exception):
 
 UNAUTHENTICATED: Final = "UNAUTHENTICATED"
 TRANSPORT: Final = "TRANSPORT"
+HTTP_REJECTED: Final = "HTTP_REJECTED"
+# 4xx answers that say "try again later", not "this request is wrong": request timeout, too early, too many requests.
+_TRANSIENT_4XX: Final = frozenset({408, 425, 429})
 
 
-def transport_failure(tool: str, statuses: list[int]) -> McpCallFailed:
-    """A failure below the tool result: a 401 among the session's HTTP answers is the worker's token refused (the SDK
+def transport_failure(tool: str, statuses: list[int], *, read: bool = True) -> McpCallFailed:
+    """A failure below the tool result. A 401 among the session's HTTP answers is the worker's token refused (the SDK
     reports every non-2xx answer as the same MCPError, mcp 2.3.0 `streamable_http.py:398-427`, so the status is read
-    from the client's own response hook); anything else is a transport failure worth one more try."""
+    from the client's own response hook). Otherwise the first error answer decides: a 4xx other than the transient
+    ones is a refusal of the request itself, so it is not retried (BS:552); a connection error, a timeout (no answer
+    at all) or a 5xx is worth one more try, on the read path only (`read`: a write's outcome is never a plain retry)."""
     if 401 in statuses:
         return McpCallFailed(f"{tool}: the server refused the worker's token", code=UNAUTHENTICATED)
-    return McpCallFailed(f"{tool}: transport or protocol failure", code=TRANSPORT, retryable=True)
+    refused = next((code for code in statuses if code >= 400), None)  # a teardown answer after it must not count
+    if refused is not None and refused < 500 and refused not in _TRANSIENT_4XX:
+        return McpCallFailed(f"{tool}: the server rejected the request ({refused})", code=HTTP_REJECTED)
+    return McpCallFailed(f"{tool}: transport or protocol failure", code=TRANSPORT, retryable=read)
 
 
 def failure_leaf(exc: BaseException) -> BaseException:
@@ -194,7 +205,7 @@ class HttpMcpCaller:
         except McpCallFailed:
             raise
         except TRANSPORT_FAILURES as exc:
-            raise transport_failure(tool, statuses) from exc
+            raise transport_failure(tool, statuses, read=read is not None) from exc
         except BaseExceptionGroup as group:
             found = leaves(group)
             if read is not None:
@@ -205,12 +216,12 @@ class HttpMcpCaller:
                     if failed is not None:  # a failed check inside the session: the client's task group wraps it
                         raise failed from None
                     if 401 in statuses or any(isinstance(leaf, TRANSPORT_FAILURES) for leaf in found):
-                        raise transport_failure(tool, statuses) from group
+                        raise transport_failure(tool, statuses, read=True) from group
                     raise McpCallFailed(f"{tool}: the session failed ({type(found[0]).__name__})") from group
                 raise
             leaf = failure_leaf(group)
             if isinstance(leaf, TRANSPORT_FAILURES):
-                raise transport_failure(tool, statuses) from leaf
+                raise transport_failure(tool, statuses, read=False) from leaf
             raise
         except Exception as exc:
             if read is None:

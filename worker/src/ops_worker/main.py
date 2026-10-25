@@ -155,7 +155,8 @@ async def _main() -> None:
     tokens = token_source(kc)
     conn = await persistence.connect(settings.app_postgres(Role.WORKER))
     # No unit is ever cancelled, so a unit stuck behind another transaction's lock ends after 10 s with 55P03, which
-    # run_forever logs as transient; its job keeps the claim until the lease lapses and the sweeper reclaims it.
+    # run_forever logs as transient. The job is not lost: `handlers.handle` releases the lease and re-queues the job
+    # (a failure no node recorded), and a lease that had already lapsed is reclaimed by the sweeper.
     await conn.execute(LOOP_LOCK_TIMEOUT)
     # The health server's own connection (see health_app).
     probe = await persistence.connect(settings.app_postgres(Role.WORKER))
@@ -204,7 +205,8 @@ async def _main() -> None:
         # stop only now, or that job would lose its lease to "event loop stalled" (review round 2, m2). SIGTERM is not
         # drained: uvicorn 0.54 re-raises the captured signal once serve() returns, and SIGTERM's default handler ends
         # the process mid-job. Safety holds (the open unit rolls back, the lease lapses and the sweeper hands the job
-        # back), but an investigate run is failed as interrupted (final review, M2). TODO(T30): drain on SIGTERM.
+        # back). The next owner resumes a mid-run investigate from its stored checkpoint, and fails it as interrupted
+        # only when no checkpoint was stored yet (final review, M2). TODO(T30): drain on SIGTERM.
         stamps_stop.set()
         await stamping
         heartbeat.stop()
