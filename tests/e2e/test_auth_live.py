@@ -18,7 +18,9 @@ import pytest
 from ops_core import persistence, settings
 
 from scripts.skeleton import Skeleton
+from tests.e2e.conftest import expire_lease, purge_run, stage_lease
 from tests.e2e.kc_browser import API, ORIGIN, Browser, TestAdmin
+from tests.e2e.test_review_live import asset, decide, drafting_on, frozen
 from tests.plan_b.live import kc
 from tests.plan_d.test_tokens import PEM1
 
@@ -236,18 +238,41 @@ def test_forged_logout_token_is_refused(skeleton: Skeleton, lines: list[str]) ->
     lines.append(f"forged logout token: {r.status_code}")
 
 
+async def held_approval(app_conn: persistence.Conn, role_conn) -> UUID:
+    """A run of ALPHA that sam approved while enabled, whose execute job waits behind a lease the test holds, so the
+    skeleton's worker meets it only when the test lets it go (T21, Plan R ruling 14)."""
+    api, worker = await role_conn(settings.Role.API), await role_conn(settings.Role.WORKER)
+    run = await drafting_on(app_conn, api, worker, asset())
+    # Plan R round 1, M3: the skeleton's worker is up, and the run's pending `run_id:1` investigate job would find a
+    # DRAFTING run with no checkpoint and fail it (INTERRUPTED), so the job is closed first.
+    await app_conn.execute("UPDATE app.jobs SET done_at = now() WHERE run_id = %s AND type = 'investigate'", (run,))
+    result, digest = await frozen(app_conn, worker, run)
+    await stage_lease(app_conn, run, owner="r086-hold", seconds=600)  # before the decision queues the job
+    await decide(api, result.proposal_id, digest)
+    return run
+
+
 @pytest.mark.asyncio
 async def test_disabled_user_is_refused_and_synced_within_60s(
-    skeleton: Skeleton, browser: Browser, secret, admin: TestAdmin, app_conn: persistence.Conn, lines: list[str]
+    skeleton: Skeleton,
+    browser: Browser,
+    secret,
+    admin: TestAdmin,
+    app_conn: persistence.Conn,
+    role_conn,
+    lines: list[str],
 ) -> None:
     """R086: disable sam in Keycloak; sam's next decision-class mutation is 401 at once (admin-API check), the sync
     deactivates sam's membership within 60 s, and sam's still-valid bearer token then fails every protected read.
+    Its grant half (T21): an execute job of a run sam approved before the disable, let go after the sync, meets a
+    real grant that refuses it, and the run is BLOCKED_REVIEW(authority_revoked) with no grant.
     The finally block re-enables sam at Keycloak; the module fixture restores the row once the sweeper is gone."""
     kcs = settings.keycloak()
     sam_token = kc.token_password(kcs.base_url, "ops-dev-direct", "sam", secret("kc_persona_sam_password"))
     headers = {"Authorization": f"Bearer {sam_token['access_token']}"}
     body = {"expected_revision": 1, "expected_payload_sha256": "0" * 64, "decision": "approve"}
     decision_url = f"/api/v1/proposals/{UUID(int=1)}/decisions"
+    held = await held_approval(app_conn, role_conn)
     try:
         with httpx2.Client(base_url=API, timeout=15.0) as c:
             # Positive controls (final review I2): the bearer token works and the enabled check passes for an enabled
@@ -289,7 +314,29 @@ async def test_disabled_user_is_refused_and_synced_within_60s(
                 f"disabled user: before me={me_enabled} decision={decided_enabled}; after disable me={me_unsynced}"
                 f" decision={decided_code} ({refusal[1]}); synced_after={synced_after}s me={me.status_code}"
             )
+        # The grant half (T21, Plan R ruling 14): let the skeleton's worker take the held execute job now. Its real
+        # grant_execution re-reads the reviewer's membership, which the sync deactivated (BS:178).
+        await expire_lease(app_conn, held)
+        await app_conn.execute(
+            "UPDATE app.jobs SET available_at = app.current_time() WHERE run_id = %s AND type = 'execute'", (held,)
+        )
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            cur = await app_conn.execute(
+                "SELECT r.state, r.reason, j.done_at IS NOT NULL AS done FROM app.runs r JOIN app.jobs j"
+                " ON j.run_id = r.run_id AND j.type = 'execute' WHERE r.run_id = %s",
+                (held,),
+            )
+            ended = await cur.fetchone()
+            if ended["done"]:
+                break
+            await asyncio.sleep(0.5)
+        cur = await app_conn.execute("SELECT count(*) AS n FROM app.execution_grant WHERE run_id = %s", (held,))
+        grants = (await cur.fetchone())["n"]
+        assert (ended["state"], ended["reason"], grants) == ("BLOCKED_REVIEW", "authority_revoked", 0), ended
+        lines.append(f"grant after the disable: {ended['state']} ({ended['reason']}), grants {grants}")
     finally:
         # Re-enable unconditionally and record the status; an assert here would hide the original failure. The row is
         # restored by the module fixture, after the sweeper stops.
         lines.append(f"sam re-enabled at keycloak: {admin.set_enabled(SAM, True)}")
+        await purge_run(app_conn, held)

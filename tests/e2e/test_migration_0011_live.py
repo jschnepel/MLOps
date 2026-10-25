@@ -25,7 +25,7 @@ from uuid import UUID
 import psycopg
 import pytest
 from ops_core import persistence, settings
-from ops_core.settings import Profile, Role
+from ops_core.settings import Role
 
 from tests.e2e.conftest import add_requester, lease_for, purge_corpus, purge_run, purge_tenant
 from tests.e2e.test_definers_run_path_live import refused
@@ -178,6 +178,9 @@ async def test_only_approved_effective_unretired_versions_are_returned(
             # Two days on the database clock (ruling 8): DOC-E and DOC-I v2 become effective. The lease lapsed with
             # the move, so the handle is minted again under a new one (Global Constraints, "Clock").
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '2 days'")
+            # T21 (ruling 14): the read path now refuses a membership the sync has not stamped within 120 s of
+            # the database clock, so the superuser stamps it again at the moved instant, as the sweeper would.
+            await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
             worker = await role_conn(Role.WORKER)
             lease = await lease_for(worker, run, owner="t17-later", seconds=600)
             later = await read_handle(worker, run, await investigate_job(app_conn, run), lease)
@@ -185,6 +188,8 @@ async def test_only_approved_effective_unretired_versions_are_returned(
             assert await found(mcp_read, later) == expected
         finally:
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
+            # Plan R round 1, M8: the rows stamped at the moved clock are stamped again, so none stays in the future.
+            await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
     finally:
         await cleanup(app_conn, runs, tenants)
 
@@ -397,9 +402,9 @@ async def relations(conn: persistence.Conn) -> dict[str, bool]:
 
 
 async def test_the_round_trip_restores_0010_and_keeps_the_extension(
-    app_conn: persistence.Conn, role_conn: RoleConn
+    app_conn: persistence.Conn, role_conn: RoleConn, at_0015: settings.Postgres
 ) -> None:
-    from scripts.skeleton import downgrade, migrate
+    from scripts.skeleton import downgrade, upgrade
 
     superuser = settings.superuser_postgres()
     mcp_read = await role_conn(Role.MCP_READ)
@@ -419,7 +424,7 @@ async def test_the_round_trip_restores_0010_and_keeps_the_extension(
         with pytest.raises(persistence.PersistenceError, match="predates this service"):
             await persistence.assert_function_text(mcp_read, *persistence.GOVERNED_CORPUS)  # mcp-read refuses 0010
     finally:
-        assert migrate(Profile.TEST) == 0  # every later test needs the head
+        upgrade("app", at_0015, "0015_checkpoints")  # the fixture migrates the head afterwards (T21)
     assert await snapshot(app_conn) == head
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         await mcp_read.execute("SELECT 1 FROM app.chunks LIMIT 1")  # mcp_read holds no table grant (SA:437)

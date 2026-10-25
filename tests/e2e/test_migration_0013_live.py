@@ -24,7 +24,7 @@ from uuid import UUID
 import psycopg
 import pytest
 from ops_core import embeddings, persistence, settings
-from ops_core.settings import Profile, Role
+from ops_core.settings import Role
 
 from tests.e2e.test_definers_run_path_live import refused
 from tests.e2e.test_migration_0011_live import APP_FUNCTIONS, DAY, cleanup, clock, handle_for, stage
@@ -275,8 +275,10 @@ async def snapshot(conn: persistence.Conn) -> dict[str, dict[str, Any]]:
     return {row["signature"]: {k: v for k, v in row.items() if k != "signature"} for row in await cur.fetchall()}
 
 
-async def test_the_round_trip_restores_0012(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
-    from scripts.skeleton import downgrade, migrate
+async def test_the_round_trip_restores_0012(
+    app_conn: persistence.Conn, role_conn: RoleConn, at_0015: settings.Postgres
+) -> None:
+    from scripts.skeleton import downgrade, upgrade
 
     module = revision_0013()
     search = f"app.search_procedures_scoped({module.SEARCH_ARGS})"
@@ -301,5 +303,5 @@ async def test_the_round_trip_restores_0012(app_conn: persistence.Conn, role_con
         with pytest.raises(persistence.PersistenceError, match="predates this service"):
             await persistence.assert_function_text(mcp_read, *persistence.VECTOR_SEARCH)  # mcp-read refuses 0012
     finally:
-        assert migrate(Profile.TEST) == 0  # every later test needs the head (the `embedded` fixture re-embeds)
+        upgrade("app", at_0015, "0015_checkpoints")  # the fixture migrates the head afterwards (T21)
     assert await snapshot(app_conn) == head

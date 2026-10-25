@@ -32,6 +32,9 @@ pytestmark = pytest.mark.asyncio
 ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")
 SAM = UUID("03f7eb09-e18d-5f33-bf75-12c57d5aaa54")  # ALPHA's seeded reviewer
 RoleConn = Callable[[Role], Awaitable[persistence.Conn]]
+# T21: the R105 test, which runs before this module, leaves a SUCCEEDED run on A17 for the last 24 hours, and the
+# asset guard (SA:189) blocks a new action there unless it supersedes that run, so these runs use another asset.
+ASSET = "A19"
 
 SEARCH = {
     "status": "ok",
@@ -60,11 +63,13 @@ class ScriptedMcp:
     def __init__(self, read: persistence.Conn, write: persistence.Conn) -> None:
         self.read, self.write = read, write  # role mcp_read and role mcp_exec connections
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
+        # The read script; `granting_reads` swaps in one the grant accepts (T21).
+        self.reads = {"get_asset_status": STATUS, "get_recent_alerts": ALERTS, "search_procedures": SEARCH}
 
     async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Resolve the handle for the tool's server, then return the scripted envelope."""
         self.calls.append((url, tool, arguments))
-        reads = {"get_asset_status": STATUS, "get_recent_alerts": ALERTS, "search_procedures": SEARCH}
+        reads = self.reads
         server = Server.READ if tool in reads else Server.WRITE
         await persistence.resolve_invocation(
             self.read if server is Server.READ else self.write, handle=handle, azp="ops-worker", tool=Tool(tool)
@@ -85,6 +90,26 @@ class ScriptedMcp:
 
 
 WorkerDeps = Callable[[type[ScriptedMcp], Any], Awaitable[tuple[handlers.Deps, ScriptedMcp]]]
+
+
+async def granting_reads(app_conn: persistence.Conn, mcp: ScriptedMcp, asset: str = ASSET) -> None:
+    """T21: a read script the grant accepts, for the tests whose write server really grants. The grant re-checks the
+    asset observation's age (R116) and every cited section against the tenant's corpus (BS:425), so the status is
+    stamped at the database clock and the search cites one permitted section of ALPHA's ingested corpus."""
+    cur = await app_conn.execute(
+        "SELECT c.document_id, c.version, c.section, c.evidence_id, c.content_sha256, app.current_time() AS at"
+        " FROM app._cited_permitted(%s, ARRAY(SELECT evidence_id FROM app.chunks WHERE tenant_id = %s)) p"
+        " JOIN app.chunks c ON c.tenant_id = %s AND c.evidence_id = p.evidence_id ORDER BY c.evidence_id LIMIT 1",
+        (ALPHA, ALPHA, ALPHA),
+    )
+    row = await cur.fetchone()
+    assert row is not None, "ALPHA has no permitted section"
+    at = row["at"].isoformat().replace("+00:00", "Z")
+    status = {**STATUS, "observed_at": at, "data": {**STATUS["data"], "asset_id": asset, "observed_at": at}}
+    hit = {k: row[k] for k in ("evidence_id", "document_id", "version", "section", "content_sha256")}
+    hit |= {"excerpt": "text", "effective_from": "2026-10-01T00:00:00Z", "retrieved_at": at}
+    search = {"status": "ok", "data": {**SEARCH["data"], "results": [hit]}}
+    mcp.reads = {**mcp.reads, "get_asset_status": status, "search_procedures": search}
 
 
 @pytest_asyncio.fixture
@@ -166,6 +191,7 @@ async def approve(api: persistence.Conn, proposal: dict[str, Any]) -> None:
             tenant_id=proposal["tenant_id"],
             proposal_id=proposal["proposal_id"],
             reviewer=SAM,
+            expected_revision=proposal["revision"],
             expected_payload_sha256=proposal["payload_sha256"],
             decision="approve",
         )
@@ -178,7 +204,7 @@ async def test_investigate_then_execute(
     deps, mcp = await worker_deps(ScriptedMcp, FakeDraftGenerator())
     run = None
     try:
-        _, _, run = await new_run(app_conn, ALPHA, api=api)
+        _, _, run = await new_run(app_conn, ALPHA, api=api, asset_id=ASSET)
         await handlers.handle(deps, *await own_job(app_conn, deps.conn, run, "investigate"))
         row = await persistence.run_row(app_conn, run)
         assert row["state"] == "AWAITING_APPROVAL" and row["active_proposal_id"] is not None
@@ -210,9 +236,10 @@ async def test_investigate_then_execute(
             "get_asset_status",
             "get_recent_alerts",
             "search_procedures",
+            "get_asset_status",  # T21: read again before the grant, on the execute job's read handle (erratum 137)
             "create_incident",
         ]
-        assert mcp.calls[3][2] == {"proposal_id": str(proposal["proposal_id"])}
+        assert mcp.calls[4][2] == {"proposal_id": str(proposal["proposal_id"])}
         cur = await app_conn.execute("SELECT done_at IS NOT NULL AS done FROM app.jobs WHERE id = %s", (job["id"],))
         assert (await cur.fetchone())["done"]
     finally:
@@ -235,7 +262,7 @@ async def test_drafting_failure_fails_the_run(
     deps, _ = await worker_deps(ScriptedMcp, RaisingGenerator())
     run = None
     try:
-        _, _, run = await new_run(app_conn, ALPHA, api=api)
+        _, _, run = await new_run(app_conn, ALPHA, api=api, asset_id=ASSET)
         job, lease = await own_job(app_conn, deps.conn, run, "investigate")
         await handlers.handle(deps, job, lease)
         row = await persistence.run_row(app_conn, run)
@@ -312,13 +339,14 @@ class UnknownMcp(ScriptedMcp):
 
 
 async def test_unreachable_write_server_requeues_the_execute_job(
-    app_conn: persistence.Conn, role_conn: RoleConn, worker_deps: WorkerDeps
+    app_conn: persistence.Conn, role_conn: RoleConn, worker_deps: WorkerDeps, ingested: None
 ) -> None:
     api = await role_conn(Role.API)
     deps, mcp = await worker_deps(WriteDownMcp, FakeDraftGenerator())
+    await granting_reads(app_conn, mcp)
     run = None
     try:
-        _, _, run = await new_run(app_conn, ALPHA, api=api)
+        _, _, run = await new_run(app_conn, ALPHA, api=api, asset_id=ASSET)
         await handlers.handle(deps, *await own_job(app_conn, deps.conn, run, "investigate"))
         await approve(api, await proposal_of(app_conn, run))
         job, lease = await own_job(app_conn, deps.conn, run, "execute")
@@ -335,15 +363,17 @@ async def test_unreachable_write_server_requeues_the_execute_job(
         await app_conn.execute("UPDATE app.jobs SET available_at = now() WHERE id = %s", (job["id"],))
         job, lease = await own_job(app_conn, deps.conn, run, "execute")
         grant_mcp = GrantThenDownMcp(mcp.read, mcp.write)
+        grant_mcp.reads = mcp.reads
         deps.mcp = grant_mcp
         await handlers.handle(deps, job, lease)
         assert (await persistence.run_row(app_conn, run))["state"] == "EXECUTING"
-        assert [c[1] for c in grant_mcp.calls] == ["create_incident"]
+        # T21 (erratum 137): an APPROVED run's asset status is read again before the grant; an EXECUTING one is not.
+        assert [c[1] for c in grant_mcp.calls] == ["get_asset_status", "create_incident"]
         # A re-queued job of an EXECUTING run must be dispatched again (same action id), not finished unsent.
         await app_conn.execute("UPDATE app.jobs SET available_at = now() WHERE id = %s", (job["id"],))
         job, lease = await own_job(app_conn, deps.conn, run, "execute")
         await handlers.handle(deps, job, lease)
-        assert [c[1] for c in grant_mcp.calls] == ["create_incident", "create_incident"]
+        assert [c[1] for c in grant_mcp.calls] == ["get_asset_status", "create_incident", "create_incident"]
         cur = await app_conn.execute("SELECT done_at IS NULL AS open FROM app.jobs WHERE id = %s", (job["id"],))
         assert (await cur.fetchone())["open"]  # re-queued again, not finished
         assert (await persistence.run_row(app_conn, run))["state"] == "EXECUTING"
@@ -353,13 +383,14 @@ async def test_unreachable_write_server_requeues_the_execute_job(
 
 
 async def test_unknown_envelope_is_recorded_by_the_worker(
-    app_conn: persistence.Conn, role_conn: RoleConn, worker_deps: WorkerDeps
+    app_conn: persistence.Conn, role_conn: RoleConn, worker_deps: WorkerDeps, ingested: None
 ) -> None:
     api = await role_conn(Role.API)
-    deps, _ = await worker_deps(UnknownMcp, FakeDraftGenerator())
+    deps, mcp = await worker_deps(UnknownMcp, FakeDraftGenerator())
+    await granting_reads(app_conn, mcp)
     run = None
     try:
-        _, _, run = await new_run(app_conn, ALPHA, api=api)
+        _, _, run = await new_run(app_conn, ALPHA, api=api, asset_id=ASSET)
         await handlers.handle(deps, *await own_job(app_conn, deps.conn, run, "investigate"))
         await approve(api, await proposal_of(app_conn, run))
         job, lease = await own_job(app_conn, deps.conn, run, "execute")

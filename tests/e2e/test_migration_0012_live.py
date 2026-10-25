@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 import pytest
 from ops_core import persistence, settings
 from ops_core.jobs import Tool
-from ops_core.settings import Profile, Role
+from ops_core.settings import Role
 
 from tests.e2e.conftest import lease_for, purge_run
 from tests.e2e.test_definers_run_path_live import refused
@@ -71,6 +71,9 @@ async def test_asset_scope_is_the_runs_asset_and_interval_at_the_database_clock(
             # A day on the database clock: as_of follows it (SA:158). The lease lapsed with the move, so the handle is
             # minted again under a new one.
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '1 day'")
+            # T21 (ruling 14): the read path now refuses a membership the sync has not stamped within 120 s of
+            # the database clock, so the superuser stamps it again at the moved instant, as the sweeper would.
+            await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
             worker = await role_conn(Role.WORKER)
             lease = await lease_for(worker, run, owner="t16-later", seconds=600)
             later = await read_handle(worker, run, await investigate_job(app_conn, run), lease)
@@ -78,6 +81,8 @@ async def test_asset_scope_is_the_runs_asset_and_interval_at_the_database_clock(
             assert timedelta(hours=23) < moved.as_of - scope.as_of < timedelta(hours=25)
         finally:
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
+            # Plan R round 1, M8: the rows stamped at the moved clock are stamped again, so none stays in the future.
+            await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
     finally:
         await purge_run(app_conn, run)
 
@@ -167,6 +172,9 @@ async def test_the_search_returns_its_instant_and_whole_sections(
             # Two days on the database clock: retrieved_at is the instant the effectiveness rule ran at, never the
             # wall clock (Plan L final review, M4).
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '2 days'")
+            # T21 (ruling 14): the read path now refuses a membership the sync has not stamped within 120 s of
+            # the database clock, so the superuser stamps it again at the moved instant, as the sweeper would.
+            await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
             worker = await role_conn(Role.WORKER)
             lease = await lease_for(worker, run, owner="t16-instant", seconds=600)
             later = await read_handle(worker, run, await investigate_job(app_conn, run), lease)
@@ -176,6 +184,8 @@ async def test_the_search_returns_its_instant_and_whole_sections(
             assert timedelta(hours=47) < moved.retrieved_at - found.retrieved_at < timedelta(hours=49)
         finally:
             await harness.execute("UPDATE app.test_clock SET clock_offset = interval '0'")
+            # Plan R round 1, M8: the rows stamped at the moved clock are stamped again, so none stays in the future.
+            await app_conn.execute("UPDATE app.memberships SET synced_at = app.current_time()")
     finally:
         await cleanup(app_conn, [run], [tenant])
 
@@ -194,8 +204,10 @@ async def snapshot(conn: persistence.Conn) -> dict[str, dict[str, Any]]:
     return {row["signature"]: {k: v for k, v in row.items() if k != "signature"} for row in await cur.fetchall()}
 
 
-async def test_the_round_trip_restores_0011(app_conn: persistence.Conn, role_conn: RoleConn) -> None:
-    from scripts.skeleton import downgrade, migrate
+async def test_the_round_trip_restores_0011(
+    app_conn: persistence.Conn, role_conn: RoleConn, at_0015: settings.Postgres
+) -> None:
+    from scripts.skeleton import downgrade, upgrade
 
     module = revision_0012()
     search = f"app.search_procedures_scoped({module.SEARCH_ARGS})"
@@ -220,7 +232,7 @@ async def test_the_round_trip_restores_0011(app_conn: persistence.Conn, role_con
         with pytest.raises(persistence.PersistenceError, match="predates this service"):
             await persistence.assert_function_text(mcp_read, *persistence.ASSET_SCOPE)  # mcp-read refuses 0011
     finally:
-        assert migrate(Profile.TEST) == 0  # every later test needs the head
+        upgrade("app", at_0015, "0015_checkpoints")  # the fixture migrates the head afterwards (T21)
     assert await snapshot(app_conn) == head
     scope_unknown = await refused(mcp_read, SCOPE, (str(uuid4()), AZP))
     assert scope_unknown == "OC008"  # back, and still the one handle refusal

@@ -11,7 +11,7 @@ import os
 import socket
 import sys
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 from uuid import UUID
 
@@ -208,6 +208,7 @@ async def fresh_memberships(migrated: None, request: pytest.FixtureRequest) -> N
 PURGE_ORDER = (
     "DELETE FROM app.invocation_context WHERE run_id = %s",
     "DELETE FROM app.outbox WHERE run_id = %s",  # T14: an intent references its event and its run
+    "DELETE FROM app.feedback WHERE run_id = %s",  # T21: feedback references its run
     "DELETE FROM app.events WHERE run_id = %s",
     (
         "DELETE FROM app.action_attempt_state WHERE action_id IN "
@@ -228,6 +229,21 @@ PURGE_ORDER = (
     # T12: the idempotency record of the admission that started the run (its response names the run).
     "DELETE FROM app.idempotency_request WHERE response->>'run_id' = %s::text",
 )
+
+
+@pytest.fixture
+def at_0015(migrated: None) -> Iterator[settings.Postgres]:
+    """The round trips of 0011-0013 start from 0015 and come back to it: revision 0016 (T21) re-creates functions they
+    compare byte for byte and replaces `record_decision`'s signature, and its own round trip is
+    tests/e2e/test_review_live.py's. The head is migrated again afterwards, whatever the test did."""
+    from scripts.skeleton import downgrade, migrate
+
+    superuser = settings.superuser_postgres()
+    downgrade("app", superuser, "0015_checkpoints")
+    try:
+        yield superuser
+    finally:
+        assert migrate(Profile.TEST) == 0  # every later test needs the head
 
 
 async def purge_run(conn: persistence.Conn, run_id: object) -> None:

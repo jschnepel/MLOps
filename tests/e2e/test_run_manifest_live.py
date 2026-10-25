@@ -26,8 +26,8 @@ ALPHA = UUID("3ea79c95-914c-52cb-9d10-c4e19dda8ff7")
 BETA = UUID("5ab45c2c-1e12-5a0c-a2b9-66cd2ff05201")
 DIGEST = "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41"
 INSERT = (
-    "INSERT INTO app.run_manifests (run_id, tenant_id, model_route, model_digest, prompt_version, corpus_version,"
-    " retrieval_mode) VALUES (%s, %s, %s, %s, 'incident-draft-v2', 'corpus-1', 'lexical')"
+    "INSERT INTO app.run_manifests (run_id, revision, tenant_id, model_route, model_digest, prompt_version,"
+    " corpus_version, retrieval_mode) VALUES (%s, 1, %s, %s, %s, 'incident-draft-v2', 'corpus-1', 'lexical')"
 )
 
 
@@ -65,17 +65,20 @@ async def test_only_the_worker_writes_a_manifest_once_and_nobody_changes_it(
         )
         async with worker.transaction():
             await persistence.set_tenant(worker, ALPHA)
-            await persistence.insert_run_manifest(worker, tenant_id=ALPHA, manifest=manifest)
-        with pytest.raises(psycopg.errors.UniqueViolation):  # one manifest per run
+            await persistence.insert_run_manifest(worker, tenant_id=ALPHA, manifest=manifest, revision=1)
+        with pytest.raises(psycopg.errors.UniqueViolation):  # one manifest per revision (T21; erratum 125)
             async with worker.transaction():
                 await persistence.set_tenant(worker, ALPHA)
-                await persistence.insert_run_manifest(worker, tenant_id=ALPHA, manifest=manifest)
+                await persistence.insert_run_manifest(worker, tenant_id=ALPHA, manifest=manifest, revision=1)
+        async with worker.transaction():  # T21 (Plan R ruling 1): a revision records its own
+            await persistence.set_tenant(worker, ALPHA)
+            await persistence.insert_run_manifest(worker, tenant_id=ALPHA, manifest=manifest, revision=2)
         for statement in ("UPDATE app.run_manifests SET model_digest = NULL", "DELETE FROM app.run_manifests"):
             assert await refused(worker, statement, ()) == "42501", statement  # immutable
         async with api.transaction():
             await persistence.set_tenant(api, ALPHA)
             cur = await api.execute("SELECT model_route, model_digest FROM app.run_manifests WHERE run_id = %s", (run,))
-            assert [dict(r) for r in await cur.fetchall()] == [{"model_route": "qwen3:8b", "model_digest": DIGEST}]
+            assert [dict(r) for r in await cur.fetchall()] == [{"model_route": "qwen3:8b", "model_digest": DIGEST}] * 2
         async with api.transaction():
             await persistence.set_tenant(api, BETA)
             cur = await api.execute("SELECT count(*) AS n FROM app.run_manifests WHERE run_id = %s", (run,))

@@ -184,7 +184,6 @@ async def test_r016_a_replay_resolves_once_and_a_changed_body_conflicts(
         again = await c.post(messages(cid), headers=h(key="r016-key-0001"), json=SAMPLE)
         codes, same = (first.status_code, again.status_code), again.content == first.content
         assert codes == (202, 202) and same, codes
-        first_run = first.json()["run_id"]
         changed = await c.post(
             messages(cid), headers=h(key="r016-key-0001"), json={**SAMPLE, "context": {"asset_id": "A17", "hours": 12}}
         )
@@ -210,9 +209,10 @@ async def test_r016_a_replay_resolves_once_and_a_changed_body_conflicts(
             assert other_runs == 0  # the unit's work was rolled back with the failed record insert
         finally:
             await app_conn.execute("DELETE FROM app.idempotency_request WHERE key = 'r016-key-0002'")
-        # AM-16 in PostgreSQL: create_run refuses a supersede across conversations (OC002) after the message is
-        # written, and only start_run's savepoint takes that message back before the 404 is recorded.
-        across = {**SAMPLE, "supersedes_run_id": first_run}
+        # AM-16 in PostgreSQL: create_run refuses a supersede that names no run of the tenant and the asset (OC002;
+        # T21, erratum 138: any conversation of the tenant) after the message is written, and only start_run's
+        # savepoint takes that message back before the 404 is recorded.
+        across = {**SAMPLE, "supersedes_run_id": str(uuid4())}
         superseding = await c.post(messages(other), headers=h(key="r016-key-0003"), json=across)
         supersede = (superseding.status_code, superseding.json()["message"])
         assert supersede == (404, "no such superseded run"), supersede

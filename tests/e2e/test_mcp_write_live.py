@@ -22,6 +22,7 @@ from ops_mcp_write import destination, execution
 from ops_mcp_write.server import outcome_envelope
 
 from tests.e2e.conftest import lease_for, purge_run
+from tests.e2e.test_definers_write_path_live import scope_of
 from tests.e2e.test_migrations_and_persistence import new_run
 
 pytestmark = pytest.mark.asyncio
@@ -38,6 +39,15 @@ async def approved_run(app_conn: persistence.Conn, *, api: persistence.Conn, wor
         await persistence.transition_run(worker, run_id=run, src=src, dst=dst)
     draft, proposal = uuid4(), uuid4()
     now = datetime.now(UTC).replace(microsecond=0)
+    # T21: the run's workflow version (the worker pins it at the first claim, ruling 18) and the asset observation the
+    # grant checks (R116), as a worker's retrieval would have recorded them. The run gets an asset of its own: tests
+    # that approve two runs would otherwise meet the asset guard (SA:189), which tests/e2e/test_review_live.py proves.
+    # The payload names that asset and the run's interval, as the freeze requires (Plan R round 1, I2).
+    await app_conn.execute(
+        "UPDATE app.runs SET workflow_version = 'investigation-v1', asset_observed_at = app.current_time(),"
+        " asset_id = 'A17-' || upper(left(run_id::text, 8)) WHERE run_id = %s",
+        (run,),
+    )
     payload = {
         "tenant_id": str(tenant),
         "run_id": str(run),
@@ -45,19 +55,13 @@ async def approved_run(app_conn: persistence.Conn, *, api: persistence.Conn, wor
         "revision": 1,
         "action": "create_incident",
         "destination": "synthetic-incidents",
-        "asset_id": "A17",
-        "start_at": (now - timedelta(hours=24)).isoformat().replace("+00:00", "Z"),
-        "end_at": now.isoformat().replace("+00:00", "Z"),
+        **await scope_of(app_conn, run),
         "title": "Live write-path proposal",
         "summary": "Synthetic.",
-        "evidence_refs": ["ALPHA-INCIDENT:v2:review"],
-        "source_snapshots": [
-            {
-                "evidence_id": "ALPHA-INCIDENT:v2:review",
-                "content_sha256": "62a90906c7bb706ae8a968eb0f7102f76b05d2c3be911c182d528a1fd25ef008",
-                "version": "2",
-            }
-        ],
+        # T21: the grant rechecks every cited section against the tenant's corpus (BS:425), which these write-path
+        # tests do not ingest, so this payload cites none; tests/e2e/test_review_live.py cites real ones.
+        "evidence_refs": [],
+        "source_snapshots": [],
         "assumptions": [],
         "limitations": ["live test"],
         "workflow_version": "investigation-v1",
@@ -79,7 +83,13 @@ async def approved_run(app_conn: persistence.Conn, *, api: persistence.Conn, wor
         )
     async with api.transaction():  # the function queues the execute job
         await persistence.record_decision(
-            api, tenant_id=tenant, proposal_id=proposal, reviewer=SAM, expected_payload_sha256=sha, decision="approve"
+            api,
+            tenant_id=tenant,
+            proposal_id=proposal,
+            reviewer=SAM,
+            expected_revision=1,
+            expected_payload_sha256=sha,
+            decision="approve",
         )
     cur = await app_conn.execute("SELECT id FROM app.jobs WHERE run_id = %s AND type = 'execute'", (run,))
     job = (await cur.fetchone())["id"]

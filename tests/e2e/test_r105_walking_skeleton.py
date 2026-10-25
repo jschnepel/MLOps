@@ -35,6 +35,8 @@ EXPECTED_EVENTS = [
     ("explanation.ready", "model_summary"),
     ("proposal.ready", "application"),
     ("approval.recorded", "application"),
+    ("tool.started", "application"),  # T21: the asset status read again before the grant (R116, erratum 137)
+    ("tool.completed", "application"),
     ("action.granted", "application"),
     ("action.dispatched", "application"),
     ("action.confirmed", "destination"),
@@ -181,7 +183,7 @@ async def test_r105_walking_skeleton(
             headers=keyed(s),
             json={**decision, "expected_payload_sha256": "0" * 64},
         )
-        assert stale.status_code == 409 and stale.json()["code"] == "VERSION_CONFLICT"
+        assert stale.status_code == 409 and stale.json()["code"] == "STALE_HASH"  # T21: its own code (ruling 3)
         approved = c.post(f"/api/v1/proposals/{pid}/decisions", headers=keyed(s), json=decision)
         assert approved.status_code == 200 and approved.json()["status"] == "APPROVED", approved.text
         second = c.post(f"/api/v1/proposals/{pid}/decisions", headers=keyed(s), json=decision)

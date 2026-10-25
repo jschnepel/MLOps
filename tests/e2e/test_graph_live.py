@@ -255,7 +255,8 @@ async def test_a_run_waits_for_its_reviewer_at_the_stored_checkpoint(
         await handlers.handle(restarted, *await own_job(app_conn, restarted.conn, run, "execute"))
         assert traces[-1].trace[0] == "await_independent_decision"  # resumed with the decision's event (SA:213)
         called: Any = restarted.mcp
-        assert [c[1] for c in called.calls] == ["create_incident"]
+        # T21 (erratum 137): the execute job reads the asset status again before the grant.
+        assert [c[1] for c in called.calls] == ["get_asset_status", "create_incident"]
         blobs = await checkpoint_bytes(app_conn, run)  # the execute resume wrote checkpoints too (R091)
         for text in (proposal["payload"]["title"], proposal["payload"]["summary"][:60], ALERT_TEXT):
             assert text.encode() not in blobs, text

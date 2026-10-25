@@ -30,8 +30,19 @@ JORDAN = UUID("cb551e64-83ec-582b-9047-8dadf20e151a")
 LEE = UUID("abcc1200-6791-57ab-87b5-9392d356b512")
 
 
-def payload_for(tenant: UUID, run: UUID, proposal: UUID, now: datetime) -> bytes:
-    """A canonical proposal document with the fields the functions read (the full contract is Plan C's)."""
+async def scope_of(app_conn: persistence.Conn, run: UUID) -> dict[str, str]:
+    """The run's asset and interval as a payload spells them: `freeze_proposal` refuses a payload whose asset or
+    interval is not the run's (T21, Plan R round 1, I2)."""
+    cur = await app_conn.execute("SELECT asset_id, start_at, end_at FROM app.runs WHERE run_id = %s", (run,))
+    row = await cur.fetchone()
+    assert row is not None
+    instant = {k: row[k].astimezone(UTC).isoformat().replace("+00:00", "Z") for k in ("start_at", "end_at")}
+    return {"asset_id": row["asset_id"], **instant}
+
+
+def payload_for(tenant: UUID, run: UUID, proposal: UUID, now: datetime, scope: dict[str, str]) -> bytes:
+    """A canonical proposal document with the fields the functions read (the full contract is Plan C's), on the run's
+    asset and interval (`scope_of`)."""
     return canonical_json(
         {
             "tenant_id": str(tenant),
@@ -40,7 +51,7 @@ def payload_for(tenant: UUID, run: UUID, proposal: UUID, now: datetime) -> bytes
             "revision": 1,
             "action": "create_incident",
             "destination": "synthetic-incidents",
-            "asset_id": "A17",
+            **scope,
             "title": "t",
             "summary": "s",
             "supersedes_run_id": None,
@@ -68,7 +79,17 @@ async def freeze(
     """Insert a validated draft and freeze its proposal as the worker; returns id, bytes and hash."""
     now = datetime.now(UTC).replace(microsecond=0)
     proposal, draft = uuid4(), uuid4()
-    body = payload_for(tenant, run, proposal, now)
+    # T21: the grant checks the asset observation's age (R116); this helper's runs are never retrieved, so the
+    # superuser records one as retrieval would. Each frozen run also gets an asset of its own: the asset guard
+    # (SA:189) blocks a second unresolved action on one asset and interval, and the tests that freeze several runs
+    # (and the R089 stress) are about other things; tests/e2e/test_review_live.py proves the guard. The payload names
+    # that asset and the run's interval, as the freeze requires (Plan R round 1, I2).
+    await app_conn.execute(
+        "UPDATE app.runs SET asset_observed_at = app.current_time(),"
+        " asset_id = 'A17-' || upper(left(run_id::text, 8)) WHERE run_id = %s",
+        (run,),
+    )
+    body = payload_for(tenant, run, proposal, now, await scope_of(app_conn, run))
     digest = sha256_hex(body)
     async with as_role(worker):  # the worker's own INSERT on drafts (AM-20.2) under its tenant, then the function
         await worker.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant),))
@@ -91,7 +112,7 @@ async def approve(
     """Record an approving decision as the API and return the result row."""
     async with as_role(api):
         cur = await api.execute(
-            "SELECT * FROM app.record_decision(%s, %s, %s, %s, 'approve', NULL, NULL)",
+            "SELECT * FROM app.record_decision(%s, %s, %s, 1, %s, 'approve', NULL, NULL)",  # T21: revision 1
             (tenant, proposal, reviewer, digest),
         )
         return dict(await cur.fetchone())
@@ -126,7 +147,8 @@ async def test_freeze_proposal_binds_bytes_to_the_draft_and_refuses_the_rest(
     try:
         now = datetime.now(UTC).replace(microsecond=0)
         proposal, draft = uuid4(), uuid4()
-        body = payload_for(ALPHA, run, proposal, now)
+        scope = await scope_of(app_conn, run)
+        body = payload_for(ALPHA, run, proposal, now, scope)
         await app_conn.execute(
             "INSERT INTO app.drafts (id, tenant_id, run_id, draft_sha256, validated, kind)"
             " VALUES (%s, %s, %s, %s, true, 'proposal')",
@@ -137,7 +159,7 @@ async def test_freeze_proposal_binds_bytes_to_the_draft_and_refuses_the_rest(
             == "OC007"
         )
         await app_conn.execute("UPDATE app.drafts SET draft_sha256 = %s WHERE id = %s", (sha256_hex(body), draft))
-        foreign = payload_for(ALPHA, uuid4(), proposal, now)  # the payload names another run, hashed correctly
+        foreign = payload_for(ALPHA, uuid4(), proposal, now, scope)  # the payload names another run, hashed right
         foreign_draft = uuid4()
         await app_conn.execute(
             "INSERT INTO app.drafts (id, tenant_id, run_id, draft_sha256, validated, kind)"
@@ -197,7 +219,7 @@ async def test_record_decision_independence_hash_and_first_wins(
     run = await drafting_run(app_conn, api, worker)
     try:
         proposal, _, digest = await freeze(app_conn, worker, run)
-        call = "SELECT * FROM app.record_decision(%s, %s, %s, %s, 'approve', NULL, NULL)"
+        call = "SELECT * FROM app.record_decision(%s, %s, %s, 1, %s, 'approve', NULL, NULL)"
         assert await refused(api, call, (ALPHA, proposal, ALEX, digest)) == "OC005"  # the requester (SELF_REVIEW)
         assert await refused(api, call, (ALPHA, proposal, LEE, digest)) == "OC005"  # a reader (NOT_REVIEWER)
         assert await refused(api, call, (ALPHA, proposal, JORDAN, digest)) == "OC005"  # beta's reviewer (NOT_REVIEWER)
@@ -241,7 +263,7 @@ async def test_rejection_frees_the_slot(app_conn: persistence.Conn, role_conn: R
         proposal, _, digest = await freeze(app_conn, worker, run)
         async with as_role(api):
             cur = await api.execute(
-                "SELECT * FROM app.record_decision(%s, %s, %s, %s, 'reject', 'rejected', NULL)",
+                "SELECT * FROM app.record_decision(%s, %s, %s, 1, %s, 'reject', 'rejected', NULL)",
                 (ALPHA, proposal, SAM, digest),
             )
             assert dict(await cur.fetchone()) == {"run_id": run, "state": "REJECTED", "state_version": 5}
@@ -628,7 +650,7 @@ async def test_r106_the_definer_path_cannot_cross_tenants(app_conn: persistence.
         assert (
             await refused(
                 api,
-                "SELECT * FROM app.record_decision(%s, %s, %s, %s, 'approve', NULL, NULL)",
+                "SELECT * FROM app.record_decision(%s, %s, %s, 1, %s, 'approve', NULL, NULL)",
                 (BETA, alpha_proposal, JORDAN, alpha_digest),
             )
             == "OC002"

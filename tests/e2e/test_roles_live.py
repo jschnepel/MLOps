@@ -42,9 +42,9 @@ async def seed_run(app_conn: persistence.Conn, tenant: UUID) -> UUID:
     )
     await app_conn.execute(
         "INSERT INTO app.runs (run_id, tenant_id, conversation_id, message_id, requester, intent, asset_id, start_at,"
-        " end_at, state, state_version, slot_held) VALUES (%s, %s, %s, %s, %s, 'investigate', 'A17',"
-        " now() - interval '1 day', now(), 'QUEUED', 1, true)",
-        (run, tenant, conv, msg, ALEX),
+        " end_at, state, state_version, slot_held, authors) VALUES (%s, %s, %s, %s, %s, 'investigate', 'A17',"
+        " now() - interval '1 day', now(), 'QUEUED', 1, true, ARRAY[%s::uuid])",  # T21: runs.authors (revision 0016)
+        (run, tenant, conv, msg, ALEX, ALEX),
     )
     await app_conn.execute("INSERT INTO app.run_directory (run_id, tenant_id) VALUES (%s, %s)", (run, tenant))
     await app_conn.execute(

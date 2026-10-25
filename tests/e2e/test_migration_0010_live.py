@@ -149,7 +149,8 @@ async def recover_handle(app_conn: persistence.Conn, worker: persistence.Conn, r
 
 
 async def cancel(api: persistence.Conn, run: UUID) -> None:
-    """What the API's cancel does to the run row (its one column cell; the cancel endpoint itself is T21's)."""
+    """The cancel flag set the way `request_cancel` sets it after a grant (the api's column cells; the route and its
+    definer are T21's, `tests/e2e/test_review_live.py`)."""
     async with api.transaction():
         await persistence.set_tenant(api, ALPHA)
         cur = await api.execute(
