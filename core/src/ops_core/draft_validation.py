@@ -29,7 +29,7 @@ import json
 from collections.abc import Iterable, Mapping
 from typing import Any, Final, Literal
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ValidationError
 
 from ops_core import contracts, grading
@@ -37,8 +37,9 @@ from ops_core.canonical import CanonicalizationError, parse_json_strict
 from ops_core.contracts import AUTHORITY_FIELDS, ModelDraft
 
 MAX_FEEDBACK: Final = 10
-# Keys only the application writes into a proposal (`ops_worker.proposals.build_proposal`) or that bind it to other
-# rows; a draft naming one is trying to set it.
+# The authority-bearing keys the application sets on a proposal (`ops_worker.proposals.build_proposal`) or that bind it
+# to other rows; a draft naming one is trying to set it. Other application-set fields (`asset_id`, `expires_at`) fall
+# to the closed schema and are refused as `schema`.
 APPLICATION_KEYS: Final = frozenset(
     {"action", "action_id", "approval", "permissions", "proposal_id", "run_id", "status", "supersedes_run_id", "tool"}
 )
@@ -54,8 +55,11 @@ Rule = Literal[
 
 
 class DraftInvalid(ValueError):
-    """The reply is not an acceptable draft. `rules` name what failed (for logs and reports); `feedback` is the
-    instance-free text the repair attempt may be shown."""
+    """The reply is not an acceptable draft.
+
+    `rules` name what failed (for logs and reports); `feedback` is the instance-free text the repair attempt may be
+    shown.
+    """
 
     def __init__(self, rules: Iterable[Rule], feedback: Iterable[str]) -> None:
         self.rules: tuple[Rule, ...] = tuple(dict.fromkeys(rules))
@@ -65,7 +69,9 @@ class DraftInvalid(ValueError):
 
 @functools.cache
 def _schema() -> Draft202012Validator:
-    return Draft202012Validator(json.loads(grading.DRAFT_SCHEMA.read_text(encoding="utf-8")))
+    # The same FormatChecker as `grading._validator`, so the two judges cannot split if the schema gains a `format`.
+    schema = json.loads(grading.DRAFT_SCHEMA.read_text(encoding="utf-8"))
+    return Draft202012Validator(schema, format_checker=FormatChecker())
 
 
 def has_thinking(text: str, reasoning: object) -> bool:

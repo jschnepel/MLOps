@@ -54,14 +54,18 @@ def test_each_runtime_prompt_is_pinned_and_the_starters_are_untouched() -> None:
     }
     for name, digest in starters.items():
         assert hashlib.sha256((ROOT / "handoff" / "prompts" / name).read_bytes()).hexdigest() == digest, name
-    # The v2 system message starts with the starter's own system message, word for word.
-    starter = (ROOT / "handoff" / "prompts" / "incident-draft-v1.md").read_text(encoding="utf-8").split("\n")
-    assert prompts.text("incident-draft-v2").startswith("\n\n".join(starter[6:11:2]))
+    # Each v2 system message starts with its starter's own system message, word for word. Line numbers are 1-based:
+    # the draft starter's system message is the paragraphs on lines 7, 9 and 11; the repair starter's is line 5.
+    draft = (ROOT / "handoff" / "prompts" / "incident-draft-v1.md").read_text(encoding="utf-8").split("\n")
+    repair = (ROOT / "handoff" / "prompts" / "schema-repair-v1.md").read_text(encoding="utf-8").split("\n")
+    assert prompts.text("incident-draft-v2").startswith("\n\n".join(draft[i - 1] for i in (7, 9, 11)))
+    assert prompts.text("schema-repair-v2").startswith(repair[5 - 1])
 
 
 def test_a_valid_draft_of_each_kind_is_accepted_unchanged() -> None:
     proposal = validate(reply(), reasoning=None, allowed_ids=ALLOWED, answer_only=False)
-    assert isinstance(proposal, ModelDraft) and proposal.kind == "proposal" and MARK in proposal.title
+    assert isinstance(proposal, ModelDraft) and proposal.kind == "proposal"
+    assert proposal.model_dump(exclude_none=True) == json.loads(reply())  # not one field changed, added or dropped
     answer = validate(reply(kind="answer"), reasoning=None, allowed_ids=ALLOWED, answer_only=True)
     assert answer.kind == "answer"
     abstain = validate(reply(kind="abstain", evidence_refs=[]), reasoning="", allowed_ids=ALLOWED, answer_only=False)
@@ -164,11 +168,12 @@ DEV_CASE = grading.load_cases(ROOT / "evals" / "dev" / "cases.jsonl")[0]  # chec
     ],
 )
 def test_the_validator_and_the_schema_grader_agree(text: str) -> None:
-    """Departure 6: `validate` passes the schema-and-contract stage exactly when `grading.check_schema` passes."""
+    """Departure 6: on these drafts `validate` refuses (as `schema` or `contract`) exactly when `check_schema` fails."""
     graded = grading.check_schema(grading.Output(draft=json.loads(text), offered_refs=ALLOWED, case=DEV_CASE))
     try:
         validate(text, reasoning=None, allowed_ids=ALLOWED, answer_only=False)
         structural = True
     except DraftInvalid as invalid:
-        structural = not ({"schema", "contract"} & set(invalid.rules))
+        assert set(invalid.rules) <= {"schema", "contract"}  # no other stage may stand in for the two judges
+        structural = False
     assert graded is not None and graded.passed == structural
