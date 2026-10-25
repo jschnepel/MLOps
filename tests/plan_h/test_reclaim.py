@@ -79,7 +79,11 @@ def test_the_tick_reclaims_even_when_the_sync_fails(monkeypatch: pytest.MonkeyPa
     async def sweep_wakeups(_deps: Any) -> None:
         calls.append("wakeups")
 
+    async def expire_proposals(_deps: Any) -> None:
+        calls.append("expiry")
+
     monkeypatch.setattr(main, "run_sync", failed_sync)
+    monkeypatch.setattr(main, "expire_proposals", expire_proposals)  # T21: between the reclaim and the wake-ups
     monkeypatch.setattr(sync, "purge_expired", purge)
     monkeypatch.setattr(leases, "reclaim", reclaim)
     monkeypatch.setattr(main, "deliver_outbox", deliver_outbox)
@@ -88,4 +92,4 @@ def test_the_tick_reclaims_even_when_the_sync_fails(monkeypatch: pytest.MonkeyPa
     deps = main.Deps(conn=none, admin=none, issuer="iss", tick_seconds=30.0, worker_name="sweeper:test")
     asyncio.run(main.tick(deps))
     # T14's work runs whether or not the sync did, the wake-up sweep before the delivery (round 1, I1).
-    assert calls == ["sync", "purge", "reclaim", "wakeups", "outbox"]
+    assert calls == ["sync", "purge", "reclaim", "expiry", "wakeups", "outbox"]

@@ -11,8 +11,9 @@ this minute's `sweep_wakeups` row) and, last, delivers the notification outbox (
 row, then `outbox.deliver`, then the dead letters' `notification.failed`), so a database error during delivery ends
 the tick after everything else has run (a sink's crash is one row's failed attempt). Readiness is 200 only while the
 last successful sync is younger than 120 s, the window after which `grant_execution` refuses (T11 review note 2), so
-`scripts/skeleton.py up` waits for the first sync.
-TODO(T21): proposal expiry.
+`scripts/skeleton.py up` waits for the first sync. Since T21 each tick also expires overdue proposals
+(`expiry.expire`, R092) and records this minute's `expire_proposals` row, after the lease reclaim and before the
+wake-up sweep.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from ops_sweeper import leases, outbox, sync, wakeups
+from ops_sweeper import expiry, leases, outbox, sync, wakeups
 
 FRESH_SECONDS = 120.0  # the gate's window (0005's grant_execution); readiness follows it
 log = logging.getLogger("ops_sweeper")
@@ -129,8 +130,18 @@ async def tick(deps: Deps) -> None:
     reclaimed = await leases.reclaim(deps.conn)
     if reclaimed:
         log.info("reclaimed %d job(s) whose run lease was not live", len(reclaimed))
+    await expire_proposals(deps)
     await sweep_wakeups(deps)  # first: notification delivery must never starve run progress (round 1, I1)
     await deliver_outbox(deps)
+
+
+async def expire_proposals(deps: Deps) -> None:
+    """Expire every tenant's overdue proposals (T21, Plan R ruling 5; SA:346), then record this minute's
+    `expire_proposals` row (SA:504's `name:<minute bucket>`), as the sync records its own."""
+    expired = await expiry.expire(deps.conn)
+    if expired:
+        log.info("expired %d proposal(s): %s", len(expired), ", ".join(str(run) for run in expired))
+    await record(deps, JobType.EXPIRE_PROPOSALS)
 
 
 async def sweep_wakeups(deps: Deps) -> None:
@@ -239,6 +250,7 @@ async def _main() -> None:
         opened.append(probe)
         await persistence.assert_clock_profile(probe, settings.profile())
         await persistence.assert_relation(probe, "app.outbox")  # revision 0008: the outbox this process delivers
+        await persistence.assert_function_text(probe, *persistence.PROPOSAL_EXPIRY)  # revision 0016: the expiry
         chosen_outbox = settings.outbox()  # refused before the loop starts, like every other setting
         chosen_wakeups = settings.wakeups()
     except BaseException:  # close what was built before the tasks exist (a refused start must not leak sockets)

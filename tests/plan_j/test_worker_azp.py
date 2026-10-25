@@ -42,7 +42,9 @@ def test_a_minted_handle_carries_the_workload_client(
     deps, lease = make(log)
     deps.workload_azp = "ops-worker-renamed"
     asyncio.run(handlers.handle(deps, {**JOB, "type": job_type}, lease))
-    assert [m["azp"] for m in minted] == ["ops-worker-renamed"]
+    # T21 (erratum 137): an execute job mints a read handle for the asset status too, before its write handle.
+    servers = ["read", "write"] if job_type == "execute" else ["read"]
+    assert [(m["azp"], m["server"].value) for m in minted] == [("ops-worker-renamed", s) for s in servers]
 
 
 def test_the_model_request_has_no_field_for_a_handle() -> None:

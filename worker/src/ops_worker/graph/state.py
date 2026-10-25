@@ -89,11 +89,12 @@ class Held:
 @dataclass
 class Context:
     """What every node of one graph run receives (LangGraph's runtime context, never persisted): the dependencies,
-    the job and the lease it runs under, the hold, and `trace`, the node names in the order they ran (R038's per-run
-    node log, which the tests read)."""
+    the job and the lease it runs under, the run's revision, the hold, and `trace`, the node names in the order they
+    ran (R038's per-run node log, which the tests read)."""
 
     deps: Deps
     job: dict[str, Any]
     lease: Lease
+    revision: int = 1  # T21: the run's revision this graph run serves (its thread, its manifest, its proposal)
     held: Held = field(default_factory=Held)
     trace: list[str] = field(default_factory=list)

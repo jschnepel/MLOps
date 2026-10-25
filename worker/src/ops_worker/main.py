@@ -164,6 +164,7 @@ async def _main() -> None:
     await persistence.assert_relation(probe, "app.model_permit")  # revision 0007: the permit and the fenced functions
     await persistence.assert_relation(probe, "app.run_manifests")  # revision 0014: every run's manifest (T19)
     await persistence.assert_relation(probe, "checkpoints.checkpoints")  # revision 0015: the graph's saver (T20)
+    await persistence.assert_function_text(probe, *persistence.FREEZE_GUARD)  # revision 0016: the guarded freeze
     # The saver's own connection (SA:559-562): its writes never share a transaction with an application unit.
     saver_conn, saver = await open_saver(settings.app_postgres(Role.WORKER))
     liveness = Liveness()

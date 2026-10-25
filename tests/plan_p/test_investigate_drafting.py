@@ -3,7 +3,8 @@
 On Plan H's fakes (`tests/plan_h/test_worker_units.py`), which log every unit and every persistence call. Catches: a
 run manifest written after the model call or outside the DRAFTING unit, or without the route's digest; a permit
 taken twice for one draft (the repair must share the first pass's hold); a failing real route that falls back to a
-fake draft or freezes anything; an outage or an exhausted repair that is not a templated FAILED; an abstention that
+fake draft or freezes anything; an outage or an exhausted repair that does not leave the run waiting in DRAFTING for
+a manual proposal (T21, erratum 134: before T21 a templated FAILED); an abstention that
 is not INSUFFICIENT_EVIDENCE; an answer or a clarifying question frozen as a proposal instead of ending ANSWERED or
 waiting for input (T20 routes them); and a draft that claims success turning into an `action.*` event, a status or
 anything but a proposal awaiting review. Since T20 the handler runs the graph (`ops_worker.graph`), so the reads are
@@ -79,7 +80,7 @@ def ends(seen: dict[str, list[dict[str, Any]]]) -> tuple[str, str | None]:
 def test_the_manifest_is_written_with_drafting_before_the_model_is_called(monkeypatch: pytest.MonkeyPatch) -> None:
     inserted: list[Any] = []
 
-    async def insert_run_manifest(_conn: Any, *, tenant_id: Any, manifest: Any) -> None:
+    async def insert_run_manifest(_conn: Any, *, tenant_id: Any, manifest: Any, revision: int) -> None:
         inserted.append(manifest)
         log.entries.append("insert_run_manifest")
 
@@ -90,7 +91,14 @@ def test_the_manifest_is_written_with_drafting_before_the_model_is_called(monkey
     deps.generator, _ = real(Reply(GOOD))
     asyncio.run(handlers.handle(deps, dict(JOB), lease))
     drafting = next(u for u in log.units() if "insert_run_manifest" in u)
-    assert drafting == ["set_tenant", "fenced", "transition_run", "run_manifest_exists", "insert_run_manifest"]
+    assert drafting == [
+        "set_tenant",
+        "fenced",
+        "transition_run",
+        "run_manifest_exists",
+        "insert_run_manifest",
+        "record_asset_observation",  # T21: the status observation the grant checks (R116)
+    ]
     assert log.entries.index("insert_run_manifest") < log.entries.index("take_model_permit")
     (manifest,) = inserted
     assert manifest.model_route is ModelRoute.QWEN3_8B and manifest.model_digest == PINS.digest
@@ -112,21 +120,23 @@ def test_one_permit_hold_spans_the_first_pass_and_the_repair(monkeypatch: pytest
 
 
 @pytest.mark.parametrize(
-    ("answers", "message"),
-    [
-        ((ModelUnavailable("Ollama answered no draft (ConnectionError)"),), handlers.MODEL_UNAVAILABLE),
-        ((Reply("not json"), Reply("still not json")), handlers.MODEL_INVALID),
-    ],
+    "answers",
+    [(ModelUnavailable("Ollama answered no draft (ConnectionError)"),), (Reply("not json"), Reply("still not json"))],
+    ids=["unavailable", "invalid-after-repair"],
 )
-def test_a_failing_real_route_fails_the_run_and_never_falls_back(
-    monkeypatch: pytest.MonkeyPatch, answers: tuple[Reply | Exception, ...], message: str
+def test_a_failing_real_route_leaves_the_run_for_a_manual_proposal(
+    monkeypatch: pytest.MonkeyPatch, answers: tuple[Reply | Exception, ...]
 ) -> None:
+    """T21 (erratum 134, Plan R ruling 7): the run stays DRAFTING with its stored checkpoint cleared and a templated
+    explanation; a person's proposal moves it on (DEV-025's FAILED_WITH_MANUAL_PATH)."""
     generator, _ = real(*answers)
     log, seen = investigate(monkeypatch, generator)
-    assert ends(seen) == ("FAILED", message)
+    assert ends(seen) == ("DRAFTING", None)
     assert "freeze_proposal" not in log.entries  # R041: no fake draft, no proposal, nothing frozen
-    assert [e["type"].value for e in seen["append_event"]] == ["tool.started", "tool.completed"] * 3
-    assert log.entries[-1] == "release_lease" and log.entries.count("release_model_permit") == 1
+    events = [(e["type"].value, e["payload"].get("message")) for e in seen["append_event"]]
+    assert events[-1] == ("explanation.ready", nodes.MANUAL_PATH) and len(events) == 7  # after the three reads
+    assert log.entries[-3:] == ["clear_checkpoint_id", "COMMIT", "release_lease"]
+    assert log.entries.count("release_model_permit") == 1
 
 
 @pytest.mark.parametrize(
@@ -165,7 +175,7 @@ def test_a_draft_claiming_success_is_only_a_proposal_awaiting_review(monkeypatch
 def test_the_fake_route_writes_its_manifest_without_a_digest(monkeypatch: pytest.MonkeyPatch) -> None:
     inserted: list[Any] = []
 
-    async def insert_run_manifest(_conn: Any, *, tenant_id: Any, manifest: Any) -> None:
+    async def insert_run_manifest(_conn: Any, *, tenant_id: Any, manifest: Any, revision: int) -> None:
         inserted.append(manifest)
 
     log = Log()
@@ -256,7 +266,7 @@ def test_a_budget_spent_before_the_draft_fails_the_run_without_calling_the_model
     deps.generator, chat = real(Reply(GOOD))
     asyncio.run(handlers.handle(deps, dict(JOB), lease))
     assert chat.calls == []  # not a single request to Ollama
-    assert ends(seen) == ("FAILED", handlers.MODEL_UNAVAILABLE)
+    assert ends(seen) == ("DRAFTING", None)  # T21: the run waits for a manual proposal (erratum 134)
     assert "freeze_proposal" not in log.entries
     assert log.entries.count("take_model_permit") == 1 and log.entries.count("release_model_permit") == 1
     assert log.entries[-1] == "release_lease"

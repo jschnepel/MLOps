@@ -7,6 +7,13 @@ interrupted mid-run (SA:214); `resume_input` resumes a run waiting for a clarifi
 (`Command(resume=...)`, SA:213); `execute` resumes the run waiting for its reviewer, or re-runs its execute node after
 a re-queue. The graph's nodes do the work (`ops_worker.graph`); here are only the entry decisions and the failures no
 node can record. A lost lease raises LeaseLost to the caller, which hands the job back (`abandon`).
+
+T21 (Plan R ruling 1): each revision of a run is its own graph thread, `run_id:revision`. The run's revision is read in
+the job's first unit (`persistence.run_revision`); an investigate job names the revision it wakes in its dedup key,
+and a job for an older revision ends without a graph run. `create_revision` clears the stored checkpoint, so a
+revision's QUEUED starts a new graph run while a clarification's QUEUED resumes. The first unit also pins the run's
+workflow version (ruling 18). A run left in DRAFTING by the manual path (erratum 134) waits for a person; no job
+resumes or fails it.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ from ops_core.states import RunState
 from psycopg.pq import TransactionStatus
 
 from ops_worker.deps import Deps
+from ops_worker.drafting import WORKFLOW_VERSION
 from ops_worker.graph import build, nodes
 from ops_worker.graph.nodes import (  # re-exported: the templates the tests and the records name
     ABSTAINED,
@@ -61,16 +69,27 @@ _MID_RUN: Final = (RunState.RETRIEVING, RunState.DRAFTING)
 
 
 async def _drive(
-    deps: Deps, job: dict[str, Any], lease: Lease, graph_input: build.GraphInput, checkpoint_id: str | None
+    deps: Deps,
+    job: dict[str, Any],
+    lease: Lease,
+    graph_input: build.GraphInput,
+    checkpoint_id: str | None,
+    revision: int,
 ) -> None:
-    """One graph run. A failure no node recorded fails a run still RETRIEVING or DRAFTING, so its slot is freed (as
-    Plan P's "drafting failed"); any other failure propagates to `handle`, which releases the lease and re-queues
-    the job."""
-    ctx = Context(deps, job, lease)
+    """One graph run on the revision's thread. A failure no node recorded fails a run still RETRIEVING or DRAFTING, so
+    its slot is freed (as Plan P's "drafting failed"); any other failure propagates to `handle`, which releases the
+    lease and re-queues the job. A graph run that ends with the run still DRAFTING took the manual path: its stored
+    checkpoint is cleared, the state a person's proposal waits for (T21, erratum 134)."""
+    ctx = Context(deps, job, lease, revision)
     try:
-        await build.run_graph(ctx, graph_input, checkpoint_id=checkpoint_id)
+        await build.run_graph(ctx, graph_input, checkpoint_id=checkpoint_id, revision=revision)
     except (LeaseLost, Requeue):
         raise
+    except persistence.RevisionMoved as moved:
+        # T21 (Plan R round 1, I1): a revision committed while this graph run was working. Nothing more is written for
+        # the old thread; the job ends and its final unit releases the lease, and the revision's own job runs its graph.
+        log.info("job %s: run %s was revised; this graph run ends (%s)", job["id"], lease.run_id, moved)
+        return
     except Exception:
         async with nodes.unit(ctx) as conn:
             run = await persistence.run_row(conn, lease.run_id, lock=True)
@@ -79,11 +98,37 @@ async def _drive(
                 raise
             log.exception("job %s: the graph run failed in %s", job["id"], state.value)
             await nodes.fail_from(conn, lease.run_id, state, nodes.WORKFLOW_FAILED)
+        return
+    async with nodes.unit(ctx) as conn:
+        run = await persistence.run_row(conn, lease.run_id, lock=True)
+        if RunState(run["state"]) is RunState.DRAFTING:
+            await persistence.clear_checkpoint_id(conn, lease.run_id)
 
 
-async def _resumable(deps: Deps, job: dict[str, Any], lease: Lease, state: RunState, stored: str | None) -> bool:
+async def _waits_for_person(conn: persistence.Conn, run: dict[str, Any]) -> bool:
+    """A DRAFTING run with no stored checkpoint whose newest explanation is the manual path's (T21, erratum 134)."""
+    if RunState(run["state"]) is not RunState.DRAFTING or run.get("checkpoint_id") is not None:
+        return False
+    explained = await persistence.run_events(conn, run["run_id"], EventType.EXPLANATION_READY)
+    return bool(explained) and explained[-1][1].get("message") == nodes.MANUAL_PATH
+
+
+async def _older_thread(deps: Deps, lease: Lease, stored: str | None, revision: int) -> bool:
+    """True when `stored` is a checkpoint of an earlier revision's thread and not of this one (T21, Plan R round 1,
+    I1): an older graph run stored it before the revision moved the run on, so the revision starts its own thread."""
+    if stored is None or await build.known(deps.saver, build.thread_id(lease.run_id, revision), stored):
+        return False
+    for older in range(revision - 1, 0, -1):
+        if await build.known(deps.saver, build.thread_id(lease.run_id, older), stored):
+            return True
+    return False
+
+
+async def _resumable(
+    deps: Deps, job: dict[str, Any], lease: Lease, state: RunState, stored: str | None, revision: int
+) -> bool:
     """True when the stored checkpoint exists; otherwise the run is failed with a template (T20 review note 2)."""
-    if stored is not None and await build.known(deps.saver, build.thread_id(lease.run_id, 1), stored):
+    if stored is not None and await build.known(deps.saver, build.thread_id(lease.run_id, revision), stored):
         return True
     log.warning("job %s: run %s has no stored checkpoint to resume (%s)", job["id"], lease.run_id, stored)
     async with nodes.unit(Context(deps, job, lease)) as conn:
@@ -92,13 +137,25 @@ async def _resumable(deps: Deps, job: dict[str, Any], lease: Lease, state: RunSt
 
 
 async def _first_unit(deps: Deps, job: dict[str, Any], lease: Lease) -> dict[str, Any]:
-    """The job's first fenced unit: the run row under its lock, and an unresumable interrupted run failed in it."""
+    """The job's first fenced unit: the run row under its lock with its revision, the run's workflow version pinned
+    (ruling 18), and an unresumable interrupted run failed in it; a run waiting for a person is left alone."""
     async with deps.conn.transaction():
         await persistence.set_tenant(deps.conn, job["tenant_id"])  # the worker's own reads are RLS-scoped
         await persistence.fenced(deps.conn, lease)  # run_lease before runs (SA:188, ruling 29)
         run = dict(await persistence.run_row(deps.conn, job["run_id"], lock=True))
+        run["revision"] = await persistence.run_revision(deps.conn, job["run_id"])
+        pinned = await persistence.record_workflow_version(deps.conn, job["run_id"], WORKFLOW_VERSION)
+        if pinned != WORKFLOW_VERSION:  # its freeze refuses this worker's payloads; routing across a bump is T36's
+            log.warning(
+                "job %s: run %s is pinned to workflow %s, this worker runs %s",
+                job["id"],
+                job["run_id"],
+                pinned,
+                WORKFLOW_VERSION,
+            )
         state = RunState(run["state"])
-        if state in _MID_RUN and run.get("checkpoint_id") is None:
+        run["manual"] = await _waits_for_person(deps.conn, run)
+        if state in _MID_RUN and run.get("checkpoint_id") is None and not run["manual"]:
             log.warning("job %s: run was interrupted in %s before a checkpoint was stored; failed", job["id"], state)
             await persistence.transition_run(
                 deps.conn, run_id=run["run_id"], src=state, dst=RunState.FAILED, detail={"message": INTERRUPTED}
@@ -108,25 +165,37 @@ async def _first_unit(deps: Deps, job: dict[str, Any], lease: Lease) -> dict[str
 
 
 async def investigate(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
-    """Start the run's graph, or resume it from its stored checkpoint after an interruption (SA:214)."""
-    await _carry_on(deps, job, lease, await _first_unit(deps, job, lease))
+    """Start the run's graph, or resume it from its stored checkpoint after an interruption (SA:214). The job's key
+    names the revision it wakes (`run_id:revision`, SA:455); a job for an older revision ends here (T21 ruling 1)."""
+    run = await _first_unit(deps, job, lease)
+    woken = int(str(job["dedup_key"]).rpartition(":")[2])
+    if woken != run["revision"]:
+        log.info(
+            "job %s: it wakes revision %s; run %s is at revision %s", job["id"], woken, lease.run_id, run["revision"]
+        )
+        return
+    await _carry_on(deps, job, lease, run)
 
 
 async def _carry_on(deps: Deps, job: dict[str, Any], lease: Lease, run: dict[str, Any]) -> None:
     """A run in QUEUED, RETRIEVING or DRAFTING: a new graph run, or crash recovery from the stored checkpoint."""
-    state, stored = RunState(run["state"]), run.get("checkpoint_id")
-    if state in _MID_RUN or (state is RunState.QUEUED and stored is not None):
+    state, stored, revision = RunState(run["state"]), run.get("checkpoint_id"), int(run["revision"])
+    if run.get("manual"):
+        log.info("job %s: run %s waits for a manual proposal", job["id"], lease.run_id)
+    elif state is RunState.QUEUED and await _older_thread(deps, lease, stored, revision):
+        await _drive(deps, job, lease, initial(lease.run_id), None, revision)
+    elif state in _MID_RUN or (state is RunState.QUEUED and stored is not None):
         # An earlier owner stopped mid-run, or after a clarification moved the run back to QUEUED: resume from the
         # stored checkpoint, never from the thread's newest one (a stray head is ignored, R108). One that is the end of
         # a graph run has nothing to resume: the run starts a new graph run.
-        if await _resumable(deps, job, lease, state, stored):
+        if await _resumable(deps, job, lease, state, stored, revision):
             assert stored is not None  # _resumable found it
-            if await build.ended(Context(deps, job, lease), build.thread_id(lease.run_id, 1), stored):
-                await _drive(deps, job, lease, initial(lease.run_id), None)
+            if await build.ended(Context(deps, job, lease), build.thread_id(lease.run_id, revision), stored):
+                await _drive(deps, job, lease, initial(lease.run_id), None, revision)
             else:
-                await _drive(deps, job, lease, None, stored)
+                await _drive(deps, job, lease, None, stored, revision)
     elif state is RunState.QUEUED:
-        await _drive(deps, job, lease, initial(lease.run_id), None)
+        await _drive(deps, job, lease, initial(lease.run_id), None, revision)
     else:
         log.info("job %s: run already %s", job["id"], state.value)
 
@@ -159,7 +228,7 @@ async def resume_input(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
             question,
         )
         return
-    if not await _resumable(deps, job, lease, state, stored):
+    if not await _resumable(deps, job, lease, state, stored, run["revision"]):
         return
     async with nodes.unit(Context(deps, job, lease), fence=False) as conn:
         received = await persistence.run_events(conn, lease.run_id, EventType.CLARIFICATION_RECEIVED)
@@ -168,7 +237,7 @@ async def resume_input(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
         async with nodes.unit(Context(deps, job, lease)) as conn:
             await nodes.fail_from(conn, lease.run_id, state, nodes.RESUME_REFUSED)
         return
-    await _drive(deps, job, lease, Command(resume=str(reply)), stored)
+    await _drive(deps, job, lease, Command(resume=str(reply)), stored, run["revision"])
 
 
 async def _approval(deps: Deps, job: dict[str, Any], lease: Lease, run: dict[str, Any]) -> UUID | None:
@@ -208,9 +277,9 @@ async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
     if RunState(run["state"]) not in JOB_RULES[JobType.EXECUTE].run_states:
         log.info("execute job %s: run is %s, nothing to dispatch", job["id"], run["state"])
         return True
-    stored = run.get("checkpoint_id")
-    thread = build.thread_id(lease.run_id, 1)
-    ctx = Context(deps, job, lease)
+    stored, revision = run.get("checkpoint_id"), int(run["revision"])
+    thread = build.thread_id(lease.run_id, revision)
+    ctx = Context(deps, job, lease, revision)
     graph_input: build.GraphInput = initial(lease.run_id)
     checkpoint = None
     if stored is not None and await build.known(deps.saver, thread, stored):
@@ -226,7 +295,7 @@ async def execute(deps: Deps, job: dict[str, Any], lease: Lease) -> bool:
         # else the stored checkpoint ended its graph run (a final refusal): a new graph run, whose router reads the
         # run's APPROVED or EXECUTING again, instead of a fork that would run nothing
     try:
-        await _drive(deps, job, lease, graph_input, checkpoint)
+        await _drive(deps, job, lease, graph_input, checkpoint, revision)
     except Requeue:
         await persistence.release_lease(deps.conn, lease, job=job, requeue_seconds=EXECUTE_RETRY_SECONDS)
         return False

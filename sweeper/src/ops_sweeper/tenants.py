@@ -1,7 +1,7 @@
 """The sweeper's tenant iteration (SA:520; Plan I ruling 18; T14 review note 3): for every table but `memberships`
 and `jobs` the sweeper has no cross-tenant policy, so it reads the RLS-free `tenants` table and runs its work in one
-transaction per tenant with that tenant set. The outbox delivery and the wake-up sweep use it now; T21's proposal
-expiry and T22's deadline escalation will.
+transaction per tenant with that tenant set. The outbox delivery, the wake-up sweep and the proposal expiry (T21)
+use it now; T22's deadline escalation will.
 """
 
 from __future__ import annotations

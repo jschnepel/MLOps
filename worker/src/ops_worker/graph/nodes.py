@@ -22,7 +22,7 @@ import logging
 import random
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Final
 from uuid import UUID, uuid4
 
@@ -72,6 +72,9 @@ ANSWERED: Final = "answered from the retrieved evidence; no incident was propose
 RESUME_REFUSED: Final = "the clarification reply is not the latest answer to the run's latest question"
 CHECKPOINT_MISSING: Final = "the stored checkpoint is missing; the run was not resumed"
 WORKFLOW_FAILED: Final = "the workflow failed"
+# T21 (erratum 134): the model could not draft, so the run waits in DRAFTING for a person's proposal (ruling 7).
+MANUAL_PATH: Final = "The model is unavailable; a requester or reviewer may submit a manual proposal."
+OBSERVED: Final = frozenset({"normal", "warning"})  # an `unavailable` status observes nothing (evidence.OBSERVED)
 
 _S = RunState
 # The worker's only ways to FAILED from a state that waits or works (transition_run, SA:451): AWAITING_INPUT may only
@@ -99,20 +102,33 @@ def _run_id(state: RunGraphState) -> UUID:
 
 
 @asynccontextmanager
-async def unit(ctx: Context, *, fence: bool = True) -> AsyncIterator[persistence.Conn]:
-    """One transaction on the loop connection under the job's tenant; a writing unit opens with the fence (SA:176)."""
+async def unit(ctx: Context, *, fence: bool = True, asset: str | None = None) -> AsyncIterator[persistence.Conn]:
+    """One transaction on the loop connection under the job's tenant; a writing unit opens with the fence (SA:176).
+    With `asset`, the asset guard's advisory lock comes first, before the fence (SA:189, T21)."""
     conn = ctx.deps.conn
     async with conn.transaction():
         await persistence.set_tenant(conn, ctx.job["tenant_id"])  # the worker's reads and inserts are RLS-scoped
+        if asset is not None:
+            await persistence.lock_asset(conn, ctx.job["tenant_id"], asset)
         if fence:
             await persistence.fenced(conn, ctx.lease)  # run_lease before runs (SA:188)
         yield conn
 
 
 async def facts(ctx: Context, run_id: UUID) -> dict[str, Any]:
-    """The router's authoritative dimensions, reread (SA:215)."""
+    """The router's authoritative dimensions, reread (SA:215). A run revised since this graph run began belongs to
+    another thread: the graph run ends here (T21, Plan R round 1, I1), so an old job that rereads QUEUED never retrieves
+    or freezes on the old thread.
+
+    Raises:
+        RevisionMoved: the run's current revision is not the one this graph run serves.
+    """
     async with unit(ctx, fence=False) as conn:
         found = await persistence.graph_facts(conn, run_id)
+    if found.revision != ctx.revision:
+        raise persistence.RevisionMoved(
+            f"the run is at revision {found.revision}, this graph run serves {ctx.revision}"
+        )
     return {
         "run_state": found.state.value,
         "intent": found.intent.value,
@@ -178,7 +194,9 @@ async def route_request(state: RunGraphState, runtime: Runtime[Context]) -> dict
     ctx = runtime.context
     ctx.trace.append("route_request")
     update: dict[str, Any] = await facts(ctx, _run_id(state))
-    if state["draft_kind"] != DraftKind.NONE.value and _held(ctx, state) is None:
+    # MANUAL holds nothing: it is the worker's verdict that no draft came (T21), and it ends the graph run.
+    unheld = state["draft_kind"] not in (DraftKind.NONE.value, DraftKind.MANUAL.value)
+    if unheld and _held(ctx, state) is None:
         update |= LOST
     if state["evidence"] == Evidence.SUFFICIENT.value and ctx.held.bundle is None:
         update["evidence"] = Evidence.UNKNOWN.value
@@ -283,14 +301,20 @@ async def retrieve_evidence(state: RunGraphState, runtime: Runtime[Context]) -> 
     if not verdict:
         return {"run_state": current.value, "context_resolved": True, "evidence": Evidence.INSUFFICIENT.value}
     ctx.held.bundle = Bundle(text, procedures, seen, manifest)
-    if current is RunState.RETRIEVING:
-        async with unit(ctx) as conn:
+    async with unit(ctx) as conn:
+        if current is RunState.RETRIEVING:
             await persistence.transition_run(conn, run_id=run["run_id"], src=current, dst=RunState.DRAFTING)
             # Written before the model is called, so a run whose draft fails still records the route, digest, prompt
-            # and corpus it used (R130); one immutable row per run, so a run retrieving again after a clarification
-            # keeps the one it has (erratum 125). A run resumed in DRAFTING never gets here.
-            if not await persistence.run_manifest_exists(conn, run["run_id"]):
-                await persistence.insert_run_manifest(conn, tenant_id=run["tenant_id"], manifest=manifest)
+            # and corpus it used (R130); one immutable row per revision, so a revision retrieving again after a
+            # clarification keeps the one it has (erratum 125) and a new revision records its own (T21).
+            if not await persistence.run_manifest_exists(conn, run["run_id"], ctx.revision):
+                await persistence.insert_run_manifest(
+                    conn, tenant_id=run["tenant_id"], manifest=manifest, revision=ctx.revision
+                )
+        # R116 (T21 ruling 9): the status observation the grant checks; sufficient means it is `normal` or `warning`.
+        await persistence.record_asset_observation(
+            conn, run["run_id"], datetime.fromisoformat(status["data"]["observed_at"])
+        )
     return {"run_state": RunState.DRAFTING.value, "context_resolved": True, "evidence": Evidence.SUFFICIENT.value}
 
 
@@ -325,11 +349,11 @@ async def draft_with_langchain(state: RunGraphState, runtime: Runtime[Context]) 
         raise  # the job is handed back; its next owner resumes the run from the stored checkpoint
     except ModelUnavailable as exc:
         log.warning("job %s: %s", ctx.job["id"], exc)
-        return await fail(ctx, RunState.DRAFTING, RunState.FAILED, MODEL_UNAVAILABLE)
+        return await manual_path(ctx, _run_id(state), Intent(run["intent"]), MODEL_UNAVAILABLE)
     except ModelOutputInvalid as exc:
         # Rule names only: the invalid text is never logged or stored (SA:496).
         log.warning("job %s: draft invalid after one repair (%s)", ctx.job["id"], exc)
-        return await fail(ctx, RunState.DRAFTING, RunState.FAILED, MODEL_INVALID)
+        return await manual_path(ctx, _run_id(state), Intent(run["intent"]), MODEL_INVALID)
     except Exception:
         log.exception("job %s: drafting failed", ctx.job["id"])
         return await fail(ctx, RunState.DRAFTING, RunState.FAILED, DRAFTING_FAILED)
@@ -337,6 +361,24 @@ async def draft_with_langchain(state: RunGraphState, runtime: Runtime[Context]) 
     ctx.held.draft = held
     kind = DraftKind.QUESTION if draft.clarification_requested else DraftKind(draft.kind)
     return {"draft_id": str(held.draft_id), "draft_kind": kind.value}
+
+
+async def manual_path(ctx: Context, run_id: UUID, intent: Intent, failure: str) -> dict[str, Any]:
+    """T21 (erratum 134, ruling 7): no validated draft came, so an investigate run stays DRAFTING for a person's
+    proposal. The templated `explanation.ready` says so (DEV-025's FAILED_WITH_MANUAL_PATH); the graph run then ends
+    (the `manual` row), and the handler clears the stored checkpoint, which is what `create_manual_proposal` waits
+    for. Revision 0016 refuses a manual proposal on any other intent (Plan R round 1, I2), so an answer_only run ends
+    FAILED with `failure` as before and takes no manual path."""
+    if intent is not Intent.INVESTIGATE:
+        return await fail(ctx, RunState.DRAFTING, RunState.FAILED, failure)
+    async with unit(ctx) as conn:
+        run = dict(await persistence.run_row(conn, run_id, lock=True))
+        if RunState(run["state"]) is not RunState.DRAFTING:
+            return {"run_state": run["state"]}  # cancelled meanwhile
+        await persistence.append_event(
+            conn, run_id=run_id, type=EventType.EXPLANATION_READY, payload={"message": MANUAL_PATH}
+        )
+    return {"draft_kind": DraftKind.MANUAL.value}
 
 
 def _held(ctx: Context, state: RunGraphState) -> HeldDraft | None:
@@ -354,7 +396,9 @@ async def validate_and_freeze(state: RunGraphState, runtime: Runtime[Context]) -
     if held is None or bundle is None:
         return dict(LOST)
     try:
-        async with unit(ctx) as conn:
+        async with unit(ctx, fence=False) as conn:  # the run's asset is fixed (SA:154): a plain read names the lock
+            asset = str((await persistence.run_row(conn, _run_id(state)))["asset_id"])
+        async with unit(ctx, asset=asset) as conn:
             run = dict(await persistence.run_row(conn, _run_id(state), lock=True))
             if RunState(run["state"]) is not RunState.DRAFTING:
                 return {"run_state": run["state"]}
@@ -363,13 +407,14 @@ async def validate_and_freeze(state: RunGraphState, runtime: Runtime[Context]) -
                 tenant_id=run["tenant_id"],
                 run_id=run["run_id"],
                 proposal_id=uuid4(),
-                revision=1,  # TODO(T21): the revision a re-entered run freezes (Plan Q ruling 13)
+                revision=ctx.revision,  # T21 (ruling 1): the revision this graph thread serves
                 asset_id=run["asset_id"],
                 start_at=run["start_at"],
                 end_at=run["end_at"],
                 draft=held.draft,
                 evidence=bundle.procedures,
-                now=datetime.now(UTC).replace(microsecond=0),
+                # Ruling 5: the expiry counts from the application clock, read in this unit (the freeze checks it).
+                now=(await persistence.current_time(conn)).replace(microsecond=0),
                 supersedes_run_id=run["supersedes_run_id"],
             )
             await insert_draft(conn, run, held, frozen.sha256)  # draft_sha256 is what freeze_proposal recomputes
@@ -540,6 +585,19 @@ async def await_independent_decision(state: RunGraphState, runtime: Runtime[Cont
     return await facts(ctx, run_id)
 
 
+async def observe_asset(ctx: Context, handle: str, asset_id: str) -> datetime | None:
+    """The asset status read again just before the grant (T21 ruling 9, erratum 137), so a normal approval window
+    does not leave the grant a stale observation (R116). Its instant when it observed the asset (`normal` or
+    `warning`); None when the read failed or observed nothing, and the grant then judges the observation it has."""
+    try:
+        doc = await read(ctx, handle, Tool.GET_ASSET_STATUS, {"asset_id": asset_id}, [1 + READ_RETRIES])
+        data = doc["data"]
+        return datetime.fromisoformat(data["observed_at"]) if data["state"] in OBSERVED else None
+    except (McpCallFailed, KeyError, TypeError, ValueError) as exc:
+        log.warning("job %s: the asset status was not read again before the grant (%s)", ctx.job["id"], exc)
+        return None
+
+
 def is_deferred(doc: dict[str, Any]) -> bool:
     """An `error` envelope whose code is GRANT_DEFERRED: the gate found the membership sync stale (T11), so the job
     is retried rather than closed."""
@@ -574,6 +632,15 @@ async def execute_approved_proposal(state: RunGraphState, runtime: Runtime[Conte
         run = dict(await persistence.run_row(conn, _run_id(state), lock=True))
         if RunState(run["state"]) not in (RunState.APPROVED, RunState.EXECUTING):
             return {"run_state": run["state"]}
+        reader = await persistence.mint_handle(
+            conn, run_id=run["run_id"], job_id=job["id"], server=Server.READ, azp=deps.workload_azp, fence=lease.fence
+        )
+    observed = (
+        await observe_asset(ctx, reader, run["asset_id"]) if RunState(run["state"]) is RunState.APPROVED else None
+    )
+    async with unit(ctx) as conn:
+        if observed is not None:  # R116 (ruling 9, erratum 137): the grant checks this observation's age
+            await persistence.record_asset_observation(conn, run["run_id"], observed)
         handle = await persistence.mint_handle(
             conn, run_id=run["run_id"], job_id=job["id"], server=Server.WRITE, azp=deps.workload_azp, fence=lease.fence
         )
@@ -596,6 +663,9 @@ async def execute_approved_proposal(state: RunGraphState, runtime: Runtime[Conte
         log.warning("execute job %s: grant deferred (stale membership sync); re-queued", job["id"])
         raise Requeue("grant deferred")
     data = doc.get("data") or {}
+    reason = (doc.get("error") or {}).get("reason")
+    if reason is not None:  # T21 (ruling 11): the gate committed BLOCKED_REVIEW; the router reads it and ends
+        log.info("execute job %s: the grant was refused (%s); the run is blocked for review", job["id"], reason)
     log.info("execute job %s: %s %s", job["id"], doc.get("status"), data.get("status"))
     if doc.get("status") == "outcome" and data.get("status") == "UNKNOWN":  # an `error` envelope is never UNKNOWN
         await mark_unknown(ctx)

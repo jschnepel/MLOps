@@ -115,7 +115,8 @@ def build_graph(
 
 
 def thread_id(run_id: object, revision: int) -> str:
-    """One LangGraph thread per run and revision (Plan Q ruling 13): a revision starts a thread of its own (T21)."""
+    """One LangGraph thread per run and revision (Plan Q ruling 13): a revision starts a thread of its own (T21,
+    Plan R ruling 1)."""
     return f"{run_id}:{revision}"
 
 
@@ -170,7 +171,7 @@ async def ended(ctx: Context, thread: str, checkpoint_id: str) -> bool:
     return not snapshot.next
 
 
-async def run_graph(ctx: Context, graph_input: GraphInput, *, checkpoint_id: str | None, revision: int = 1) -> None:
+async def run_graph(ctx: Context, graph_input: GraphInput, *, checkpoint_id: str | None, revision: int) -> None:
     """One graph run under the job's lease: input for a new graph run, `Command(resume=...)` for a human resume, or
     None with the stored checkpoint for crash recovery, which LangGraph treats as time travel and forks (SA:214)."""
     thread = thread_id(ctx.lease.run_id, revision)
@@ -188,7 +189,7 @@ async def run_graph(ctx: Context, graph_input: GraphInput, *, checkpoint_id: str
             continue  # a resume announces the checkpoint it starts from
         await confirm(ctx.deps.saver, thread, current)
         async with nodes.unit(ctx) as conn:
-            await persistence.store_checkpoint_id(conn, ctx.lease.run_id, current)
+            await persistence.store_checkpoint_id(conn, ctx.lease.run_id, current, revision=ctx.revision)
         stored = current
 
 

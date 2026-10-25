@@ -1128,15 +1128,16 @@ async def release_model_permit(conn: Conn, *, slot: int, holder: str) -> None:
     )
 
 
-async def insert_run_manifest(conn: Conn, *, tenant_id: UUID, manifest: RunManifest) -> None:
-    """The run's manifest (AM-80; revision 0014), as the worker under its own grant (INSERT, SELECT). The caller's
-    unit sets the tenant and holds the fence; a second manifest for the run fails on the primary key, so one run is
-    recorded once."""
+async def insert_run_manifest(conn: Conn, *, tenant_id: UUID, manifest: RunManifest, revision: int) -> None:
+    """The run's manifest for one revision (AM-80; revision 0014, keyed per revision since 0016), as the worker under
+    its own grant (INSERT, SELECT). The caller's unit sets the tenant and holds the fence; a second manifest for the
+    same revision fails on the primary key, so each revision is recorded once (erratum 125 closes, Plan R ruling 1)."""
     await conn.execute(
-        "INSERT INTO app.run_manifests (run_id, tenant_id, model_route, model_digest, prompt_version, corpus_version,"
-        " retrieval_mode) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        "INSERT INTO app.run_manifests (run_id, revision, tenant_id, model_route, model_digest, prompt_version,"
+        " corpus_version, retrieval_mode) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
         (
             manifest.run_id,
+            revision,
             tenant_id,
             manifest.model_route.value,
             manifest.model_digest,
@@ -1147,10 +1148,10 @@ async def insert_run_manifest(conn: Conn, *, tenant_id: UUID, manifest: RunManif
     )
 
 
-async def run_manifest_exists(conn: Conn, run_id: UUID) -> bool:
-    """True when the run has its manifest (T20: a run that retrieves again after a clarification keeps the one it
-    has, Plan Q ruling 13 and erratum 125; whether a revision records its own is T21's)."""
-    cur = await conn.execute("SELECT 1 FROM app.run_manifests WHERE run_id = %s", (run_id,))
+async def run_manifest_exists(conn: Conn, run_id: UUID, revision: int) -> bool:
+    """True when the run's revision has its manifest: a revision that retrieves again after a clarification keeps the
+    one it has (erratum 125), and a new revision records its own (T21, Plan R ruling 1)."""
+    cur = await conn.execute("SELECT 1 FROM app.run_manifests WHERE run_id = %s AND revision = %s", (run_id, revision))
     return await cur.fetchone() is not None
 
 
@@ -1352,18 +1353,30 @@ class GraphFacts:
     decision_present: bool
     attempt_state: AttemptState | None
     checkpoint_id: str | None
+    revision: int = 1  # T21 (Plan R round 1, I1): the run's current revision, which a graph run's thread must match
+
+
+class RevisionMoved(PersistenceError):
+    """The run was revised after this graph run began (T21, Plan R round 1, I1): its thread is no longer the run's, so
+    it stores no checkpoint id and routes no further; the handler ends the graph run quietly."""
+
+
+REVISION_OF_RUN = (
+    "(SELECT 1 + count(*) FROM app.events e WHERE e.run_id = r.run_id AND e.type = 'proposal.revised')::integer"
+)
 
 
 async def graph_facts(conn: Conn, run_id: UUID) -> GraphFacts:
-    """The run's state, intent, whether its active proposal has a decision, its latest action attempt state and its
-    stored checkpoint id, read without a lock under the caller's tenant unit (the worker's SELECT grants, AM-20.2). The
-    attempt state is the newest grant's latest row, so a run that ever holds a second grant reads the second's attempt.
+    """The run's state, intent, whether its active proposal has a decision, its latest action attempt state, its
+    stored checkpoint id and its current revision, read without a lock under the caller's tenant unit (the worker's
+    SELECT grants, AM-20.2). The attempt state is the newest grant's latest row, so a run that ever holds a second
+    grant reads the second's attempt.
 
     Raises:
         NotFound: no such run for the unit's tenant.
     """
     cur = await conn.execute(
-        "SELECT r.state, r.intent, r.checkpoint_id,"
+        f"SELECT r.state, r.intent, r.checkpoint_id, {REVISION_OF_RUN} AS revision,"
         " EXISTS (SELECT 1 FROM app.decisions d WHERE d.proposal_id = r.active_proposal_id) AS decided,"
         " (SELECT s.state FROM app.action_attempt_state s JOIN app.execution_grant g ON g.action_id = s.action_id"
         "  WHERE g.run_id = r.run_id"
@@ -1381,19 +1394,27 @@ async def graph_facts(conn: Conn, run_id: UUID) -> GraphFacts:
         bool(row["decided"]),
         None if attempt is None else AttemptState(attempt),
         row["checkpoint_id"],
+        int(row["revision"]),
     )
 
 
-async def store_checkpoint_id(conn: Conn, run_id: UUID, checkpoint_id: str) -> None:
+async def store_checkpoint_id(conn: Conn, run_id: UUID, checkpoint_id: str, *, revision: int) -> None:
     """`runs.checkpoint_id` := the checkpoint LangGraph confirmed (SA:211), under the worker's column grant (AM-20.2).
-    The caller's unit sets the tenant and opens with `fenced`, so only the current lease holder can move it.
+    The caller's unit sets the tenant and opens with `fenced`, so only the current lease holder can move it. The run
+    row is locked first and its revision read after the lock (T21, Plan R round 1, I1): `create_revision` holds no
+    lease, so a graph run of an older revision still holds a valid fence and must not overwrite the cleared column.
 
     Raises:
         NotFound: no such run for the unit's tenant.
+        RevisionMoved: the run is at another revision than the graph run's.
     """
-    cur = await conn.execute("UPDATE app.runs SET checkpoint_id = %s WHERE run_id = %s", (checkpoint_id, run_id))
-    if cur.rowcount != 1:
+    cur = await conn.execute("SELECT 1 FROM app.runs WHERE run_id = %s FOR UPDATE", (run_id,))
+    if await cur.fetchone() is None:
         raise NotFound("run not found")
+    current = await run_revision(conn, run_id)  # a statement after the lock: it sees a revision committed before it
+    if current != revision:
+        raise RevisionMoved(f"the run is at revision {current}, this graph run serves {revision}")
+    await conn.execute("UPDATE app.runs SET checkpoint_id = %s WHERE run_id = %s", (checkpoint_id, run_id))
 
 
 async def run_events(conn: Conn, run_id: UUID, event_type: EventType) -> list[tuple[UUID, dict[str, Any]]]:

@@ -50,7 +50,7 @@ RUN = {
     "supersedes_run_id": None,
     "active_proposal_id": uuid4(),
 }
-JOB = {"id": uuid4(), "run_id": RUN_ID, "tenant_id": TENANT, "type": "investigate"}
+JOB = {"id": uuid4(), "run_id": RUN_ID, "tenant_id": TENANT, "type": "investigate", "dedup_key": f"{RUN_ID}:1"}
 REAL_RELEASE = persistence.release_lease  # `patch` replaces it; the release tests run the real unit on fakes
 WRITES = {
     "transition_run",
@@ -60,6 +60,8 @@ WRITES = {
     "insert",
     "mark_unknown",
     "store_checkpoint_id",
+    "record_asset_observation",  # T21: the worker's column UPDATEs on its run row
+    "clear_checkpoint_id",
 }
 SEARCH = {
     "status": "ok",
@@ -213,19 +215,42 @@ def patch(
         state = RunState(current["state"])
         decided = state in (RunState.APPROVED, RunState.EXECUTING, RunState.OUTCOME_UNKNOWN)
         attempt = AttemptState.SENT if state is RunState.EXECUTING else None
-        return persistence.GraphFacts(state, Intent(current["intent"]), decided, attempt, current.get("checkpoint_id"))
+        return persistence.GraphFacts(
+            state, Intent(current["intent"]), decided, attempt, current.get("checkpoint_id"), current.get("revision", 1)
+        )
 
-    async def insert_run_manifest(_conn: Any, **_: Any) -> None:
-        log.entries.append("insert")  # as the real one's INSERT is logged by FakeConn
-        current["manifest"] = True
-
-    async def run_manifest_exists(_conn: Any, _run_id: Any) -> bool:
+    async def run_manifest_exists(_conn: Any, _run_id: Any, revision: int) -> bool:
         log.entries.append("run_manifest_exists")
-        return bool(current.get("manifest"))
+        return current.get("manifest") == revision  # T21: one manifest per revision
 
-    async def store_checkpoint_id(_conn: Any, _run_id: Any, checkpoint_id: str) -> None:
+    async def insert_revision_manifest(_conn: Any, *, revision: int, **_: Any) -> None:
+        log.entries.append("insert")
+        current["manifest"] = revision
+
+    async def store_checkpoint_id(_conn: Any, _run_id: Any, checkpoint_id: str, *, revision: int) -> None:
         log.entries.append("store_checkpoint_id")
+        if revision != current.get("revision", 1):  # T21 (Plan R round 1, I1): the definer-side rule, on the fake
+            raise persistence.RevisionMoved(f"revision {revision}")
         current["checkpoint_id"] = checkpoint_id
+
+    async def clear_checkpoint_id(_conn: Any, _run_id: Any) -> None:
+        log.entries.append("clear_checkpoint_id")
+        current["checkpoint_id"] = None
+
+    async def run_revision(_conn: Any, _run_id: Any) -> int:
+        log.entries.append("run_revision")
+        return int(current.get("revision", 1))  # T21: what create_revision journals, kept on the fake row
+
+    async def record_workflow_version(_conn: Any, _run_id: Any, version: str) -> str:
+        current.setdefault("workflow_version", version)
+        return str(current["workflow_version"])
+
+    async def record_asset_observation(_conn: Any, _run_id: Any, observed_at: Any) -> None:
+        log.entries.append("record_asset_observation")
+        current["asset_observed_at"] = observed_at
+
+    async def current_time(_conn: Any) -> datetime:
+        return NOW
 
     def recorder(name: str, result: Any = None) -> Callable[..., Any]:
         async def call(*_: Any, **__: Any) -> Any:
@@ -239,7 +264,13 @@ def patch(
         "run_row": run_row,
         "graph_facts": graph_facts,
         "store_checkpoint_id": store_checkpoint_id,
-        "insert_run_manifest": insert_run_manifest,
+        "clear_checkpoint_id": clear_checkpoint_id,
+        "run_revision": run_revision,
+        "record_workflow_version": record_workflow_version,
+        "record_asset_observation": record_asset_observation,
+        "current_time": current_time,
+        "lock_asset": recorder("lock_asset"),
+        "insert_run_manifest": insert_revision_manifest,
         "run_manifest_exists": run_manifest_exists,
         "run_events": run_events,
         "message_text": message_text,
@@ -290,7 +321,9 @@ def test_every_unit_that_writes_opens_with_the_fence(monkeypatch: pytest.MonkeyP
     )  # the permit is held around the draft call only (ruling 12)
     for unit in units:
         if WRITES & set(unit):
-            assert next(entry for entry in unit if entry != "set_tenant") == "fenced", unit  # set_config is no lock
+            # set_config is no lock; T21: the freeze unit's asset guard lock precedes the fence (SA:189).
+            assert next(entry for entry in unit if entry not in ("set_tenant", "lock_asset")) == "fenced", unit
+    assert ["set_tenant", "lock_asset", "fenced", "run_row"] == next(u for u in units if "freeze_proposal" in u)[:4]
     assert log.entries[-1] == "release_lease" and log.entries.count("mcp:search_procedures") == 1
 
 
@@ -389,7 +422,8 @@ def test_an_interrupted_run_is_failed_not_left_active(monkeypatch: pytest.Monkey
     deps, lease = make(log)
     asyncio.run(handlers.handle(deps, dict(JOB), lease))
     assert moves == [(state, "FAILED", {"message": "interrupted; the run was not resumed"})]
-    assert log.units()[0] == ["set_tenant", "fenced", "run_row", "transition_run"]
+    first = log.units()[0]  # T21: the unit also reads the revision (and, for DRAFTING, the manual-path explanation)
+    assert first[:3] == ["set_tenant", "fenced", "run_row"] and first[-1] == "transition_run"
     assert log.entries[-1] == "release_lease" and "mcp:search_procedures" not in log.entries
 
 

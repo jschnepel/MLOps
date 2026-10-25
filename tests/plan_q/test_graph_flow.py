@@ -467,6 +467,8 @@ class Answering:
 
     async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self.log.entries.append(f"mcp:{tool}")
+        if tool == "get_asset_status":  # T21: the status read again before the grant (erratum 137)
+            return STATUS
         return self.docs.pop(0)
 
 

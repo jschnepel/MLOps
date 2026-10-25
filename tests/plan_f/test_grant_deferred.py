@@ -15,6 +15,7 @@ from ops_core.lease import Lease
 from ops_core.states import Intent, RunState
 from ops_mcp_write.server import refusal_error
 from ops_worker import handlers
+from ops_worker.graph import nodes
 from ops_worker.handlers import EXECUTE_RETRY_SECONDS, is_deferred
 
 
@@ -64,7 +65,16 @@ async def test_execute_requeues_a_deferred_grant_and_releases_its_lease(monkeypa
     lease = Lease(run_id=run_id, owner="worker:test", fence=2, lease_seconds=30, started=time.monotonic())
 
     async def run_row(_conn: Any, rid: UUID, *, lock: bool = False) -> dict[str, Any]:
-        return {"run_id": rid, "state": RunState.APPROVED.value, "active_proposal_id": uuid4()}
+        return {"run_id": rid, "state": RunState.APPROVED.value, "active_proposal_id": uuid4(), "asset_id": "A17"}
+
+    async def run_revision(_conn: Any, _rid: UUID) -> int:
+        return 1
+
+    async def record_workflow_version(_conn: Any, _rid: UUID, version: str) -> str:
+        return version
+
+    async def observe_nothing(*_: Any) -> None:
+        return None  # T21: the status read again before the grant is not this test's subject
 
     async def mint_handle(_conn: Any, **kwargs: Any) -> str:
         assert kwargs["fence"] == 2  # the handle carries the lease's fence
@@ -87,7 +97,7 @@ async def test_execute_requeues_a_deferred_grant_and_releases_its_lease(monkeypa
     async def graph_facts(_conn: Any, _rid: UUID) -> persistence.GraphFacts:  # T20: the graph's router reads these
         return persistence.GraphFacts(RunState.APPROVED, Intent.INVESTIGATE, True, None, None)
 
-    async def store_checkpoint_id(_conn: Any, _rid: UUID, _checkpoint_id: str) -> None:
+    async def store_checkpoint_id(_conn: Any, _rid: UUID, _checkpoint_id: str, *, revision: int) -> None:
         return None
 
     for name, fn in {
@@ -99,8 +109,11 @@ async def test_execute_requeues_a_deferred_grant_and_releases_its_lease(monkeypa
         "mark_unknown": mark_unknown,
         "graph_facts": graph_facts,
         "store_checkpoint_id": store_checkpoint_id,
+        "run_revision": run_revision,
+        "record_workflow_version": record_workflow_version,
     }.items():
         monkeypatch.setattr(persistence, name, fn)
+    monkeypatch.setattr(nodes, "observe_asset", observe_nothing)
     conn: Any = FakeConn()
     mcp = DeferringMcp()
     no_generator: Any = None  # the execute path never drafts

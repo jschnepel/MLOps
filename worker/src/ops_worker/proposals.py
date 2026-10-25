@@ -18,7 +18,8 @@ from ops_core.contracts import ModelDraft, ProposalPayload, SourceSnapshot
 
 from ops_worker.drafting import PROMPT_VERSION, WORKFLOW_VERSION, EvidenceItem
 
-EXPIRY = timedelta(minutes=15)  # BUILD_SPEC §12 default; enforced by T21
+# BUILD_SPEC §12 default, counted from the application clock; freeze_proposal and the grant enforce it (T21).
+EXPIRY = timedelta(minutes=15)
 
 
 @dataclass(frozen=True)

@@ -13,18 +13,19 @@ never a new one inserted (erratum 62). A run whose cancellation was requested is
 `max_attempts` times is not re-armed again; the sweep logs it on every tick instead (operator visibility through
 logs; metrics are T28's).
 
-That predicate also matches a run the execute handler left APPROVED on purpose: a grant refusal it takes as final
-(an inactive membership, a missing approval) finishes the job without moving the run, so the sweep re-dispatches it,
-at most until the job has been claimed `max_attempts` times. No grant can follow a refusal that stays a refusal; a
-refusal that clears within those minutes (a reviewer reactivated by the membership sync) is executed. Moving such a
-run out of APPROVED (BLOCKED_REVIEW, AM-10) is T21's (debt list; round 1, I3).
+Since T21 a refused grant of a run's review (expiry, revoked authority, stale evidence, the asset guard) moves the run
+to BLOCKED_REVIEW in the gate's own transaction (AM-10 SA:140; Plan R rulings 9 and 11), so the APPROVED pair re-arms
+a lost decision wake-up (R023) and nothing it must not: a deferred grant re-queues its own job, and only the binding
+refusals that leave a run APPROVED (a missing approval, a hash mismatch) are re-dispatched, at most until the job has
+been claimed `max_attempts` times (erratum 63, resolved this way provisionally).
 
 It is the sweeper's routine with direct grants, separate from the lease reclaim (erratum 63, extending erratum 49):
 the reclaim hands back claimed jobs of dead leases, this reopens done jobs of stuck runs. It reads runs per tenant
 (SA:520: `runs` has no sweeper policy) without a lock and re-arms each job in a unit of its own. The re-arm's UPDATE
 repeats every condition of the scan on the row it takes, with the clock read there (round 1, I7): the job is still
 done, done longer ago than the grace on `app.current_time()`, below the cap, still the newest job of its type for the
-run, and the run still waits in the job's state without a cancellation. The purge deletes finished maintenance rows
+run (for an investigate job: the job of the run's current revision, Plan R round 1, M1), and the run still waits in
+the job's state without a cancellation. The purge deletes finished maintenance rows
 past their retention; a run's jobs are never deleted, because their dedup keys are what makes a wake-up happen once
 (a restrictive policy enforces it, erratum 61).
 """
@@ -59,6 +60,13 @@ def job_type_case(pairs: Sequence[tuple[str, str]]) -> str:
     return "CASE r.state " + " ".join(f"WHEN '{state}' THEN '{job_type}'" for state, job_type in pairs) + " END"
 
 
+# T21 (Plan R round 1, M1): a run's investigate wake-up is the job whose key names its current revision
+# (`run_id:N`, SA:455). An older revision's job, which may finish after the current one, ends without a graph run, so
+# re-arming it would leave the run QUEUED until the cap.
+CURRENT_KEY = (
+    "r.run_id::text || ':' || (1 + (SELECT count(*) FROM app.events e WHERE e.run_id = r.run_id"
+    " AND e.type = 'proposal.revised'))::text"
+)
 # Each run's newest job of its state's type; an unfinished one sorts first (NULLS FIRST), so a run whose wake-up is
 # still pending is never picked.
 LOST = (
@@ -66,6 +74,7 @@ LOST = (
     " JOIN LATERAL (SELECT jj.id, jj.type, jj.attempts, jj.done_at FROM app.jobs jj"
     " WHERE jj.run_id = r.run_id"
     f" AND jj.type = {job_type_case(WAKEUPS)}"
+    f" AND (jj.type <> 'investigate' OR jj.dedup_key = {CURRENT_KEY})"
     " ORDER BY jj.done_at DESC NULLS FIRST, jj.created_at DESC LIMIT 1) j ON true"
     # Only waiting runs reach the lateral (round 1, M7), and never one whose cancellation was requested (I3).
     f" WHERE r.state IN ({STATES}) AND NOT r.cancel_requested AND (r.state, j.type) IN ({PAIRS})"
@@ -79,8 +88,9 @@ REARM = (
     " WHERE j.id = %s AND j.done_at IS NOT NULL AND j.attempts < %s"
     " AND j.done_at <= app.current_time() - make_interval(secs => %s)"
     " AND NOT EXISTS (SELECT 1 FROM app.jobs o WHERE o.run_id = j.run_id AND o.type = j.type AND o.id <> j.id"
-    " AND (o.done_at IS NULL OR o.done_at > j.done_at))"
-    " AND EXISTS (SELECT 1 FROM app.runs r WHERE r.run_id = j.run_id AND r.state = %s AND NOT r.cancel_requested)"
+    " AND j.type <> 'investigate' AND (o.done_at IS NULL OR o.done_at > j.done_at))"
+    " AND EXISTS (SELECT 1 FROM app.runs r WHERE r.run_id = j.run_id AND r.state = %s AND NOT r.cancel_requested"
+    f" AND (j.type <> 'investigate' OR j.dedup_key = {CURRENT_KEY}))"
 )
 PURGE = (
     "DELETE FROM app.jobs WHERE run_id IS NULL AND done_at IS NOT NULL"

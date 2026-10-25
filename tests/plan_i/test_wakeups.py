@@ -66,7 +66,7 @@ def lost(job_type: str, attempts: int) -> dict[str, Any]:
 
 
 def test_the_sweep_looks_only_where_a_handler_exists() -> None:
-    assert wakeups.WAKEUPS == (("QUEUED", "investigate"), ("APPROVED", "execute"))  # ruling 7: T20, T21, T22 add
+    assert wakeups.WAKEUPS == (("QUEUED", "investigate"), ("APPROVED", "execute"))  # ruling 7; T22 adds the rest
 
 
 def test_the_job_type_case_covers_every_wakeup_pair() -> None:
