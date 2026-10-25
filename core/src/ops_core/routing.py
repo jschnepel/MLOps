@@ -368,6 +368,9 @@ class DraftKind(StrEnum):
     ANSWER = "answer"
     ABSTAIN = "abstain"
     QUESTION = "question"
+    # T21 (erratum 134): no validated draft came (the model was unavailable, or its draft stayed invalid after the
+    # repair); the run waits in DRAFTING for a person's proposal. The worker's verdict, never a model's kind.
+    MANUAL = "manual"
 
 
 @dataclass(frozen=True)
@@ -436,6 +439,8 @@ GRAPH_ROUTES: Final[tuple[GraphRule, ...]] = (
         draft_kind=DraftKind.PROPOSAL,
     ),
     GraphRule("answer", frozenset({_RS.DRAFTING}), GraphRoute.ANSWER_ONLY, draft_kind=DraftKind.ANSWER),
+    # T21 (erratum 134): the graph run ends with the run in DRAFTING; a person's proposal moves it on (ruling 7).
+    GraphRule("manual", frozenset({_RS.DRAFTING}), GraphRoute.PUBLISH, draft_kind=DraftKind.MANUAL),
     GraphRule("question", frozenset({_RS.DRAFTING}), GraphRoute.CLARIFY, draft_kind=DraftKind.QUESTION),
     GraphRule("abstention", frozenset({_RS.DRAFTING}), GraphRoute.ABSTAIN, draft_kind=DraftKind.ABSTAIN),
     GraphRule(

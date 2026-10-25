@@ -287,9 +287,12 @@ class FeedbackRequest(BaseModel):
 
 
 class ManualProposalRequest(BaseModel):
-    """`POST /manual-proposals`: a human-authored draft that enters the same approval path (AM-20.3)."""
+    """`POST /manual-proposals`: a human-authored draft that enters the same approval path (AM-20.3). `run_id` names
+    the run whose model draft it replaces (T21, contract erratum 133: BS:281's route carries no run in its path); the
+    asset and the interval must be that run's (SA:154)."""
 
     model_config = _Strict
+    run_id: UUID
     asset_id: AssetId
     start_at: Instant
     end_at: Instant
@@ -314,6 +317,14 @@ class ManualProposalRequest(BaseModel):
         if not self.start_at < self.end_at:
             raise ValueError("start_at must be before end_at")
         return self
+
+
+class SearchRequest(BaseModel):
+    """`POST /search`: the manual baseline's bounded lexical search (BS:280; T21, erratum 135: no vector mode in v1)."""
+
+    model_config = _Strict
+    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500), _Nfc]
+    limit: int = Field(default=5, ge=1, le=10)
 
 
 class ModelDraft(BaseModel):
@@ -454,6 +465,12 @@ class ErrorCode(StrEnum):
     GRANT_EXISTS = "GRANT_EXISTS"
     SLOT_OCCUPIED = "SLOT_OCCUPIED"
     AUTHORITY_VIOLATION = "AUTHORITY_VIOLATION"
+    # T21 (Plan R ruling 3, erratum 131): the decision's conflicts, each its own code; and the author cap (ruling 4).
+    ALREADY_DECIDED = "ALREADY_DECIDED"
+    STALE_REVISION = "STALE_REVISION"
+    STALE_HASH = "STALE_HASH"
+    EXPIRED = "EXPIRED"
+    AUTHOR_LIMIT = "AUTHOR_LIMIT"
 
 
 class SafeError(BaseModel):

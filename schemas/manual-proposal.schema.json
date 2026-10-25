@@ -6,6 +6,10 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
     "asset_id": {
       "type": "string",
       "maxLength": 32,
@@ -64,6 +68,7 @@
     }
   },
   "required": [
+    "run_id",
     "asset_id",
     "start_at",
     "end_at",

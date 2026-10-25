@@ -465,8 +465,8 @@
       "schema": "schemas/job.schema.json",
       "valid": false,
       "note": "Synthetic target contract example; not a live result.",
-      "reason": "An execute job may call only create_incident.",
-      "reason_match": "^\\$\\.allowed_tools\\[0\\]: 'get_recent_alerts' is not one of"
+      "reason": "An execute job may call only create_incident and, before its grant, get_asset_status (T21, erratum 137).",
+      "reason_match": "^\\$\\.allowed_tools\\[1\\]: 'get_recent_alerts' is not one of"
     },
     {
       "path": "schemas/examples/decision-invalid-old-hash-field.json",

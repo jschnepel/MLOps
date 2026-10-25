@@ -35,7 +35,8 @@ UNCHANGED = {
     "schemas/tools/search_procedures.input.schema.json": (
         "51277441bf8482e10258a63ca270d03b81cc8a65a536ac31824eb67d041758b9"
     ),
-    "schemas/tool-result.schema.json": "c4e6f39b44c4b22c6078826329e7a16694872d9303bc53718f8cde5c02d4466a",
+    # T21 (Plan R ruling 11) added the error object's optional `reason`; the read tools' shapes are unchanged.
+    "schemas/tool-result.schema.json": "124f889658b32f7a095d89cf4a56d0a60d80634b9b02dfe418dcbe4150d3a45a",
 }
 
 

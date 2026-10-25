@@ -36,7 +36,7 @@ from ops_core.outcomes import (
     ToolOutcome,
 )
 from ops_core.routing import AdmissionRoute, GraphRoute, ModelRoute
-from ops_core.states import GRANTLESS_STATES, POST_GRANT_STATES, AttemptState, Reason, RunState
+from ops_core.states import GRANT_REFUSALS, GRANTLESS_STATES, POST_GRANT_STATES, AttemptState, Reason, RunState
 
 ROOT = Path(__file__).resolve().parents[1]
 Doc = dict[str, Any]
@@ -574,7 +574,14 @@ def event() -> Doc:
 def tool_result() -> Doc:
     """The MCP tool-result envelope (AM-15, AM-80 tool-result row)."""
     error_object = closed(
-        {"code": text(1, 80), "message": SHORT, "retryable": {"type": "boolean"}}, ["code", "message", "retryable"]
+        {
+            "code": text(1, 80),
+            "message": SHORT,
+            "retryable": {"type": "boolean"},
+            # T21 (Plan R ruling 11): a grant refused with a committed BLOCKED_REVIEW names its AM-10 reason.
+            "reason": {"enum": sorted(r.value for r in GRANT_REFUSALS)},
+        },
+        ["code", "message", "retryable"],
     )
     alert = closed(
         {
@@ -708,6 +715,7 @@ def manual_proposal() -> Doc:
         "manual-proposal",
         closed(
             {
+                "run_id": UUID,  # T21 (contract erratum 133): the run whose model draft it replaces
                 "asset_id": ASSET_ID,
                 "start_at": UTC_REQUEST,
                 "end_at": UTC_REQUEST,
@@ -717,7 +725,17 @@ def manual_proposal() -> Doc:
                 "assumptions": array(SHORT, 0, 8),
                 "limitations": array(SHORT, 0, 8),
             },
-            ["asset_id", "start_at", "end_at", "title", "summary", "evidence_refs", "assumptions", "limitations"],
+            [
+                "run_id",
+                "asset_id",
+                "start_at",
+                "end_at",
+                "title",
+                "summary",
+                "evidence_refs",
+                "assumptions",
+                "limitations",
+            ],
         ),
     )
 
@@ -1100,6 +1118,7 @@ def examples(root: Path = ROOT) -> list[tuple[Doc, Doc]]:
         "text": "Cites the superseded version.",
     }
     manual_valid = {
+        "run_id": RUN,
         "asset_id": "A17",
         "start_at": "2026-10-05T12:00:00Z",
         "end_at": CLOCK,
@@ -1566,13 +1585,13 @@ def examples(root: Path = ROOT) -> list[tuple[Doc, Doc]]:
         "job",
         {
             "type": "execute",
-            "allowed_tools": [Tool.GET_RECENT_ALERTS.value],
+            "allowed_tools": [Tool.GET_ASSET_STATUS.value, Tool.GET_RECENT_ALERTS.value],
             "run_states": ["APPROVED", "EXECUTING"],
             "created_by": ["record_decision"],
             "dedup_key": PROPOSAL,
         },
-        "An execute job may call only create_incident.",
-        "^\\$\\.allowed_tools\\[0\\]: 'get_recent_alerts' is not one of",
+        "An execute job may call only create_incident and, before its grant, get_asset_status (T21, erratum 137).",
+        "^\\$\\.allowed_tools\\[1\\]: 'get_recent_alerts' is not one of",
     )
     old_hash = {("payload_sha256" if k == "expected_payload_sha256" else k): v for k, v in decision_valid.items()}
     invalid(

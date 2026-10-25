@@ -233,6 +233,9 @@ PRE_GRANT_STATES: Final = frozenset(
 GRANTLESS_STATES: Final = PRE_GRANT_STATES | frozenset({_S.REJECTED, _S.ANSWERED, _S.INSUFFICIENT_EVIDENCE})
 # States a run reaches only through grant_execution (APPROVED → EXECUTING) or after it (AM-10 table, AM-20.3
 # performers). FAILED is not here: RETRIEVING/DRAFTING → FAILED by transition_run (ruling 8) needs no grant.
+# The reasons a refused grant records (the APPROVED -> BLOCKED_REVIEW row of grant_execution and expire_proposal's
+# expiry), which mcp-write's GRANT_REFUSED envelope names (T21, Plan R ruling 11).
+GRANT_REFUSALS: Final = _GRANT_REFUSAL
 POST_GRANT_STATES: Final = frozenset(
     {_S.EXECUTING, _S.OUTCOME_UNKNOWN, _S.ESCALATED, _S.SUCCEEDED, _S.ABANDONED_UNVERIFIED}
 )

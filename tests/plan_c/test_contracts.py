@@ -76,6 +76,7 @@ REQUEST_MODELS = [
     (
         c.ManualProposalRequest,
         {
+            "run_id": str(RUN),
             "asset_id": "A17",
             "start_at": "2026-10-05T12:00:00+00:00",
             "end_at": "2026-10-06T12:00:00+00:00",

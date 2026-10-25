@@ -9,7 +9,9 @@ in the same session, before the call, the server must advertise exactly the thre
 committed input schema (`check_listing`); the answer must be at most 256 KiB, not error-flagged, a valid tool result
 of that tool by `schemas/tool-result.schema.json` and `ok` (`read_result`). Anything else is McpCallFailed, which the
 graph's retrieval node retries when it is transient and otherwise records as FAILED (T20): nothing is assumed to
-have succeeded.
+have succeeded. A write tool gets the same discovery (exactly mcp-write's three tools, the called one's committed
+schema) and its answer must be a valid tool result of that tool (T21, Plan R ruling 17); any other status (an
+`outcome`, an `error`) is the caller's to read.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ from ops_core.mcp_protocol import PROTOCOL_VERSION
 
 # A read handle's tools (AM-15): what mcp-read must advertise, no more and no fewer.
 READ_TOOLS: Final = JOB_RULES[JobType.INVESTIGATE].allowed_tools
+# mcp-write's three tools (AM-15: a recover job may call each), what it must advertise (T21, Plan R ruling 17).
+WRITE_TOOLS: Final = JOB_RULES[JobType.RECOVER].allowed_tools
 
 
 class McpCallFailed(Exception):
@@ -87,10 +91,10 @@ def leaves(exc: BaseException) -> list[BaseException]:
 TRANSPORT_FAILURES = (MCPError, httpx2.HTTPError, OSError)
 
 
-def check_listing(listing: ListToolsResult, tool: Tool) -> None:
-    """R029's discovery check: the server lists exactly the read tools, once each, on one page, and advertises the
-    called tool's committed input schema (canonical JSON). A listing with a `next_cursor` is refused: a later page
-    could add a tool this check never saw.
+def check_listing(listing: ListToolsResult, tool: Tool, expected: frozenset[Tool] = READ_TOOLS) -> None:
+    """R029's discovery check: the server lists exactly the `expected` tools (the read tools, or since T21 mcp-write's
+    three), once each, on one page, and advertises the called tool's committed input schema (canonical JSON). A
+    listing with a `next_cursor` is refused: a later page could add a tool this check never saw.
 
     Limit (measured, mcp 2.3.0): the SDK filters the listing before this function sees it, dropping a tool whose
     `x-mcp-header` annotation is invalid (`ClientSession._absorb_tool_listing`). A server that adds a tool in that
@@ -105,7 +109,7 @@ def check_listing(listing: ListToolsResult, tool: Tool) -> None:
     if (
         listing.next_cursor is not None
         or len(names) != len(set(names))
-        or set(names) != {read.value for read in READ_TOOLS}
+        or set(names) != {known.value for known in expected}
     ):
         raise McpCallFailed(f"{tool.value}: the server advertises an unexpected tool set")
     schema = next(entry.input_schema for entry in advertised if entry.name == tool.value)
@@ -180,6 +184,7 @@ class HttpMcpCaller:
     async def call(self, url: str, *, handle: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Call the tool over Streamable HTTP; every failure to obtain a valid tool result is McpCallFailed."""
         read = next((candidate for candidate in READ_TOOLS if candidate.value == tool), None)
+        write = next((candidate for candidate in WRITE_TOOLS if candidate.value == tool), None)
         statuses: list[int] = []
 
         async def record(response: httpx2.Response) -> None:
@@ -198,6 +203,8 @@ class HttpMcpCaller:
             ):
                 if read is not None:  # discovery in the same session, before the call (ruling 13)
                     check_listing(await client.list_tools(), read)
+                elif write is not None:  # T21 (Plan R ruling 17): mcp-write's listing, the same rule
+                    check_listing(await client.list_tools(), write, WRITE_TOOLS)
                 # The SDK itself checks the result against the output schema the server advertised and raises
                 # RuntimeError on a mismatch, and if the server answers a call with a header mismatch it lists again
                 # and retries inside this call, outside `check_listing`. Both are acceptable here: any failure of a
@@ -221,6 +228,8 @@ class HttpMcpCaller:
                     raise McpCallFailed(f"{tool}: the session failed ({type(found[0]).__name__})") from group
                 raise
             leaf = failure_leaf(group)
+            if isinstance(leaf, McpCallFailed):  # a failed write-listing check: the client's task group wraps it
+                raise leaf from None
             if isinstance(leaf, TRANSPORT_FAILURES):
                 raise transport_failure(tool, statuses, read=False) from leaf
             raise
@@ -231,8 +240,11 @@ class HttpMcpCaller:
             raise McpCallFailed(f"{tool}: the session failed ({type(exc).__name__})") from exc
         if read is not None:
             return read_result(read, result)
-        # TODO(T21): the write tools (mcp-write) still get only T47's check: no discovery and no result-schema check
-        # (Plan Q departure 4: whether mcp-write advertises the committed create_incident schema is checked live first).
         if result.is_error or not isinstance(result.structured_content, dict):
             raise McpCallFailed(f"{tool}: the server rejected the call")
-        return result.structured_content
+        if write is None:  # no tool of either server: the SDK answered, so its result is all there is to return
+            return result.structured_content
+        try:  # T21 (Plan R ruling 17): the committed result schema, whatever the envelope's status
+            return tool_contracts.check_result(write, result.structured_content)
+        except tool_contracts.ContractViolation as exc:
+            raise McpCallFailed(f"{tool}: the result fails the contract") from exc

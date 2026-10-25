@@ -27,7 +27,7 @@ from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.tools.base import Tool
-from ops_core import persistence, redaction, settings
+from ops_core import persistence, redaction, settings, tool_contracts
 from ops_core.jobs import Tool as ToolName
 from ops_core.mcp_protocol import MCP_PATH, ProtocolVersionGuard
 from ops_core.outcomes import ActionOutcome, ToolOutcome
@@ -80,6 +80,12 @@ def refusal_error(code: str) -> dict[str, Any]:
     if code == "NOT_REDISPATCHABLE":
         return tool_error(code, "a recover job redispatches only an attempt that was never sent")
     return tool_error("GRANT_REFUSED", f"grant refused: {code}")
+
+
+def blocked_error(blocked: execution.GrantBlocked) -> dict[str, Any]:
+    """The tool error for a grant the gate refused with a committed BLOCKED_REVIEW (T21, Plan R ruling 11): the code
+    every final grant refusal has, plus `reason`, the run's AM-10 reason; nothing was granted or sent (SA:355)."""
+    return {**tool_error("GRANT_REFUSED", f"grant refused: {blocked.reason.value}"), "reason": blocked.reason.value}
 
 
 def envelope(tool_name: str, *, data: dict[str, Any] | None = None, error: dict[str, Any] | None = None) -> ToolResult:
@@ -146,11 +152,13 @@ class McpVerifier:
 
 
 def strict_tool(fn: Any) -> Tool:
-    """A Tool whose argument model forbids extra keys and whose advertised schema says so.
+    """A Tool whose argument model forbids extra keys and which advertises exactly the committed input schema.
 
     The SDK derives the model from the signature and ignores unknown keys (measured in the Plan D spike); SA:350
-    requires the opposite, so the model is subclassed with `extra="forbid"` and the schema regenerated. `strict`
-    stops lax coercion, so `limit="1"` or `limit=True` is refused rather than read as 1.
+    requires the opposite, so the model is subclassed with `extra="forbid"`. `strict` stops lax coercion, so
+    `limit="1"` or `limit=True` is refused rather than read as 1. What a client is shown is the file in
+    `schemas/tools/` itself, which the worker compares with its own copy before every write call (T21, Plan R ruling
+    17; mcp-read's rule since T16).
     """
     tool = Tool.from_function(fn)
     base = tool.fn_metadata.arg_model
@@ -158,7 +166,7 @@ def strict_tool(fn: Any) -> Tool:
         base.__name__, (base,), {"model_config": ConfigDict(arbitrary_types_allowed=True, extra="forbid", strict=True)}
     )
     tool.fn_metadata.arg_model = strict
-    tool.parameters = strict.model_json_schema(by_alias=True)
+    tool.parameters = tool_contracts.input_schema(ToolName(tool.name))
     return tool
 
 
@@ -228,6 +236,8 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
             return await work(state.deps, handle, token.client_id)
         except persistence.HandleRejected as exc:
             return envelope(tool.value, error=tool_error("INVALID_HANDLE", str(exc)))
+        except execution.GrantBlocked as exc:
+            return envelope(tool.value, error=blocked_error(exc))
         except persistence.Refused as exc:
             return envelope(tool.value, error=refusal_error(exc.code))
         except persistence.NotFound:
@@ -304,6 +314,8 @@ def build_app(server: MCPServer, state: State) -> Starlette:
                 await persistence.assert_function_text(conn, *persistence.HANDLE_BINDING)
                 # Revision 0010: the definers this server calls take the token's azp, and request_abort exists (T47).
                 await persistence.assert_function_text(conn, *persistence.WRITE_PATH)
+                # Revision 0016: the grant applies the asset guard and returns a committed refusal (T21).
+                await persistence.assert_function_text(conn, *persistence.GRANT_GUARD)
             except BaseException:  # a failed start must leak no connection
                 await conn.close()
                 raise

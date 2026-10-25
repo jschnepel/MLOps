@@ -1,6 +1,7 @@
 {
   "type": "execute",
   "allowed_tools": [
+    "get_asset_status",
     "get_recent_alerts"
   ],
   "run_states": [

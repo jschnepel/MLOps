@@ -21,7 +21,12 @@
         "ASSET_INCIDENT_EXISTS",
         "GRANT_EXISTS",
         "SLOT_OCCUPIED",
-        "AUTHORITY_VIOLATION"
+        "AUTHORITY_VIOLATION",
+        "ALREADY_DECIDED",
+        "STALE_REVISION",
+        "STALE_HASH",
+        "EXPIRED",
+        "AUTHOR_LIMIT"
       ]
     },
     "message": {

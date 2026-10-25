@@ -99,9 +99,13 @@ def test_freeze_is_gated_by_intent_and_an_answer_is_answered_on_any_run() -> Non
 
 
 def test_a_draft_kind_selects_only_abstain_clarify_answer_or_freeze() -> None:
+    # T21: MANUAL is the worker's own verdict when no validated draft came (erratum 134), never a model's kind; it
+    # ends the graph run with the run waiting in DRAFTING for a person's proposal.
     routes = {
         route_graph(GraphKey(RunState.DRAFTING, Intent.INVESTIGATE, True, Evidence.SUFFICIENT, kind, False, None))
         for kind in DraftKind
-        if kind is not DraftKind.NONE
+        if kind not in (DraftKind.NONE, DraftKind.MANUAL)
     }
     assert routes == {GraphRoute.ABSTAIN, GraphRoute.CLARIFY, GraphRoute.ANSWER_ONLY, GraphRoute.FREEZE}
+    manual = GraphKey(RunState.DRAFTING, Intent.INVESTIGATE, True, Evidence.SUFFICIENT, DraftKind.MANUAL, False, None)
+    assert route_graph(manual) is GraphRoute.PUBLISH

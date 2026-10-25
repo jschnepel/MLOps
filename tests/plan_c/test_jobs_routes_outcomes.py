@@ -38,7 +38,8 @@ def test_job_rules_match_am15():
     assert len(JobType) == 8 and len(Tool) == 6
     assert JOB_RULES[JobType.INVESTIGATE].allowed_tools == READ_TOOLS
     assert JOB_RULES[JobType.RESUME_INPUT].allowed_tools == READ_TOOLS
-    assert JOB_RULES[JobType.EXECUTE].allowed_tools == {Tool.CREATE_INCIDENT}
+    # T21 (erratum 137): an execute job reads the asset status again before its grant (R116).
+    assert JOB_RULES[JobType.EXECUTE].allowed_tools == {Tool.CREATE_INCIDENT, Tool.GET_ASSET_STATUS}
     assert JOB_RULES[JobType.RECOVER].allowed_tools == {
         Tool.CREATE_INCIDENT,
         Tool.GET_INCIDENT_RECEIPT,

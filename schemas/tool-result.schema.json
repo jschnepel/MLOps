@@ -59,6 +59,15 @@
             },
             "retryable": {
               "type": "boolean"
+            },
+            "reason": {
+              "enum": [
+                "asset_action_unresolved",
+                "asset_incident_exists",
+                "authority_revoked",
+                "expired",
+                "stale_evidence"
+              ]
             }
           },
           "required": [
@@ -112,6 +121,15 @@
               },
               "retryable": {
                 "type": "boolean"
+              },
+              "reason": {
+                "enum": [
+                  "asset_action_unresolved",
+                  "asset_incident_exists",
+                  "authority_revoked",
+                  "expired",
+                  "stale_evidence"
+                ]
               }
             },
             "required": [

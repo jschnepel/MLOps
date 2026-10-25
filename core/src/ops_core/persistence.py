@@ -47,7 +47,12 @@ class NotFound(PersistenceError):
 
 
 class VersionConflict(PersistenceError):
-    """A stale state, version or hash: the caller's view of the run is out of date."""
+    """A stale state, version or hash: the caller's view of the run is out of date. `code` is the function's DETAIL
+    when it names one (T21's decision rules: ALREADY_DECIDED, STALE_REVISION, STALE_HASH, EXPIRED)."""
+
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class HandleRejected(PersistenceError):
@@ -93,6 +98,9 @@ def translate(exc: psycopg.Error) -> Exception | None:
         return Refused(detail or "REFUSED")
     if cls is HandleRejected:
         return HandleRejected("invocation handle rejected")  # one message for every refusal (SA:357)
+    if cls is VersionConflict:
+        message = f"{exc.diag.message_primary}: {detail}" if detail else str(exc.diag.message_primary)
+        return VersionConflict(message, code=detail or None)
     return cls(f"{exc.diag.message_primary}: {detail}" if detail else str(exc.diag.message_primary))
 
 
@@ -210,6 +218,14 @@ VECTOR_SEARCH: Final = (
     "app.search_procedures_scoped(text, text, text, public.vector, text, integer, text)",
     "e.embedding OPERATOR(public.<=>) p_query_embedding",
 )
+# Revision 0016 (T21): the freeze and the grant apply the asset guard and return what a committed refusal decided, the
+# read path defers a stale sync, and `expire_proposal` exists. The worker, mcp-write, mcp-read and the sweeper call
+# them in these shapes, so each refuses to start without them (Plan R ruling 16); the api checks `app.feedback`. The
+# same rule: a later revision that re-creates one keeps its text or changes it here in the same commit.
+FREEZE_GUARD: Final = ("app.freeze_proposal(uuid, uuid, bytea, timestamptz)", "app._asset_guard(")
+GRANT_GUARD: Final = ("app.grant_execution(text, text, uuid)", "app._asset_guard(")
+READ_FRESHNESS: Final = ("app.asset_scope(text, text)", "DETAIL = 'MEMBERSHIP_STALE'")
+PROPOSAL_EXPIRY: Final = ("app.expire_proposal(uuid)", "app._expire(")
 
 
 async def assert_function_text(conn: Conn, signature: str, marker: str) -> None:
@@ -358,23 +374,41 @@ async def mark_unknown(conn: Conn, run_id: UUID, fence: int) -> Unknown:
 
 @dataclass(frozen=True)
 class Frozen:
-    """What freeze_proposal returned: the proposal's id and revision, and the run's new state_version."""
+    """What freeze_proposal or create_manual_proposal committed: AWAITING_APPROVAL with the proposal's id, or
+    BLOCKED_REVIEW with the asset guard's reason and no proposal (T21, AM-13); the revision, the run's new
+    state_version and, for a manual proposal, the blocking run (the caller's tenant's, ruling 10)."""
 
-    proposal_id: UUID
+    proposal_id: UUID | None
     revision: int
+    state: RunState
+    reason: Reason | None
     state_version: int
+    blocking_run_id: UUID | None = None
+
+
+def _frozen(row: DictRow) -> Frozen:
+    blocking = row.get("blocking_run_id")
+    return Frozen(
+        None if row["proposal_id"] is None else UUID(str(row["proposal_id"])),
+        int(row["revision"]),
+        RunState(str(row["state"])),
+        None if row["reason"] is None else Reason(str(row["reason"])),
+        int(row["state_version"]),
+        None if blocking is None else UUID(str(blocking)),
+    )
 
 
 async def freeze_proposal(
     conn: Conn, *, run_id: UUID, draft_id: UUID, payload_canonical: bytes, expires_at: datetime
 ) -> Frozen:
-    """The frozen bytes are hashed inside and compared with the validated draft's hash (SA:453)."""
+    """The frozen bytes are hashed inside and compared with the validated draft's hash (SA:453); since T21 the
+    function also applies the asset guard, whose refusal commits BLOCKED_REVIEW and freezes nothing."""
     row = await _call(
         conn, "SELECT * FROM app.freeze_proposal(%s, %s, %s, %s)", (run_id, draft_id, payload_canonical, expires_at)
     )
     if row is None:
         raise PersistenceError("freeze_proposal returned nothing")
-    return Frozen(UUID(str(row["proposal_id"])), int(row["revision"]), int(row["state_version"]))
+    return _frozen(row)
 
 
 @dataclass(frozen=True)
@@ -524,6 +558,24 @@ async def search_procedures(
     )
     if row is None:
         raise PersistenceError("search_procedures_scoped returned nothing")
+    return _procedures(row)
+
+
+async def search_procedures_api(conn: Conn, *, tenant_id: UUID, query: str, limit: int) -> Procedures:
+    """The manual baseline's lexical search (BS:280; T21, erratum 135) over the API session's tenant: the ranking,
+    filters and result rows of `search_procedures`, with no handle and no vector mode.
+
+    Raises:
+        Refused: BAD_ARGUMENT for a query or limit outside the bounds.
+    """
+    row = await _call(conn, "SELECT * FROM app.search_procedures_api(%s, %s, %s)", (tenant_id, query, limit))
+    if row is None:
+        raise PersistenceError("search_procedures_api returned nothing")
+    return _procedures(row)
+
+
+def _procedures(row: DictRow) -> Procedures:
+    """A search function's row as `Procedures`."""
     hits = row["results"]
     results = tuple(
         Procedure(
@@ -579,6 +631,16 @@ async def asset_scope(conn: Conn, *, handle: str, azp: str) -> AssetScope:
 
 
 @dataclass(frozen=True)
+class Blocked:
+    """A grant the §13 gate refused with a committed BLOCKED_REVIEW (T21; AM-10 SA:140): expired, authority_revoked,
+    stale_evidence, asset_action_unresolved or asset_incident_exists. Nothing was granted."""
+
+    run_id: UUID
+    proposal_id: UUID
+    reason: Reason
+
+
+@dataclass(frozen=True)
 class Grant:
     """One run's execution grant with its latest attempt state (None before the first attempt row)."""
 
@@ -608,16 +670,20 @@ def _grant(row: DictRow) -> Grant:
     )
 
 
-async def grant_execution(conn: Conn, *, handle: str, azp: str, proposal_id: UUID) -> Grant:
+async def grant_execution(conn: Conn, *, handle: str, azp: str, proposal_id: UUID) -> Grant | Blocked:
     """The §13 gate inside the function; a replay returns the grant the run already has (SA:462).
 
     `azp` is the presented token's. This definer and the four after it (`lookup_action`, `mark_sent`, `request_abort`,
     `record_outcome`) pass it to `_resolve_handle`, which compares it with the one the handle was minted for, as
-    `resolve_invocation` always did (revision 0010, Plan K ruling 12).
+    `resolve_invocation` always did (revision 0010, Plan K ruling 12). Since T21 a refusal of the run's review
+    (expiry, revoked authority, stale evidence, the asset guard) is returned as `Blocked`, so the caller's unit
+    commits the BLOCKED_REVIEW it wrote; a binding refusal still raises `Refused` and commits nothing.
     """
     row = await _call(conn, "SELECT * FROM app.grant_execution(%s, %s, %s)", (handle, azp, proposal_id))
     if row is None:
         raise PersistenceError("grant_execution returned nothing")
+    if row["refusal"] is not None:
+        return Blocked(UUID(str(row["run_id"])), UUID(str(row["proposal_id"])), Reason(str(row["refusal"])))
     return _grant(row)
 
 
@@ -1058,6 +1124,195 @@ async def run_manifest_exists(conn: Conn, run_id: UUID) -> bool:
     has, Plan Q ruling 13 and erratum 125; whether a revision records its own is T21's)."""
     cur = await conn.execute("SELECT 1 FROM app.run_manifests WHERE run_id = %s", (run_id,))
     return await cur.fetchone() is not None
+
+
+async def run_revision(conn: Conn, run_id: UUID) -> int:
+    """The run's current revision: 1 plus its `proposal.revised` events, the rule revision 0016's `_run_revision`
+    applies (T21, Plan R ruling 1). Read under the caller's tenant unit."""
+    cur = await conn.execute(
+        "SELECT 1 + count(*) AS revision FROM app.events WHERE run_id = %s AND type = %s",
+        (run_id, EventType.PROPOSAL_REVISED.value),
+    )
+    row = await cur.fetchone()
+    return 1 if row is None else int(row["revision"])
+
+
+async def lock_asset(conn: Conn, tenant_id: UUID, asset_id: str) -> None:
+    """The asset guard's advisory lock (SA:189) in the caller's transaction, the key `_asset_lock` takes: the worker's
+    freeze unit takes it before its fence, so its order is the published one (advisory:asset, run_lease, runs).
+    No privilege is needed for an advisory lock."""
+    await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s || ':' || %s, 0))", (str(tenant_id), asset_id))
+
+
+async def record_asset_observation(conn: Conn, run_id: UUID, observed_at: datetime) -> None:
+    """`runs.asset_observed_at` := the instant mcp-read's status answer observed the asset (R116; T21 ruling 9), under
+    the worker's column grant; the grant refuses an observation older than five minutes."""
+    await conn.execute("UPDATE app.runs SET asset_observed_at = %s WHERE run_id = %s", (observed_at, run_id))
+
+
+async def record_workflow_version(conn: Conn, run_id: UUID, version: str) -> str:
+    """`runs.workflow_version` := `version` unless the run has one already (BS:342; T21 ruling 18: the first claim pins
+    it); returns the run's version, which the freeze compares with the payload's."""
+    cur = await conn.execute(
+        "UPDATE app.runs SET workflow_version = coalesce(workflow_version, %s) WHERE run_id = %s"
+        " RETURNING workflow_version",
+        (version, run_id),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        raise NotFound("run not found")
+    return str(row["workflow_version"])
+
+
+async def clear_checkpoint_id(conn: Conn, run_id: UUID) -> None:
+    """`runs.checkpoint_id` := NULL for a run whose graph run ended in DRAFTING because the model could not draft: the
+    state a manual proposal waits for (T21, erratum 134)."""
+    await conn.execute("UPDATE app.runs SET checkpoint_id = NULL WHERE run_id = %s", (run_id,))
+
+
+@dataclass(frozen=True)
+class Revised:
+    """What create_revision committed: the run's new state_version and its new revision."""
+
+    run_id: UUID
+    state_version: int
+    revision: int
+
+
+async def create_revision(
+    conn: Conn,
+    *,
+    tenant_id: UUID,
+    run_id: UUID,
+    expected_version: int,
+    author: UUID,
+    supersedes_run_id: UUID | None,
+) -> Revised:
+    """AWAITING_APPROVAL, APPROVED or BLOCKED_REVIEW → QUEUED with a new revision (SA:455; T21 rulings 1, 2, 4, 6).
+
+    Raises:
+        NotFound: no such run in the tenant, or a supersedes_run_id that names no run of the tenant and asset.
+        VersionConflict: the run is in another state or at another version.
+        Refused: NOT_REQUESTER, GRANT_EXISTS, AUTHOR_LIMIT or SLOT_OCCUPIED.
+    """
+    row = await _call(
+        conn,
+        "SELECT * FROM app.create_revision(%s, %s, %s, %s, %s)",
+        (tenant_id, run_id, expected_version, author, supersedes_run_id),
+    )
+    if row is None:
+        raise PersistenceError("create_revision returned nothing")
+    return Revised(UUID(str(row["run_id"])), int(row["state_version"]), int(row["revision"]))
+
+
+@dataclass(frozen=True)
+class Cancelled:
+    """What request_cancel answered (SA:458): CANCELLED before a grant; after one, the flag set and the attempt."""
+
+    run_id: UUID
+    state: RunState
+    state_version: int
+    grant_exists: bool
+    attempt_state: AttemptState | None
+
+
+async def request_cancel(conn: Conn, *, tenant_id: UUID, run_id: UUID, expected_version: int, actor: UUID) -> Cancelled:
+    """Cancel before the grant, or set `cancel_requested` after it (SA:458; T21 ruling 12).
+
+    Raises:
+        NotFound: no such run in the tenant.
+        VersionConflict: before a grant, the run is terminal or at another version.
+        Refused: NOT_CANCELLER (neither the run's requester nor a reviewer of the tenant).
+    """
+    row = await _call(
+        conn, "SELECT * FROM app.request_cancel(%s, %s, %s, %s)", (tenant_id, run_id, expected_version, actor)
+    )
+    if row is None:
+        raise PersistenceError("request_cancel returned nothing")
+    attempt = row["attempt_state"]
+    return Cancelled(
+        UUID(str(row["run_id"])),
+        RunState(str(row["state"])),
+        int(row["state_version"]),
+        bool(row["grant_exists"]),
+        None if attempt is None else AttemptState(str(attempt)),
+    )
+
+
+async def expire_proposal(conn: Conn, run_id: UUID) -> RunState:
+    """BLOCKED_REVIEW(expired) when the run's active proposal is past its expiry (SA:457); otherwise nothing. The run's
+    state afterwards."""
+    row = await _call(conn, "SELECT app.expire_proposal(%s) AS state", (run_id,))
+    if row is None:
+        raise PersistenceError("expire_proposal returned nothing")
+    return RunState(str(row["state"]))
+
+
+@dataclass(frozen=True)
+class ManualFacts:
+    """What a manual proposal's payload takes from the run (T21 ruling 7): its revision, workflow version, supersession,
+    asset and interval, the expiry on the application clock, and the snapshots of the cited permitted sections."""
+
+    revision: int
+    workflow_version: str
+    supersedes_run_id: UUID | None
+    asset_id: str
+    start_at: datetime
+    end_at: datetime
+    expires_at: datetime
+    snapshots: list[dict[str, str]]
+
+
+async def prepare_manual_proposal(
+    conn: Conn, *, tenant_id: UUID, run_id: UUID, author: UUID, evidence_ids: Sequence[str]
+) -> ManualFacts:
+    """The first of a manual proposal's two calls, in the caller's unit: the asset guard's lock and the run's lock
+    are held until it commits (T21 ruling 7).
+
+    Raises:
+        NotFound: no such run, or a cited section that is not a permitted section of the tenant (note 4).
+        VersionConflict: the run does not wait for a manual proposal.
+        Refused: NOT_AUTHOR or AUTHOR_LIMIT.
+    """
+    row = await _call(
+        conn,
+        "SELECT * FROM app.prepare_manual_proposal(%s, %s, %s, %s)",
+        (tenant_id, run_id, author, list(evidence_ids)),
+    )
+    if row is None:
+        raise PersistenceError("prepare_manual_proposal returned nothing")
+    supersedes = row["supersedes_run_id"]
+    return ManualFacts(
+        int(row["revision"]),
+        str(row["workflow_version"]),
+        None if supersedes is None else UUID(str(supersedes)),
+        str(row["asset_id"]),
+        row["start_at"],
+        row["end_at"],
+        row["expires_at"],
+        [dict(s) for s in row["snapshots"]],
+    )
+
+
+async def create_manual_proposal(
+    conn: Conn, *, tenant_id: UUID, run_id: UUID, payload_canonical: bytes, author: UUID
+) -> Frozen:
+    """The person's frozen proposal through the freeze rules and the asset guard (SA:456; T21 ruling 7).
+
+    Raises:
+        NotFound: no such run, another asset than the run's, or snapshots that are not the permitted sections.
+        VersionConflict: the run does not wait for a manual proposal, or another revision.
+        Refused: NOT_AUTHOR, AUTHOR_LIMIT or a payload field the run fixes (PAYLOAD_RUN_MISMATCH, INTERVAL,
+            SUPERSEDES_MISMATCH, WORKFLOW_VERSION, EXPIRY).
+    """
+    row = await _call(
+        conn,
+        "SELECT * FROM app.create_manual_proposal(%s, %s, %s, %s)",
+        (tenant_id, run_id, payload_canonical, author),
+    )
+    if row is None:
+        raise PersistenceError("create_manual_proposal returned nothing")
+    return _frozen(row)
 
 
 @dataclass(frozen=True)

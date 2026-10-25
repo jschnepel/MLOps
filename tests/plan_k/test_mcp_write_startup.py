@@ -37,7 +37,8 @@ class MarkerConn:
         self.closed = True
 
 
-BOTH = {persistence.HANDLE_BINDING[1], persistence.WRITE_PATH[1]}
+# Since T21 a started mcp-write also finds revision 0016's guarded grant (Plan R ruling 16).
+BOTH = {persistence.HANDLE_BINDING[1], persistence.WRITE_PATH[1], persistence.GRANT_GUARD[1]}
 
 
 def test_mcp_write_refuses_a_database_at_0009_and_closes_the_connection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -62,8 +63,9 @@ def test_mcp_read_does_not_ask_for_0010(monkeypatch: pytest.MonkeyPatch) -> None
         persistence.ASSET_SCOPE,
         persistence.SEARCH_INSTANT,
         persistence.VECTOR_SEARCH,
+        persistence.READ_FRESHNESS,  # T21: revision 0016's stale-sync deferral (Plan R ruling 14)
     )
-    conn: Any = MarkerConn({marker for _, marker in present})  # every mcp-read revision through 0013 (T18)
+    conn: Any = MarkerConn({marker for _, marker in present})  # every mcp-read revision through 0016 (T21)
     start(monkeypatch, conn)
     assert all(persistence.WRITE_PATH[1] not in asked for asked in conn.asked)
     for signature, marker in present:  # mcp-read asks for each of its own revisions' markers, 0013's included

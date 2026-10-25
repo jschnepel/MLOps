@@ -88,7 +88,9 @@ JOB_RULES: Final[dict[JobType, JobRule]] = {
     ),
     JobType.EXECUTE: JobRule(
         JobType.EXECUTE,
-        frozenset({Tool.CREATE_INCIDENT}),
+        # T21 (erratum 137): the asset status is read again before the grant, so its observation is fresh (R116); the
+        # read goes to mcp-read on a read handle of the same job (revision 0016's `_resolve_handle`).
+        frozenset({Tool.CREATE_INCIDENT, Tool.GET_ASSET_STATUS}),
         frozenset({_S.APPROVED, _S.EXECUTING}),
         Server.WRITE,
         ("record_decision",),

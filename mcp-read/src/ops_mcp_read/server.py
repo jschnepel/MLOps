@@ -87,6 +87,14 @@ def tool_error(code: str, message: str, *, retryable: bool = False) -> dict[str,
     return {"code": code, "message": message, "retryable": retryable}
 
 
+def stale_error(code: str) -> dict[str, Any]:
+    """The tool error for a definer's refusal: MEMBERSHIP_STALE (the requester's row not synced within 120 s, T21
+    ruling 14) is a deferral the caller may retry, as mcp-write's GRANT_DEFERRED is; any other code is `REFUSED`."""
+    if code == "MEMBERSHIP_STALE":
+        return tool_error(code, "the membership sync is stale; try again", retryable=True)
+    return tool_error("REFUSED", code)
+
+
 def envelope(
     tool_name: str,
     *,
@@ -270,6 +278,8 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
                 return await persistence.asset_scope(conn, handle=caller.handle, azp=caller.azp)
         except persistence.HandleRejected as exc:
             return envelope(tool.value, error=tool_error("INVALID_HANDLE", str(exc)))
+        except persistence.Refused as exc:
+            return envelope(tool.value, error=stale_error(exc.code))
 
     async def from_asset_sim(
         tool: ToolName, scope: persistence.AssetScope, call: Awaitable[dict[str, Any]], limit: int | None = None
@@ -430,7 +440,7 @@ def build_server(state: State, *, issuer: str, resource_url: str) -> MCPServer:
             # The scope is known by now, so these refusals carry its database instant like the asset tools' do.
             return envelope(name.value, error=tool_error("INVALID_HANDLE", str(exc)), observed_at=scope.as_of)
         except persistence.Refused as exc:
-            return envelope(name.value, error=tool_error("REFUSED", exc.code), observed_at=scope.as_of)
+            return envelope(name.value, error=stale_error(exc.code), observed_at=scope.as_of)
         return search_response(found, mode)
 
     return MCPServer(
@@ -460,6 +470,7 @@ def build_app(server: MCPServer, state: State) -> Starlette:
                 await persistence.assert_function_text(conn, *persistence.ASSET_SCOPE)  # 0012 (T16)
                 await persistence.assert_function_text(conn, *persistence.SEARCH_INSTANT)  # 0012 (T16)
                 await persistence.assert_function_text(conn, *persistence.VECTOR_SEARCH)  # 0013 (T18)
+                await persistence.assert_function_text(conn, *persistence.READ_FRESHNESS)  # 0016 (T21)
             except BaseException:  # a failed start must leak no connection, and a re-entered lifespan re-asserts
                 await conn.close()
                 raise

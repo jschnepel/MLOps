@@ -34,7 +34,7 @@ from uuid import UUID
 import httpx2
 from ops_core import persistence
 from ops_core.outcomes import ActionOutcome, EventRuleViolation, ToolOutcome
-from ops_core.states import AttemptState, IllegalTransition
+from ops_core.states import AttemptState, IllegalTransition, Reason
 from ops_core.tokens import WorkloadTokenSource
 
 from ops_mcp_write import destination
@@ -51,6 +51,15 @@ Ask = Callable[[str], Awaitable[destination.Reply | None]]
 # The reasons `request_abort` chooses (revision 0010, Plan K ruling 3), the same three incident-sim accepts. Any other
 # answer is a fault, refused before the abort POST rather than left to the destination's 422 (final review T3-a).
 ABORT_REASONS: Final = frozenset({"cancelled_before_send", "expired", "deadline"})
+
+
+class GrantBlocked(Exception):
+    """The §13 gate refused the grant and committed the run's BLOCKED_REVIEW (T21, Plan R rulings 9 and 11): nothing
+    was granted or sent. `reason` is the AM-10 reason the run records."""
+
+    def __init__(self, reason: Reason) -> None:
+        super().__init__(reason.value)
+        self.reason = reason
 
 
 def next_step(attempt_state: str | None) -> Literal["stored", "send", "resend", "aborting"]:
@@ -114,7 +123,10 @@ async def create_incident(deps: Deps, *, handle: str, azp: str, proposal_id: UUI
     """Four units of work in AM-13 order; the destination call sits between two commits, never inside one. `azp` is
     the presented token's, which every definer compares with the handle's (revision 0010)."""
     async with deps.session.unit() as conn:  # the functions resolve the handle and set the tenant themselves
-        grant = await persistence.grant_execution(conn, handle=handle, azp=azp, proposal_id=proposal_id)
+        granted = await persistence.grant_execution(conn, handle=handle, azp=azp, proposal_id=proposal_id)
+    if isinstance(granted, persistence.Blocked):
+        raise GrantBlocked(granted.reason)  # raised after the unit committed the run's BLOCKED_REVIEW (AM-10)
+    grant = granted
     step = next_step(grant.attempt_state)
     if step == "stored":
         return _stored(grant)

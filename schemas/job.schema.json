@@ -170,11 +170,12 @@
           "allowed_tools": {
             "items": {
               "enum": [
+                "get_asset_status",
                 "create_incident"
               ]
             },
-            "minItems": 1,
-            "maxItems": 1
+            "minItems": 2,
+            "maxItems": 2
           },
           "run_states": {
             "items": {
