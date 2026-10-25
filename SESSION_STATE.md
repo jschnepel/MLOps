@@ -1423,6 +1423,44 @@ Allowed shortcuts in T23, each with its owning task:
   with T41's labels under their own schema, and the holdout's `as_of` policy (the instant its labels and the safety
   index use) → T25 with T41 (round 1, minor 9).
 
+## Plan P debt list (T19; committed before coding) [R6-B7]
+
+Allowed shortcuts in T19, each with its owning task:
+- an `answer` draft and an `abstain` draft with a question end the run FAILED with a templated message; the graph
+  router that sends them to ANSWERED and AWAITING_INPUT, and the `resume_input` job, → T20 (SA:137, SA:153; R114,
+  R129) (Plan P ruling 11); the payload does not tell the model that an `answer_only` run may not propose, so such a
+  run spends its first attempt on a refused proposal and relies on the repair's feedback; stating it in the payload →
+  T20 (round 1, M10);
+- a model timeout, an unreachable Ollama and a draft still invalid after its one repair each end the run FAILED and
+  close the job; bounded retries and outage handling → T22 and T29 (BS:562, BS:680; R061, R062) (ruling 8);
+- with the model unavailable, the authorized manual search and proposal path is not offered → T21 (BS:564; R057 and
+  R041's "manual path") (ruling 8);
+- BS:555's 90 s are the run's: each draft attempt is clipped to what the run's compute budget has left (measured from
+  the claim, less a 5 s margin), but the heartbeat still cancels the call itself when the budget runs out ("compute
+  budget spent": a lost lease, a hand-back and INTERRUPTED rather than the templated failure), and a run that spent
+  its budget waiting for the permit gets no draft at all → T29 (as Plan H's debt line);
+- the worker sends the model the request, the asset, the interval and the retrieved procedure sections only; the asset
+  status and alert records reach the model with T20's asset reads (BS:419; R028's note, R038) (ruling 1);
+- every manifest records the `retrieval_mode` the tool reports, today always `lexical`, the only mode the worker asks
+  for; choosing it per run → T20 and T25 (Plan N ruling 16);
+- the manifest holds AM-80's six fields; the commit, workflow version, prompt hash and tool schema version BS:572 also
+  names, and the Ollama version, stay in logs and the evidence report → T28 and T37 (ruling 9);
+- the digest is checked once, at startup: a model replaced under a running worker is not seen until it restarts →
+  T30 (probes and readiness) (ruling 4);
+- the permit is released when the draft call ends or is cancelled, T02's provisional "release on cancel"; nothing
+  polls `/api/ps` → the owner confirms or reverses the line (T02 DoD 2) (ruling 7);
+- the model pin and the draft schema (`schemas/model-draft.schema.json`, through `grading.DRAFT_SCHEMA`) are read from
+  the checkout, as the embedding pin is → T30 (packaging);
+- telemetry of the LangChain call → T28 (R058, R059); LangSmith tracing, a transitive dependency of `langchain-core`,
+  stays off (no `LANGSMITH_*` or `LANGCHAIN_TRACING*` variable is set anywhere);
+- whether a draft's claims follow from its evidence, the repeated trials and conditions B and C (R130's identical
+  routes) → T25 (BS:452, SA:660); untrusted model text shown safely → T26 (R035, R055);
+- the real-model evidence is one run on one machine (BS:566), recorded by hand; a trusted workflow for real-model
+  checks → T31;
+- the model hint SA:375 makes optional is not built in v1 (erratum 118; no task);
+- the dev database stays at 0013 until the owner migrates it (revision 0014); the worker refuses to start on it before
+  then.
+
 ## Environment (observed)
 
 | Item | Observed |
