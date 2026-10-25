@@ -74,6 +74,9 @@ KEEP_ALIVE: Final = "30m"  # keeps the warmed model loaded between drafts; Ollam
 NUM_CTX: Final = 16384
 NUM_PREDICT: Final = 1000
 WARM_UP_REQUEST: Final = "Warm-up call at worker start; no evidence is supplied, so abstain."
+# Appended to an answer_only run's request (Plan Q ruling 10): the payload's keys and the v2 prompt stay as they are,
+# and a proposal is still refused by validation if the model ignores the line.
+ANSWER_ONLY_NOTE: Final = "Answer only; do not propose an incident."
 
 
 @dataclass(frozen=True)
@@ -129,20 +132,29 @@ def draft_schema() -> dict[str, Any]:
 
 
 def payload(request: DraftRequest, evidence: list[EvidenceItem]) -> dict[str, Any]:
-    """The user message of the first pass, with the starter's keys (`handoff/prompts/incident-draft-v1.md`)."""
+    """The user message of the first pass, with the starter's keys (`handoff/prompts/incident-draft-v1.md`). The asset
+    status and alerts follow the procedure sections in `permitted_evidence` without an evidence id, so they inform the
+    draft and cannot be cited (T20, BS:419); an answer_only run's request says so (Plan P debt, M10)."""
+    confirmed = f"{request.text}\n\n{ANSWER_ONLY_NOTE}" if request.answer_only else request.text
     return {
-        "confirmed_request": request.text,
+        "confirmed_request": confirmed,
         "asset_id": request.asset_id,
         "interval": {"start_at": _instant(request.start_at), "end_at": _instant(request.end_at)},
         "permitted_evidence": [
-            {
-                "evidence_id": e.evidence_id,
-                "document_id": e.document_id,
-                "version": e.version,
-                "section": e.section,
-                "excerpt": e.excerpt,
-            }
-            for e in evidence
+            *(
+                {
+                    "evidence_id": e.evidence_id,
+                    "document_id": e.document_id,
+                    "version": e.version,
+                    "section": e.section,
+                    "excerpt": e.excerpt,
+                }
+                for e in evidence
+            ),
+            *(
+                {"document_id": "asset-sim", "version": o.version, "section": o.section, "excerpt": o.excerpt}
+                for o in request.observations
+            ),
         ],
         "allowed_evidence_ids": [e.evidence_id for e in evidence],
         "requested_output_schema": draft_schema(),

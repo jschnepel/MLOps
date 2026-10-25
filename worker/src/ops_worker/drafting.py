@@ -34,11 +34,22 @@ BUDGET_SECONDS: Final = 90.0  # BS:555: both attempts together
 
 
 @dataclass(frozen=True)
+class Observation:
+    """An asset status or alert record from mcp-read (BS:419), rendered by the worker: the model reads it and can
+    never cite it, because only procedure sections carry the hash a proposal's snapshot binds (`build_proposal`)."""
+
+    section: str  # "asset status", "alert" or "alerts not shown"
+    version: str  # asset-sim's revision of the record
+    excerpt: str
+
+
+@dataclass(frozen=True)
 class DraftRequest:
-    """What the model may know about the ask; no identity, credential or tool is part of it. Two fields are the
-    worker's, never shown to the model: `answer_only`, the router's verdict that this run may not propose an incident
-    (SA:153), and `remaining_seconds`, what the run's compute budget has left when drafting starts (BS:555; None when
-    no run holds a budget, as in the evidence script)."""
+    """What the model may know about the ask; no identity, credential or tool is part of it. `observations` are the
+    run's asset status and alerts (T20). Two fields are the worker's, and the model learns only what the payload says
+    of them: `answer_only`, the router's verdict that this run may not propose an incident (SA:153; the payload states
+    it), and `remaining_seconds`, what the run's compute budget has left when drafting starts (BS:555; None when no run
+    holds a budget, as in the evidence script)."""
 
     asset_id: str
     text: str
@@ -46,6 +57,7 @@ class DraftRequest:
     end_at: datetime
     answer_only: bool = False
     remaining_seconds: float | None = None
+    observations: tuple[Observation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -99,8 +111,9 @@ class ModelOutputInvalid(Exception):
 
 
 class FakeDraftGenerator:
-    """The deterministic route that exercises the control path without a model (BUILD_SPEC §1). `delay_seconds` makes
-    it as slow as a real model call without blocking the event loop (R088's "> 30 s fake drafter"; tests only)."""
+    """The deterministic route that exercises the control path without a model (BUILD_SPEC §1): an answer for an
+    answer_only run (SA:153, T20) and a proposal otherwise. `delay_seconds` makes it as slow as a real model call
+    without blocking the event loop (R088's "> 30 s fake drafter"; tests only)."""
 
     route = ModelRoute.FAKE
     digest: str | None = None  # nothing to pin; the fake never reads data/model-pins.json
@@ -116,9 +129,21 @@ class FakeDraftGenerator:
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
         if not evidence:
-            raise ValueError("a proposal draft needs at least one evidence item")
+            raise ValueError("a draft needs at least one evidence item")
         cited = evidence[0]  # the highest-ranked section; deterministic because the search is
         hours = int((request.end_at - request.start_at).total_seconds() // 3600)
+        if request.answer_only:
+            return ModelDraft(
+                kind="answer",
+                title=f"Answer about {request.asset_id}",
+                summary=(
+                    f"For {request.asset_id} over the {hours}-hour window, procedure {cited.document_id} "
+                    f"v{cited.version} ({cited.section}) applies: {cited.excerpt[:200]}"
+                ),
+                evidence_refs=[cited.evidence_id],
+                assumptions=["Synthetic fixture data; no live equipment was observed."],
+                limitations=[f"Answered by the fake model route ({PROMPT_VERSION}); the control path, not quality."],
+            )
         return ModelDraft(
             kind="proposal",
             title=f"Review synthetic warnings on {request.asset_id}",
