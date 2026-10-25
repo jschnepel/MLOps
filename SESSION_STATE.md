@@ -1538,6 +1538,45 @@ Allowed shortcuts in T19, each with its owning task:
 - the dev database stays at 0013 until the owner migrates it (revision 0014); the worker refuses to start on it before
   then.
 
+## Plan Q debt list (T20; committed before coding) [R6-B7]
+
+Allowed shortcuts in T20, each with its owning task:
+- the stock `AsyncPostgresSaver` does not check the run fence inside its own writes: the stored checkpoint id protects
+  the head, but a stale worker could still append a checkpoint or a pending write after losing its lease; v1 runs one
+  worker replica (SA:217) → T38 (R021, M15);
+- R042's restart is a new graph instance on a new saver connection inside one test process; a killed worker process
+  is not tested → T30 (the `docker kill` recovery demo); SIGTERM is still not drained (T30's marker);
+- crash recovery repeats the reads and their `tool.*` events, and a draft held in memory when the process stopped is
+  drafted again (nothing text-bearing was persisted, SA:496): a run recovered after a completed draft can make more
+  than BS:554's two generation attempts, and its next job counts BS:555's 90 s from its own claim → T29 (erratum 128);
+- a transient read is retried at most twice inside the retrieval node (BS:552) and then the run ends FAILED, and a
+  401 to the worker's token ends FAILED with its own message; a bounded re-queue of the job instead → T22;
+- the read path has no membership freshness bound (erratum 105) → the owner's decision on erratum 105, then T21;
+- "evidence sufficient?" is SA:377's rule with a 5-minute freshness window, and the search's minimum rank is v1's
+  relevance criterion (erratum 122); erratum 102's residue (5 of 20 no-source questions answered) stays measured →
+  T25;
+- the T19 evidence run (`reports/model/t19-real-run.md`) was made before the asset status and alerts reached the
+  payload; its figures may move and it is not re-run here → T25 (the real-model trials);
+- revision re-entry is a seam only: one LangGraph thread per run and revision, `build_proposal` freezes revision 1,
+  `runs.checkpoint_id` is per run, and the manifest stays one per run (erratum 125) → T21;
+- `workflow_version` lives only in the checkpoint metadata → T21 (a column) and T36 (routing across a bump);
+- `recover` jobs are closed unhandled and `reconcile_outcome` only logs → T22;
+- an execute job whose run's latest decision is not an approval of its active proposal ends without a graph run, logs
+  the three ids and leaves the run APPROVED (the worker may not move it, SA:451); recovering such a run → T22;
+- a rejected run's graph thread ends at the reviewer wait: `record_decision` queues no job on a rejection, so
+  `publish_state` never runs for it in v1; the run's REJECTED state is the API's and is authoritative → recorded
+  (erratum 128), no task;
+- the worker's write tool keeps T47's result check: no discovery listing and no result-schema check for
+  `create_incident` (Plan Q departure 4) → T21;
+- a human wait is not excluded from the compute budget, and `runs.budget_used` is not written → T29;
+- the node log is per graph run, in memory and in the logs; spans for the graph's nodes → T28 (R058);
+- the saver has one connection with no pool and no reconnect: a broken saver connection fails the graph run → T30;
+- checkpoints of finished threads are never pruned → T30;
+- an answer's summary is shown as the model wrote it (validated, cited, `source=model_summary`) → T26 (R055's safe
+  display);
+- every run still asks for `lexical` retrieval → T25 (Plan N ruling 16);
+- the dev database stays at 0013 until the owner migrates it; the worker now needs revision 0015 as well.
+
 ## Environment (observed)
 
 | Item | Observed |
