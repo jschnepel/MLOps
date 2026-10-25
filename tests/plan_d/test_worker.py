@@ -64,7 +64,6 @@ async def test_build_proposal_binds_hash_to_canonical_bytes():
         end_at=REQ.end_at,
         draft=draft,
         evidence=EV,
-        corpus_version="handoff-1",
         now=NOW,
         supersedes_run_id=None,
     )
@@ -84,8 +83,7 @@ async def test_build_proposal_binds_hash_to_canonical_bytes():
     assert (
         frozen.payload.prompt_version == "incident-draft-v2" and frozen.payload.workflow_version == "investigation-v1"
     )
-    assert frozen.manifest.model_route is ModelRoute.FAKE and frozen.manifest.model_digest is None
-    assert frozen.manifest.corpus_version == "handoff-1" and frozen.manifest.retrieval_mode == "lexical"
+    assert drafting.FakeDraftGenerator.route is ModelRoute.FAKE and drafting.FakeDraftGenerator.digest is None
 
 
 @pytest.mark.asyncio

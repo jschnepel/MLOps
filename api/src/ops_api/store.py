@@ -413,7 +413,7 @@ class AdmissionStore:
                     asset_id=None if context is None else context.asset_id,
                     hours=None if context is None else context.hours,
                     active_run=await unit.active_run(conversation_id),
-                    hint=None,  # TODO(T19): the model router may supply a hint; it can only produce clarify
+                    hint=None,  # no hint producer in v1 (SA:375 optional; erratum 118); one could only ask to clarify
                 )
             )
             if decision.route is AdmissionRoute.REJECT:

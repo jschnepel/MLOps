@@ -2,7 +2,10 @@
 `worker` (`transition_run`, `freeze_proposal`, `mark_unknown`), and every network call happens outside a transaction
 (BUILD_SPEC §11).
 
-`investigate`: QUEUED → RETRIEVING → (read tool) → DRAFTING → fake draft → freeze → AWAITING_APPROVAL. `execute`: mint
+`investigate`: QUEUED → RETRIEVING → (read tool) → DRAFTING, with the run manifest → the model route's draft → by its
+kind: a proposal is frozen → AWAITING_APPROVAL; an abstention without a question → INSUFFICIENT_EVIDENCE; an answer or
+a clarifying question → FAILED until T20 routes them; a model outage, or a draft still invalid after its one repair →
+FAILED with a templated message (BS:516). `execute`: mint
 a write handle and call `create_incident`; mcp-write performs the grant, the dispatch and the outcome, while the
 worker records an UNKNOWN envelope through `mark_unknown`. Every handler runs under the run lease its claim took
 (AM-12, T13): each unit that writes for the run opens with `persistence.fenced` (the lease row FOR SHARE; owner, fence
@@ -17,7 +20,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 import psycopg
@@ -25,12 +28,21 @@ from ops_core import persistence
 from ops_core.jobs import JOB_RULES, JobType, Server
 from ops_core.lease import Lease, LeaseLost
 from ops_core.outcomes import EventSource, EventType
+from ops_core.routing import RunManifest
 from ops_core.settings import LeaseSettings, Urls
 from ops_core.states import Intent, RunState, freeze_allowed
 from psycopg.pq import TransactionStatus
+from pydantic import ValidationError
 
 from ops_worker import permit, proposals
-from ops_worker.drafting import DraftGenerator, DraftRequest, EvidenceItem
+from ops_worker.drafting import (
+    PROMPT_VERSION,
+    DraftGenerator,
+    DraftRequest,
+    EvidenceItem,
+    ModelOutputInvalid,
+    ModelUnavailable,
+)
 from ops_worker.heartbeat import Heartbeat
 from ops_worker.mcp import McpCaller, McpCallFailed
 
@@ -38,6 +50,15 @@ log = logging.getLogger("ops_worker")
 EXECUTE_RETRY_SECONDS = 30  # how long an execute job waits after mcp-write could not be reached
 QUERY_CHARS = 500  # schemas/tools/search_procedures.input.schema.json maxLength
 INTERRUPTED = "interrupted; the run was not resumed"  # TODO(T20): resume from the checkpoint instead
+# Templated outcomes of a draft (BS:516): never the model's text, never an exception's.
+MODEL_UNAVAILABLE = "the model route did not answer in time or could not be reached"
+MODEL_INVALID = "the model's draft failed validation after its one repair"
+NOT_ROUTED = "the draft was an answer or a clarifying question, which this build does not route yet"
+ABSTAINED = "the model found the evidence insufficient"
+RETRIEVAL_MODE: Final = "lexical"  # the only mode the worker asks for; choosing it per run is TODO(T25)
+# The draft stops this long before the run's compute budget ends, so the freeze or the failure unit after it still
+# runs inside the budget, before the heartbeat's own gate ("compute budget spent") could cancel the call.
+BUDGET_MARGIN_SECONDS: Final = 5.0
 
 
 def is_deferred(doc: dict[str, Any]) -> bool:
@@ -125,11 +146,21 @@ async def investigate(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
                 deps.urls.mcp_read,
                 handle=handle,
                 tool="search_procedures",
-                arguments={"query": text[:QUERY_CHARS], "limit": 3, "mode": "lexical"},
+                arguments={"query": text[:QUERY_CHARS], "limit": 3, "mode": RETRIEVAL_MODE},
             )
         )
         evidence = proposals.evidence_from_search(doc)
-    except (McpCallFailed, ValueError) as exc:
+        # The manifest records the corpus version and the mode the tool reports it ran (mcp-read's `retrieval_mode`),
+        # so a tool result without them, or with values the manifest refuses, is a retrieval failure like any other.
+        manifest = RunManifest(
+            run_id=run["run_id"],
+            model_route=deps.generator.route,
+            model_digest=deps.generator.digest,
+            prompt_version=PROMPT_VERSION,
+            corpus_version=str(doc["data"]["corpus_version"]),
+            retrieval_mode=doc["data"]["retrieval_mode"],
+        )
+    except (McpCallFailed, KeyError, ValidationError, ValueError) as exc:
         log.warning("investigate job %s: retrieval failed: %s", job["id"], exc)
         await _fail(deps, lease, RunState.RETRIEVING, RunState.FAILED, "retrieval failed")
         return
@@ -138,14 +169,25 @@ async def investigate(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
         await _fail(deps, lease, RunState.RETRIEVING, RunState.INSUFFICIENT_EVIDENCE, "no procedure section matched")
         return
     async with deps.conn.transaction():
+        await persistence.set_tenant(deps.conn, run["tenant_id"])  # the manifest INSERT is RLS-scoped
         await persistence.fenced(deps.conn, lease)
         await persistence.transition_run(
             deps.conn, run_id=run["run_id"], src=RunState.RETRIEVING, dst=RunState.DRAFTING
         )
+        # Written before the model is called, so a run whose draft fails still records the route, digest, prompt and
+        # corpus it used (R130); one immutable row per run.
+        await persistence.insert_run_manifest(deps.conn, tenant_id=run["tenant_id"], manifest=manifest)
     try:
-        await _draft_and_freeze(deps, lease, run, text, evidence, str(doc["data"]["corpus_version"]))
+        await _draft_and_freeze(deps, lease, run, text, evidence, manifest)
     except LeaseLost:
         raise  # the lease is gone: the job is handed back, and its next owner fails the interrupted run (INTERRUPTED)
+    except ModelUnavailable as exc:
+        log.warning("investigate job %s: %s", job["id"], exc)
+        await _fail(deps, lease, RunState.DRAFTING, RunState.FAILED, MODEL_UNAVAILABLE)
+    except ModelOutputInvalid as exc:
+        # Rule names only: the invalid text is never logged or stored (SA:496).
+        log.warning("investigate job %s: draft invalid after one repair (%s)", job["id"], exc)
+        await _fail(deps, lease, RunState.DRAFTING, RunState.FAILED, MODEL_INVALID)
     except Exception:
         # A failure here fails the run at once with its own reason; handed back instead, the next owner would only
         # find the run interrupted in DRAFTING and fail it as INTERRUPTED.
@@ -154,12 +196,29 @@ async def investigate(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
 
 
 async def _draft_and_freeze(
-    deps: Deps, lease: Lease, run: dict[str, Any], text: str, evidence: list[EvidenceItem], corpus_version: str
+    deps: Deps, lease: Lease, run: dict[str, Any], text: str, evidence: list[EvidenceItem], manifest: RunManifest
 ) -> None:
-    """Draft from the evidence and freeze the proposal; any failure here is the caller's to turn into FAILED."""
-    request = DraftRequest(asset_id=run["asset_id"], text=text, start_at=run["start_at"], end_at=run["end_at"])
-    async with permit.model_permit(deps.conn, holder=deps.worker_name, lease=lease):  # model concurrency 1 (BS:549)
+    """Draft from the evidence and act on the draft's kind; any failure here is the caller's to turn into FAILED."""
+    # One hold spans the first pass and its repair (model concurrency 1, BS:549; the TTL covers both, permit.py).
+    async with permit.model_permit(deps.conn, holder=deps.worker_name, lease=lease):
+        request = DraftRequest(
+            asset_id=run["asset_id"],
+            text=text,
+            start_at=run["start_at"],
+            end_at=run["end_at"],
+            answer_only=Intent(run["intent"]) is Intent.ANSWER_ONLY,
+            # BS:555's 90 s are the run's, counted from the claim as the heartbeat counts them, so the draft gets what
+            # retrieval and the permit wait left, less a margin for the unit that follows it.
+            remaining_seconds=deps.leases.compute_budget_seconds - lease.held_for() - BUDGET_MARGIN_SECONDS,
+        )
         draft = await lease.effect(deps.generator.generate(request, evidence))  # a lease effect (SA:195)
+    if draft.kind == "abstain" and not draft.clarification_requested:
+        await _fail(deps, lease, RunState.DRAFTING, RunState.INSUFFICIENT_EVIDENCE, ABSTAINED)  # SA:147
+        return
+    if draft.kind != "proposal":
+        # TODO(T20): the graph router sends an answer to ANSWERED and a question to AWAITING_INPUT (SA:137, SA:153).
+        await _fail(deps, lease, RunState.DRAFTING, RunState.FAILED, NOT_ROUTED)
+        return
     freeze_allowed(Intent(run["intent"]))  # an answer_only run never freezes a proposal (SA:453)
     now = datetime.now(UTC).replace(microsecond=0)
     proposal_id, draft_id = uuid4(), uuid4()
@@ -173,7 +232,6 @@ async def _draft_and_freeze(
         end_at=run["end_at"],
         draft=draft,
         evidence=evidence,
-        corpus_version=corpus_version,
         now=now,
         supersedes_run_id=run["supersedes_run_id"],
     )
@@ -194,8 +252,8 @@ async def _draft_and_freeze(
             run_id=run["run_id"],
             type=EventType.EXPLANATION_READY,
             payload={
-                "message": f"Drafted by model route {frozen.manifest.model_route.value} "
-                f"(prompt {frozen.manifest.prompt_version}).",
+                # A template naming the route and the prompt version (erratum 117), never the model's own summary.
+                "message": f"Drafted by model route {manifest.model_route.value} (prompt {manifest.prompt_version}).",
                 "evidence_refs": list(frozen.payload.evidence_refs),
             },
             source=EventSource.MODEL_SUMMARY,

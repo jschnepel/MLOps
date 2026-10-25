@@ -79,6 +79,7 @@ OBSERVED_UNITS: Final[dict[str, tuple[str, ...]]] = {
     "worker investigate start": ("run_lease", "runs", "jobs:finish"),  # the minted handle's FK key share on its job
     "worker tool event (append_event)": ("run_lease", "runs"),
     "worker failure (transition_run)": ("run_lease", "runs"),
+    "worker drafting start (transition_run, run manifest)": ("run_lease", "runs"),  # T19: the manifest's FK share
     "worker draft and freeze": ("run_lease", "runs"),
     "worker execute start": ("run_lease", "runs", "jobs:finish"),
     "worker mark_unknown": ("run_lease", "runs", "invocation_context"),

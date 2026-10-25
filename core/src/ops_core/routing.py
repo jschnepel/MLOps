@@ -207,7 +207,7 @@ def said(seconds: Fraction) -> str:
 @dataclass(frozen=True)
 class AdmissionFacts:
     """What the router sees: the request's kind, text and fields, whether the conversation holds a run, and an
-    optional model hint (no producer exists yet; TODO(T19))."""
+    optional model hint (none is produced in v1: SA:375 makes it optional, erratum 118)."""
 
     kind: MessageKind
     text: str

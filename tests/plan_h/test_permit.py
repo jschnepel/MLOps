@@ -2,7 +2,7 @@
 database.
 
 Catches: a backoff that does not double or exceeds 2 s, jitter that can drop to zero (two waiters hammering one row),
-a permit kept after the block or after a lost lease cancelled the call (one stuck permit stops every draft for 65 s),
+a permit kept after the block or after a lost lease cancelled the call (one stuck permit stops every draft for 95 s),
 a permit taken or released by a loss during the back-off (review round 1, I2), a waiter that outlives its lease, and a
 slow drafter that blocks the event loop.
 """
@@ -63,7 +63,7 @@ def test_the_backoff_doubles_to_two_seconds_with_jitter_in_the_upper_half() -> N
     assert [backoff(i, lambda: 1.0) for i in range(6)] == [0.25, 0.5, 1.0, 2.0, 2.0, 2.0]
     assert [backoff(i, lambda: 0.0) for i in range(4)] == [0.125, 0.25, 0.5, 1.0]
     assert backoff(10_000, lambda: 1.0) == 2.0  # a long wait never overflows the doubling
-    assert PERMIT_TTL_SECONDS == 65  # a 60 s model attempt plus 5 s (SA:596, ruling 12)
+    assert PERMIT_TTL_SECONDS == 95  # a draft's 90 s budget, both attempts, plus 5 s (BS:555; T19, Plan P ruling 7)
 
 
 def test_the_permit_is_released_after_the_block_and_after_a_lost_lease(monkeypatch: pytest.MonkeyPatch) -> None:
