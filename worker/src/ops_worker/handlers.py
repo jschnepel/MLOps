@@ -131,7 +131,7 @@ async def _resumable(
     if stored is not None and await build.known(deps.saver, build.thread_id(lease.run_id, revision), stored):
         return True
     log.warning("job %s: run %s has no stored checkpoint to resume (%s)", job["id"], lease.run_id, stored)
-    async with nodes.unit(Context(deps, job, lease)) as conn:
+    async with nodes.unit(Context(deps, job, lease, revision)) as conn:
         await nodes.fail_from(conn, lease.run_id, state, nodes.CHECKPOINT_MISSING)
     return False
 
@@ -190,7 +190,7 @@ async def _carry_on(deps: Deps, job: dict[str, Any], lease: Lease, run: dict[str
         # a graph run has nothing to resume: the run starts a new graph run.
         if await _resumable(deps, job, lease, state, stored, revision):
             assert stored is not None  # _resumable found it
-            if await build.ended(Context(deps, job, lease), build.thread_id(lease.run_id, revision), stored):
+            if await build.ended(Context(deps, job, lease, revision), build.thread_id(lease.run_id, revision), stored):
                 await _drive(deps, job, lease, initial(lease.run_id), None, revision)
             else:
                 await _drive(deps, job, lease, None, stored, revision)
@@ -207,14 +207,14 @@ async def resume_input(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
     whose question is no longer the run's newest is stale (its own graph run asked the next one before the job ran
     again): it ends without a graph run, and the newer reply's job resumes the run."""
     run = await _first_unit(deps, job, lease)
-    state, stored = RunState(run["state"]), run.get("checkpoint_id")
+    state, stored, revision = RunState(run["state"]), run.get("checkpoint_id"), int(run["revision"])
     if state is not RunState.AWAITING_INPUT:
         # An earlier owner of this job already took the reply (the run is QUEUED, RETRIEVING or DRAFTING): carry on
         # as an investigate job would; any other state has nothing left for this job.
         await _carry_on(deps, job, lease, run)
         return
     question = str(job["dedup_key"]).partition(":")[2]
-    async with nodes.unit(Context(deps, job, lease), fence=False) as conn:
+    async with nodes.unit(Context(deps, job, lease, revision), fence=False) as conn:
         requested = await persistence.run_events(conn, lease.run_id, EventType.CLARIFICATION_REQUESTED)
     newest = str(requested[-1][0]) if requested else None
     if newest is not None and newest != question:
@@ -228,23 +228,23 @@ async def resume_input(deps: Deps, job: dict[str, Any], lease: Lease) -> None:
             question,
         )
         return
-    if not await _resumable(deps, job, lease, state, stored, run["revision"]):
+    if not await _resumable(deps, job, lease, state, stored, revision):
         return
-    async with nodes.unit(Context(deps, job, lease), fence=False) as conn:
+    async with nodes.unit(Context(deps, job, lease, revision), fence=False) as conn:
         received = await persistence.run_events(conn, lease.run_id, EventType.CLARIFICATION_RECEIVED)
     reply = next((event_id for event_id, p in reversed(received) if p.get("question_id") == question), None)
     if reply is None:
-        async with nodes.unit(Context(deps, job, lease)) as conn:
+        async with nodes.unit(Context(deps, job, lease, revision)) as conn:
             await nodes.fail_from(conn, lease.run_id, state, nodes.RESUME_REFUSED)
         return
-    await _drive(deps, job, lease, Command(resume=str(reply)), stored, run["revision"])
+    await _drive(deps, job, lease, Command(resume=str(reply)), stored, revision)
 
 
 async def _approval(deps: Deps, job: dict[str, Any], lease: Lease, run: dict[str, Any]) -> UUID | None:
     """The decision's committed event, the resume value (SA:213), checked against the database first: the run's
     latest decision event is an `approval.recorded` (no `run.rejected`) whose `proposal_id` is the run's active
     proposal (record_decision's payload, 0004). None when it is not, with the three ids logged (round 1, M1)."""
-    async with nodes.unit(Context(deps, job, lease), fence=False) as conn:
+    async with nodes.unit(Context(deps, job, lease, int(run["revision"])), fence=False) as conn:
         approved = await persistence.run_events(conn, lease.run_id, EventType.APPROVAL_RECORDED)
         rejected = await persistence.run_events(conn, lease.run_id, EventType.RUN_REJECTED)
     event_id, payload = approved[-1] if approved else (None, {})

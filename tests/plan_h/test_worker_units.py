@@ -193,10 +193,15 @@ def patch(
     async def transition_run(_conn: Any, *, dst: RunState, detail: Any = None, **_: Any) -> int:
         log.entries.append("transition_run")
         current["state"] = dst.value
+        current.setdefault("transitions", []).append((dst, dict(detail or {})))  # T21 review: what each move said
         if dst is RunState.AWAITING_INPUT:
             asked = current["events"].setdefault(EventType.CLARIFICATION_REQUESTED, [])
             asked.append((uuid4(), dict(detail or {})))
         return 2
+
+    async def append_event(_conn: Any, *, type: EventType, payload: dict[str, Any], **_: Any) -> None:
+        log.entries.append("append_event")
+        current.setdefault("appended", []).append((type, dict(payload)))  # T21 review: the payloads a node journalled
 
     async def run_events(_conn: Any, _run_id: Any, event_type: EventType) -> list[tuple[Any, dict[str, Any]]]:
         log.entries.append("run_events")
@@ -277,7 +282,7 @@ def patch(
         "set_tenant": recorder("set_tenant"),
         "transition_run": transition_run,
         "mint_handle": recorder("mint_handle", "handle"),
-        "append_event": recorder("append_event"),
+        "append_event": append_event,
         "freeze_proposal": freeze_proposal,
         "release_lease": recorder("release_lease"),
         "revoke_handles": recorder("revoke_handles", 1),

@@ -63,10 +63,7 @@ def job_type_case(pairs: Sequence[tuple[str, str]]) -> str:
 # T21 (Plan R round 1, M1): a run's investigate wake-up is the job whose key names its current revision
 # (`run_id:N`, SA:455). An older revision's job, which may finish after the current one, ends without a graph run, so
 # re-arming it would leave the run QUEUED until the cap.
-CURRENT_KEY = (
-    "r.run_id::text || ':' || (1 + (SELECT count(*) FROM app.events e WHERE e.run_id = r.run_id"
-    " AND e.type = 'proposal.revised'))::text"
-)
+CURRENT_KEY = f"r.run_id::text || ':' || {persistence.REVISION_OF_RUN}::text"  # the revision, one formula
 # Each run's newest job of its state's type; an unfinished one sorts first (NULLS FIRST), so a run whose wake-up is
 # still pending is never picked.
 LOST = (

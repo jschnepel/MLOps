@@ -11,6 +11,7 @@ same rule lazily. An APPROVED run expires before its grant (SA:140); a granted r
 from __future__ import annotations
 
 import functools
+import logging
 from collections.abc import Sequence
 from uuid import UUID
 
@@ -18,6 +19,8 @@ from ops_core import persistence
 from ops_core.states import RunState
 
 from ops_sweeper.tenants import for_each_tenant, in_tenant
+
+log = logging.getLogger("ops_sweeper.expiry")
 
 # The scan reads without a lock; the definer decides under its own (the scan is only a list of candidates).
 DUE = (
@@ -36,12 +39,18 @@ async def _expire(conn: persistence.Conn, *, run_id: UUID) -> RunState:
 
 
 async def expire(conn: persistence.Conn, *, tenants: Sequence[UUID] | None = None) -> list[UUID]:
-    """Expire every tenant's overdue proposals, one run per unit; the runs that moved to BLOCKED_REVIEW."""
+    """Expire every tenant's overdue proposals, one run per unit; the runs that moved to BLOCKED_REVIEW. A run whose
+    unit fails (a lock timeout, an unexpected definer error) is logged and skipped, so one run never stops the others
+    or the rest of the tick; its transaction rolled back, and the next tick finds it again (Task 5 review, M4)."""
     found = await for_each_tenant(conn, _due, tenants=tenants)
     expired: list[UUID] = []
     for tenant, runs in found.items():
         for run_id in runs:
-            state = await in_tenant(conn, tenant, functools.partial(_expire, run_id=run_id))
+            try:
+                state = await in_tenant(conn, tenant, functools.partial(_expire, run_id=run_id))
+            except Exception:
+                log.exception("proposal expiry of run %s failed; the other runs go on", run_id)
+                continue
             if state is RunState.BLOCKED_REVIEW:
                 expired.append(run_id)
     return expired

@@ -40,7 +40,7 @@ from pydantic import ValidationError
 
 from ops_worker import evidence, permit, proposals
 from ops_worker.drafting import PROMPT_VERSION, DraftRequest, ModelOutputInvalid, ModelUnavailable
-from ops_worker.evidence import Bundle
+from ops_worker.evidence import OBSERVED, Bundle
 from ops_worker.graph.state import Context, HeldDraft, RunGraphState, key
 from ops_worker.mcp import TRANSPORT, UNAUTHENTICATED, McpCallFailed
 
@@ -73,8 +73,7 @@ RESUME_REFUSED: Final = "the clarification reply is not the latest answer to the
 CHECKPOINT_MISSING: Final = "the stored checkpoint is missing; the run was not resumed"
 WORKFLOW_FAILED: Final = "the workflow failed"
 # T21 (erratum 134): the model could not draft, so the run waits in DRAFTING for a person's proposal (ruling 7).
-MANUAL_PATH: Final = "The model is unavailable; a requester or reviewer may submit a manual proposal."
-OBSERVED: Final = frozenset({"normal", "warning"})  # an `unavailable` status observes nothing (evidence.OBSERVED)
+MANUAL_PATH: Final = "No valid draft could be produced; a requester or reviewer may submit a manual proposal."
 
 _S = RunState
 # The worker's only ways to FAILED from a state that waits or works (transition_run, SA:451): AWAITING_INPUT may only
@@ -320,7 +319,9 @@ async def retrieve_evidence(state: RunGraphState, runtime: Runtime[Context]) -> 
 
 async def draft_with_langchain(state: RunGraphState, runtime: Runtime[Context]) -> dict[str, Any]:
     """The model route's draft from the held bundle, under one model permit; the validated draft is held, its id and
-    kind go into state. An outage, an invalid draft or any other failure ends the run FAILED with a template."""
+    kind go into state. An outage or an invalid draft after the repair leaves an investigate run waiting in DRAFTING for
+    a manual proposal (`manual_path`, T21) and fails any other run; any other failure ends the run FAILED. Every failure
+    is a template."""
     ctx = runtime.context
     ctx.trace.append("draft_with_langchain")
     deps, lease, bundle = ctx.deps, ctx.lease, ctx.held.bundle
@@ -348,11 +349,13 @@ async def draft_with_langchain(state: RunGraphState, runtime: Runtime[Context]) 
     except LeaseLost:
         raise  # the job is handed back; its next owner resumes the run from the stored checkpoint
     except ModelUnavailable as exc:
-        log.warning("job %s: %s", ctx.job["id"], exc)
+        log.warning("job %s: %s; the run waits for a manual proposal", ctx.job["id"], exc)
         return await manual_path(ctx, _run_id(state), Intent(run["intent"]), MODEL_UNAVAILABLE)
     except ModelOutputInvalid as exc:
         # Rule names only: the invalid text is never logged or stored (SA:496).
-        log.warning("job %s: draft invalid after one repair (%s)", ctx.job["id"], exc)
+        log.warning(
+            "job %s: draft invalid after one repair (%s); the run waits for a manual proposal", ctx.job["id"], exc
+        )
         return await manual_path(ctx, _run_id(state), Intent(run["intent"]), MODEL_INVALID)
     except Exception:
         log.exception("job %s: drafting failed", ctx.job["id"])
@@ -632,12 +635,19 @@ async def execute_approved_proposal(state: RunGraphState, runtime: Runtime[Conte
         run = dict(await persistence.run_row(conn, _run_id(state), lock=True))
         if RunState(run["state"]) not in (RunState.APPROVED, RunState.EXECUTING):
             return {"run_state": run["state"]}
-        reader = await persistence.mint_handle(
-            conn, run_id=run["run_id"], job_id=job["id"], server=Server.READ, azp=deps.workload_azp, fence=lease.fence
+        reader = (
+            await persistence.mint_handle(
+                conn,
+                run_id=run["run_id"],
+                job_id=job["id"],
+                server=Server.READ,
+                azp=deps.workload_azp,
+                fence=lease.fence,
+            )
+            if RunState(run["state"]) is RunState.APPROVED  # an EXECUTING resend reads nothing and needs no handle
+            else None
         )
-    observed = (
-        await observe_asset(ctx, reader, run["asset_id"]) if RunState(run["state"]) is RunState.APPROVED else None
-    )
+    observed = await observe_asset(ctx, reader, run["asset_id"]) if reader is not None else None
     async with unit(ctx) as conn:
         if observed is not None:  # R116 (ruling 9, erratum 137): the grant checks this observation's age
             await persistence.record_asset_observation(conn, run["run_id"], observed)

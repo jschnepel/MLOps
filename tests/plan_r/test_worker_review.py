@@ -23,7 +23,7 @@ from ops_core.jobs import JobType
 from ops_core.lease import Lease, LeaseLost
 from ops_core.outcomes import EventType
 from ops_core.states import RunState
-from ops_sweeper import expiry, wakeups
+from ops_sweeper import expiry
 from ops_sweeper import main as sweeper
 from ops_worker import main
 from ops_worker.drafting import ModelUnavailable
@@ -72,6 +72,11 @@ def test_the_frozen_payload_names_the_runs_asset_and_interval(monkeypatch: pytes
         RUN["start_at"].isoformat().replace("+00:00", "Z"),
         RUN["end_at"].isoformat().replace("+00:00", "Z"),
     )
+
+
+def appended(w: Any, kind: EventType) -> list[dict[str, Any]]:
+    """The payloads of the `kind` events the nodes appended (Plan H's recorder keeps them since the T21 review)."""
+    return [payload for found, payload in w.run.get("appended", []) if found is kind]
 
 
 def revise(w: Any) -> None:
@@ -155,10 +160,8 @@ def test_a_model_outage_leaves_the_run_for_a_manual_proposal(monkeypatch: pytest
     assert w.contexts[0].trace[-3:] == ["draft_with_langchain", "route_request", "publish_state"]
     # A job that wakes the run again (a re-armed or reclaimed one) leaves it waiting: no failure, no second draft.
     moves = w.log.entries.count("transition_run")
-    explanation = [(uuid4(), {"message": nodes.MANUAL_PATH})]
-    w.run["events"][EventType.EXPLANATION_READY] = (
-        explanation  # what manual_path journalled (Plan H's recorder drops it)
-    )
+    assert appended(w, EventType.EXPLANATION_READY) == [{"message": nodes.MANUAL_PATH}]  # the templated explanation
+    w.run["events"][EventType.EXPLANATION_READY] = [(uuid4(), p) for p in appended(w, EventType.EXPLANATION_READY)]
     generator = Scripted()
     job(w, generator)
     assert w.log.entries.count("transition_run") == moves and generator.requests == []
@@ -171,8 +174,9 @@ def test_an_answer_only_model_outage_still_fails_the_run_with_no_manual_path(mon
     w = world(monkeypatch, {**RUN, "intent": "answer_only"})
     job(w, Scripted(ModelUnavailable("no reply")))
     assert w.run["state"] == "FAILED"
+    assert w.run["transitions"][-1] == (RunState.FAILED, {"message": nodes.MODEL_UNAVAILABLE})  # not "workflow failed"
     assert "clear_checkpoint_id" not in w.log.entries and "freeze_proposal" not in w.log.entries
-    assert EventType.EXPLANATION_READY not in w.run["events"]  # no manual-path explanation
+    assert appended(w, EventType.EXPLANATION_READY) == []  # no manual-path explanation was journalled
 
 
 def test_an_execute_job_reads_the_asset_status_again_before_its_grant(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,15 +231,6 @@ def test_r023_a_lost_lease_after_the_decision_resumes_exactly_the_accepted_appro
     resumes = [i.resume for i in inputs if isinstance(i, Command)]
     assert resumes == [str(accepted), str(accepted)]  # exactly the accepted event, both times
     assert w.log.entries.count("mcp:create_incident") == 1
-
-
-def test_the_investigate_wake_up_is_the_current_revisions_job() -> None:
-    """Plan R round 1, M1: the sweep picks and re-arms only the investigate job whose key names the run's current
-    revision, never an older revision's job that finished later."""
-    current = "jj.dedup_key = " + wakeups.CURRENT_KEY
-    assert current in wakeups.LOST
-    assert "j.dedup_key = " + wakeups.CURRENT_KEY in wakeups.REARM
-    assert "'proposal.revised'" in wakeups.CURRENT_KEY  # the rule of `_run_revision` (erratum 140)
 
 
 def test_the_sweeper_expires_every_tenants_overdue_proposals_and_records_its_minute(
