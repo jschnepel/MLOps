@@ -37,13 +37,8 @@ def test_a_minted_handle_carries_the_workload_client(
     monkeypatch: pytest.MonkeyPatch, job_type: str, state: str
 ) -> None:
     log = Log()
-    patch(monkeypatch, log)
+    patch(monkeypatch, log, run={**RUN, "state": state})
     minted = capture_mints(monkeypatch)
-
-    async def run_row(_conn: Any, _run_id: Any, *, lock: bool = False) -> dict[str, Any]:
-        return {**RUN, "state": state}
-
-    monkeypatch.setattr(persistence, "run_row", run_row)
     deps, lease = make(log)
     deps.workload_azp = "ops-worker-renamed"
     asyncio.run(handlers.handle(deps, {**JOB, "type": job_type}, lease))

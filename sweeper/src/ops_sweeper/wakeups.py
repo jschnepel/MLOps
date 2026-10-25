@@ -4,7 +4,9 @@ A wake-up is a job committed with the event that needs it (SA:173, BS:340): the 
 execute job with the approving decision. The worker consumes a job only in its final unit, after the handler
 returned; a handler that returned without moving the run (or a crash between consumption and progress) leaves the run
 waiting in the job's state with the job done. The sweep finds such runs, in the states a handler serves today
-(QUEUED for `investigate`, APPROVED for `execute`; AWAITING_INPUT is T20's, OUTCOME_UNKNOWN and ESCALATED are T22's),
+(QUEUED for `investigate`, APPROVED for `execute`; AWAITING_INPUT's wake-up is the API's `resume_input` job, erratum
+62, and a run that job moved back to QUEUED is re-armed by the investigate pair, which resumes it from its stored
+checkpoint (T20); OUTCOME_UNKNOWN and ESCALATED are T22's),
 when the newest job of the type has been done for longer than the grace, and reopens that job: its dedup key is the
 wake-up's identity, so the same row is re-armed (`done_at`, `claimed_by`, `claimed_at` cleared under `sweeper_all`),
 never a new one inserted (erratum 62). A run whose cancellation was requested is never re-armed. A job claimed

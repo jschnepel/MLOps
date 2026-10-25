@@ -1,6 +1,7 @@
-"""The worker process: a polling loop beside a health server and the lease heartbeat thread, three connections (the
-loop's, the probe's and the heartbeat's synchronous one), SelectorEventLoop on Windows (psycopg async refuses the
-Proactor loop; measured in the Plan D spike; the heartbeat's synchronous connection is not bound by that).
+"""The worker process: a polling loop beside a health server and the lease heartbeat thread, four connections (the
+loop's, the probe's, the heartbeat's synchronous one and the checkpoint saver's, T20), SelectorEventLoop on Windows
+(psycopg async refuses the Proactor loop; measured in the Plan D spike; the heartbeat's synchronous connection is not
+bound by that).
 
 Each poll claims the next job together with its run's lease (`persistence.claim_next`, Plan H ruling 3) and runs the
 handler under that lease while the heartbeat renews it; a lost lease cancels the job's effects in flight and hands the
@@ -29,6 +30,7 @@ from starlette.routing import Route
 
 from ops_worker import handlers
 from ops_worker.drafting import ModelStartError, start_route
+from ops_worker.graph.build import open_saver
 from ops_worker.heartbeat import Heartbeat, Liveness, connector, keep_stamping
 from ops_worker.mcp import HttpMcpCaller
 
@@ -160,6 +162,9 @@ async def _main() -> None:
     await persistence.assert_clock_profile(probe, settings.profile())
     await persistence.assert_relation(probe, "app.model_permit")  # revision 0007: the permit and the fenced functions
     await persistence.assert_relation(probe, "app.run_manifests")  # revision 0014: every run's manifest (T19)
+    await persistence.assert_relation(probe, "checkpoints.checkpoints")  # revision 0015: the graph's saver (T20)
+    # The saver's own connection (SA:559-562): its writes never share a transaction with an application unit.
+    saver_conn, saver = await open_saver(settings.app_postgres(Role.WORKER))
     liveness = Liveness()
     heartbeat = Heartbeat(connect=connector(settings.app_postgres(Role.WORKER)), settings=leases, liveness=liveness)
     deps = handlers.Deps(
@@ -171,6 +176,7 @@ async def _main() -> None:
         workload_azp=tokens.client_id,
         leases=leases,
         heartbeat=heartbeat,
+        saver=saver,
     )
     stop = asyncio.Event()
     stamps_stop = asyncio.Event()  # its own event: the stamps must outlive the job a shutdown lets finish
@@ -205,6 +211,7 @@ async def _main() -> None:
         await asyncio.to_thread(heartbeat.join, 5.0)  # off the loop: the thread ends its tick and closes its connection
         await conn.close()
         await probe.close()
+        await saver_conn.close()
     # A supervisor restarts a worker that lost its database or its health server; exit 0 would hide either.
     for task in (polling, serving):
         if task.done() and not task.cancelled() and task.exception() is not None:

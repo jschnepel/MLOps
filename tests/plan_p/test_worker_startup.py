@@ -1,8 +1,9 @@
 """The worker's start-up relation checks (T19; revision 0014), without a database.
 
 Catches: the worker starting on a database that lacks `app.run_manifests`, which would claim jobs it could not
-record a manifest for. The check is read off the order of `assert_relation` calls, stopped at the manifest table;
-and an unset MODEL_MODE ending in a traceback instead of the logged refusal to start.
+record a manifest for, or `checkpoints.checkpoints` (revision 0015, T20), whose graph could not persist. The check is
+read off the order of `assert_relation` calls, stopped at the checkpoint table, the last one asked for; and an unset
+MODEL_MODE ending in a traceback instead of the logged refusal to start.
 """
 
 from types import SimpleNamespace
@@ -33,7 +34,7 @@ async def test_the_worker_asks_for_the_manifest_table_before_it_starts(monkeypat
 
     async def assert_relation(_: object, name: str) -> None:
         asked.append(name)
-        if name == "app.run_manifests":
+        if name == "checkpoints.checkpoints":
             raise Stop
 
     fake_settings = SimpleNamespace(
@@ -52,7 +53,7 @@ async def test_the_worker_asks_for_the_manifest_table_before_it_starts(monkeypat
     monkeypatch.setattr(persistence, "assert_relation", assert_relation)
     with pytest.raises(Stop):
         await main._main()
-    assert asked == ["app.model_permit", "app.run_manifests"]
+    assert asked == ["app.model_permit", "app.run_manifests", "checkpoints.checkpoints"]
 
 
 @pytest.mark.asyncio
