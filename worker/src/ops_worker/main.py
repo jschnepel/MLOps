@@ -20,7 +20,7 @@ import psycopg
 import uvicorn
 from ops_core import persistence, redaction, settings
 from ops_core.lease import LeaseLost
-from ops_core.settings import Role
+from ops_core.settings import Role, SettingsError
 from ops_core.tokens import WorkloadTokenSource
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -28,7 +28,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from ops_worker import handlers
-from ops_worker.drafting import make_generator
+from ops_worker.drafting import ModelStartError, start_route
 from ops_worker.heartbeat import Heartbeat, Liveness, connector, keep_stamping
 from ops_worker.mcp import HttpMcpCaller
 
@@ -140,7 +140,14 @@ def token_source(kc: settings.Keycloak) -> WorkloadTokenSource:
 async def _main() -> None:
     # The redaction filter must sit on the root handler before the first log line (T11 note 4).
     redaction.install()
-    generator = make_generator(settings.env("MODEL_MODE"))  # unset or any other route: refuse to start (R130)
+    try:
+        # Unset or any other route refuses to start (R130); the real route checks its digest and warms up first
+        # (R127), before any database connection or claim, so no job ever waits on a model that is not ready. An unset
+        # MODEL_MODE is a SettingsError here; start_route turns the route's own settings errors into ModelStartError.
+        generator = await start_route(settings.env("MODEL_MODE"))
+    except (ModelStartError, SettingsError) as exc:
+        log.error("the worker refuses to start: %s", exc)
+        raise SystemExit(1) from exc
     leases = settings.leases()  # an unsafe lease, heartbeat, stall or budget combination refuses to start
     kc = settings.keycloak()
     tokens = token_source(kc)
@@ -152,6 +159,7 @@ async def _main() -> None:
     probe = await persistence.connect(settings.app_postgres(Role.WORKER))
     await persistence.assert_clock_profile(probe, settings.profile())
     await persistence.assert_relation(probe, "app.model_permit")  # revision 0007: the permit and the fenced functions
+    await persistence.assert_relation(probe, "app.run_manifests")  # revision 0014: every run's manifest (T19)
     liveness = Liveness()
     heartbeat = Heartbeat(connect=connector(settings.app_postgres(Role.WORKER)), settings=leases, liveness=liveness)
     deps = handlers.Deps(

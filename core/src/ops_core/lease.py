@@ -98,6 +98,11 @@ class Lease:
         with self._lock:
             return self._deadline
 
+    def held_for(self) -> float:
+        """Seconds since the claim took the lease, on the lease's clock: what the heartbeat's compute gate measures
+        against the run's budget (BS:555)."""
+        return self._clock() - self.held_since
+
     @property
     def renewed_at(self) -> float:
         """The monotonic instant before the last acquiring or renewing statement."""

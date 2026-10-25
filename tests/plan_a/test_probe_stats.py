@@ -207,16 +207,26 @@ def test_seal_problem_names_the_failing_line():
     assert (seal_problem(bad3, EXPECTED_PROMPTS) or "").startswith("line 3")
 
 
-def test_probe_main_refuses_malformed_or_missing_seal(tmp_path, monkeypatch, capsys):
+def test_probe_main_refuses_an_edited_prompt(monkeypatch, capsys):
     from scripts import probe
 
-    seal = tmp_path / "holdout.sha256"
-    seal.write_text("not a seal\n", encoding="utf-8")
-    monkeypatch.setattr(probe, "SEAL", seal)
-    # model_digest is the first call that touches Ollama; reaching it means the seal gate did not stop the run.
-    monkeypatch.setattr(probe, "model_digest", lambda: pytest.fail("network reached past the seal gate"))
+    # model_digest is the first call that touches Ollama; reaching it means the prompt gate did not stop the run.
+    monkeypatch.setattr(probe, "model_digest", lambda: pytest.fail("network reached past the prompt gate"))
+    monkeypatch.setitem(probe.EXPECTED, probe.PROMPT_DRAFT.name, "0" * 64)
     assert probe.main() == 2
-    assert "line" in capsys.readouterr().err
-    monkeypatch.setattr(probe, "SEAL", tmp_path / "missing.sha256")
-    assert probe.main() == 2
-    assert "missing" in capsys.readouterr().err
+    assert "refusing to run" in capsys.readouterr().err
+
+
+def test_probe_main_needs_no_holdout_seal(monkeypatch):
+    # Erratum 114: with the pinned prompts intact, the run goes on to Ollama whether or not a seal file exists.
+    from scripts import probe
+
+    class ReachedOllama(Exception):
+        pass
+
+    def stop():
+        raise ReachedOllama
+
+    monkeypatch.setattr(probe, "model_digest", stop)
+    with pytest.raises(ReachedOllama):
+        probe.main()

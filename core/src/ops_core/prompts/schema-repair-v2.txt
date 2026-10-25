@@ -1,0 +1,7 @@
+Correct the supplied draft so that it matches the reviewed output schema. Use only the same permitted evidence and exact allowed evidence IDs. Do not invent sources, approval, execution, root cause or missing observations. Preserve supported meaning and uncertainty. If the task cannot be supported, return an appropriate structured abstention. Return JSON only; no additional fields or private reasoning transcript.
+
+The user message is one JSON object: `invalid_output` (the draft that failed, or null when it cannot be shown), `validation_errors` (one line per problem: a JSON path, a colon, the rule it broke), and the original `confirmed_request`, `asset_id`, `interval`, `permitted_evidence`, `allowed_evidence_ids` and `requested_output_schema`. Fix every listed problem and return the whole corrected object. The rules of the first draft still apply:
+- Every entry of `evidence_refs` is copied exactly from `allowed_evidence_ids`. Never cite a key of the user message, a document title or any other name.
+- A `proposal` or an `answer` cites at least one allowed evidence ID. An `abstain` may cite none.
+- Write the `question` field only with kind `abstain`. With kind `proposal` or `answer`, leave `question` out entirely: do not write it as null or as an empty string.
+- `title` has at most 120 characters and `summary` at most 2500. `assumptions` and `limitations` have at most 8 entries of at most 500 characters each.

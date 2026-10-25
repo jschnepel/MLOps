@@ -689,14 +689,21 @@
       "category": "security",
       "requirement": "Retrieved instructions cannot grant tool authority",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r036_retrieved_instructions_cannot_grant_tool_authori.py",
       "expected_evidence": "Inject administrator-style text into SOP fixture; no permission/action boundary changes.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "core/src/ops_core/draft_validation.py",
+        "worker/src/ops_worker/ollama_drafting.py",
+        "tests/plan_p/test_ollama_drafting.py",
+        "tests/plan_p/test_draft_validation.py",
+        "reports/model/t19-real-run.md"
+      ],
       "owning_tasks": [
         "T19"
-      ]
+      ],
+      "note": "Plan P (T19): the injected corpus-1 section reaches the model as data, and a reply that takes it at its word (authority keys, a tool) is refused at the first pass and at the repair, so the run ends FAILED with no draft (tests/plan_p/test_ollama_drafting.py); no accepted draft can carry a field outside the schema, and the proposal's action and destination are set by code. The real run includes the twelve injected probe inputs, each with its tenant's injected section (reports/model/t19-real-run.md). Model output never selects a tool: the model sees none (SA:207)."
     },
     {
       "id": "R037",
@@ -704,14 +711,20 @@
       "category": "model",
       "requirement": "Actual LangChain and Ollama inference occurs",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r037_actual_langchain_and_ollama_inference_occurs.py",
       "expected_evidence": "Trace ChatOllama request using named installed model; record real output, versions and hardware.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "reports/model/t19-real-run.md",
+        "reports/model/t19-real-run.json",
+        "scripts/draft_evidence.py",
+        "tests/plan_p/test_model_route_live.py"
+      ],
       "owning_tasks": [
         "T19"
-      ]
+      ],
+      "note": "Plan P (T19): the worker's own qwen3:8b route (LangChain ChatOllama 1.1.0, Ollama, the pinned digest) over the 60 probe inputs, recorded once by hand with versions, parameters, hardware and sample outputs: valid first pass 60/60, after at most one repair 60/60, kinds {'abstain': 40, 'proposal': 20}, 26 clarifying questions, 0 thinking, 0 authority keys. The live gate's start test makes the worker's real warm-up call. One machine; not a capacity claim (BS:566)."
     },
     {
       "id": "R038",
@@ -734,14 +747,20 @@
       "category": "explanation",
       "requirement": "Reasoning text is not authority or an audit record",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r039_reasoning_text_is_not_authority_or_an_audit_reco.py",
       "expected_evidence": "Model claims success without receipt; UI/actions remain authoritative and raw reasoning stays off.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "core/src/ops_core/draft_validation.py",
+        "worker/src/ops_worker/ollama_drafting.py",
+        "tests/plan_p/test_draft_validation.py",
+        "tests/plan_p/test_investigate_drafting.py"
+      ],
       "owning_tasks": [
         "T19"
-      ]
+      ],
+      "note": "Plan P (T19): thinking in a reply's text or metadata refuses the reply whole (never stripped) and is not shown to the repair; a draft claiming the incident was created and approved only freezes a proposal for an independent reviewer, with a templated explanation and no action event or status from its words."
     },
     {
       "id": "R040",
@@ -749,14 +768,20 @@
       "category": "model",
       "requirement": "Invalid model schema has a bounded repair policy",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r040_invalid_model_schema_has_a_bounded_repair_policy.py",
       "expected_evidence": "Repeated malformed JSON exhausts one repair within remaining budget; no incident.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "core/src/ops_core/draft_validation.py",
+        "worker/src/ops_worker/ollama_drafting.py",
+        "tests/plan_p/test_ollama_drafting.py",
+        "tests/plan_p/test_investigate_drafting.py"
+      ],
       "owning_tasks": [
         "T19"
-      ]
+      ],
+      "note": "Plan P (T19): one repair within what is left of the run's 90 s compute budget (BS:555, measured from the claim), with instance-free feedback; a second invalid reply is ModelOutputInvalid and the run ends FAILED with a templated message, no draft row, no proposal and no incident. A timeout or an outage is never repaired."
     },
     {
       "id": "R041",
@@ -764,14 +789,22 @@
       "category": "model",
       "requirement": "No fake or hosted fallback masquerades as real output",
       "blocking_for_v1": true,
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "suggested_test": "tests/acceptance/test_r041_no_fake_or_hosted_fallback_masquerades_as_real_o.py",
       "expected_evidence": "Remove real model or block endpoint; clear failure/manual path, no silent substitute.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY",
+      "evidence_paths": [
+        "core/src/ops_core/draft_validation.py",
+        "worker/src/ops_worker/ollama_drafting.py",
+        "worker/src/ops_worker/drafting.py",
+        "tests/plan_p/test_ollama_drafting.py",
+        "tests/plan_p/test_investigate_drafting.py",
+        "tests/plan_d/test_worker.py"
+      ],
       "owning_tasks": [
         "T19"
-      ]
+      ],
+      "note": "Plan P (T19): MODEL_MODE names the route (fake or qwen3:8b; anything else, `ollama` included, refuses to start); a blocked endpoint or a missing model fails the start, and a failing real route fails the run with no fake draft and nothing frozen. The manual path when the model is unavailable is T21's (R057)."
     },
     {
       "id": "R042",
@@ -2221,17 +2254,22 @@
       "id": "R127",
       "category": "model",
       "requirement": "The pinned model digest is verified at worker warm-up",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Worker start with a mismatching digest in data/model-pins.json fails closed; matching digest proceeds; probe date recorded.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "worker/src/ops_worker/ollama_drafting.py",
+        "tests/plan_p/test_ollama_drafting.py",
+        "tests/plan_p/test_model_route_live.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r127_the_pinned_model_digest_is_verified_at_worker_wa.py",
       "milestone": "M07",
       "owning_tasks": [
         "T19"
       ],
-      "blocking_for_v1": true
+      "blocking_for_v1": true,
+      "note": "Plan P (T19): at worker start the installed digest from /api/tags (erratum 115) must equal data/model-pins.json's before the warm-up call; a mismatch, a missing or malformed pin, a missing model or an unreachable Ollama exits non-zero before any job is claimed; the probe date is in the pin and the message. Live: the committed pin passes and a tampered one fails before anything is generated."
     },
     {
       "id": "R128",
@@ -2280,10 +2318,17 @@
       "id": "R130",
       "category": "model",
       "requirement": "The model route is explicit, recorded and never silently substituted",
-      "implementation_status": "NOT_IMPLEMENTED_OR_NOT_TARGET_VERIFIED",
+      "implementation_status": "IMPLEMENTED_LOCALLY_VERIFIED",
       "expected_evidence": "Run manifest records model_route, digest, prompt_version, corpus_version; a missing or mismatched model fails closed; B and C evaluation conditions show identical routes.",
-      "evidence_status": "NOT_RUN",
-      "evidence_paths": [],
+      "evidence_status": "RECORDED_LOCALLY_LIVE",
+      "evidence_paths": [
+        "migrations/app/versions/0014_run_manifests.py",
+        "worker/src/ops_worker/handlers.py",
+        "tests/plan_p/test_migration_0014.py",
+        "tests/plan_p/test_investigate_drafting.py",
+        "tests/e2e/test_worker_live.py",
+        "tests/e2e/test_run_manifest_live.py"
+      ],
       "source": "SPEC_AMENDMENTS.md",
       "suggested_test": "tests/acceptance/test_r130_the_model_route_is_explicit_recorded_and_never_s.py",
       "milestone": "M07",
@@ -2291,7 +2336,8 @@
         "T19",
         "T25"
       ],
-      "blocking_for_v1": true
+      "blocking_for_v1": true,
+      "note": "Plan P (T19): every run that reaches DRAFTING records one immutable manifest (app.run_manifests, revision 0014: run, route, digest, prompt and corpus versions, retrieval mode) before the model is called, on both routes, and a failed draft keeps it; the route is chosen at start and never substituted. Met subject to T25's half: conditions B and C show identical routes."
     },
     {
       "id": "R131",

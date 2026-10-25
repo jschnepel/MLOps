@@ -2,8 +2,8 @@
 
 The payload is built once, canonicalised once, hashed once; the same bytes are stored, shown and sent. Evidence refs
 are sorted and the snapshots follow them, as `ProposalPayload` demands, so two drafts citing the same sections in a
-different order freeze to the same bytes. The run manifest records the model route (SA:379) and is validated here even
-though T19 is the task that stores it.
+different order freeze to the same bytes. The run manifest is not part of the proposal: the worker writes it before the
+draft (`handlers.investigate`, R130).
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from uuid import UUID
 
 from ops_core.canonical import canonical_json, canonical_sha256
 from ops_core.contracts import ModelDraft, ProposalPayload, SourceSnapshot
-from ops_core.routing import ModelRoute, RunManifest
 
 from ops_worker.drafting import PROMPT_VERSION, WORKFLOW_VERSION, EvidenceItem
 
@@ -24,12 +23,11 @@ EXPIRY = timedelta(minutes=15)  # BUILD_SPEC §12 default; enforced by T21
 
 @dataclass(frozen=True)
 class Frozen:
-    """The proposal as frozen: payload, the exact bytes, their hash and the run manifest."""
+    """The proposal as frozen: payload, the exact bytes and their hash."""
 
     payload: ProposalPayload
     canonical: bytes
     sha256: str
-    manifest: RunManifest
 
 
 def evidence_from_search(doc: dict[str, Any]) -> list[EvidenceItem]:
@@ -65,11 +63,10 @@ def build_proposal(
     end_at: datetime,
     draft: ModelDraft,
     evidence: list[EvidenceItem],
-    corpus_version: str,
     now: datetime,
     supersedes_run_id: UUID | None,
 ) -> Frozen:
-    """Build the payload, its canonical bytes, their hash and the run manifest from a validated draft."""
+    """Build the payload, its canonical bytes and their hash from a validated draft."""
     by_id = {e.evidence_id: e for e in evidence}
     refs = sorted(draft.evidence_refs)
     payload = ProposalPayload(
@@ -97,12 +94,4 @@ def build_proposal(
         supersedes_run_id=supersedes_run_id,
     )
     doc = payload.canonical_dict()
-    manifest = RunManifest(
-        run_id=run_id,
-        model_route=ModelRoute.FAKE,
-        model_digest=None,
-        prompt_version=PROMPT_VERSION,
-        corpus_version=corpus_version,
-        retrieval_mode="lexical",
-    )
-    return Frozen(payload=payload, canonical=canonical_json(doc), sha256=canonical_sha256(doc), manifest=manifest)
+    return Frozen(payload=payload, canonical=canonical_json(doc), sha256=canonical_sha256(doc))

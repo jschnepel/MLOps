@@ -125,6 +125,25 @@ async def event_types(conn: persistence.Conn, run: UUID) -> list[tuple[str, str]
     return [(r["type"], r["source"]) for r in await cur.fetchall()]
 
 
+MANIFEST = {  # what the fake route records for a run that retrieved SEARCH (T19, AM-80)
+    "model_route": "fake",
+    "model_digest": None,
+    "prompt_version": "incident-draft-v2",
+    "corpus_version": "handoff-1",
+    "retrieval_mode": "lexical",
+}
+
+
+async def manifest_of(conn: persistence.Conn, run: UUID) -> list[dict[str, Any]]:
+    """The run's manifest rows (at most one: the run is the key), without the run id and the timestamp."""
+    cur = await conn.execute(
+        "SELECT model_route, model_digest, prompt_version, corpus_version, retrieval_mode FROM app.run_manifests"
+        " WHERE run_id = %s",
+        (run,),
+    )
+    return [dict(r) for r in await cur.fetchall()]
+
+
 async def proposal_of(conn: persistence.Conn, run: UUID) -> dict[str, Any]:
     """The run's active proposal row."""
     row = await persistence.run_row(conn, run)
@@ -178,6 +197,7 @@ async def test_investigate_then_execute(
             "DRAFTING",
             "AWAITING_APPROVAL",
         ]
+        assert await manifest_of(app_conn, run) == [MANIFEST]  # T19: the fake route's manifest, written once
         await approve(api, proposal)
         assert (await event_types(app_conn, run))[-1] == ("approval.recorded", "application")
         job, lease = await own_job(app_conn, deps.conn, run, "execute")
@@ -191,8 +211,8 @@ async def test_investigate_then_execute(
             await purge_run(app_conn, run)
 
 
-class RaisingGenerator:
-    """A model route that fails mid-draft."""
+class RaisingGenerator(FakeDraftGenerator):
+    """A model route that fails mid-draft (the fake's route and digest, so the run manifest is written first)."""
 
     async def generate(self, request: Any, evidence: Any) -> Any:
         """Stand in for a model route that fails mid-draft."""
@@ -224,6 +244,7 @@ async def test_drafting_failure_fails_the_run(
         assert [r["to_state"] for r in await cur.fetchall()] == ["QUEUED", "RETRIEVING", "DRAFTING", "FAILED"]
         cur = await app_conn.execute("SELECT done_at IS NOT NULL AS done FROM app.jobs WHERE id = %s", (job["id"],))
         assert (await cur.fetchone())["done"]
+        assert await manifest_of(app_conn, run) == [MANIFEST]  # R130: written before the draft that failed
     finally:
         if run is not None:
             await purge_run(app_conn, run)

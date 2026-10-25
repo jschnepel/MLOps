@@ -20,8 +20,11 @@ connection renews the lease while the event loop is alive and the job is within 
 job's MCP or model call in flight when renewal fails; the job's final unit closes the job, releases the lease and
 makes the run's deferred jobs due at once (T14). Polling is the v1 wake mechanism; a job it consumed without moving
 its run is re-armed by the sweeper (`docs/runbooks/events-and-outbox.md`).
-`investigate`: read tool on mcp-read → fake draft under the model permit (`MODEL_MODE=fake`, the only route until
-T19) → frozen proposal → AWAITING_APPROVAL. `execute`: `create_incident` on mcp-write.
+`investigate`: read tool on mcp-read → the run manifest → a draft under the model permit from the route `MODEL_MODE`
+names (`fake`, or `qwen3:8b` through LangChain's ChatOllama on local Ollama, whose digest the worker checks against
+`data/model-pins.json` and warms before it claims a job; T19) → a proposal is frozen → AWAITING_APPROVAL (an
+abstention ends INSUFFICIENT_EVIDENCE; an answer or a question, an outage or an invalid draft ends FAILED).
+`execute`: `create_incident` on mcp-write.
 One token of the worker's client (`OPS_WORKLOAD_CLIENT_ID`, default `ops-worker`, the one setting both MCP servers'
 verifiers read too, T47) carries both MCP audiences; one handle per call, bound to the lease's fence and to the client
 id the tokens are issued to (T15). Settings:

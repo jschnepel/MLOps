@@ -388,3 +388,39 @@ The inherited source/test/integration bytes are retained unchanged in this hando
   conditions and statistics -> T25; the scenario suite -> T24; `evals/quality-gates.json` -> the owner. Two errata
   (112-113) are proposed.
 - Next: no PLANNED task can start; T19 and T41 wait on owner steps.
+
+## Update — erratum 114 and the live probe (2026-10-24, branch `plan-p`)
+
+- PRs #12, #13 and #14 are merged into `main` (2026-10-20, at the owner's request).
+- Erratum 114 (the owner's decision, 2026-10-21): the holdout seal no longer gates T02, T19 or T25. `scripts/probe.py`
+  keeps its pinned-prompt check; `check.py` is `CHECK: GREEN` at 1540 passed, 219 skipped.
+- T02's live probe ran on local Ollama 0.40.4 (`reports/model-probe-qwen3-8b.md`, `data/model-pins.json`): JSON-valid
+  59/60, schema-valid 5/60 first pass and after repair (a `question` on proposal and answer drafts), no thinking, warm
+  p50 2.77 s, the cold call over the 60 s cap. Its decision lines (proceed; release on cancel) are provisional.
+- Next: T19 (Plan P).
+
+## Update — Plan P executed (2026-10-25, branch `plan-p`)
+
+- The owner merged PRs #12-#14, removed the holdout seal (erratum 114) and asked the agent to build autonomously; T02's
+  probe decision lines stay provisional. Plan P (T19: the real-model drafting route) executed on branch `plan-p`
+  (`ee2729d..737d1ab`, on `main` 3905b35). The plan is
+  `docs/superpowers/plans/2026-10-24-first-slice-p-drafting-route.md`. T19 is DONE; T02 stays `DONE_PENDING_OWNER` and
+  T44 step 10 stays pending.
+- `PYTHONUTF8=1 uv run python scripts/check.py` is `CHECK: GREEN`: pytest `1629 passed, 222 skipped`.
+  `PYTHONUTF8=1 uv run python scripts/check.py --profile test` is `CHECK: GREEN`: pytest `1830 passed, 21 skipped`.
+  `uv run python -I scripts/verify_handoff.py --reference-code --manifest --contracts` exits 0.
+- **Evidenced** (`IMPLEMENTED_LOCALLY_VERIFIED`): R036, R039, R040, R041 (`RECORDED_LOCALLY`: an injected section with
+  an adversarial reply ends FAILED with no draft; thinking refused whole; one repair, then a templated failure; no
+  fallback, a blocked endpoint fails the start); R037, R127, R130 (`RECORDED_LOCALLY_LIVE`: the recorded real run; the
+  digest check against `/api/tags` passes with the committed pin and fails closed with a tampered one; one immutable
+  manifest per run on both routes, R130 subject to T25's half).
+- Built: the runtime prompts v2, `ops_core.draft_validation`, `ops_worker.ollama_drafting` (ChatOllama, 60 s per
+  attempt within 90 s, one repair, a 180 s warm-up), the two-route router, revision 0014 (`app.run_manifests`), the
+  permit held across both attempts (TTL 95 s). The real run (`reports/model/t19-real-run.md`): valid first pass
+  60/60, after at most one repair 60/60, kinds {'abstain': 40, 'proposal': 20}, 26 clarifying questions, 0 thinking, 0
+  authority keys. Validity is not support: the 20 proposals are ungraded (T25). The dev database is still at 0013
+  (nothing here connected to it); the worker refuses to start there until `skeleton.py migrate` (0014), an owner step
+  (or the agent at the owner's request).
+- Deferred, each with its owner in `SESSION_STATE.md`: answers and clarifying questions -> T20; outage retries ->
+  T22/T29; the manual path -> T21; trials, conditions and support -> T25. Seven errata (115-121) are proposed.
+- Next: T20 (the LangGraph workflow).

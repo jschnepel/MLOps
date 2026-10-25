@@ -3,7 +3,16 @@ name = "ops-worker"
 version = "0.0.1"
 description = "Run-lease worker: LangGraph orchestrator, LangChain draft node, MCP client"
 requires-python = ">=3.13"
-dependencies = ["ops-core", "mcp==2.3.0", "uvicorn>=0.54,<1"]
+dependencies = [
+  "ops-core",
+  "mcp==2.3.0",
+  "uvicorn>=0.54,<1",
+  "langchain-ollama==1.1.0",
+  # Imported directly by ops_worker.ollama_drafting, so declared at the versions langchain-ollama resolved (SA:582).
+  "langchain-core==1.7.0",
+  "ollama==0.6.3",
+  "httpx==0.28.1",
+]
 
 [tool.uv.sources]
 ops-core = { workspace = true }

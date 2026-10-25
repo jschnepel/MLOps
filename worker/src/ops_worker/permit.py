@@ -1,11 +1,16 @@
-"""The model permit around every model call (AM-12 SA:203-205, Plan H ruling 12): one row of `app.model_permit` per
+"""The model permit around every draft (AM-12 SA:203-205, Plan H ruling 12; the worker's warm-up call runs before any
+claim, outside the permit): one row of `app.model_permit` per
 unit of global model concurrency (one, BS:549), taken with SKIP LOCKED in its own short transaction and released in
 another, so a waiting worker never holds a database transaction. A busy permit is polled with capped exponential
 backoff and jitter while the caller's lease lasts. The take and the release are database units and are never
 cancelled; the back-off sleep is the one effect a lost lease cancels (review round 1, I2), so the `finally` releases
-exactly the slot a take returned, also when the lease is lost during the model call. A 65 s TTL (one 60 s model
-attempt plus 5 s) frees a permit whose holder died. TODO(T19): SA:205's stricter release ("hold until `ollama ps`
-shows idle"), once T02 has measured whether a cancelled request stops Ollama's generation.
+exactly the slot a take returned, also when the lease is lost during the model call. One hold spans a whole draft,
+the first pass and its repair, and a 95 s TTL (the 90 s draft budget plus 5 s) frees a permit whose holder died.
+
+The permit is released when the draft call ends or is cancelled (SA:205's rule as T02 measured it): after a
+mid-generation cancel the next call started in 0.15 s, so a cancelled request does not keep Ollama busy
+(`reports/model-probe-qwen3-8b.md`, cancel row; the line is provisional until the owner confirms it), and nothing polls
+`/api/ps`.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from typing import Any
 from ops_core import persistence
 from ops_core.lease import Lease
 
-PERMIT_TTL_SECONDS = 65  # SA:596: a model attempt is capped at 60 s; 5 s more for the call around it
+PERMIT_TTL_SECONDS = 95  # BS:555: a draft's two attempts share 90 s (drafting.BUDGET_SECONDS); 5 s more
 FIRST_BACKOFF_SECONDS = 0.25
 MAX_BACKOFF_SECONDS = 2.0
 Sleep = Callable[[float], Coroutine[Any, Any, None]]

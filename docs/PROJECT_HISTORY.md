@@ -1072,6 +1072,71 @@ record, ran a stray `uv run python -I -` with empty standard input and stopped i
 `uv run python -I -c "pass"` to a shell command: it ran nothing, but it broke the "scripts are files" rule the
 controller gives every agent.
 
-## 33. What the process taught
+## 33. The owner removed the holdout seal so the model work could start
+
+**Problem.** After T23 every remaining task waited on one owner step: writing about twenty-five holdout cases without
+AI help and sealing their hash (T03). The model probe (T02) refused to run without the seal, the drafting route (T19)
+listed T03 as a dependency, and the evaluation (T25) waited on the owner's labels for the sealed set (T41). For a
+portfolio project being scaffolded before the owner gets hands-on, that gate stopped the whole build.
+
+**Fix.** On 2026-10-21 the owner decided to remove the seal (erratum 114). T03 left the dependencies of T02 and T19,
+and T41 left T25's. The probe kept its other guard: it still refuses to run if either starter prompt differs from its
+pinned hash, and a new test proves it reaches Ollama with no seal file present. T25 will report on the development set
+and say plainly that its numbers are not held out. The holdout tooling stays, so the owner can still write one later.
+
+**Process.** The permission system twice refused the agent's part: first a listing of the holdout and seal files
+(read as weakening a security control), then the script that edited the task graph (read as the agent rewriting its
+own instructions). The agent stopped both times and asked. The owner added one allow rule for scripts run as
+`uv run python -I <script>` and told the agent to continue; the same script then ran unchanged. The merges of PRs
+#12-#14, refused twice before, went through when the owner asked for them directly.
+
+## 34. The drafting plan put the real model behind the same gates as the fake
+
+**Problem.** Plan P takes T19: the worker had one drafting route, a deterministic fake, and the first real model run
+(T02's probe) had found the starter prompt nearly unusable: 5 of 60 drafts passed the schema, because the model wrote
+`question` on proposals and cited the payload's keys instead of evidence IDs, which the probe's payload never gave
+it. The real route had to be selectable, validated, bounded, pinned and recorded without weakening anything the fake
+route already proved.
+
+**Change.** `MODEL_MODE` now names one of two routes, and the worker refuses anything else. The real route asks
+qwen3:8b through LangChain's ChatOllama with the probe's exact settings, checks the installed digest against the pin
+and warms the model before it claims a job, and validates every reply in a core module T25 can reuse: thinking,
+authority keys, the schema, the contract, citation membership. One repair, with feedback that names a path and a rule
+and never repeats the reply, fits inside a 90-second budget; a timeout or an outage is never repaired, and nothing
+falls back to the fake. Every run records its route, digest, prompt and corpus in an immutable manifest row before the
+model is called. The new prompts add the rules the probe showed missing, and the payload finally lists the allowed
+evidence IDs. On the same 60 inputs the real run recorded valid first pass 60/60, after at most one repair 60/60,
+kinds {'abstain': 40, 'proposal': 20}, 26 clarifying questions, 0 thinking, 0 authority keys.
+
+**Review.** The plan stage had a fact sheet of 20 open questions (0db7ca4), 20 rulings, the plan (fbe940b, with eleven
+departures the controller accepted) and one static review round (REVISE, 0 Critical, 3 Important, 10 Minor). The
+Important findings were a missing test that the grader and the validator agree on what a valid draft is, an evidence
+report that said nothing about what had been sent to the model, and a draft budget of 90 seconds counted from the call
+to `generate` rather than from the lease, against BS:555; the fix (8bbad58) was checked by diff, with no second round.
+Each building task then had its own review (opus for Tasks 1 to 4, sonnet for Task 5). Task 1 was approved with six
+minors (comment and test-wording slips, and the validator now shares the grader's `FormatChecker`). Task 2 needed one
+fix: under `reasoning=False` langchain-ollama 1.1.0 drops Ollama's separate `thinking` field before the route sees it,
+so the reasoning channel is dead on the real route; the docstrings were corrected and the finding became erratum 121,
+and the real-chat error mappings, the warm-up and repair cut-offs gained tests. Task 3 needed one fix: the live check
+that only the worker can insert a manifest could have passed with every role granted, because row-level security
+refuses with the same code when no tenant is set; the test now sets the tenant and matches "permission denied". Task 4
+was approved with seven minors: the budget wiring was untested (four handler tests, checked by mutation), a
+`str(corpus_version)` defeated the strict manifest, and an attempt with no time left now never calls the model. Task 5
+needed fixes and had a spec gap: the withholding of sample text was tested only in isolation (it is now tested at both
+call sites), the report did not say that 12 of 12 injected inputs valid is validity and not resistance (PR-003, a valid
+proposal that restates and cites the injected note), kinds per scenario were missing, and a hung `nvidia-smi` could
+have lost the run; a `--from-json` path lets the markdown be corrected without running the model again. The three
+database live tests that the plan writer could never run (`.env` was refused in the scratch copy) passed on their first
+execution, and the real run matched the plan's prediction exactly. The final whole-branch review found the branch ready
+to merge with fixes (0 Critical, 2 Important, 10 Minor): erratum 121 was cited in code and recorded nowhere, two
+shortcuts the code takes had no debt line (the 30-minute `keep_alive` with a warm-up only at start, and the skeleton's
+90-second readiness wait against the 180-second warm-up), the real route's `answer_only` and AM-31's ChatOllama
+settings were pinned by no test, and three start-up failures bypassed the clean exit. One fix wave closed the code
+findings (737d1ab) and this close-out the records. The process slips ran nothing against the dev database and opened no
+holdout material: an implementer ran `python -` with an empty heredoc, which hung and was stopped, a by-hand mypy run
+polluted `.mypy_cache` (removed), a temp log was written outside the repository (deleted), and one-off scripts wrote
+CRLF into six files, which the hygiene test caught.
+
+## 35. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.
