@@ -1137,6 +1137,45 @@ holdout material: an implementer ran `python -` with an empty heredoc, which hun
 polluted `.mypy_cache` (removed), a temp log was written outside the repository (deleted), and one-off scripts wrote
 CRLF into six files, which the hygiene test caught.
 
-## 35. What the process taught
+## 35. The workflow plan put the run's lifecycle into one graph
+
+**Problem.** Plan Q takes T20: the worker ran each job as a straight-line handler that failed a run it found
+interrupted, routed only proposals, and kept no checkpoint. The spec asks for one explicit LangGraph graph whose
+router is a table, synchronous checkpoints whose accepted id is stored under the lease fence, interrupts that carry
+ids only, waits that hold no lease, and an ANSWERED path, all without the checkpoint ever holding evidence or model
+text.
+
+**Change.** The graph's router is a table in core, and the graph's conditional edges are generated from it, so a test
+can walk every row to the node it reaches. Each job runs one graph run under its lease: every checkpoint LangGraph
+announces is confirmed by reading it back and then stored in `runs.checkpoint_id` under the fence, because the
+library announces a run's first checkpoint before it has written it. A question or a reviewer wait interrupts with an
+event or proposal id, the job releases the lease, and the wake-up job resumes from the stored id; a crash resumes from
+it too and ignores any newer head. Retrieval now reads the asset status and the alerts as well as the procedures and
+judges them by SA:377's code rule; the evidence and the draft stay in the worker's memory between nodes, never in a
+checkpoint.
+
+**Review.** Building the slice in a scratch copy found what reading had not: a clarified run that retrieved again would
+have hit the manifest's primary key; a `resume_input` job could not read in RETRIEVING (the allowlist said
+AWAITING_INPUT and QUEUED only); a crash resumes at the node that was next, which may be the one that needs the lost
+draft, so every consumer routes a missing hold back through retrieval and `publish_state` leaves the graph only when the
+table says the run is settled; and the MCP SDK reports every non-2xx answer the same way, so the worker's client records
+HTTP statuses itself to tell a refused token from a transport failure. The static review then found that a node's early
+return left the router's decision dimensions stale, so an approved run that had forked from before its freeze could
+never execute; the router now rereads them on every hop. It also found R108's synchronous persistence evidenced only by
+an argument spy (a live stub test now shows a step finding the previous checkpoint stored), and an execute job's resume
+value used unchecked (now checked against the run's latest decision). The database live tests were written blind (the
+scratch copy could not reach the stack's `.env`) and first ran in execution: two harness facts surfaced (LangGraph
+numbers the start node's superstep 0, so the first node's checkpoint is step 1; the clarification test's cleanup had to
+delete the reply the API path adds), and nothing in the graph. The task reviews found that an execute job re-sent after
+a cleared refusal resumed a finished graph and ran no node, which the plan's own handler text mandated and the sweeper's
+re-dispatch promise forbids (a finished snapshot now starts a new graph run); that closing a job on an unexpected
+failure stranded runs waiting for input or executing (the job is re-queued with its lease released, unbounded until
+T22); and that the plan's `git checkout -- reports` had left two committed evidence reports describing pre-T20
+behaviour. The whole-branch review found two more: a `resume_input` job run again after its own graph asked a second
+question took the old reply and failed the run (it now ends without a graph run), and the six-call read budget was
+checked only before retries (now before every call). One fix wave of twenty-two items followed, each verified by a
+scoped re-review with mutation probes.
+
+## 36. What the process taught
 
 Eight spec rounds and four plan dry-runs found the following pattern: each round's fixes introduced the next round's high-severity findings, because new mechanisms (functions, tombstones, locks, matrices) arrive with their own gaps. The fourth and eighth rounds, which executed the first tasks on the real machine instead of reading them, produced the findings that changed the first slice most, and the Plan B dry-run did the same for the bootstrap. Every implementation plan is now dry-run on scratch copies before anyone executes it, and every executed slice gets a whole-branch review after its task gates. The plan therefore ends spec-wide review here and reviews each implementation slice against its code and tests, where a grant either lets admission commit or it does not.

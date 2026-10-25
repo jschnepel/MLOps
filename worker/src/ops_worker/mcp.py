@@ -60,7 +60,8 @@ def transport_failure(tool: str, statuses: list[int], *, read: bool = True) -> M
     at all) or a 5xx is worth one more try, on the read path only (`read`: a write's outcome is never a plain retry)."""
     if 401 in statuses:
         return McpCallFailed(f"{tool}: the server refused the worker's token", code=UNAUTHENTICATED)
-    refused = next((code for code in statuses if code >= 400), None)  # a teardown answer after it must not count
+    # The response hook sees the tools/list and tools/call POSTs only; this client sends no DELETE.
+    refused = next((code for code in statuses if code >= 400), None)
     if refused is not None and refused < 500 and refused not in _TRANSIENT_4XX:
         return McpCallFailed(f"{tool}: the server rejected the request ({refused})", code=HTTP_REJECTED)
     return McpCallFailed(f"{tool}: transport or protocol failure", code=TRANSPORT, retryable=read)

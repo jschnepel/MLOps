@@ -17,7 +17,7 @@ Start with **[START_HERE.md](START_HERE.md)**. The implementation contract is [B
 |---|---|---|
 | **Least privilege** | Column-level DB grants per role; MCP servers with no table access; a function-only final gate; capability handles; token audiences | R084, R124, R128, R106, R131, R026, R027, R085 |
 | **Routers** | An admission router, a graph router node and a model router, each with an enumerable route table; model output can only downgrade a route | R129, R130 |
-| **Orchestrator** | One explicit LangGraph graph: evidence before drafting, durable pauses, synchronous checkpoints, never the authority | R038, R042, R108, R091 |
+| **Orchestrator** | One explicit LangGraph graph: evidence before drafting, durable pauses, synchronous checkpoints, never the authority | R038, R042, R108, R091, R022, R114 |
 | **MCP servers** | `mcp-read` (asset status, alerts, procedure search) and `mcp-write` (guarded incident write and recovery), disjoint functions, disjoint handles | R025–R031, R131 |
 
 The full map, with diagrams and the demo that shows each, is **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.

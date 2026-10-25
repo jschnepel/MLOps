@@ -311,7 +311,7 @@ skipped. Every dev figure was measured on the scratch copy; the live ones are ar
 
 **Requirements:** rulings 16, 17; SA:698 (the debt list first); SA:580-581.
 
-- [ ] **Step 1a: Record both baselines**
+- [x] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py < /dev/null` → `CHECK: GREEN` with pytest `1629 passed, 222
 skipped`; with the dev stack up, local Ollama answering and `uv run python scripts/skeleton.py status` showing every
@@ -320,12 +320,12 @@ passed, 21 skipped`, then `git checkout -- reports`. Run `uv run python -I scrip
 --manifest --contracts < /dev/null` → exit 0. Record the three lines in the report. A gate that is not GREEN stops the
 plan here, before anything is committed.
 
-- [ ] **Step 1b: Record the base**
+- [x] **Step 1b: Record the base**
 
 Run `git rev-parse --short HEAD` (expected `6466b8c` or the commit that adds this plan on top of it) and write it as
 `BASE=<hash>` in the report and the SDD ledger. Task 6's span is `<base>..<last>`. `git status --short` prints nothing.
 
-- [ ] **Step 1c: Commit the debt list (before any code)**
+- [x] **Step 1c: Commit the debt list (before any code)**
 
 Edit 1 (`SESSION_STATE.md`), replace:
 
@@ -393,7 +393,7 @@ git add SESSION_STATE.md
 git commit -m "docs: declare Plan Q's shortcuts before coding (T20 debt list)"
 ```
 
-- [ ] **Step 2: The dependencies and the test path**
+- [x] **Step 2: The dependencies and the test path**
 
 Edit 2 (`worker/pyproject.toml`), replace:
 
@@ -474,7 +474,7 @@ git commit -m "build: langgraph 1.2.14 and langgraph-checkpoint-postgres 3.1.2 f
   `ops_core.privileges.CHECKPOINT_SCHEMA`, `CHECKPOINT_GRANTS`; revision `0015_checkpoints` (`statements()`,
   `CHECKPOINT_DDL_0015`, `CHECKPOINT_GRANTS_0015`).
 
-- [ ] **Step 1: The tests first**
+- [x] **Step 1: The tests first**
 
 Create `tests/plan_q/test_graph_table.py`:
 
@@ -738,7 +738,7 @@ collection`: `ImportError: cannot import name 'GRAPH_ROUTES' from 'ops_core.rout
 `AssertionError` listing the revisions (`tests/plan_e/test_transitions_table.py` names `0015_checkpoints`, which does
 not exist yet).
 
-- [ ] **Step 2: The table, the helpers, the job rule, the matrix rows and the revision**
+- [x] **Step 2: The table, the helpers, the job rule, the matrix rows and the revision**
 
 Edit 7 (`core/src/ops_core/routing.py`), replace:
 
@@ -1292,7 +1292,7 @@ documents (20 contracts, 6 tool inputs); 91 examples (36 valid, 55 invalid); ind
 Run `PYTHONUTF8=1 uv run python -m pytest tests/plan_q tests/plan_e/test_transitions_table.py
 tests/plan_h/test_locking.py tests/plan_j/test_allowlist.py -q -p no:cacheprovider < /dev/null` → `105 passed`.
 
-- [ ] **Step 3: Gates and commit**
+- [x] **Step 3: Gates and commit**
 
 `git add` the three new files; dev `CHECK: GREEN`, `1667 passed, 222 skipped`; `verify_handoff.py` exit 0.
 
@@ -1319,7 +1319,7 @@ states `answer_only`).
   ANSWER_ONLY_NOTE`; `ops_worker.mcp.McpCallFailed(code=, retryable=)`, `UNAUTHENTICATED`, `TRANSPORT`,
   `transport_failure(tool, statuses)`.
 
-- [ ] **Step 1: The tests first**
+- [x] **Step 1: The tests first**
 
 Create `tests/plan_q/fixtures.py`:
 
@@ -1534,7 +1534,7 @@ Run `PYTHONUTF8=1 uv run python -m pytest tests/plan_q/test_evidence.py tests/pl
 no:cacheprovider < /dev/null` → RED, `2 errors during collection`: `ImportError: cannot import name 'evidence' from
 'ops_worker'` and `ImportError: cannot import name 'Observation' from 'ops_worker.drafting'`.
 
-- [ ] **Step 2: The bundle, the payload, the fake's answer and the failure codes**
+- [x] **Step 2: The bundle, the payload, the fake's answer and the failure codes**
 
 Edit 18 (`worker/src/ops_worker/drafting.py`), replace:
 
@@ -2086,7 +2086,7 @@ anything else, or a body that is not a JSON object, is `UpstreamInvalid`. A 401 
 
 Run the same command → `8 passed`.
 
-- [ ] **Step 3: Gates and commit**
+- [x] **Step 3: Gates and commit**
 
 `git add` the three new files; dev `CHECK: GREEN`, `1672 passed, 222 skipped`; `verify_handoff.py` exit 0.
 
@@ -2119,7 +2119,7 @@ R129 (DoD 1-4 on the in-memory saver); errata 124, 125, 127-129.
   `edge_map`, `next_route`, `after_publish`, `build_graph(saver, replace)`, `thread_id`, `config`, `confirm`, `known`,
   `interrupted`, `run_graph`, `open_saver`); `handlers.resume_input`.
 
-- [ ] **Step 1: The tests first (and Plan H's fakes keep the run row)**
+- [x] **Step 1: The tests first (and Plan H's fakes keep the run row)**
 
 Edit 32 (`tests/plan_h/test_worker_units.py`), replace:
 
@@ -3800,7 +3800,7 @@ Run `PYTHONUTF8=1 uv run python -m pytest tests/plan_q/test_graph_routes.py test
 tests/plan_h/test_worker_units.py -q -p no:cacheprovider < /dev/null` → RED, `2 errors during collection`, both
 `ModuleNotFoundError: No module named 'ops_worker.graph'`.
 
-- [ ] **Step 2: The graph, the handlers and the saver's connection**
+- [x] **Step 2: The graph, the handlers and the saver's connection**
 
 Create `worker/src/ops_worker/deps.py`:
 
@@ -5192,7 +5192,7 @@ Run `PYTHONUTF8=1 uv run python -m pytest tests/plan_q tests/plan_h tests/plan_m
 tests/plan_f -q -p no:cacheprovider < /dev/null` → `600 passed, 2 skipped` (the two skips are Plan P's Ollama route
 tests).
 
-- [ ] **Step 3: Gates and commit**
+- [x] **Step 3: Gates and commit**
 
 `git add` the seven new files; dev `CHECK: GREEN`, `1721 passed, 222 skipped`; `verify_handoff.py` exit 0.
 `git grep -n "TODO(T20)" -- '*.py' ':!*holdout*' ':!*seal*' ':!*.sha256'` prints nothing.
@@ -5214,7 +5214,7 @@ git commit -m "feat: the LangGraph workflow - sync durability, stored checkpoint
 
 **Requirements:** rulings 6, 9, 12, 15; R022, R038, R042, R091, R108, R114, R122 live; DoD 1-3 on the Postgres saver.
 
-- [ ] **Step 1: The live tests**
+- [x] **Step 1: The live tests**
 
 Create `tests/e2e/test_graph_live.py`:
 
@@ -5784,7 +5784,7 @@ with:
 Gates: `git add tests/e2e/test_graph_live.py`; dev `CHECK: GREEN`, `1721 passed, 227 skipped` (the five new live
 tests skip without `OPS_LIVE=1`); `verify_handoff.py` exit 0.
 
-- [ ] **Step 2: The live gate (these database tests have never run, departure 1)**
+- [x] **Step 2: The live gate (these database tests have never run, departure 1)**
 
 With the dev stack up, local Ollama answering and every skeleton process down, run `PYTHONUTF8=1 uv run python
 scripts/check.py --profile test < /dev/null` → `CHECK: GREEN` with `1927 passed, 21 skipped` (arithmetic). It writes
@@ -5818,7 +5818,7 @@ Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-
 Step 1b, excluded; `<last>` the newest commit before this task's own). `<date>` is `date -u +%F`. `<dev>` and `<live>`
 are the final gates' pytest lines. Step 4 replaces every placeholder.
 
-- [ ] **Step 1: Handoff records**
+- [x] **Step 1: Handoff records**
 
 Save this outside the repository as `t20_records.py` (in the implementer's scratchpad) and run `BASE=<hash> uv run
 python -I <path>/t20_records.py < /dev/null` from the repository root. It stops if the live report is missing or a
@@ -5961,7 +5961,7 @@ print(f"T20 DONE; M07 DONE; current milestone M08; rows {', '.join([*ROWS, 'R122
 Expected: `T20 DONE; M07 DONE; current milestone M08; rows R022, R038, R042, R091, R108, R114, R122, R129; span
 <base>..<last>`.
 
-- [ ] **Step 2: State, status, the architecture page and the history**
+- [x] **Step 2: State, status, the architecture page and the history**
 
 Edit 80 (`SESSION_STATE.md`), replace:
 
@@ -6206,12 +6206,12 @@ were written blind (the scratch copy could not reach the stack's `.env`) and fir
 ## 36. What the process taught
 ````
 
-- [ ] **Step 3: Final gates**
+- [x] **Step 3: Final gates**
 
 Dev `CHECK: GREEN`, `1721 passed, 227 skipped`; live `CHECK: GREEN`, `1927 passed, 21 skipped` (then `git checkout --
 reports`, keeping `reports/graph/t20-graph-live.md` as the run rewrote it); `verify_handoff.py` exit 0.
 
-- [ ] **Step 4: Placeholders, checkboxes and the commit**
+- [x] **Step 4: Placeholders, checkboxes and the commit**
 
 Fill in `<base>`, `<last>`, `<date>`, `<dev>` and `<live>` in `SESSION_STATE.md` and `STATUS.md` with the values
 (`grep -n "<base>\|<last>\|<date>\|<dev>\|<live>" SESSION_STATE.md STATUS.md` prints nothing afterwards); tick this

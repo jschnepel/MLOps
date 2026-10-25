@@ -137,11 +137,15 @@ flowchart LR
   E --> R
   D --> R
   V --> R
-  X --> R
-  O --> R
+  C --> R
+  A --> R
+  X --> O
+  P -->|not settled| R
+  P -->|settled| Z((end))
+  O --> Z
 ```
 
-Every node returns to `route_request`, and every labelled edge is one row of the AM-16 route table (ten routes). The two interrupt nodes end the graph run; a committed human event and its wake-up job start a new run of the graph from the stored checkpoint. Nodes are deterministic Python; only `draft_with_langchain` calls the model, and only `retrieve_evidence`, `execute_approved_proposal` and `reconcile_outcome` call MCP servers.
+The working nodes and the two waiting nodes return to `route_request`, and every labelled edge out of it is generated from the AM-16 route table (`ops_core.routing.GRAPH_ROUTES`, built by T20; ten routes). The two waiting nodes interrupt, which ends the graph run and releases the lease; the committed human event's wake-up job (`resume_input`, or `execute` after a decision) resumes the graph from the stored checkpoint with `Command(resume=<event id>)`. `publish_state` ends the graph run once the table routes the run to `publish` (erratum 128), and in v1 `execute_approved_proposal` hands over to `reconcile_outcome`, which ends it (recovery is T22's). Nodes are deterministic Python; only `draft_with_langchain` calls the model, and only `retrieve_evidence` and `execute_approved_proposal` call MCP servers (`reconcile_outcome`'s calls arrive with T22).
 
 ### Properties
 
@@ -401,7 +405,7 @@ model, and the model that ranks it cannot act: mcp-read asks Ollama for one quer
 | `core/domain/`, `core/routing.py` | the transition table, the route tables, the reason enum, canonical JSON |
 | `core/db/migrations/` | roles, grants, definer functions, RLS policies (AM-20 in SQL) |
 | `api/` | the admission router and the decision endpoint |
-| `worker/graph/` | the orchestrator's nodes and edges |
+| `worker/src/ops_worker/graph/` | the orchestrator's nodes and edges (written by T20) |
 | `mcp-read/`, `mcp-write/` | the two tool servers and their token verifiers |
 | `incident-sim/` | the destination's atomic action-key table |
 | `tests/acceptance/` | one file per requirement ID, created by the owning task |
