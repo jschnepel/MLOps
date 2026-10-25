@@ -327,7 +327,7 @@ feedback), R036 (authority keys); SA:698 (the debt list first).
   `ops_core.draft_validation.validate(text, *, reasoning, allowed_ids, answer_only) -> ModelDraft`, `DraftInvalid`
   (`rules`, `feedback`), `has_thinking`, `MAX_FEEDBACK`, `Rule`, `APPLICATION_KEYS`.
 
-- [ ] **Step 1a: Record both baselines**
+- [x] **Step 1a: Record both baselines**
 
 Run `PYTHONUTF8=1 uv run python scripts/check.py < /dev/null` → `CHECK: GREEN` with pytest `1540 passed, 219
 skipped`; with the dev stack up, local Ollama answering (`curl -s http://127.0.0.1:11434/api/version` →
@@ -338,12 +338,12 @@ showing every process down, run `PYTHONUTF8=1 uv run python scripts/check.py --p
 scripts/verify_handoff.py --reference-code --manifest --contracts < /dev/null` → exit 0. Record the three lines in the
 report. A gate that is not GREEN stops the plan here, before anything is committed.
 
-- [ ] **Step 1b: Record the base**
+- [x] **Step 1b: Record the base**
 
 Run `git rev-parse --short HEAD` (expected `8b1c8b7` or the commit that adds this plan on top of it) and write it as
 `BASE=<hash>` in the report and the SDD ledger. Task 6's span is `<base>..<last>`. `git status --short` prints nothing.
 
-- [ ] **Step 1c: Commit the debt list (before any code)**
+- [x] **Step 1c: Commit the debt list (before any code)**
 
 Edit 1 (`SESSION_STATE.md`, at the end of "Plan O debt list (T23; committed before coding) [R6-B7]"), replace:
 
@@ -400,7 +400,7 @@ git add SESSION_STATE.md
 git commit -m "docs: declare Plan P's shortcuts before coding (T19 debt list)"
 ```
 
-- [ ] **Step 2: Put `tests/plan_p` on the test path**
+- [x] **Step 2: Put `tests/plan_p` on the test path**
 
 Edit 2 (`pyproject.toml`), replace:
 
@@ -420,7 +420,7 @@ Create `tests/plan_p/__init__.py`:
 """Plan P (T19): the real-model drafting route: prompts, validation, the router, the run manifest and its evidence."""
 ```
 
-- [ ] **Step 3: Add the LangChain dependency and re-lock**
+- [x] **Step 3: Add the LangChain dependency and re-lock**
 
 Edit 3 (`worker/pyproject.toml`), replace:
 
@@ -452,7 +452,7 @@ report it. Then `uv sync --locked
 .venv/Lib/site-packages/langchain_ollama/py.typed .venv/Lib/site-packages/ollama/py.typed` (POSIX venvs:
 `.venv/lib/python3.13/site-packages/...`) → all three exist, so no mypy override is needed (ruling 13).
 
-- [ ] **Step 4: Write the failing test**
+- [x] **Step 4: Write the failing test**
 
 Create `tests/plan_p/test_draft_validation.py`:
 
@@ -636,7 +636,7 @@ def test_the_validator_and_the_schema_grader_agree(text: str) -> None:
 Run `git add tests/plan_p && uv run python -m pytest tests/plan_p/test_draft_validation.py -q < /dev/null` → a
 collection error, `ImportError: cannot import name 'prompts' from 'ops_core'`.
 
-- [ ] **Step 5: The runtime prompts**
+- [x] **Step 5: The runtime prompts**
 
 The two text files are sent byte for byte as system messages. Each begins with its starter's own text
 (`handoff/prompts/incident-draft-v1.md` lines 7-11, the system message; `schema-repair-v1.md` line 5), word for word,
@@ -719,7 +719,7 @@ def sha256(version: str) -> str:
 `ops-core` builds with hatchling from `src/ops_core`, which ships every file under the package, the `.txt` prompts
 included (package data, ruling 5); the workspace installs it editable, so nothing else changes.
 
-- [ ] **Step 6: The validation**
+- [x] **Step 6: The validation**
 
 Create `core/src/ops_core/draft_validation.py`:
 
@@ -863,7 +863,7 @@ def validate(text: str, *, reasoning: object, allowed_ids: frozenset[str], answe
     return draft
 ```
 
-- [ ] **Step 7: Run the tests and the gates, then commit**
+- [x] **Step 7: Run the tests and the gates, then commit**
 
 Run `git add core/src/ops_core/prompts core/src/ops_core/draft_validation.py && uv run ruff format core tests/plan_p &&
 uv run ruff check core tests/plan_p && uv run python -m pytest tests/plan_p -q < /dev/null` → `26 passed`. Run
@@ -904,7 +904,7 @@ R036, R040, R041, R127.
   `repair_payload`, `draft_schema`, `ollama_chat`, `OllamaDraftGenerator` (`from_settings(on_attempt=None)`, `start`, `generate`,
   `pins`, `digest`, `ollama_version`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_p/test_ollama_drafting.py`:
 
@@ -1325,7 +1325,7 @@ tests/plan_d/test_worker.py tests/plan_j/test_worker_azp.py -q < /dev/null` → 
 (`test_model_router_has_two_routes_and_no_fallback`, `test_build_proposal_binds_hash_to_canonical_bytes`,
 `test_the_model_request_has_no_field_for_a_handle`).
 
-- [ ] **Step 2: Replace the router module**
+- [x] **Step 2: Replace the router module**
 
 Replace `worker/src/ops_worker/drafting.py` with:
 
@@ -1491,7 +1491,7 @@ async def start_route(mode: str) -> DraftGenerator:
     return generator
 ```
 
-- [ ] **Step 3: The real route**
+- [x] **Step 3: The real route**
 
 Create `worker/src/ops_worker/ollama_drafting.py`:
 
@@ -1804,7 +1804,7 @@ class OllamaDraftGenerator:
         raise ModelOutputInvalid(judged.rules)
 ```
 
-- [ ] **Step 4: Start the route before anything else**
+- [x] **Step 4: Start the route before anything else**
 
 Edit 5 (`worker/src/ops_worker/main.py`), replace:
 
@@ -1836,7 +1836,7 @@ with:
         raise SystemExit(1) from exc
 ```
 
-- [ ] **Step 5: Run the tests and the gates, then commit**
+- [x] **Step 5: Run the tests and the gates, then commit**
 
 Run `git add worker/src/ops_worker && uv run ruff format worker tests && uv run ruff check worker tests && uv run
 python -m pytest tests/plan_p tests/plan_d/test_worker.py tests/plan_j/test_worker_azp.py -q < /dev/null` →
@@ -1873,7 +1873,7 @@ git commit -m "feat: the qwen3:8b drafting route, the two-route model router and
   `privileges.GRANTS["run_manifests"]`, `RLS_TABLES` + `run_manifests`; `locking.NEVER_LOCKED` + `run_manifests`;
   `persistence.insert_run_manifest(conn, *, tenant_id, manifest)`; the worker's start-up check for the relation.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_p/test_migration_0014.py`:
 
@@ -2029,7 +2029,7 @@ async def test_only_the_worker_writes_a_manifest_once_and_nobody_changes_it(
 Run `git add tests && uv run python -m pytest tests/plan_p/test_migration_0014.py -q < /dev/null` → `3 failed`
 (`FileNotFoundError` for `0014_run_manifests.py`).
 
-- [ ] **Step 2: The revision**
+- [x] **Step 2: The revision**
 
 Create `migrations/app/versions/0014_run_manifests.py`:
 
@@ -2105,7 +2105,7 @@ def downgrade() -> None:
         op.execute(statement)
 ```
 
-- [ ] **Step 3: The matrix rows, the lock order, the insert and the start-up check**
+- [x] **Step 3: The matrix rows, the lock order, the insert and the start-up check**
 
 Edit 1 (`core/src/ops_core/privileges.py`, the module docstring), replace:
 
@@ -2270,7 +2270,7 @@ with:
     "DELETE FROM app.jobs WHERE run_id = %s",
 ```
 
-- [ ] **Step 4: Run the tests and the gates, then commit**
+- [x] **Step 4: Run the tests and the gates, then commit**
 
 Run `git add migrations tests && uv run ruff format core worker migrations tests && uv run ruff check core worker
 migrations tests && uv run python -m pytest tests/plan_p/test_migration_0014.py tests/plan_e tests/plan_h/test_locking.py
@@ -2308,7 +2308,7 @@ budget, round 1 I3); R039, R041, R130.
   in the DRAFTING unit; `proposals.build_proposal` without `corpus_version` and `Frozen` without `manifest`;
   `permit.PERMIT_TTL_SECONDS = 95`; the lock-order unit "worker drafting start (transition_run, run manifest)".
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/plan_p/test_investigate_drafting.py`:
 
@@ -2630,7 +2630,7 @@ python -m pytest tests/plan_d/test_worker.py tests/plan_h/test_permit.py -q < /d
 (`test_build_proposal_binds_hash_to_canonical_bytes`: `build_proposal` still requires `corpus_version`; the TTL
 assertion: 65).
 
-- [ ] **Step 2: The handler**
+- [x] **Step 2: The handler**
 
 Edit 9 (`worker/src/ops_worker/handlers.py`, the module docstring), replace:
 
@@ -2886,7 +2886,7 @@ with:
                 "message": f"Drafted by model route {manifest.model_route.value} (prompt {manifest.prompt_version}).",
 ```
 
-- [ ] **Step 3: The proposal, the permit and the lock order**
+- [x] **Step 3: The proposal, the permit and the lock order**
 
 Edit 20 (`worker/src/ops_worker/proposals.py`), replace:
 
@@ -3026,7 +3026,7 @@ with:
     "worker draft and freeze": ("run_lease", "runs"),
 ```
 
-- [ ] **Step 4: The docs and the hint markers**
+- [x] **Step 4: The docs and the hint markers**
 
 Edit 28 (`worker/README.md`), replace:
 
@@ -3106,7 +3106,7 @@ with:
 
 `git grep -n "TODO(T19)" -- '*.py'` → nothing.
 
-- [ ] **Step 5: Run the tests and the gates, including the first live gate, then commit**
+- [x] **Step 5: Run the tests and the gates, including the first live gate, then commit**
 
 Run `uv run ruff format worker core api tests && uv run ruff check worker core api tests && uv run python -m pytest
 tests/plan_p tests/plan_d tests/plan_h -q < /dev/null` → `261 passed, 2 skipped` (`test_investigate_drafting.py` 9).
@@ -3141,7 +3141,7 @@ BS:593.
 - Produces: `scripts.draft_evidence.injected_section`, `probe_case`, `outcome`, `summarize`, `render`, `run`, `main`;
   the two report files.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/plan_p/test_draft_evidence.py`:
 
@@ -3242,7 +3242,7 @@ def test_the_summary_and_the_report_carry_the_rates_and_their_intervals() -> Non
 Run `git add tests/plan_p && uv run python -m pytest tests/plan_p/test_draft_evidence.py -q < /dev/null` → a
 collection error, `ImportError: cannot import name 'draft_evidence' from 'scripts'`.
 
-- [ ] **Step 2: The evidence script**
+- [x] **Step 2: The evidence script**
 
 Create `scripts/draft_evidence.py`:
 
@@ -3519,7 +3519,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ````
 
-- [ ] **Step 3: Run the tests and the gates, then commit the script**
+- [x] **Step 3: Run the tests and the gates, then commit the script**
 
 Run `git add scripts/draft_evidence.py && uv run ruff format scripts tests/plan_p && uv run ruff check scripts
 tests/plan_p && uv run python -m pytest tests/plan_p -q < /dev/null` → `61 passed, 2 skipped`.
@@ -3531,7 +3531,7 @@ git add scripts/draft_evidence.py tests/plan_p/test_draft_evidence.py
 git commit -m "feat: scripts/draft_evidence.py - the T19 real-model run over the probe inputs"
 ```
 
-- [ ] **Step 4: Run the real model once and commit the evidence**
+- [x] **Step 4: Run the real model once and commit the evidence**
 
 With local Ollama answering and `qwen3:8b` installed at the pinned digest (Task 1 Step 1a), run `PYTHONUTF8=1 uv run
 python -I scripts/draft_evidence.py < /dev/null` (three to five minutes: a warm-up, then 60 drafts of about 2-3 s
@@ -3568,7 +3568,7 @@ Throughout, `<base>..<last>` is the git range of this plan's execution on `plan-
 Step 1b, excluded; `<last>` the newest commit before this task's own). `<date>` is `date -u +%F`. `<dev>` and `<live>`
 are the final gates' pytest lines; `<figures>` is the line Step 1 prints second. Step 4 replaces every placeholder.
 
-- [ ] **Step 1: Handoff records**
+- [x] **Step 1: Handoff records**
 
 Save this outside the repository as `t19_records.py` and run `BASE=<hash> uv run python -I <path>/t19_records.py <
 /dev/null` from the repository root (a script file, never standard input). It stops if the report is missing or a
@@ -3714,7 +3714,7 @@ print(figures)
 Expected: it prints the span and the figures. `git diff --stat handoff` shows three files changed; `git diff
 handoff/acceptance-matrix.json` shows seven rows; `tasks.json` shows T19 `DONE` and `"current_milestone": "M07"`.
 
-- [ ] **Step 2: Project state**
+- [x] **Step 2: Project state**
 
 Edit 1 (`SESSION_STATE.md`, the milestone), replace:
 
@@ -3889,7 +3889,7 @@ with:
 - Next: T20 (the LangGraph workflow).
 ```
 
-- [ ] **Step 3: The history**
+- [x] **Step 3: The history**
 
 Section 34's **Review** paragraph is written now, at close-out, from what actually happened, never in advance: the
 static review's round 1 (`.superpowers/planp/round1-static.md`: the grader-agreement test, the report's statement
@@ -3928,7 +3928,7 @@ evidence IDs. On the same 60 inputs the real run recorded <figures>.
 ## 35. What the process taught
 ```
 
-- [ ] **Step 4: Fill the placeholders and run the final gates**
+- [x] **Step 4: Fill the placeholders and run the final gates**
 
 Run the final gates: `PYTHONUTF8=1 uv run python scripts/check.py < /dev/null` → `CHECK: GREEN`, pytest `1603 passed,
 222 skipped`; the live gate → `CHECK: GREEN`, `1804 passed, 21 skipped`, then `git checkout -- reports`;

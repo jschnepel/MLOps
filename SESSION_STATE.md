@@ -1,12 +1,19 @@
 # Session state
 
 **Specification:** OPS-BUILD-1.3.6 (`BUILD_SPEC.md` + `SPEC_AMENDMENTS.md`)
-**Current milestone:** M06 (vector retrieval; T18 is DONE in Plan N, and T41, the owner's holdout labels, is its open task. M05 closed with T16 in Plan M. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
-**Next task:** T19 (Plan P, branch `plan-p` from `main` 3905b35). PRs #12-#14 are merged. Erratum 114 (the owner's
-decision, 2026-10-21) removed the holdout seal as a gate: T19 no longer waits on T03 and T25 no longer on T41. The
-agent ran T02's live probe on 2026-10-24 at the owner's instruction (`reports/model-probe-qwen3-8b.md`,
-`data/model-pins.json`; schema-valid 5/60, diagnosed in the report; its decision lines are provisional), and the owner
-chose to go ahead past T44 step 10 with it pending. The Plan O record follows.
+**Current milestone:** M07 (the LangChain draft node and the LangGraph workflow; T19 is DONE in Plan P and T20 is next. M06 closed with T18 in Plan N; its T41, the owner's holdout labels, is optional since erratum 114. Every task of M00 to M05 is DONE or DONE_PENDING_OWNER, and the owner steps of M00 and M01 are listed below)
+**Next task:** T20 (the LangGraph workflow). Plan P (T19) is executed on branch `plan-p` (`ee2729d..737d1ab` holds the
+debt list and the five building tasks; the close-out is the commit after `737d1ab`). T19 is DONE: the qwen3:8b route
+is selectable, validated, bounded, pinned and recorded (R036, R039, R040, R041 recorded locally; R037, R127 and R130
+live, R130 subject to T25's half); errata 115-121 are proposed; the real run is `reports/model/t19-real-run.md`
+(valid first pass 60/60, after at most one repair 60/60, kinds {'abstain': 40, 'proposal': 20}, 26 clarifying
+questions, 0 thinking, 0 authority keys). Owner inputs added by Plan P: decide errata 115-121; migrate the dev database
+to 0014 (`uv run python scripts/skeleton.py migrate`; the worker refuses to start on 0013); push `plan-p` and open its
+PR after the final review. T20 depends on T19, T14 and T16, all DONE. Before Plan P: PRs #12-#14 were merged; erratum
+114 (the owner's decision, 2026-10-21) removed the holdout seal as a gate; the agent ran T02's live probe on 2026-10-24
+at the owner's instruction (`reports/model-probe-qwen3-8b.md`, `data/model-pins.json`; schema-valid 5/60, diagnosed in
+the report; its decision lines are provisional), and the owner chose to go ahead past T44 step 10 with it pending. The
+Plan O record follows.
 **Plan O record:** Plan O (T23) is executed on branch `plan-o` (`e91b27b..80da1f2` holds the debt list and the four
 building tasks; the close-out is the commit after `80da1f2`). T23 is DONE: R111 is evidenced (`evals/dev/cases.jsonl`,
 `core/src/ops_core/grading.py`, `evals/dev/RUBRIC.md`) subject to erratum 112; errata 112-113 are proposed; the
@@ -40,7 +47,7 @@ fix wave 71753ab). Next is T18 (vector retrieval; it now also owns mcp-read's ve
 or T23, both unblocked; T19 and T41 wait on owner steps, and T20 waits on T19. A proposed erratum awaiting the
 owner's decision does not change a task's status; a task met "subject to" an erratum stays DONE.
 **Plan A outcome:** executed on branch `plan-a` (a638801..HEAD); `scripts/check.py` GREEN (54 passed, 1 skipped: owner seal). Final whole-branch review: 5 Important findings fixed in the final-review wave; minors deferred: M3 timing restructure (`astream`), M6 mypy member list.
-**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-o` off `plan-n` (Plan O executed, pushed 2026-10-20, PR #14 into `plan-n`; `plan-n`: Plan N executed, pushed 2026-10-19, PR #13 into `plan-m`; `plan-m`: Plan M executed, pushed 2026-10-18, PR #12 into `main`; `main` 66d6833 has the same tree as `plan-l`, which sat on `plan-k`, on `plan-j`, on `plan-i`, on `plan-h`, on `plan-g`, on `plan-f`, on `plan-e`, on `plan-d`, on `plan-c`, on `plan-b`, on `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) were merged into `main` by the owner on 2026-10-18 (merge commits; the plan branches are kept); `plan-j` and `plan-k` were pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11).
+**Repository:** local git repo at `C:\Users\joeys\Desktop\MLOps`, branch `plan-p` off `main` 3905b35 (Plan P executed, not pushed; `plan-o`: Plan O executed, pushed 2026-10-20, PR #14 into `plan-n`, merged into `main`; `plan-n`: Plan N executed, pushed 2026-10-19, PR #13 into `plan-m`; `plan-m`: Plan M executed, pushed 2026-10-18, PR #12 into `main`; `main` 66d6833 has the same tree as `plan-l`, which sat on `plan-k`, on `plan-j`, on `plan-i`, on `plan-h`, on `plan-g`, on `plan-f`, on `plan-e`, on `plan-d`, on `plan-c`, on `plan-b`, on `plan-a`). Remote `github.com/jschnepel/MLOps` (public, MIT) exists; `main` and `plan-a` were pushed on 2026-10-07. `plan-b` to `plan-e` were pushed on 2026-10-08 and `plan-f` on 2026-10-09; `plan-g`, `plan-h` and `plan-i` are pushed too, and every pushed branch matches its local one (checked 2026-10-15). PRs #1-#5 were opened on 2026-10-09 and are green after the EXE001 fix (first green run https://github.com/jschnepel/MLOps/actions/runs/37962510516; record `reports/ci/t06-first-ci-runs.txt`); PRs #1-#11 (plan-b -> main through plan-l -> plan-k) were merged into `main` by the owner on 2026-10-18 (merge commits; the plan branches are kept); `plan-j` and `plan-k` were pushed (2026-10-16), `plan-l` on 2026-10-18 (PR #11).
 
 ## Done in the planning session (2026-10-06)
 
@@ -1045,6 +1052,72 @@ owner's decision does not change a task's status; a task met "subject to" an err
   restored with `git checkout -- reports/`, keeping nothing new: the committed numeric report (Task 4) already holds
   these figures.
 
+## Plan P executed (2026-10-25, branch `plan-p`)
+
+- T19 = `ee2729d..737d1ab` (the debt list first, then the five building tasks and their review fixes; the close-out is
+  the commit after `737d1ab`). Background: the owner merged PRs #12-#14 into `main`, removed the holdout seal
+  (erratum 114) and asked the agent to build autonomously; T02's probe ran on 2026-10-24 and its two decision lines
+  stay provisional. The plan (`docs/superpowers/plans/2026-10-24-first-slice-p-drafting-route.md`) holds the 20
+  rulings of the controller's brief as implemented, with eleven departures named at its top; the input is
+  `docs/superpowers/research/2026-10-24-plan-p-inputs.md`. Evidence: `core/src/ops_core/prompts/`,
+  `core/src/ops_core/draft_validation.py`, `worker/src/ops_worker/ollama_drafting.py`,
+  `worker/src/ops_worker/drafting.py`, `migrations/app/versions/0014_run_manifests.py`, `tests/plan_p/` (unit, and the
+  two Ollama route tests, live), `tests/e2e/test_run_manifest_live.py` and `tests/e2e/test_worker_live.py` (live); the
+  real run `reports/model/t19-real-run.md` and `.json` (`scripts/draft_evidence.py`).
+- The real run: valid first pass 60/60, after at most one repair 60/60, kinds {'abstain': 40, 'proposal': 20}, 26
+  clarifying questions, 0 thinking, 0 authority keys. Validity is not support: nobody graded the 20 proposals for
+  groundedness (T25), and the injected-section sample (PR-003) shows a valid proposal can restate and cite injected
+  text, so R036 is met by code (the text cannot reach a tool, a grant or the destination), not by the model refusing it.
+- Gates: `check.py` `1629 passed, 222 skipped`; `check.py --profile test` `1830 passed, 21 skipped`;
+  `verify_handoff.py` exit 0. T02 stays `DONE_PENDING_OWNER`; T44 step 10 stays pending. The dev database is still at 0013 (nothing in Plan P connected to
+  it); the worker refuses to start on it until `skeleton.py migrate` runs, an owner step (or the agent at the owner's
+  request).
+- **Proposed errata (the owner decides; the spec text stays authoritative until then).** Numbered on from erratum 114:
+  115. SA:598 and T19's instructions name `/api/show` as the digest's source; it carries none for qwen3:8b (T19 note
+       1, Ollama 0.33.3 and 0.40.4). The worker compares the digest `/api/tags` reports, as `scripts/probe.py` (which
+       wrote the pin) and T18's embedding check do; the comparison is a plain string equality on the bare hex.
+  116. AM-50's no-tuning rule (SA:657-659), SA:606 and SA:47: the runtime prompts `incident-draft-v2` and
+       `schema-repair-v2` are the starters' text plus rules the T02 probe's diagnosis showed missing (copy evidence IDs
+       only from `allowed_evidence_ids`; `question` only with `abstain`) and the user payload with the starter's keys,
+       so they were informed by a measurement on the 60 probe inputs. The rule protected a holdout, which erratum 114
+       made optional. They live in `core/src/ops_core/prompts/` (package data of `ops-core`) rather than
+       `core/prompts/`; the starters stay byte-identical in `handoff/prompts/`, pinned by the probe.
+  117. SA:379 ("the choice, model digest and prompt version are written to the run manifest and the
+       `explanation.ready` event") and T19's "records the route in explanation.ready": the model digest lives in the
+       run manifest only. The event's templated message carries the route and the prompt version; its closed payload
+       (`message`, `evidence_refs`) is unchanged in schema, code and SQL. The event is emitted only on the proposal
+       path: abstained, not-routed and failed runs emit no `explanation.ready`, so for them the route lives in the
+       manifest alone.
+  118. SA:375: optional model-assisted intent classification is not built in v1. The admission router keeps its tested
+       `hint` input and the API passes none; the Plan G debt line naming T19 is closed.
+  119. BS:437 (`DraftGenerator.generate(request_context, evidence_bundle, policy_metadata)`) and BS:441
+       (`MODEL_MODE=ollama`): `generate` takes the request and the evidence bundle; the one policy fact a draft
+       depends on, whether the run may propose, travels as the request's `answer_only`. `MODEL_MODE` names the route
+       itself, `fake` or `qwen3:8b` (SA:379's names); `ollama` and anything else refuse to start the worker. T19's
+       "future named model" (SA:379, `handoff/tasks.json`) gets no enum slot now: adding one is a later
+       route-enum and schema change, which no task owns.
+  120. AM-20.2 and AM-20.5: `run_manifests` (revision 0014) is a tenant table neither lists. Cells: `worker` INSERT and
+       SELECT, `api` SELECT, nobody UPDATE or DELETE (a manifest is immutable); ENABLE + FORCE RLS with the
+       `tenant_isolation` policy for `api`, `worker`, `sweeper` and `app_definer`.
+  121. AM-31 / BS:460 / R039 (thinking): under `reasoning=False` langchain-ollama 1.1.0 drops Ollama's separate
+       `thinking` field before the route sees it (`langchain_ollama/chat_models.py:1263-1268`, `:1345-1350`), so the
+       runtime detects inline `<think>` tags only and relies on Ollama honouring `think=false`; the `reasoning`
+       channel in `ops_core.draft_validation` is defensive and always None on the real route. The T02 probe, in the
+       same configuration, measured 0 inline thinking over 130 calls. Reading Ollama's raw field would need a
+       different client than AM-31's fixed ChatOllama configuration; recorded, not built.
+- Rulings made during execution (the controller's, from the SDD ledger; the owner may reverse any of them):
+  Task 1: the validator shares grading's `FormatChecker` and nothing more (no hoist; the runtime-to-eval import stays
+  and is covered by the T30 checkout debt line). Task 2: langchain-ollama's dropped `thinking` field is a docstring
+  correction and erratum 121, because AM-31 fixes the ChatOllama configuration; a thinking attempt's text is never
+  persisted (done in Task 5). Task 4: review minor 4 declined, the explicit `ValidationError` stays. Task 5: the
+  model was not re-run after the review; the markdown is rendered again from the committed JSON. Final review: the
+  code findings went to one fix wave, the record findings to this close-out.
+- Process slips (none ran code against the dev database or opened holdout material): the Task 1 implementer ran a
+  `python -` with an empty heredoc, which hung and was stopped; the Task 2 implementer's by-hand mypy run polluted
+  `.mypy_cache` (removed); the Task 4 implementer wrote a temp log outside the repository (deleted); one-off scripts
+  wrote CRLF into six files in the fix wave, which the hygiene test caught (converted back). The plan writer could not
+  copy `.env` into its scratch copy, so the three database live tests ran for the first time in execution and passed.
+
 ## Walking-skeleton debt list (T08; committed before coding) [R6-B7]
 
 Allowed shortcuts in T08, each with its owning task:
@@ -1442,11 +1515,15 @@ Allowed shortcuts in T19, each with its owning task:
 - the worker sends the model the request, the asset, the interval and the retrieved procedure sections only; the asset
   status and alert records reach the model with T20's asset reads (BS:419; R028's note, R038) (ruling 1);
 - every manifest records the `retrieval_mode` the tool reports, today always `lexical`, the only mode the worker asks
-  for; choosing it per run → T20 and T25 (Plan N ruling 16);
+  for; choosing it per run → T25 (Plan N ruling 16; `handlers.py`'s `TODO(T25)`);
 - the manifest holds AM-80's six fields; the commit, workflow version, prompt hash and tool schema version BS:572 also
   names, and the Ollama version, stay in logs and the evidence report → T28 and T37 (ruling 9);
 - the digest is checked once, at startup: a model replaced under a running worker is not seen until it restarts →
   T30 (probes and readiness) (ruling 4);
+- `KEEP_ALIVE="30m"` with a warm-up only at start: an idle worker reloads the model inside a draft's 60 s attempt, and
+  a slow reload ends that run FAILED/MODEL_UNAVAILABLE → T22 and T29 (bounded retries, or a periodic keep-warm);
+- `scripts/skeleton.py` waits 90 s for readiness while the real route's warm-up budget is 180 s → T30 (the container
+  topology); until then start the worker on the real route with a warm model;
 - the permit is released when the draft call ends or is cancelled, T02's provisional "release on cancel"; nothing
   polls `/api/ps` → the owner confirms or reverses the line (T02 DoD 2) (ruling 7);
 - the model pin and the draft schema (`schemas/model-draft.schema.json`, through `grading.DRAFT_SCHEMA`) are read from
@@ -1572,7 +1649,13 @@ the `ops_test` databases. The dev database stays at 0013 with corpus-1 embedded.
 
 - Decide errata 35-44 (see "Plan G executed"), 45-59 (see "Plan H executed"), 60-71 (see
   "Plan I executed"), 72-81 (see "Plan J executed"), 82-92 (see "Plan K executed"), 93-102 (see "Plan L
-  executed"), 103-106 (see "Plan M executed"), 107-111 (see "Plan N executed") and 112-113 (see "Plan O executed").
+  executed"), 103-106 (see "Plan M executed"), 107-111 (see "Plan N executed"), 112-113 (see "Plan O executed") and
+  115-121 (see "Plan P executed").
+- Migrate the dev database to revision 0014 (`uv run python scripts/skeleton.py migrate`): the worker refuses to start
+  on 0013, which lacks `app.run_manifests`. To run the worker on the real model, set `MODEL_MODE=qwen3:8b`; the
+  skeleton's default stays `fake`.
+- Confirm or reverse the T02 probe's two provisional lines (proceed; the permit released on cancel), which T19 builds
+  on (`reports/model-probe-qwen3-8b.md`, `worker/src/ops_worker/permit.py`).
 - Fill in `evals/quality-gates.json` (schema `evals/quality-gates.schema.json`) and commit it before the first holdout
   run (SA:672-674): the safety gates are fixed at a blocking 0; the quality thresholds are the owner's choice.
 - Decide on the installed Ollama 0.40.4 against SA:587's 0.33.3 (the embedding pin records 0.40.4).
@@ -1615,9 +1698,10 @@ uv run python scripts/skeleton.py up      # then: status, and down when finished
 OPS_LIVE=1 PYTHONUTF8=1 uv run python -m pytest tests/e2e -q   # with no skeleton running; rewrites the evidence
 ```
 
-Then continue with T19 (Plan P; fact sheet `docs/superpowers/research/2026-10-24-plan-p-inputs.md`), then T20, T21,
-T22, T24 and T25 in dependency order. Owner inputs still open: the Ollama runbook's other-device LAN check (T44 step
-10), the proposed errata (up to 113, plus Plan P's), confirming the probe's provisional decision lines, and
-`evals/quality-gates.json`. Before erratum 114 (2026-10-21) every remaining task waited on the holdout seal (T03).
+Then continue with T20 (the LangGraph workflow: the earliest dependency-satisfied PLANNED task in `handoff/tasks.json`;
+it depends on T19, T14 and T16), then T21, T22, T24 and T25 in dependency order. Owner inputs still open: the dev
+database's migration to 0014, the Ollama runbook's other-device LAN check (T44 step 10), the proposed errata (up to
+121), confirming the probe's provisional decision lines, and `evals/quality-gates.json`. Before erratum 114
+(2026-10-21) every remaining task waited on the holdout seal (T03).
 
 Do not store secrets or private reasoning in this file.
