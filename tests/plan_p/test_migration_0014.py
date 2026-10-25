@@ -7,6 +7,7 @@ the bounds); a table outside the lock-order registry; and a downgrade that leave
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Any, get_args
 
@@ -40,7 +41,7 @@ def test_upgrade_creates_the_table_then_its_cells_and_policy(monkeypatch: pytest
 def test_the_cells_are_the_matrix_row_and_nobody_can_change_a_manifest() -> None:
     module = rev0014()
     assert module.GRANTS_0014 == {"run_manifests": CELLS} == {"run_manifests": privileges.GRANTS["run_manifests"]}
-    assert all(not g.upd and not g.dele for g in CELLS.values())
+    assert all(not g.upd and not g.dele for g in privileges.GRANTS["run_manifests"].values())
     assert "run_manifests" in privileges.RLS_TABLES and "run_manifests" not in privileges.SWEEPER_ALL
     assert "run_manifests" in locking.NEVER_LOCKED
 
@@ -58,5 +59,7 @@ def test_the_checks_say_what_the_schema_and_the_contract_say() -> None:
     assert "model_digest ~ '^[a-f0-9]{64}$'" in ddl
     assert "char_length(prompt_version) BETWEEN 1 AND 60" in ddl
     assert "char_length(corpus_version) BETWEEN 1 AND 100" in ddl
+    columns = re.findall(r"\b(\w+) (?:uuid|text|timestamptz)\b", ddl)
+    assert sorted(columns) == sorted([*schema["properties"], "tenant_id", "created_at"])  # no field beyond AM-80's six
     assert "run_id uuid PRIMARY KEY" in ddl  # one manifest per run
     assert "FOREIGN KEY (tenant_id, run_id) REFERENCES app.runs (tenant_id, run_id)" in ddl

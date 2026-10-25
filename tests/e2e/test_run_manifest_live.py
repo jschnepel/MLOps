@@ -39,7 +39,13 @@ async def test_only_the_worker_writes_a_manifest_once_and_nobody_changes_it(
     try:
         _, _, run = await new_run(app_conn, ALPHA, api=api)
         for role in (Role.API, Role.SWEEPER, Role.MCP_READ, Role.MCP_EXEC, Role.OPERATOR):
-            assert await refused(await role_conn(role), INSERT, (run, ALPHA, "fake", None)) == "42501", role
+            other = await role_conn(role)
+            # The tenant is set, so a row-level refusal cannot stand in for the missing grant: only "permission
+            # denied for table" passes (the message test_roles_live.py matches too).
+            with pytest.raises(psycopg.errors.InsufficientPrivilege, match="permission denied"):
+                async with other.transaction():
+                    await persistence.set_tenant(other, ALPHA)
+                    await other.execute(INSERT, (run, ALPHA, "fake", None))
         worker = await role_conn(Role.WORKER)
         with pytest.raises(psycopg.errors.CheckViolation):  # schemas/run-manifest.schema.json: a real route's digest
             async with worker.transaction():
